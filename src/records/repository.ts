@@ -42,6 +42,7 @@ export class RecordsRepository {
   readonly #getByPath: StatementSync;
   readonly #delete: StatementSync;
   readonly #listByParent: StatementSync;
+  readonly #listAll: StatementSync;
   readonly #countAll: StatementSync;
 
   constructor(db: DatabaseSync) {
@@ -78,6 +79,7 @@ export class RecordsRepository {
     this.#listByParent = db.prepare(
       'SELECT * FROM records WHERE parent_path = ? ORDER BY sequence_key, created'
     );
+    this.#listAll = db.prepare('SELECT * FROM records ORDER BY file_path');
     this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
   }
 
@@ -141,6 +143,10 @@ export class RecordsRepository {
 
   listByParent(parentPath: string): VaultRecord[] {
     return (this.#listByParent.all(parentPath) as unknown[] as RecordRow[]).map(rowToRecord);
+  }
+
+  listAll(): VaultRecord[] {
+    return (this.#listAll.all() as unknown[] as RecordRow[]).map(rowToRecord);
   }
 
   count(): number {

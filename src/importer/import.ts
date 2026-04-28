@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordsRepository} from '../records/repository.ts';
+import {buildEdges, type EdgeBuildSummary} from './build-edges.ts';
 import {importFile} from './import-file.ts';
 import {walkMarkdown} from './walk.ts';
 
@@ -9,6 +10,7 @@ export interface ImportSummary {
   unchanged: number;
   total: number;
   durationMs: number;
+  edges: EdgeBuildSummary;
 }
 
 /**
@@ -20,22 +22,22 @@ export interface ImportSummary {
  */
 export const importVault = (db: DatabaseSync, vaultRoot: string): ImportSummary => {
   const records = new RecordsRepository(db);
-  const summary: ImportSummary = {
-    inserted: 0,
-    updated: 0,
-    unchanged: 0,
-    total: 0,
-    durationMs: 0
-  };
   const start = performance.now();
   const now = new Date().toISOString();
+
+  let inserted = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let total = 0;
 
   db.exec('BEGIN');
   try {
     for (const file of walkMarkdown(vaultRoot)) {
       const result = importFile(records, file.relativePath, file.absolutePath, now);
-      summary[result.action]++;
-      summary.total++;
+      total++;
+      if (result.action === 'inserted') inserted++;
+      else if (result.action === 'updated') updated++;
+      else unchanged++;
     }
     db.exec('COMMIT');
   } catch (err) {
@@ -43,6 +45,14 @@ export const importVault = (db: DatabaseSync, vaultRoot: string): ImportSummary 
     throw err;
   }
 
-  summary.durationMs = Math.round(performance.now() - start);
-  return summary;
+  const edges = buildEdges(db, {vaultRoot, now});
+
+  return {
+    inserted,
+    updated,
+    unchanged,
+    total,
+    durationMs: Math.round(performance.now() - start),
+    edges
+  };
 };

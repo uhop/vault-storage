@@ -37,6 +37,13 @@ switch (subcommand) {
         `${summary.updated} updated, ${summary.unchanged} unchanged ` +
         `(${summary.durationMs} ms)\n`
     );
+    process.stdout.write(
+      `edges: ${summary.edges.edgesCreated} created, ` +
+        `${summary.edges.unresolvedFrontmatter} unresolved related:, ` +
+        `${summary.edges.unresolvedBody} unresolved body wikilinks, ` +
+        `${summary.edges.selfReferences} self-references skipped ` +
+        `(${summary.edges.durationMs} ms)\n`
+    );
     break;
   }
   default:
