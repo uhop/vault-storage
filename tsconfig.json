@@ -1,5 +1,5 @@
 {
-  "include": ["src/**/*", "tests/**/*", "types/**/*"],
+  "include": ["src/**/*", "tests/**/*"],
   "compilerOptions": {
     "target": "ES2024",
     "module": "NodeNext",
@@ -8,10 +8,7 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
-    "skipLibCheck": false,
-    "paths": {
-      "@huggingface/transformers": ["./types/huggingface-transformers.d.ts"]
-    },
+    "skipLibCheck": true,
     "types": ["node"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
