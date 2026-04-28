@@ -50,23 +50,26 @@ test('RecordVecRepository CRUD', async t => {
     fx.records.insert(makeRecord(id, 'topics/a.md'));
     const vec = await fx.embedder.embed('a body');
 
-    await t.test('insert + has + count', t => {
-      fx.vecs.insert(id, vec);
+    await t.test('insert + has + count + getContentHash', t => {
+      fx.vecs.insert(id, 'hash-v1', vec);
       t.ok(fx.vecs.has(id), 'has returns true after insert');
       t.equal(fx.vecs.count(), 1, 'count is 1');
+      t.equal(fx.vecs.getContentHash(id), 'hash-v1', 'content_hash stored');
     });
 
-    await t.test('upsert replaces the vector', t => {
+    await t.test('upsert replaces the vector and content_hash', t => {
       const vec2 = new Float32Array(384);
       vec2[0] = 1;
-      fx.vecs.upsert(id, vec2);
+      fx.vecs.upsert(id, 'hash-v2', vec2);
       t.equal(fx.vecs.count(), 1, 'still one row');
+      t.equal(fx.vecs.getContentHash(id), 'hash-v2', 'content_hash refreshed');
     });
 
     await t.test('delete removes the row', t => {
       t.ok(fx.vecs.delete(id), 'delete returns true');
       t.notOk(fx.vecs.has(id), 'has returns false after delete');
       t.equal(fx.vecs.count(), 0, 'count back to 0');
+      t.equal(fx.vecs.getContentHash(id), null, 'getContentHash returns null after delete');
     });
   } finally {
     fx.db.close();
@@ -83,7 +86,7 @@ test('nearest returns the closest record_id and orders by distance', async t => 
       const id = uuidv7();
       fx.records.insert(makeRecord(id, `topics/${body}.md`, body));
       const v = await fx.embedder.embed(body);
-      fx.vecs.insert(id, v);
+      fx.vecs.insert(id, `hash-${body}`, v);
       ids.push(id);
     }
 

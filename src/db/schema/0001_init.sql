@@ -40,11 +40,17 @@ CREATE INDEX idx_records_type        ON records(type, status);
 -- record_vec: BGE-small-en-v1.5 embeddings (384-dim float32).
 -- Virtual tables can't carry FK constraints; record_vec rows are kept in sync
 -- by the application layer (insert / delete on records mirrors here).
+--
+-- The `+content_hash` auxiliary column tracks the body hash that produced
+-- this vector. The embed pass joins record_vec ↔ records and re-embeds when
+-- record_vec.content_hash != records.content_hash (i.e., body has changed
+-- since this vector was computed).
 -- ---------------------------------------------------------------------------
 
 CREATE VIRTUAL TABLE record_vec USING vec0(
-  record_id TEXT PRIMARY KEY,
-  embedding FLOAT[384]
+  record_id     TEXT PRIMARY KEY,
+  +content_hash TEXT,
+  embedding     FLOAT[384]
 );
 
 -- ---------------------------------------------------------------------------

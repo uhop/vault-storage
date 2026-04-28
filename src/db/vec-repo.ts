@@ -20,13 +20,17 @@ export class RecordVecRepository {
   readonly #delete: StatementSync;
   readonly #has: StatementSync;
   readonly #count: StatementSync;
+  readonly #getHash: StatementSync;
   readonly #nearest: StatementSync;
 
   constructor(db: DatabaseSync) {
-    this.#insert = db.prepare('INSERT INTO record_vec (record_id, embedding) VALUES (?, ?)');
+    this.#insert = db.prepare(
+      'INSERT INTO record_vec (record_id, content_hash, embedding) VALUES (?, ?, ?)'
+    );
     this.#delete = db.prepare('DELETE FROM record_vec WHERE record_id = ?');
     this.#has = db.prepare('SELECT 1 AS x FROM record_vec WHERE record_id = ? LIMIT 1');
     this.#count = db.prepare('SELECT COUNT(*) AS n FROM record_vec');
+    this.#getHash = db.prepare('SELECT content_hash FROM record_vec WHERE record_id = ? LIMIT 1');
     this.#nearest = db.prepare(
       `SELECT record_id, distance
          FROM record_vec
@@ -36,17 +40,25 @@ export class RecordVecRepository {
     );
   }
 
-  insert(recordId: string, vec: Float32Array): void {
-    this.#insert.run(recordId, toBlob(vec));
+  insert(recordId: string, contentHash: string, vec: Float32Array): void {
+    this.#insert.run(recordId, contentHash, toBlob(vec));
   }
 
   /**
    * sqlite-vec virtual tables don't support UPSERT — emulate by DELETE + INSERT.
    * Wrap in a transaction at the call site if atomicity matters across many rows.
    */
-  upsert(recordId: string, vec: Float32Array): void {
+  upsert(recordId: string, contentHash: string, vec: Float32Array): void {
     this.#delete.run(recordId);
-    this.#insert.run(recordId, toBlob(vec));
+    this.#insert.run(recordId, contentHash, toBlob(vec));
+  }
+
+  /** Returns the content_hash recorded with the vector, or null if none. */
+  getContentHash(recordId: string): string | null {
+    const row = this.#getHash.get(recordId) as Record<string, unknown> | undefined as
+      | {content_hash: string | null}
+      | undefined;
+    return row?.content_hash ?? null;
   }
 
   delete(recordId: string): boolean {
