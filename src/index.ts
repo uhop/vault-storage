@@ -44,8 +44,8 @@ switch (subcommand) {
     const summary = importVault(db, resolve(vaultRoot as string));
     process.stdout.write(
       `imported ${summary.total} files: ${summary.inserted} inserted, ` +
-        `${summary.updated} updated, ${summary.unchanged} unchanged ` +
-        `(${summary.durationMs} ms)\n`
+        `${summary.updated} updated, ${summary.unchanged} unchanged, ` +
+        `${summary.skipped} skipped (${summary.durationMs} ms)\n`
     );
     process.stdout.write(
       `edges: ${summary.edges.edgesCreated} created, ` +
