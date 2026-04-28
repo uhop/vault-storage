@@ -221,11 +221,27 @@ const codeFraction = (body: string): number => {
   return codeLines / lines.length;
 };
 
-const nonAsciiFraction = (body: string): number => {
+// Non-Latin script ranges: Cyrillic, Greek, Hebrew, Arabic, Devanagari,
+// Hiragana, Katakana, CJK unified, Hangul. Excludes Latin punctuation
+// (U+2000-block em-dashes, curly quotes) and box-drawing graphics (U+2500
+// block) so an English note with rich typography or terminal output doesn't
+// misread as foreign-language content.
+const isNonLatinScript = (cp: number): boolean =>
+  (cp >= 0x0370 && cp <= 0x03ff) || // Greek
+  (cp >= 0x0400 && cp <= 0x052f) || // Cyrillic + Supplement
+  (cp >= 0x0590 && cp <= 0x05ff) || // Hebrew
+  (cp >= 0x0600 && cp <= 0x06ff) || // Arabic
+  (cp >= 0x0900 && cp <= 0x097f) || // Devanagari
+  (cp >= 0x3040 && cp <= 0x309f) || // Hiragana
+  (cp >= 0x30a0 && cp <= 0x30ff) || // Katakana
+  (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
+  (cp >= 0xac00 && cp <= 0xd7af);   // Hangul
+
+const nonLatinScriptFraction = (body: string): number => {
   if (!body) return 0;
   let n = 0;
-  for (let i = 0; i < body.length; i++) if (body.charCodeAt(i) > 127) n++;
-  return n / body.length;
+  for (const ch of body) if (isNonLatinScript(ch.codePointAt(0)!)) n++;
+  return n / [...body].length;
 };
 
 const codeHeavySpotCheck = (records: RecordRow[]): string => {
@@ -249,12 +265,12 @@ const codeHeavySpotCheck = (records: RecordRow[]): string => {
 
 const crossLanguageSpotCheck = (records: RecordRow[]): string => {
   const ranked = records
-    .map(r => ({r, frac: nonAsciiFraction(r.body)}))
-    .filter(x => x.frac >= 0.05)
+    .map(r => ({r, frac: nonLatinScriptFraction(r.body)}))
+    .filter(x => x.frac >= 0.02)
     .sort((a, b) => b.frac - a.frac)
     .slice(0, 5);
-  if (ranked.length === 0) return '_(no records with ≥5% non-ASCII content)_';
-  const lines = ['| Source | Non-ASCII % | Top-3 nearest paths |', '|---|---|---|'];
+  if (ranked.length === 0) return '_(no records with ≥2% non-Latin-script content — vault is English-only by content; typographic non-ASCII like em-dashes or box-drawing is correctly excluded)_';
+  const lines = ['| Source | Non-Latin-script % | Top-3 nearest paths |', '|---|---|---|'];
   for (const {r, frac} of ranked) {
     const nearest = topK(r.id, r.vec, records, 3);
     const paths = nearest
