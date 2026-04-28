@@ -14,10 +14,10 @@ An AI-agent-first persistent knowledge base. Markdown files are the source of tr
 
 ## Repositories
 
-| Repo | Visibility | Purpose |
-|---|---|---|
-| [`vault-storage`](https://github.com/uhop/vault-storage) (this repo) | public | server code |
-| [`vault-data`](https://github.com/uhop/vault-data) | **private** | markdown content, source of truth |
+| Repo                                                                 | Visibility  | Purpose                           |
+| -------------------------------------------------------------------- | ----------- | --------------------------------- |
+| [`vault-storage`](https://github.com/uhop/vault-storage) (this repo) | public      | server code                       |
+| [`vault-data`](https://github.com/uhop/vault-data)                   | **private** | markdown content, source of truth |
 
 The split keeps this code repo public (so it can be installed and inspected) without exposing personal notes.
 
@@ -36,6 +36,7 @@ Planned shape:
 ## Usage
 
 > Not yet implemented. Will cover:
+>
 > - REST surface: search (lexical / semantic / hybrid), section CRUD, edges, suggestions, tags, maintenance jobs.
 > - MCP surface: ~25 tools, 5 resources, 8 prompts (replacing today's `~/.claude/skills/vault/SKILL.md` slash commands).
 > - CLI commands invoked via the agent: `/vault compact`, `/vault review-edges`, `/vault review-duplicates`, `/vault review-tags`.

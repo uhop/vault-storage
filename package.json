@@ -1,0 +1,36 @@
+{
+  "name": "vault-storage",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "AI-agent-first knowledge base. Markdown files are the source of truth; SQLite + sqlite-vec is a derived index. REST + MCP server.",
+  "engines": {
+    "node": ">=25"
+  },
+  "scripts": {
+    "test": "tape6 --flags FO 'tests/test-*.ts'",
+    "ts-check": "tsc --noEmit",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write ."
+  },
+  "dependencies": {
+    "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "prettier": "^3.8.3",
+    "tape-six": "^1.8.0",
+    "typescript": "^5.9.3"
+  },
+  "github": "https://github.com/uhop/vault-storage",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/uhop/vault-storage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/uhop/vault-storage/issues"
+  },
+  "homepage": "https://github.com/uhop/vault-storage#readme",
+  "author": "Eugene Lazutkin <eugene.lazutkin@gmail.com>",
+  "license": "UNLICENSED"
+}
