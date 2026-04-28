@@ -1,5 +1,5 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
-import type {Record, RecordStatus, RecordType} from './types.ts';
+import type {RecordStatus, RecordType, VaultRecord} from './types.ts';
 
 interface RecordRow {
   record_id: string;
@@ -18,7 +18,7 @@ interface RecordRow {
   archived_at: string | null;
 }
 
-const rowToRecord = (row: RecordRow): Record => ({
+const rowToRecord = (row: RecordRow): VaultRecord => ({
   recordId: row.record_id,
   filePath: row.file_path,
   parentPath: row.parent_path,
@@ -81,7 +81,7 @@ export class RecordsRepository {
     this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
   }
 
-  insert(r: Record): void {
+  insert(r: VaultRecord): void {
     this.#insert.run(
       r.recordId,
       r.filePath,
@@ -101,7 +101,7 @@ export class RecordsRepository {
   }
 
   /** Insert or update by `file_path`. Preserves record_id and created on update. */
-  upsertByPath(r: Record): void {
+  upsertByPath(r: VaultRecord): void {
     this.#upsert.run(
       r.recordId,
       r.filePath,
@@ -120,13 +120,17 @@ export class RecordsRepository {
     );
   }
 
-  getById(id: string): Record | null {
-    const row = this.#getById.get(id) as unknown as RecordRow | undefined;
+  getById(id: string): VaultRecord | null {
+    const row = this.#getById.get(id) as Record<string, unknown> | undefined as
+      | RecordRow
+      | undefined;
     return row ? rowToRecord(row) : null;
   }
 
-  getByPath(path: string): Record | null {
-    const row = this.#getByPath.get(path) as unknown as RecordRow | undefined;
+  getByPath(path: string): VaultRecord | null {
+    const row = this.#getByPath.get(path) as Record<string, unknown> | undefined as
+      | RecordRow
+      | undefined;
     return row ? rowToRecord(row) : null;
   }
 
@@ -135,11 +139,13 @@ export class RecordsRepository {
     return result.changes > 0;
   }
 
-  listByParent(parentPath: string): Record[] {
-    return (this.#listByParent.all(parentPath) as unknown as RecordRow[]).map(rowToRecord);
+  listByParent(parentPath: string): VaultRecord[] {
+    return (this.#listByParent.all(parentPath) as unknown[] as RecordRow[]).map(rowToRecord);
   }
 
   count(): number {
-    return (this.#countAll.get() as unknown as {n: number}).n;
+    // COUNT(*) always returns one row, so undefined isn't reachable here.
+    const row = this.#countAll.get() as Record<string, unknown> as {n: number};
+    return row.n;
   }
 }

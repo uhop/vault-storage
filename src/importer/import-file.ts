@@ -1,7 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../records/repository.ts';
-import {RECORD_STATUSES, type Record, type RecordStatus} from '../records/types.ts';
+import {RECORD_STATUSES, type RecordStatus, type VaultRecord} from '../records/types.ts';
 import {contentHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
@@ -54,7 +54,7 @@ export const importFile = (
   const updated = asString(data['updated']) ?? now;
   const priority = asNumber(data['priority']) ?? 0;
 
-  const record: Record = {
+  const record: VaultRecord = {
     recordId: existing?.recordId ?? uuidv7(),
     filePath: relativePath,
     parentPath: existing?.parentPath ?? null,

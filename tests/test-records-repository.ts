@@ -3,11 +3,11 @@ import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {EdgesRepository} from '../src/records/edges.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
-import type {Edge, Record} from '../src/records/types.ts';
+import type {Edge, VaultRecord} from '../src/records/types.ts';
 import {uuidv7} from '../src/util/uuid.ts';
 import {contentHash} from '../src/util/hash.ts';
 
-const makeRecord = (overrides: Partial<Record> = {}): Record => {
+const makeRecord = (overrides: Partial<VaultRecord> = {}): VaultRecord => {
   const id = uuidv7();
   const now = '2026-04-28T12:00:00Z';
   const body = overrides.body ?? 'sample body';
@@ -60,7 +60,7 @@ test('upsertByPath updates on conflict, inserts otherwise', t => {
   const r1 = makeRecord({filePath: 'a.md', body: 'first'});
   records.upsertByPath(r1);
 
-  const r2: Record = {
+  const r2: VaultRecord = {
     ...r1,
     recordId: uuidv7(),
     body: 'second',
@@ -179,9 +179,7 @@ test('listInbound and listByType filter as expected', t => {
 
 test('record CHECK rejects an invalid type at insert', t => {
   const {db, records} = setup();
-  const r = makeRecord();
-  // @ts-expect-error — deliberately bad type for runtime check
-  r.type = 'not-a-type';
-  t.throws(() => records.insert(r), 'invalid type rejected');
+  const bad = {...makeRecord(), type: 'not-a-type'} as unknown as VaultRecord;
+  t.throws(() => records.insert(bad), 'invalid type rejected');
   db.close();
 });

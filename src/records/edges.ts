@@ -50,14 +50,14 @@ export class EdgesRepository {
   }
 
   listOutbound(fromId: string): Edge[] {
-    return (this.#listOutbound.all(fromId) as unknown as EdgeRow[]).map(rowToEdge);
+    return (this.#listOutbound.all(fromId) as unknown[] as EdgeRow[]).map(rowToEdge);
   }
 
   listInbound(toId: string): Edge[] {
-    return (this.#listInbound.all(toId) as unknown as EdgeRow[]).map(rowToEdge);
+    return (this.#listInbound.all(toId) as unknown[] as EdgeRow[]).map(rowToEdge);
   }
 
   listByType(type: EdgeType): Edge[] {
-    return (this.#listByType.all(type) as unknown as EdgeRow[]).map(rowToEdge);
+    return (this.#listByType.all(type) as unknown[] as EdgeRow[]).map(rowToEdge);
   }
 }

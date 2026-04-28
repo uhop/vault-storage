@@ -37,7 +37,7 @@ export const EDGE_TYPES = [
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
-export interface Record {
+export interface VaultRecord {
   recordId: string;
   filePath: string;
   parentPath: string | null;
