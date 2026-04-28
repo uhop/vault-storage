@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "tape6 --flags FO 'tests/test-*.ts'",
+    "eval": "node eval/embedding-quality.ts",
     "ts-check": "tsc --noEmit",
     "lint": "prettier --check .",
     "lint:fix": "prettier --write ."
