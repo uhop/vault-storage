@@ -4,6 +4,10 @@
 import {resolve} from 'node:path';
 import {openDatabase} from './db/connection.ts';
 import {runMigrations} from './db/migrate.ts';
+import {BgeEmbedder} from './embeddings/bge.ts';
+import {embedPending} from './embeddings/embed-pass.ts';
+import {FakeEmbedder} from './embeddings/fake.ts';
+import type {Embedder} from './embeddings/types.ts';
 import {importVault} from './importer/import.ts';
 
 const dbPath = process.env['VAULT_DB_PATH'] ?? ':memory:';
@@ -14,6 +18,12 @@ const die = (msg: string, code = 1): never => {
   process.stderr.write(`vault-storage: ${msg}\n`);
   process.exit(code);
 };
+
+// VAULT_EMBEDDER=fake skips the BGE model load — useful for fast iteration on
+// the importer/edge code without paying the model-load cost on every run. Tests
+// always use FakeEmbedder by direct import; this env var is for the CLI only.
+const makeEmbedder = (): Embedder =>
+  process.env['VAULT_EMBEDDER'] === 'fake' ? new FakeEmbedder() : new BgeEmbedder();
 
 const db = openDatabase({path: dbPath});
 const migration = runMigrations(db);
@@ -43,6 +53,12 @@ switch (subcommand) {
         `${summary.edges.unresolvedBody} unresolved body wikilinks, ` +
         `${summary.edges.selfReferences} self-references skipped ` +
         `(${summary.edges.durationMs} ms)\n`
+    );
+    const embedder = makeEmbedder();
+    const embed = await embedPending(db, embedder);
+    process.stdout.write(
+      `embed: ${embed.embedded} embedded, ${embed.upToDate} up-to-date ` +
+        `(${embed.total} total, model=${embedder.modelName}, ${embed.durationMs} ms)\n`
     );
     break;
   }
