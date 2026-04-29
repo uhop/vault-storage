@@ -15,3 +15,7 @@ coverage/
 # Editor
 .vscode/
 .idea/
+
+# Claude Code runtime state (lock files, transcripts). Project-level config
+# like .claude/settings.json or .claude/agents/* is OK to commit if added.
+.claude/*.lock
