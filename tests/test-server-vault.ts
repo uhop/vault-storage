@@ -280,7 +280,7 @@ test('PUT /vault/{path} creates a new file', async t => {
     seed(root);
     const ctx = await startTestServer(root);
     try {
-      const md = ['---', 'title: New', 'tags: [created-via-api]', '---', 'New body content.', ''].join('\n');
+      const md = ['---', 'title: New', 'tags: []', '---', 'New body content.', ''].join('\n');
       const put = await fetchAuthed(`${ctx.url}/vault/topics/created.md`, {
         method: 'PUT',
         headers: {'Content-Type': 'text/markdown'},
@@ -326,6 +326,43 @@ test('PUT /vault/{path} replaces an existing file and preserves created', async 
       t.ok(onDisk.includes('title: Alpha v2'), 'title updated');
       t.ok(onDisk.includes('created: 2026-04-01'), 'created preserved from existing fm');
       t.ok(onDisk.includes('Replaced body.'), 'body replaced');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} syncs tags from frontmatter', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db.exec(`
+        INSERT INTO tags_taxonomy (tag, description, added) VALUES
+          ('research', null, '2026-04-29'),
+          ('design', null, '2026-04-29');
+      `);
+
+      const md = ['---', 'title: Alpha v3', 'tags: [research, design]', '---', 'replaced body', ''].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 204, '204 no content');
+
+      const list = await fetchAuthed(
+        `${ctx.url}/sections?file_path=${encodeURIComponent('topics/alpha.md')}`
+      );
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]!.record_id;
+
+      const rows = ctx.db
+        .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+        .all(id) as Array<{tag: string}>;
+      t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'tags synced from PUT body frontmatter');
     } finally {
       await teardown(ctx);
     }

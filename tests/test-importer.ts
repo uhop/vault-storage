@@ -144,6 +144,79 @@ test('explicit frontmatter type overrides path-derived type', t => {
   }
 });
 
+test('importFile syncs tags on the unchanged path (backfill case)', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      ['---', 'title: X', 'tags: [design, research]', '---', 'body', ''].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    db.exec(`
+      INSERT INTO tags_taxonomy (tag, description, added) VALUES
+        ('design', null, '2026-04-29'),
+        ('research', null, '2026-04-29');
+    `);
+
+    // First import: tags get inserted (insert path).
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    const recordId = repo.getByPath('topics/x.md')?.recordId ?? '';
+    t.ok(recordId, 'record was imported');
+
+    // Simulate the live-DB backfill scenario: the record exists but the
+    // tags table is empty (mimicking pre-TagsImporter import).
+    db.prepare('DELETE FROM tags WHERE record_id = ?').run(recordId);
+    const empty = db.prepare('SELECT COUNT(*) AS n FROM tags WHERE record_id = ?').get(recordId) as {n: number};
+    t.equal(empty.n, 0, 'tags cleared to simulate pre-backfill state');
+
+    // Second import: content_hash and tracked fields all match → 'unchanged'
+    // path. With the fix, tags are still synced from frontmatter.
+    const second = importVault(db, root);
+    t.equal(second.unchanged, 1, 'second import hits unchanged path');
+    const rows = db
+      .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+      .all(recordId) as Array<{tag: string}>;
+    t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'tags backfilled on unchanged path');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importFile picks up tags-only frontmatter edits via the unchanged path', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/x.md', ['---', 'title: X', 'tags: [design]', '---', 'body', ''].join('\n'));
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    db.exec(`
+      INSERT INTO tags_taxonomy (tag, description, added) VALUES
+        ('design', null, '2026-04-29'),
+        ('research', null, '2026-04-29');
+    `);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    const recordId = repo.getByPath('topics/x.md')?.recordId ?? '';
+
+    // Edit only the tags array. Body, title, type, status, priority all
+    // unchanged → record-row unchanged → without the fix, tags would not
+    // re-sync and 'design' would persist.
+    writeMd(root, 'topics/x.md', ['---', 'title: X', 'tags: [research]', '---', 'body', ''].join('\n'));
+    const second = importVault(db, root);
+    t.equal(second.unchanged, 1, 'tags-only edit still hits unchanged path');
+    const rows = db
+      .prepare('SELECT tag FROM tags WHERE record_id = ?')
+      .all(recordId) as Array<{tag: string}>;
+    t.deepEqual(rows.map(r => r.tag), ['research'], 'tag set tracks the new frontmatter');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('walker skips .git and .obsidian directories', t => {
   const {root, cleanup} = setupVault();
   try {

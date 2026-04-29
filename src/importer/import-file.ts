@@ -25,18 +25,24 @@ export interface ImportFileResult {
   recordId: string;
 }
 
+export interface ImportFileOptions {
+  /** When provided, syncs the record's tag set from frontmatter `tags:`. */
+  tags?: TagsImporter;
+}
+
 /**
  * Read a single markdown file, derive a record, and upsert into the repository.
  * Returns 'unchanged' when content_hash matches the existing row AND every
  * frontmatter-derived field is already correct — the importer uses this to
  * skip embedding recomputation. A frontmatter-only edit (e.g. `type:` change)
  * still flows through the upsert path so the DB stays consistent with disk.
+ *
+ * Tags are synced from frontmatter on every call regardless of unchanged
+ * status. A `tags:`-only edit doesn't change content_hash or any tracked
+ * record field, so it would otherwise hit the unchanged branch and skip
+ * tag updates. Same for records imported before TagsImporter existed —
+ * subsequent reindexes detected `unchanged` and never backfilled tags.
  */
-export interface ImportFileOptions {
-  /** When provided, syncs the record's tag set from frontmatter `tags:`. */
-  tags?: TagsImporter;
-}
-
 export const importFile = (
   records: RecordsRepository,
   relativePath: string,
@@ -61,43 +67,52 @@ export const importFile = (
   const priority = asNumber(data['priority']) ?? 0;
   const title = asString(data['title']) ?? null;
 
-  if (
-    existing &&
+  const isUnchanged =
+    !!existing &&
     existing.contentHash === hash &&
     existing.type === type &&
     existing.status === status &&
     existing.title === title &&
-    existing.priority === priority
-  ) {
-    return {action: 'unchanged', recordId: existing.recordId};
+    existing.priority === priority;
+
+  let recordId: string;
+  let action: 'inserted' | 'updated' | 'unchanged';
+
+  if (isUnchanged) {
+    recordId = existing.recordId;
+    action = 'unchanged';
+  } else {
+    const record: VaultRecord = {
+      recordId: existing?.recordId ?? uuidv7(),
+      filePath: relativePath,
+      parentPath: existing?.parentPath ?? null,
+      sequenceKey: existing?.sequenceKey ?? null,
+      type,
+      body,
+      contentHash: hash,
+      title,
+      created,
+      updated,
+      lastReferenced: existing?.lastReferenced ?? null,
+      decayScore: existing?.decayScore ?? 1,
+      status,
+      priority,
+      archivedAt: existing?.archivedAt ?? null
+    };
+
+    records.upsertByPath(record);
+    recordId = record.recordId;
+    action = existing ? 'updated' : 'inserted';
   }
 
-  const record: VaultRecord = {
-    recordId: existing?.recordId ?? uuidv7(),
-    filePath: relativePath,
-    parentPath: existing?.parentPath ?? null,
-    sequenceKey: existing?.sequenceKey ?? null,
-    type,
-    body,
-    contentHash: hash,
-    title,
-    created,
-    updated,
-    lastReferenced: existing?.lastReferenced ?? null,
-    decayScore: existing?.decayScore ?? 1,
-    status,
-    priority,
-    archivedAt: existing?.archivedAt ?? null
-  };
-
-  records.upsertByPath(record);
   if (options.tags) {
-    const result = options.tags.syncTags(record.recordId, data['tags']);
+    const result = options.tags.syncTags(recordId, data['tags']);
     if (result.rejected.length > 0) {
       process.stderr.write(
         `tags ${relativePath}: ${result.rejected.length} unknown (${result.rejected.join(', ')})\n`
       );
     }
   }
-  return {action: existing ? 'updated' : 'inserted', recordId: record.recordId};
+
+  return {action, recordId};
 };

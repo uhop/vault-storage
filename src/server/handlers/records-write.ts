@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {join} from 'node:path';
 import {importFile} from '../../importer/import-file.ts';
+import {TagsImporter} from '../../importer/import-tags.ts';
 import {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendNoContent} from '../responses.ts';
@@ -22,6 +23,7 @@ export const putRecordHandler =
     }
 
     const records = new RecordsRepository(deps.db);
+    const tags = new TagsImporter(deps.db);
     const existing = records.getById(id);
     if (!existing) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
@@ -54,7 +56,7 @@ export const putRecordHandler =
     // Re-import: parses the file we just wrote, recomputes content_hash, and
     // upserts. Preserves record_id (upsert is keyed on file_path).
     const absolutePath = join(deps.vaultDataPath, existing.filePath);
-    importFile(records, existing.filePath, absolutePath);
+    importFile(records, existing.filePath, absolutePath, undefined, {tags});
 
     sendNoContent(ctx.res);
   };

@@ -4,6 +4,7 @@ import {basename, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {importFile} from '../../importer/import-file.ts';
+import {TagsImporter} from '../../importer/import-tags.ts';
 import {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
@@ -166,6 +167,7 @@ export const putVaultHandler =
     }
 
     const records = new RecordsRepository(deps.db);
+    const tags = new TagsImporter(deps.db);
     const existing = records.getByPath(path);
 
     let absolutePath: string;
@@ -185,7 +187,7 @@ export const putVaultHandler =
       throw err;
     }
 
-    importFile(records, path, absolutePath);
+    importFile(records, path, absolutePath, undefined, {tags});
     sendNoContent(ctx.res);
   };
 

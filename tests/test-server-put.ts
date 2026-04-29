@@ -195,6 +195,39 @@ test('PUT /sections/{id} rejects auto-managed frontmatter keys', async t => {
   }
 });
 
+test('PUT /sections/{id} syncs tags from frontmatter', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db.exec(`
+        INSERT INTO tags_taxonomy (tag, description, added) VALUES
+          ('research', null, '2026-04-29'),
+          ('design', null, '2026-04-29');
+      `);
+
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const newMd = ['---', 'title: Alpha', 'tags: [research, design]', '---', 'body', ''].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: newMd
+      });
+      t.equal(put.status, 204, '204 no content');
+
+      const rows = ctx.db
+        .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+        .all(id) as Array<{tag: string}>;
+      t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'tags synced from PUT body frontmatter');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /sections/{unknown-id} returns 404', async t => {
   const {root, cleanup} = setupVault();
   try {

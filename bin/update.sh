@@ -4,11 +4,16 @@
 # What it does:
 #   1. Aborts if the working tree is dirty (don't lose local edits).
 #   2. Fetches + previews incoming commits.
-#   3. Fast-forward pulls (no merge gymnastics — assumes deploy box is read-only).
+#   3. Fast-forward pulls (no merge gymnastics — assumes deploy box is read-only)
+#      when there are incoming commits.
 #   4. Warns if .env is missing keys that .env.example added.
-#   5. Builds the image with both `:latest` and `:<short-sha>` tags so you can
-#      roll back by re-tagging.
-#   6. Recreates the container via compose (image change triggers replace).
+#   5. Always builds the image with both `:latest` and `:<short-sha>` tags.
+#      Build is unconditional — Docker layer caching makes a no-op rebuild
+#      fast, and rebuilding always (vs. skipping when prev_sha == next_sha)
+#      protects against the common case where a user `git pull`-ed by hand
+#      before running update.sh, leaving the running container behind the
+#      checked-out code.
+#   6. Recreates the container via compose.
 #
 # Rollback: `docker tag vault-storage:<prev-sha> vault-storage:latest && docker compose up -d`
 
@@ -23,7 +28,7 @@ if ! git diff-index --quiet HEAD -- 2>/dev/null; then
   exit 1
 fi
 
-# 2. Show what's coming.
+# 2. Compare local HEAD to upstream.
 prev_sha=$(git rev-parse --short HEAD)
 git fetch --quiet
 upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
@@ -34,19 +39,17 @@ fi
 next_sha=$(git rev-parse --short "$upstream")
 
 if [[ "$prev_sha" == "$next_sha" ]]; then
-  echo "vault-storage update: already at $prev_sha. Re-running container."
-  docker compose up -d
-  exit 0
+  echo "vault-storage update: already at $prev_sha (no incoming commits)."
+else
+  echo "vault-storage update: $prev_sha → $next_sha"
+  echo
+  echo "Incoming commits:"
+  git --no-pager log --oneline "HEAD..$upstream"
+  echo
+
+  # 3. Pull only when there's something new.
+  git pull --ff-only --quiet
 fi
-
-echo "vault-storage update: $prev_sha → $next_sha"
-echo
-echo "Incoming commits:"
-git --no-pager log --oneline "HEAD..$upstream"
-echo
-
-# 3. Pull.
-git pull --ff-only --quiet
 
 # 4. .env drift check.
 if [[ -f .env && -f .env.example ]]; then
@@ -61,12 +64,13 @@ if [[ -f .env && -f .env.example ]]; then
   fi
 fi
 
-# 5. Build with SHA + latest tags.
+# 5. Build with SHA + latest tags. Unconditional — see header comment.
 sha=$(git rev-parse --short HEAD)
 echo "vault-storage update: building :$sha + :latest"
 docker build -t "vault-storage:$sha" -t vault-storage:latest .
 
-# 6. Recreate container. Image SHA changed → compose replaces in place.
+# 6. Recreate container. Image SHA changed → compose replaces in place; if
+# the SHA is the same Docker is a no-op and compose keeps the existing one.
 echo "vault-storage update: recreating container"
 docker compose up -d
 
