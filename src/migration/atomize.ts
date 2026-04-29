@@ -18,6 +18,40 @@ import {readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync} from 'no
 import {basename, dirname, join} from 'node:path';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
 import {walkMarkdown} from '../importer/walk.ts';
+import type {RecordType} from '../records/types.ts';
+
+// Atomized pieces of legacy "running" project files inherit a more specific
+// type than the source file's frontmatter. The live vault tags these files as
+// `type: project`, but their pieces are individually decisions, learnings,
+// queue items, etc. — and that's how the closed-enum type model expects them.
+//
+// Source-stem → piece-type mapping. Applied only when the source file lives
+// directly under `projects/<name>/`. Files deeper in the tree (e.g.
+// `projects/<name>/design/foo.md`) inherit by path via typeFromPath instead.
+const PIECE_TYPE_BY_STEM: Record<string, RecordType> = {
+  decisions: 'design',
+  decision: 'design',
+  learnings: 'research',
+  learning: 'research',
+  queue: 'queue-item',
+  ideas: 'idea',
+  idea: 'idea',
+  bugs: 'bug-report',
+  bug: 'bug-report',
+  design: 'design',
+  plan: 'plan',
+  research: 'research'
+};
+
+const pieceTypeForSource = (relativePath: string): RecordType | null => {
+  // Only override when the source is `projects/<name>/<stem>.md` — a "top-level"
+  // running-file in a project folder. Deeper paths already get the right type
+  // via typeFromPath when imported.
+  const parts = relativePath.split('/');
+  if (parts[0] !== 'projects' || parts.length !== 3) return null;
+  const stem = basename(parts[2] ?? '', '.md');
+  return PIECE_TYPE_BY_STEM[stem] ?? null;
+};
 
 export interface AtomizationDecision {
   atomize: boolean;
@@ -132,6 +166,11 @@ export const splitFile = (input: SplitInput): SplitOutput => {
   for (const key of inheritedKeys) {
     if (data[key] !== undefined) inheritedFm[key] = data[key];
   }
+  // For atomized "running" files (decisions.md / learnings.md / queue.md /
+  // ideas.md / bugs.md / design.md / plan.md), pieces get a more specific type
+  // than the source's frontmatter — see PIECE_TYPE_BY_STEM above.
+  const overrideType = pieceTypeForSource(relativePath);
+  if (overrideType !== null) inheritedFm['type'] = overrideType;
 
   const seenSlugs = new Map<string, number>();
   const pieces: SplitOutputPiece[] = sections.map((section, i) => {

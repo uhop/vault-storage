@@ -111,6 +111,43 @@ test('splitFile: produces piece files + _about.md', t => {
   t.equal(aboutFm['type'], 'meta', 'about type meta');
 });
 
+test('splitFile: pieces of legacy running files get specific type override', t => {
+  const sectionsBody = '## A\nbody\n## B\nbody\n';
+  const decSource = ['---', 'title: Decisions', 'type: project', '---', sectionsBody].join('\n');
+  const decResult = splitFile({relativePath: 'projects/blog/decisions.md', source: decSource});
+  const piece = parseFrontmatter(decResult.pieces[0]!.content).data;
+  t.equal(piece['type'], 'design', 'decisions.md piece → type=design');
+
+  const learnSource = ['---', 'title: Learnings', 'type: project', '---', sectionsBody].join('\n');
+  const learnResult = splitFile({
+    relativePath: 'projects/blog/learnings.md',
+    source: learnSource
+  });
+  const lpiece = parseFrontmatter(learnResult.pieces[0]!.content).data;
+  t.equal(lpiece['type'], 'research', 'learnings.md piece → type=research');
+
+  const queueSource = ['---', 'type: project', '---', sectionsBody].join('\n');
+  const queueResult = splitFile({
+    relativePath: 'projects/blog/queue.md',
+    source: queueSource
+  });
+  const qpiece = parseFrontmatter(queueResult.pieces[0]!.content).data;
+  t.equal(qpiece['type'], 'queue-item', 'queue.md piece → type=queue-item');
+});
+
+test('splitFile: deeper-path source keeps inherited type', t => {
+  // `projects/<name>/design/<file>.md` is already in the right folder; the
+  // pieces should keep the inherited type rather than mis-mapping based on stem.
+  const sectionsBody = '## A\nbody\n## B\nbody\n';
+  const source = ['---', 'type: design', '---', sectionsBody].join('\n');
+  const result = splitFile({
+    relativePath: 'projects/blog/design/playbash-design.md',
+    source
+  });
+  const piece = parseFrontmatter(result.pieces[0]!.content).data;
+  t.equal(piece['type'], 'design', 'inherited type preserved');
+});
+
 test('splitFile: dedupes slug collisions', t => {
   const source = ['## Same\nfirst\n', '## same\nsecond\n', '## SAME\nthird\n'].join('\n');
   const result = splitFile({relativePath: 'a.md', source});
