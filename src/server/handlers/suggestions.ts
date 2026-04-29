@@ -1,0 +1,225 @@
+import type {DatabaseSync} from 'node:sqlite';
+import {readBodyText} from '../body.ts';
+import {parsePagination, splitCsv} from '../query.ts';
+import {sendError, sendJson} from '../responses.ts';
+import type {Handler} from '../router.ts';
+
+interface SuggestionsDeps {
+  db: DatabaseSync;
+}
+
+const SUGGESTION_KINDS: ReadonlySet<string> = new Set([
+  'edge_type',
+  'duplicate',
+  'archive_candidate',
+  'merge_candidate',
+  'compaction_candidate',
+  'contradiction_candidate',
+  'tag_suggestion',
+  'new_tag',
+  'inefficiency_detected',
+  'infrastructure_upgrade',
+  'frontmatter_inference_ambiguous'
+]);
+const SUGGESTION_STATUSES: ReadonlySet<string> = new Set(['pending', 'accepted', 'rejected']);
+
+interface SuggestionRow {
+  id: string;
+  kind: string;
+  subject_id: string | null;
+  payload: string;
+  status: string;
+  created: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+const rowToJson = (row: SuggestionRow): Record<string, unknown> => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload);
+  } catch {
+    payload = {raw: row.payload};
+  }
+  return {
+    id: row.id,
+    kind: row.kind,
+    subject_id: row.subject_id,
+    status: row.status,
+    payload,
+    created: row.created,
+    resolved_at: row.resolved_at,
+    resolved_by: row.resolved_by
+  };
+};
+
+/**
+ * GET /suggestions?kind=&status=&subject_id=&offset=&limit=
+ * Defaults to status=pending when no status filter is given — the most
+ * common agent-review query.
+ */
+export const listSuggestionsHandler =
+  (deps: SuggestionsDeps): Handler =>
+  ctx => {
+    const kinds = splitCsv(ctx.query['kind']);
+    for (const k of kinds) {
+      if (!SUGGESTION_KINDS.has(k)) {
+        sendError(ctx.res, 400, 'bad_request', `unknown suggestion kind: ${k}`);
+        return;
+      }
+    }
+    const statusesRaw = splitCsv(ctx.query['status']);
+    const statuses = statusesRaw.length > 0 ? statusesRaw : ['pending'];
+    for (const s of statuses) {
+      if (!SUGGESTION_STATUSES.has(s)) {
+        sendError(ctx.res, 400, 'bad_request', `unknown suggestion status: ${s}`);
+        return;
+      }
+    }
+
+    const subjectId = ctx.query['subject_id'];
+    const {offset, limit} = parsePagination(ctx.query);
+
+    const where: string[] = [];
+    const bindings: string[] = [];
+    if (kinds.length > 0) {
+      where.push(`kind IN (${kinds.map(() => '?').join(',')})`);
+      bindings.push(...kinds);
+    }
+    if (statuses.length > 0) {
+      where.push(`status IN (${statuses.map(() => '?').join(',')})`);
+      bindings.push(...statuses);
+    }
+    if (subjectId !== undefined && subjectId.length > 0) {
+      where.push('subject_id = ?');
+      bindings.push(subjectId);
+    }
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = deps.db
+      .prepare(
+        `SELECT id, kind, subject_id, payload, status, created, resolved_at, resolved_by
+           FROM suggestions
+           ${whereClause}
+           ORDER BY created DESC
+           LIMIT ? OFFSET ?`
+      )
+      .all(...bindings, limit, offset) as unknown[] as SuggestionRow[];
+
+    const total = (
+      deps.db
+        .prepare(`SELECT COUNT(*) AS n FROM suggestions ${whereClause}`)
+        .get(...bindings) as {n: number}
+    ).n;
+
+    sendJson(ctx.res, 200, {
+      items: rows.map(rowToJson),
+      offset,
+      limit,
+      total
+    });
+  };
+
+/** GET /suggestions/{id} — single suggestion. */
+export const getSuggestionHandler =
+  (deps: SuggestionsDeps): Handler =>
+  ctx => {
+    const id = ctx.params['id'];
+    if (!id) {
+      sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
+      return;
+    }
+    const row = deps.db
+      .prepare(
+        `SELECT id, kind, subject_id, payload, status, created, resolved_at, resolved_by
+           FROM suggestions WHERE id = ?`
+      )
+      .get(id) as SuggestionRow | undefined;
+    if (!row) {
+      sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
+      return;
+    }
+    sendJson(ctx.res, 200, rowToJson(row));
+  };
+
+interface ResolveBody {
+  resolved_by?: string;
+}
+
+const parseResolveBody = async (raw: string): Promise<ResolveBody | string> => {
+  if (raw.trim().length === 0) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return 'request body must be a JSON object';
+    }
+    return parsed as ResolveBody;
+  } catch (err) {
+    return `invalid JSON: ${(err as Error).message}`;
+  }
+};
+
+const makeResolveHandler =
+  (deps: SuggestionsDeps, target: 'accepted' | 'rejected'): Handler =>
+  async ctx => {
+    const id = ctx.params['id'];
+    if (!id) {
+      sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
+      return;
+    }
+
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    const body = await parseResolveBody(raw);
+    if (typeof body === 'string') {
+      sendError(ctx.res, 400, 'bad_request', body);
+      return;
+    }
+
+    const existing = deps.db
+      .prepare('SELECT id, status FROM suggestions WHERE id = ?')
+      .get(id) as {id: string; status: string} | undefined;
+    if (!existing) {
+      sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
+      return;
+    }
+    if (existing.status !== 'pending') {
+      sendError(
+        ctx.res,
+        409,
+        'already_resolved',
+        `suggestion is already ${existing.status}; resolutions are not undoable`
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    deps.db
+      .prepare(
+        `UPDATE suggestions SET status = ?, resolved_at = ?, resolved_by = ?
+          WHERE id = ?`
+      )
+      .run(target, now, body.resolved_by ?? null, id);
+
+    const updated = deps.db
+      .prepare(
+        `SELECT id, kind, subject_id, payload, status, created, resolved_at, resolved_by
+           FROM suggestions WHERE id = ?`
+      )
+      .get(id) as unknown as SuggestionRow;
+    sendJson(ctx.res, 200, rowToJson(updated));
+  };
+
+/** POST /suggestions/{id}/accept — mark accepted. Side-effects (e.g.,
+ *  promoting cites→typed) are deferred to agent skills. */
+export const acceptSuggestionHandler = (deps: SuggestionsDeps): Handler =>
+  makeResolveHandler(deps, 'accepted');
+
+/** POST /suggestions/{id}/reject — mark rejected. */
+export const rejectSuggestionHandler = (deps: SuggestionsDeps): Handler =>
+  makeResolveHandler(deps, 'rejected');

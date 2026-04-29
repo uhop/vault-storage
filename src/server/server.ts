@@ -3,6 +3,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {checkBearer} from './auth.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
+import {backlinksHandler, neighborhoodHandler} from './handlers/edges.ts';
 import {
   getRecordHandler,
   getRecordMetaHandler,
@@ -10,8 +11,16 @@ import {
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
+import {similarHandler} from './handlers/similar.ts';
+import {
+  acceptSuggestionHandler,
+  getSuggestionHandler,
+  listSuggestionsHandler,
+  rejectSuggestionHandler
+} from './handlers/suggestions.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {systemStatusHandler} from './handlers/system.ts';
+import {listTagsHandler, recordsByTagHandler} from './handlers/tags.ts';
 import {
   deleteVaultHandler,
   getVaultHandler,
@@ -46,12 +55,25 @@ export const buildRouter = (opts: BuildOptions): Router => {
     })
   );
   router.get('/sections', listRecordsHandler(opts.db));
+  router.get('/sections/{id}/neighborhood', neighborhoodHandler({db: opts.db}));
+  router.get('/sections/{id}/similar', similarHandler({db: opts.db}));
+  router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db}));
   router.get('/sections/{id}/meta', getRecordMetaHandler(opts.db));
   router.get('/sections/{id}', getRecordHandler(opts.db));
   router.put(
     '/sections/{id}',
     putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
+
+  const tagsDeps = {db: opts.db};
+  router.get('/tags', listTagsHandler(tagsDeps));
+  router.get('/tags/{tag}/records', recordsByTagHandler(tagsDeps));
+
+  const suggestionsDeps = {db: opts.db};
+  router.get('/suggestions', listSuggestionsHandler(suggestionsDeps));
+  router.get('/suggestions/{id}', getSuggestionHandler(suggestionsDeps));
+  router.post('/suggestions/{id}/accept', acceptSuggestionHandler(suggestionsDeps));
+  router.post('/suggestions/{id}/reject', rejectSuggestionHandler(suggestionsDeps));
 
   const vaultDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath};
   router.get('/vault/', getVaultRootHandler(vaultDeps));

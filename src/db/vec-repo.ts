@@ -27,6 +27,7 @@ export class RecordVecRepository {
   readonly #countRecords: StatementSync;
   readonly #getRecordHash: StatementSync;
   readonly #nearestChunks: StatementSync;
+  readonly #chunksForRecord: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
@@ -48,6 +49,11 @@ export class RecordVecRepository {
         WHERE embedding MATCH ?
           AND k = ?
         ORDER BY distance`
+    );
+    this.#chunksForRecord = db.prepare(
+      `SELECT chunk_index, embedding FROM record_vec
+        WHERE record_id = ?
+        ORDER BY chunk_index`
     );
   }
 
@@ -108,6 +114,43 @@ export class RecordVecRepository {
     }
     return [...best.entries()]
       .map(([recordId, distance]) => ({recordId, distance}))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, k);
+  }
+
+  /**
+   * Top-k records similar to `recordId`, computed across all of that record's
+   * chunks. Aggregates by min-distance and excludes the source record itself.
+   * Returns empty when the record has no chunks (not yet embedded).
+   */
+  nearestToRecord(recordId: string, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
+    const chunks = this.#chunksForRecord.all(recordId) as unknown[] as {
+      chunk_index: number;
+      embedding: Uint8Array;
+    }[];
+    if (chunks.length === 0) return [];
+
+    const best = new Map<string, number>();
+    const chunkK = opts.chunkK ?? Math.max(k * 5, 20);
+    for (const chunk of chunks) {
+      // record_vec stores embeddings as raw float32 little-endian blobs.
+      const vec = new Float32Array(
+        chunk.embedding.buffer,
+        chunk.embedding.byteOffset,
+        chunk.embedding.byteLength / 4
+      );
+      const rows = this.#nearestChunks.all(toBlob(vec), chunkK) as unknown[] as {
+        record_id: string;
+        distance: number;
+      }[];
+      for (const r of rows) {
+        if (r.record_id === recordId) continue;
+        const cur = best.get(r.record_id);
+        if (cur === undefined || r.distance < cur) best.set(r.record_id, r.distance);
+      }
+    }
+    return [...best.entries()]
+      .map(([rid, distance]) => ({recordId: rid, distance}))
       .sort((a, b) => a.distance - b.distance)
       .slice(0, k);
   }
