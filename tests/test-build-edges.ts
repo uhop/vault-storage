@@ -115,6 +115,39 @@ test('end-to-end edge extraction from a synthetic vault', async t => {
   }
 });
 
+test('buildEdges GCs edges that no longer have a backing wikilink', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'topics/a.md',
+      ['---', 'title: A', 'related:', '  - "[[topics/b]]"', '---', 'A cites [[topics/b]].', ''].join('\n')
+    );
+    writeMd(fx.root, 'topics/b.md', '---\ntitle: B\n---\nplain\n');
+
+    const first = importVault(fx.db, fx.root);
+    t.ok(first.edges.edgesCreated >= 2, 'initial edges written');
+    t.equal(first.edges.edgesDeleted, 0, 'nothing to GC on a fresh build');
+
+    // Edit topics/a.md to remove all references to topics/b.
+    writeMd(fx.root, 'topics/a.md', ['---', 'title: A', '---', 'A no longer mentions B.', ''].join('\n'));
+    const second = importVault(fx.db, fx.root);
+    t.ok(second.edges.edgesDeleted >= 2, 'stale edges (cites + related-to + mirror) collected');
+
+    const edges = new EdgesRepository(fx.db);
+    const records = new RecordsRepository(fx.db);
+    const a = records.getByPath('topics/a.md');
+    const b = records.getByPath('topics/b.md');
+    const between = edges
+      .listOutbound(a!.recordId)
+      .filter(e => e.toId === b!.recordId)
+      .concat(edges.listOutbound(b!.recordId).filter(e => e.toId === a!.recordId));
+    t.equal(between.length, 0, 'no edges between a ↔ b after the GC pass');
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('buildEdges is idempotent — re-run is a no-op', async t => {
   const fx = setup();
   try {

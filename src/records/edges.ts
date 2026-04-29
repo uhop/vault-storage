@@ -25,6 +25,7 @@ export class EdgesRepository {
   readonly #listOutbound: StatementSync;
   readonly #listInbound: StatementSync;
   readonly #listByType: StatementSync;
+  readonly #listAll: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
@@ -38,6 +39,7 @@ export class EdgesRepository {
     this.#listOutbound = db.prepare('SELECT * FROM edges WHERE from_id = ? ORDER BY type, to_id');
     this.#listInbound = db.prepare('SELECT * FROM edges WHERE to_id = ? ORDER BY type, from_id');
     this.#listByType = db.prepare('SELECT * FROM edges WHERE type = ? ORDER BY created');
+    this.#listAll = db.prepare('SELECT * FROM edges');
   }
 
   /** Idempotent insert keyed on (from_id, to_id, type). Updates weight + note on re-insert. */
@@ -59,5 +61,9 @@ export class EdgesRepository {
 
   listByType(type: EdgeType): Edge[] {
     return (this.#listByType.all(type) as unknown[] as EdgeRow[]).map(rowToEdge);
+  }
+
+  listAll(): Edge[] {
+    return (this.#listAll.all() as unknown[] as EdgeRow[]).map(rowToEdge);
   }
 }

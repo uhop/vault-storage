@@ -4,6 +4,7 @@ import type {RecordsRepository} from '../records/repository.ts';
 import {RECORD_STATUSES, type RecordStatus, type VaultRecord} from '../records/types.ts';
 import {contentHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
+import type {TagsImporter} from './import-tags.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
 
 const DEFAULT_STATUS: RecordStatus = 'active';
@@ -31,11 +32,17 @@ export interface ImportFileResult {
  * skip embedding recomputation. A frontmatter-only edit (e.g. `type:` change)
  * still flows through the upsert path so the DB stays consistent with disk.
  */
+export interface ImportFileOptions {
+  /** When provided, syncs the record's tag set from frontmatter `tags:`. */
+  tags?: TagsImporter;
+}
+
 export const importFile = (
   records: RecordsRepository,
   relativePath: string,
   absolutePath: string,
-  now: string = new Date().toISOString()
+  now: string = new Date().toISOString(),
+  options: ImportFileOptions = {}
 ): ImportFileResult => {
   const source = readFileSync(absolutePath, 'utf8');
   const {data, body} = parseFrontmatter(source);
@@ -84,5 +91,13 @@ export const importFile = (
   };
 
   records.upsertByPath(record);
+  if (options.tags) {
+    const result = options.tags.syncTags(record.recordId, data['tags']);
+    if (result.rejected.length > 0) {
+      process.stderr.write(
+        `tags ${relativePath}: ${result.rejected.length} unknown (${result.rejected.join(', ')})\n`
+      );
+    }
+  }
   return {action: existing ? 'updated' : 'inserted', recordId: record.recordId};
 };

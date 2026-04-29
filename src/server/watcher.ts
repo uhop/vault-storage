@@ -13,6 +13,7 @@ import {embedPending} from '../embeddings/embed-pass.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges} from '../importer/build-edges.ts';
 import {importFile} from '../importer/import-file.ts';
+import {TagsImporter} from '../importer/import-tags.ts';
 import {RecordsRepository} from '../records/repository.ts';
 
 export interface WatcherHandle {
@@ -63,6 +64,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     opts.onError ?? (err => process.stderr.write(`watcher: ${err instanceof Error ? err.message : String(err)}\n`));
 
   const records = new RecordsRepository(db);
+  const tags = new TagsImporter(db);
 
   const pending = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
@@ -97,7 +99,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             }
             continue;
           }
-          importFile(records, relativePath, abs, now);
+          importFile(records, relativePath, abs, now, {tags});
           imported++;
         } catch (err) {
           errors++;

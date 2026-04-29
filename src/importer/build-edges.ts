@@ -11,6 +11,8 @@ import {WikilinkResolver} from './resolver.ts';
 export interface EdgeBuildSummary {
   /** Edges actually written to the DB (idempotent — re-runs over the same content yield 0). */
   edgesCreated: number;
+  /** Stale edges removed because no current wikilink/frontmatter target backs them. */
+  edgesDeleted: number;
   /** Frontmatter `related:` targets that didn't resolve to any record. */
   unresolvedFrontmatter: number;
   /** Body `[[wikilink]]` targets that didn't resolve to any record. */
@@ -63,12 +65,21 @@ export const buildEdges = (
 
   const summary: EdgeBuildSummary = {
     edgesCreated: 0,
+    edgesDeleted: 0,
     unresolvedFrontmatter: 0,
     unresolvedBody: 0,
     selfReferences: 0,
     durationMs: 0
   };
   const start = performance.now();
+
+  // Track every edge that the current vault content backs. After the pass we
+  // delete edges in the DB that aren't in this set — that's edge GC, so a
+  // wikilink removal in a markdown file actually removes the corresponding
+  // edge instead of leaving a dangling row.
+  const touched = new Set<string>();
+  const touchKey = (fromId: string, toId: string, type: EdgeType): string =>
+    `${fromId}|${toId}|${type}`;
 
   db.exec('BEGIN');
   try {
@@ -90,7 +101,9 @@ export const buildEdges = (
         related.map(target => ({target, type: 'related-to' as EdgeType})),
         now,
         summary,
-        'frontmatter'
+        'frontmatter',
+        touched,
+        touchKey
       );
 
       summary.edgesCreated += writeEdges(
@@ -100,9 +113,20 @@ export const buildEdges = (
         classifyBodyLinks(body),
         now,
         summary,
-        'body'
+        'body',
+        touched,
+        touchKey
       );
     }
+
+    // GC pass: any edge in the DB not covered by the current run is stale.
+    for (const edge of edges.listAll()) {
+      if (!touched.has(touchKey(edge.fromId, edge.toId, edge.type))) {
+        edges.delete(edge.fromId, edge.toId, edge.type);
+        summary.edgesDeleted++;
+      }
+    }
+
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -134,7 +158,9 @@ const writeEdges = (
   targets: ClassifiedTarget[],
   now: string,
   summary: EdgeBuildSummary,
-  origin: 'frontmatter' | 'body'
+  origin: 'frontmatter' | 'body',
+  touched: Set<string>,
+  touchKey: (fromId: string, toId: string, type: EdgeType) => string
 ): number => {
   const seen = new Set<string>();
   let written = 0;
@@ -151,9 +177,10 @@ const writeEdges = (
     }
     const fromId = inverse ? resolved : source.recordId;
     const toId = inverse ? source.recordId : resolved;
-    const dedupKey = `${fromId}|${toId}|${type}`;
+    const dedupKey = touchKey(fromId, toId, type);
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
+    touched.add(dedupKey);
 
     edges.upsert({
       fromId,
@@ -167,9 +194,10 @@ const writeEdges = (
 
     // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
     if (SYMMETRIC_TYPES.has(type)) {
-      const mirrorKey = `${toId}|${fromId}|${type}`;
+      const mirrorKey = touchKey(toId, fromId, type);
       if (!seen.has(mirrorKey)) {
         seen.add(mirrorKey);
+        touched.add(mirrorKey);
         edges.upsert({
           fromId: toId,
           toId: fromId,
