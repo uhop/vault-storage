@@ -26,8 +26,10 @@ export interface ImportFileResult {
 
 /**
  * Read a single markdown file, derive a record, and upsert into the repository.
- * Returns 'unchanged' when content_hash matches the existing row — the importer
- * can use this to skip embedding recomputation.
+ * Returns 'unchanged' when content_hash matches the existing row AND every
+ * frontmatter-derived field is already correct — the importer uses this to
+ * skip embedding recomputation. A frontmatter-only edit (e.g. `type:` change)
+ * still flows through the upsert path so the DB stays consistent with disk.
  */
 export const importFile = (
   records: RecordsRepository,
@@ -40,9 +42,6 @@ export const importFile = (
 
   const hash = contentHash(body);
   const existing = records.getByPath(relativePath);
-  if (existing && existing.contentHash === hash) {
-    return {action: 'unchanged', recordId: existing.recordId};
-  }
 
   const fmType = data['type'];
   const type = isRecordType(fmType) ? fmType : typeFromPath(relativePath);
@@ -54,6 +53,17 @@ export const importFile = (
   const updated = asString(data['updated']) ?? now;
   const priority = asNumber(data['priority']) ?? 0;
   const title = asString(data['title']) ?? null;
+
+  if (
+    existing &&
+    existing.contentHash === hash &&
+    existing.type === type &&
+    existing.status === status &&
+    existing.title === title &&
+    existing.priority === priority
+  ) {
+    return {action: 'unchanged', recordId: existing.recordId};
+  }
 
   const record: VaultRecord = {
     recordId: existing?.recordId ?? uuidv7(),
