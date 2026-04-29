@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# vault-curl — curl wrapper for the vault-storage REST API (Obsidian-compatible).
+#
+# Prepends the Authorization header and the vault base URL to the given path,
+# then passes the remaining options through to curl. All flags are curl's.
+#
+# Usage:
+#   vault-curl <path> [curl-options...]
+#
+# The path is appended to $VAULT_API_URL. A leading "/" is optional.
+#
+# Examples:
+#   vault-curl /vault/_index.md
+#   vault-curl /vault/logs/ -s
+#   vault-curl /vault/topics/foo.md -X PUT -H 'Content-Type: text/markdown' --data-binary @foo.md
+#   vault-curl /search/simple/ -X POST -H 'Content-Type: application/json' -d '{"query":"docker"}'
+#
+# Environment:
+#   VAULT_API_URL   — base URL of the vault-storage server (or Obsidian Local REST API)
+#   VAULT_API_TOKEN — bearer token
+
+set -uCo pipefail
+
+# Hard dependency. Inline (no bootstrap.sh source — vault-curl stays slim
+# so it's cheap to invoke from scripts, hooks, or one-liners).
+if ! command -v curl >/dev/null 2>&1; then
+  echo "vault-curl: curl is required but is not installed" >&2
+  exit 1
+fi
+
+if [[ -z "${VAULT_API_URL:-}" || -z "${VAULT_API_TOKEN:-}" ]]; then
+  echo "vault-curl: VAULT_API_URL and VAULT_API_TOKEN must be set" >&2
+  exit 1
+fi
+
+if [ $# -lt 1 ]; then
+  echo "usage: vault-curl <path> [curl-options...]" >&2
+  exit 1
+fi
+
+path=$1
+shift
+
+# Normalize: strip trailing slash from base, ensure leading slash on path.
+base=${VAULT_API_URL%/}
+[[ $path == /* ]] || path=/$path
+
+exec curl -H "Authorization: Bearer $VAULT_API_TOKEN" "$@" "$base$path"

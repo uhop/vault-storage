@@ -1,0 +1,49 @@
+name: Publish MCP tarball
+
+on:
+  push:
+    tags:
+      - 'mcp-*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '25'
+
+      - name: Pack MCP
+        working-directory: mcp
+        run: |
+          tag="${GITHUB_REF_NAME}"            # e.g. mcp-0.0.1
+          version="${tag#mcp-}"               # 0.0.1
+          npm version --no-git-tag-version --allow-same-version "$version"
+          cp ../LICENSE LICENSE
+          npm pack
+          ls -la vault-storage-mcp-*.tgz
+
+      - name: Create release & attach tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          files: mcp/vault-storage-mcp-*.tgz
+          name: MCP ${{ github.ref_name }}
+          body: |
+            `vault-storage-mcp` ${{ github.ref_name }}
+
+            Install on any machine (no GitHub auth required):
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/uhop/vault-storage/main/scripts/install-mcp.sh | sh
+            ```
+
+            Pin a specific version:
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/uhop/vault-storage/main/scripts/install-mcp.sh | sh -s -- --version ${{ github.ref_name }}
+            ```

@@ -1,11 +1,15 @@
 {
-  "_comment": "Template for project-level MCP config. Copy to .mcp.json and fill in the token. .mcp.json is gitignored so secrets stay local. Restart Claude Code (or /mcp reload) to pick up changes.",
+  "_help": "Project-scope MCP config for Claude Code. Copy this file to .mcp.json (gitignored), fill in VAULT_API_URL + VAULT_API_TOKEN, and restart Claude Code. The bearer token is a secret — do NOT commit .mcp.json.",
+  "_command_options": {
+    "recommended": "Install the launcher with: curl -fsSL https://raw.githubusercontent.com/uhop/vault-storage/main/scripts/install-mcp.sh | sh — then 'command' is 'vault-storage-mcp'. If Claude Code does not see ~/.local/bin on its PATH, use the absolute path '/home/<user>/.local/bin/vault-storage-mcp' instead.",
+    "local_checkout": "Without the installer: set 'command' to 'node' and 'args' to ['/abs/path/to/vault-storage/mcp/src/index.ts']."
+  },
   "mcpServers": {
     "vault": {
-      "command": "node",
-      "args": ["/home/eugene/Open/vault-storage/mcp/src/index.ts"],
+      "command": "vault-storage-mcp",
+      "args": [],
       "env": {
-        "VAULT_API_URL": "http://croc.lan:8123",
+        "VAULT_API_URL": "http://your-host:8123",
         "VAULT_API_TOKEN": "<paste-bearer-token-here>"
       }
     }

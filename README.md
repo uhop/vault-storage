@@ -2,7 +2,7 @@
 
 An AI-agent-first persistent knowledge base. Markdown files are the source of truth; a SQLite + `sqlite-vec` index sits next to them and provides fast lookup, semantic search, and typed-edge traversal for AI agents.
 
-**Status:** v0.x, in active development. Working: importer, embedder, REST server (auth + section read/write), file-watcher with auto-reindex, migration tool (Obsidian → vault-storage tree), Docker packaging. Not yet: MCP layer, suggestions review surface, decay/maintenance jobs.
+**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue + Obsidian sync), MCP adapter (20 tools / 3 resources), file-watcher with auto-reindex, edge GC, auto-commit, migration tool (Obsidian → vault-storage tree), Docker packaging. Not yet: suggestions review surface, decay/maintenance jobs.
 
 ## Architecture
 
@@ -129,6 +129,24 @@ The `migrate` subcommand:
 
 After `migrate`, run `import` against the target tree to build records, edges, and embeddings.
 
+## Agent integration
+
+Two complementary surfaces for driving the vault from inside a Claude Code
+session:
+
+- **Claude Code skills** — `skills/vault*` are the slash-command skills
+  (`/vault resume`, `/vault check`, `/vault propose-related`, etc.) that hit
+  the REST API directly through the `bin/vault-curl` wrapper. Backup +
+  install instructions in [`skills/README.md`](skills/README.md).
+- **MCP adapter** — the `mcp/` sub-package exposes the REST surface to Claude
+  Code as ~20 tools and 3 resources with closed-enum input schemas. See
+  `.mcp.json.example` for project-scope activation; `skills/README.md` covers
+  user-scope setup. A standalone, checkout-free installer (release tarball +
+  `curl | sh`) is in progress.
+
+The two stack: skills can call the MCP tools, or fall back to `vault-curl`
+when MCP isn't configured. Both share the same backend.
+
 ## Tests
 
 ```bash
@@ -151,4 +169,4 @@ The architectural decisions are recorded as numbered constraints C1–C16 in the
 
 ## License
 
-TBD
+BSD-3-Clause. See [LICENSE](LICENSE).
