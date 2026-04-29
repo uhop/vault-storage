@@ -37,7 +37,12 @@ export const putRecordHandler =
     }
 
     try {
-      writeRecordToDisk({existing, requestMarkdown, vaultDataPath: deps.vaultDataPath});
+      writeRecordToDisk({
+        filePath: existing.filePath,
+        existing,
+        requestMarkdown,
+        vaultDataPath: deps.vaultDataPath
+      });
     } catch (err) {
       if (err instanceof WriterError) {
         sendError(ctx.res, err.status, err.code, err.message);

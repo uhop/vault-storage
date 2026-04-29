@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {importVault} from '../src/importer/import.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer, type ServerHandle} from '../src/server/server.ts';
@@ -47,7 +48,8 @@ const startTestServer = async (
   const handle = await startServer({
     db,
     env: makeEnv(0, vaultRoot),
-    schemaVersion: migration.current
+    schemaVersion: migration.current,
+    embedder: new FakeEmbedder()
   });
   const addr = handle.server.address();
   const port = typeof addr === 'object' && addr !== null ? addr.port : 0;

@@ -32,9 +32,13 @@ export class WriterError extends Error {
 }
 
 export interface WriteOptions {
-  existing: VaultRecord;
+  /** Vault-relative path. Source of truth for where to write. */
+  filePath: string;
   requestMarkdown: string;
   vaultDataPath: string;
+  /** Existing record, when replacing. Provides `created` fallback if file is
+   *  off-disk. Null when creating a new file. */
+  existing: VaultRecord | null;
   now?: string;
 }
 
@@ -47,17 +51,18 @@ export interface WriteResult {
   body: string;
 }
 
-const ensureSafePath = (vaultRoot: string, filePath: string): string => {
+/**
+ * Resolve a vault-relative path against `vaultRoot`. Rejects path traversal,
+ * null bytes, and absolute paths that escape the root.
+ */
+export const ensureSafePath = (vaultRoot: string, filePath: string): string => {
   if (filePath.includes('\0')) throw new WriterError('invalid file path', 'invalid_path', 400);
+  if (filePath.length === 0) throw new WriterError('empty file path', 'invalid_path', 400);
   const absRoot = resolve(vaultRoot);
   const absFile = resolve(absRoot, filePath);
   const rel = relative(absRoot, absFile);
   if (rel.startsWith('..') || resolve(absRoot, rel) !== absFile) {
-    throw new WriterError(
-      'file_path escapes vault root',
-      'invalid_path',
-      400
-    );
+    throw new WriterError('file_path escapes vault root', 'invalid_path', 400);
   }
   return absFile;
 };
@@ -66,12 +71,17 @@ const ensureSafePath = (vaultRoot: string, filePath: string): string => {
  * Compose new frontmatter + body from a request, write to disk, return the
  * composed shape. Does NOT touch the DB — the caller re-imports the file
  * (which recomputes content_hash + updated and triggers re-embedding).
+ *
+ * Frontmatter merge precedence (highest first): the request's user-authored
+ * keys, then on-disk frontmatter, then the existing record's fields, then
+ * defaults. `updated` is always force-stamped to `now`. `created` is preserved
+ * from disk/record, or stamped at first write.
  */
 export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
-  const {existing, requestMarkdown, vaultDataPath} = opts;
+  const {filePath, existing, requestMarkdown, vaultDataPath} = opts;
   const now = opts.now ?? new Date().toISOString();
 
-  const absolutePath = ensureSafePath(vaultDataPath, existing.filePath);
+  const absolutePath = ensureSafePath(vaultDataPath, filePath);
 
   const {data: requestFm, body: requestBody} = parseFrontmatter(requestMarkdown);
 
@@ -84,13 +94,11 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     );
   }
 
-  // Existing file may not be on disk yet (e.g., DB seeded but file deleted);
-  // fall back to a synthesized frontmatter from the existing record in that case.
-  let existingFm: Record<string, unknown>;
+  let existingFm: Record<string, unknown> = {};
   if (existsSync(absolutePath)) {
     const onDisk = readFileSync(absolutePath, 'utf8');
     existingFm = parseFrontmatter(onDisk).data;
-  } else {
+  } else if (existing) {
     existingFm = {
       title: '',
       type: existing.type,
@@ -100,13 +108,11 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     };
   }
 
-  // Merge: keep existing keys, override with request keys, force `updated: now`.
-  // `created` is preserved from the existing frontmatter (or the existing record
-  // if disk has none) and never overridden by the request — request_fm cannot
-  // contain it (caught by AUTO_MANAGED_KEYS above).
   const merged: Record<string, unknown> = {...existingFm, ...requestFm};
-  merged['updated'] = now.slice(0, 10); // ISO date (YYYY-MM-DD), matching vault convention
-  if (!('created' in merged)) merged['created'] = existing.created.slice(0, 10);
+  merged['updated'] = now.slice(0, 10);
+  if (!('created' in merged)) {
+    merged['created'] = existing ? existing.created.slice(0, 10) : now.slice(0, 10);
+  }
 
   mkdirSync(dirname(absolutePath), {recursive: true});
   const out = serializeFrontmatter({data: merged, body: requestBody});

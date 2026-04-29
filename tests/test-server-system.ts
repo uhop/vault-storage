@@ -1,6 +1,7 @@
 import test from 'tape-six';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer} from '../src/server/server.ts';
 
@@ -36,7 +37,12 @@ const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => 
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   // port 0 → OS picks a free port
-  const handle = await startServer({db, env: makeEnv(0), schemaVersion: migration.current});
+  const handle = await startServer({
+    db,
+    env: makeEnv(0),
+    schemaVersion: migration.current,
+    embedder: new FakeEmbedder()
+  });
   const addr = handle.server.address();
   const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
   const url = `http://127.0.0.1:${port}`;

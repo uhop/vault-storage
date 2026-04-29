@@ -33,7 +33,7 @@ export const main = async (): Promise<void> => {
     );
   }
 
-  const handle = await startServer({db, env, schemaVersion: migration.current});
+  const handle = await startServer({db, env, schemaVersion: migration.current, embedder});
   process.stdout.write(
     `vault-storage: listening on ${handle.url} ` +
       `(db=${env.vaultDbPath} schema=${migration.current} vault=${env.vaultDataPath})\n`

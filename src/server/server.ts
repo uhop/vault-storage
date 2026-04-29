@@ -2,13 +2,21 @@ import {createServer, type IncomingMessage, type Server, type ServerResponse} fr
 import type {DatabaseSync} from 'node:sqlite';
 import {checkBearer} from './auth.ts';
 import type {ServerEnv} from './env.ts';
+import type {Embedder} from '../embeddings/types.ts';
 import {
   getRecordHandler,
   getRecordMetaHandler,
   listRecordsHandler
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
+import {simpleSearchHandler} from './handlers/search.ts';
 import {systemStatusHandler} from './handlers/system.ts';
+import {
+  deleteVaultHandler,
+  getVaultHandler,
+  getVaultRootHandler,
+  putVaultHandler
+} from './handlers/vault.ts';
 import {sendError} from './responses.ts';
 import {Router, type RequestContext} from './router.ts';
 
@@ -23,6 +31,7 @@ interface BuildOptions {
   db: DatabaseSync;
   env: ServerEnv;
   schemaVersion: number;
+  embedder: Embedder;
 }
 
 export const buildRouter = (opts: BuildOptions): Router => {
@@ -42,6 +51,16 @@ export const buildRouter = (opts: BuildOptions): Router => {
     '/sections/{id}',
     putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
+
+  const vaultDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath};
+  router.get('/vault/', getVaultRootHandler(vaultDeps));
+  router.get('/vault/{path}', getVaultHandler(vaultDeps));
+  router.put('/vault/{path}', putVaultHandler(vaultDeps));
+  router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
+
+  router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
+  router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
+
   return router;
 };
 
