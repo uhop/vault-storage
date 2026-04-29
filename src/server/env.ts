@@ -11,6 +11,14 @@ export interface ServerEnv {
   apiToken: string;
   host: string;
   port: number;
+  /** When true, server runs an importVault pass on startup before listening. */
+  autoReindex: boolean;
+  /** When true, server starts a file-watcher → debounced incremental reindex. */
+  autoWatch: boolean;
+  /** Watcher debounce window — events within this gap collapse into one flush. */
+  watchDebounceMs: number;
+  /** When 'fake', skips the BGE model load. Useful for smoke tests. */
+  embedder: 'bge' | 'fake';
 }
 
 const required = (name: string): string => {
@@ -36,5 +44,39 @@ export const readServerEnv = (): ServerEnv => {
     throw new Error(`VAULT_PORT is not a valid port: ${portRaw}`);
   }
 
-  return {vaultDataPath, vaultIngestPath, vaultDbPath, apiToken, host, port};
+  const autoReindex = parseFlag(process.env['VAULT_AUTO_REINDEX'], true);
+  const autoWatch = parseFlag(process.env['VAULT_AUTO_WATCH'], true);
+
+  const debounceRaw = process.env['VAULT_WATCH_DEBOUNCE_MS'] ?? '1500';
+  const watchDebounceMs = Number.parseInt(debounceRaw, 10);
+  if (!Number.isFinite(watchDebounceMs) || watchDebounceMs < 0) {
+    throw new Error(`VAULT_WATCH_DEBOUNCE_MS is not a valid integer: ${debounceRaw}`);
+  }
+
+  const embedderRaw = (process.env['VAULT_EMBEDDER'] ?? 'bge').toLowerCase();
+  if (embedderRaw !== 'bge' && embedderRaw !== 'fake') {
+    throw new Error(`VAULT_EMBEDDER must be 'bge' or 'fake' (got '${embedderRaw}')`);
+  }
+  const embedder = embedderRaw;
+
+  return {
+    vaultDataPath,
+    vaultIngestPath,
+    vaultDbPath,
+    apiToken,
+    host,
+    port,
+    autoReindex,
+    autoWatch,
+    watchDebounceMs,
+    embedder
+  };
+};
+
+const parseFlag = (raw: string | undefined, defaultValue: boolean): boolean => {
+  if (raw === undefined || raw === '') return defaultValue;
+  const v = raw.toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  throw new Error(`expected a boolean flag, got: ${raw}`);
 };

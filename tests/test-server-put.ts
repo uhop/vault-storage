@@ -28,7 +28,11 @@ const makeEnv = (port: number, dataPath: string): ServerEnv => ({
   vaultDbPath: ':memory:',
   apiToken: TEST_TOKEN,
   host: '127.0.0.1',
-  port
+  port,
+  autoReindex: false,
+  autoWatch: false,
+  watchDebounceMs: 1500,
+  embedder: 'fake'
 });
 
 interface ServerCtx {
