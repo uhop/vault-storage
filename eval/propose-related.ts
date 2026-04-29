@@ -27,20 +27,26 @@ interface CliArgs {
   output: string;
   perNote: number;
   limit: number;
+  /** Cosine-distance ceiling. Default 0.30 = cosine ≥ 0.70 ≈ 99% recall on the curated set. */
+  maxDistance: number;
 }
 
 const parseArgs = (argv: string[]): CliArgs => {
-  const args: CliArgs = {db: '', vault: '', output: 'eval/related-candidates.tsv', perNote: 10, limit: 0};
+  const args: CliArgs = {
+    db: '', vault: '', output: 'eval/related-candidates.tsv',
+    perNote: 20, limit: 0, maxDistance: 0.30
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--db') args.db = argv[++i] ?? '';
     else if (a === '--vault') args.vault = argv[++i] ?? '';
     else if (a === '--output') args.output = argv[++i] ?? args.output;
-    else if (a === '--per-note') args.perNote = Number.parseInt(argv[++i] ?? '10', 10);
+    else if (a === '--per-note') args.perNote = Number.parseInt(argv[++i] ?? '20', 10);
     else if (a === '--limit') args.limit = Number.parseInt(argv[++i] ?? '0', 10);
+    else if (a === '--max-distance') args.maxDistance = Number.parseFloat(argv[++i] ?? '0.30');
   }
   if (!args.db || !args.vault) {
-    process.stderr.write('usage: propose-related.ts --db <path> --vault <root> [--output <tsv>] [--per-note N] [--limit N]\n');
+    process.stderr.write('usage: propose-related.ts --db <path> --vault <root> [--output <tsv>] [--per-note N] [--limit N] [--max-distance D]\n');
     process.exit(2);
   }
   return args;
@@ -145,6 +151,7 @@ for (let i = 0; i < Math.min(limit, rows.length); i++) {
   for (const hit of nearest) {
     if (hit.recordId === r.id) continue;
     if (frontmatterRelated.has(hit.recordId)) continue;
+    if (hit.distance > args.maxDistance) break; // sorted ascending; once past cap, stop
     const target = byId.get(hit.recordId);
     if (!target) continue;
     candidates.push({fromPath: r.path, toPath: target.path, toTitle: target.title, distance: hit.distance});
@@ -165,8 +172,8 @@ writeFileSync(outPath, tsvLines.join('\n') + '\n', 'utf8');
 // Also write a markdown review-friendly summary, grouped by source.
 const mdPath = outPath.replace(/\.tsv$/, '.md');
 const mdLines: string[] = [`# related-to candidates from BGE retrieval\n`];
-mdLines.push(`Generated ${new Date().toISOString().slice(0, 10)} from \`${dbPath}\`. ${candidates.length} candidates across ${Math.min(limit, rows.length)} source notes (top-${args.perNote} each, excluding existing \`related:\` and body \`[[wikilinks]]\`).\n`);
-mdLines.push('Distance interpretation: cosine distance (0 = identical, 2 = opposite). Candidates are sorted nearest-first per source.\n');
+mdLines.push(`Generated ${new Date().toISOString().slice(0, 10)} from \`${dbPath}\`. ${candidates.length} candidates across ${Math.min(limit, rows.length)} source notes (top-${args.perNote} each, max distance ${args.maxDistance.toFixed(2)}, excluding existing \`related:\` and body \`[[wikilinks]]\`).\n`);
+mdLines.push(`Distance interpretation: cosine distance (0 = identical, 2 = opposite). Default cap of 0.30 corresponds to cosine ≥ 0.70 — the 99%-recall operating point on the curated set. Candidates are sorted nearest-first per source.\n`);
 
 const grouped = new Map<string, Candidate[]>();
 for (const c of candidates) {
