@@ -10,6 +10,7 @@ import {
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
+import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {systemStatusHandler} from './handlers/system.ts';
 import {
   deleteVaultHandler,
@@ -60,6 +61,11 @@ export const buildRouter = (opts: BuildOptions): Router => {
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
+
+  router.post(
+    '/sync/from-obsidian',
+    syncFromObsidianHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
 
   return router;
 };

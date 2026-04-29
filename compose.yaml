@@ -32,12 +32,20 @@ services:
       # These override .env for paths that must be container-relative.
       VAULT_DATA_PATH: /data
       HF_HOME: /home/node/.cache/huggingface
+      # Container-side path for the Obsidian read-only mount (only used when
+      # OBSIDIAN_VAULT_PATH_HOST is set in .env).
+      OBSIDIAN_VAULT_PATH: /obsidian
     volumes:
       # Markdown source-of-truth tree. Read-write — the server's PUT /sections
       # endpoint writes here, and the watcher detects external edits.
       - "${VAULT_DATA_PATH_HOST}:/data"
       # Persist the BGE model cache so container restarts don't re-download.
       - vault-hf-cache:/home/node/.cache/huggingface
+      # Cutover from Obsidian: uncomment during the transition to mount the
+      # live Obsidian vault read-only at /obsidian. Used by
+      # `POST /sync/from-obsidian` and the `/vault sync-from-obsidian` skill.
+      # Set OBSIDIAN_VAULT_PATH_HOST in .env first.
+      # - "${OBSIDIAN_VAULT_PATH_HOST}:/obsidian:ro"
     healthcheck:
       test:
         - CMD-SHELL
