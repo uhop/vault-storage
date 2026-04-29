@@ -1,0 +1,13 @@
+{
+  "_comment": "Template for project-level MCP config. Copy to .mcp.json and fill in the token. .mcp.json is gitignored so secrets stay local. Restart Claude Code (or /mcp reload) to pick up changes.",
+  "mcpServers": {
+    "vault": {
+      "command": "node",
+      "args": ["/home/eugene/Open/vault-storage/mcp/src/index.ts"],
+      "env": {
+        "VAULT_API_URL": "http://croc.lan:8123",
+        "VAULT_API_TOKEN": "<paste-bearer-token-here>"
+      }
+    }
+  }
+}
