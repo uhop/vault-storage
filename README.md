@@ -2,7 +2,7 @@
 
 An AI-agent-first persistent knowledge base. Markdown files are the source of truth; a SQLite + `sqlite-vec` index sits next to them and provides fast lookup, semantic search, and typed-edge traversal for AI agents.
 
-**Status:** v0.x, in active development. Working: importer, embedder, REST server (auth + section read/write), migration tool (Obsidian → vault-storage tree). Not yet: MCP layer, suggestions review surface, decay/maintenance jobs, Docker packaging.
+**Status:** v0.x, in active development. Working: importer, embedder, REST server (auth + section read/write), file-watcher with auto-reindex, migration tool (Obsidian → vault-storage tree), Docker packaging. Not yet: MCP layer, suggestions review surface, decay/maintenance jobs.
 
 ## Architecture
 
@@ -21,12 +21,27 @@ An AI-agent-first persistent knowledge base. Markdown files are the source of tr
 
 The split keeps this code repo public (so it can be installed and inspected) without exposing personal notes.
 
-## Setup
+## Quick start (Docker)
+
+```bash
+git clone https://github.com/uhop/vault-storage
+cd vault-storage
+cp .env.example .env
+# Edit .env: set VAULT_API_TOKEN and VAULT_DATA_PATH_HOST.
+docker compose up -d
+docker compose logs -f vault-storage   # watch the initial reindex
+```
+
+That's it. The container watches `VAULT_DATA_PATH_HOST` for markdown changes and keeps the index in sync. By default it listens on `0.0.0.0:8123` so other machines on your network can reach it (bearer-token auth required on every request — generate one with `openssl rand -hex 32`).
+
+To restrict to local-only or LAN access, set `VAULT_PUBLISH_HOST=127.0.0.1` (or your LAN IP) in `.env`. For TLS over the public internet, put a reverse proxy (Caddy / nginx / Cloudflare Tunnel) in front, or use Tailscale/WireGuard for private remote access.
+
+## Setup (without Docker)
 
 Requires Node ≥ 25.
 
 ```bash
-git clone git@github.com:uhop/vault-storage
+git clone https://github.com/uhop/vault-storage
 cd vault-storage
 npm install
 
@@ -36,15 +51,21 @@ git clone git@github.com:uhop/vault-data /path/to/vault-data
 
 Environment variables:
 
-| Variable            | Required | Purpose                                                                      |
-| ------------------- | -------- | ---------------------------------------------------------------------------- |
-| `VAULT_DATA_PATH`   | yes      | Markdown content tree (the `vault-data` clone). Source of truth.             |
-| `VAULT_API_TOKEN`   | yes      | Bearer token enforced on every server request.                               |
-| `VAULT_DB_PATH`     | no       | SQLite path. Default `${VAULT_DATA_PATH}/.vault-storage/vault.sqlite`.       |
-| `VAULT_HOST`        | no       | Bind address. Default `127.0.0.1`.                                           |
-| `VAULT_PORT`        | no       | Listen port. Default `8123`.                                                 |
-| `VAULT_INGEST_PATH` | no       | Default source path for `migrate` / `import` subcommands.                    |
-| `VAULT_EMBEDDER`    | no       | Set to `fake` to skip BGE model load (dev/test only).                        |
+| Variable                   | Required | Purpose                                                                      |
+| -------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `VAULT_DATA_PATH`          | yes      | Markdown content tree (the `vault-data` clone). Source of truth.             |
+| `VAULT_API_TOKEN`          | yes      | Bearer token enforced on every server request.                               |
+| `VAULT_DB_PATH`            | no       | SQLite path. Default `${VAULT_DATA_PATH}/.vault-storage/vault.sqlite`.       |
+| `VAULT_HOST`               | no       | Bind address. Default `127.0.0.1` (use `0.0.0.0` for remote access).         |
+| `VAULT_PORT`               | no       | Listen port. Default `8123`.                                                 |
+| `VAULT_INGEST_PATH`        | no       | Default source path for `migrate` / `import` subcommands.                    |
+| `VAULT_EMBEDDER`           | no       | `bge` (default) or `fake` (skip model load — dev/test only).                 |
+| `VAULT_AUTO_REINDEX`       | no       | Run a full reindex on startup. Default `true`.                               |
+| `VAULT_AUTO_WATCH`         | no       | Watch the vault tree and reindex incrementally. Default `true`.              |
+| `VAULT_WATCH_DEBOUNCE_MS`  | no       | Watcher debounce window. Default `1500`.                                     |
+| `VAULT_AUTO_COMMIT`        | no       | Periodic `git add && git commit` of the vault tree. Default `true`.          |
+| `VAULT_AUTO_PUSH`          | no       | `git push` after each auto-commit. Default `false` (manual push).            |
+| `VAULT_COMMIT_INTERVAL_MS` | no       | Poll interval for auto-commit. Default `60000`.                              |
 
 Put these in `~/.env` (sourced by `.bashrc`) or pass on the command line.
 
