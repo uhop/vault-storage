@@ -16,7 +16,10 @@ const makeEnv = (port: number): ServerEnv => ({
   autoReindex: false,
   autoWatch: false,
   watchDebounceMs: 1500,
-  embedder: 'fake'
+  embedder: 'fake',
+  autoCommit: false,
+  autoPush: false,
+  commitIntervalMs: 60000
 });
 
 const fetchJson = async (

@@ -19,6 +19,12 @@ export interface ServerEnv {
   watchDebounceMs: number;
   /** When 'fake', skips the BGE model load. Useful for smoke tests. */
   embedder: 'bge' | 'fake';
+  /** When true, periodically `git add -A && git commit` in the vault tree. */
+  autoCommit: boolean;
+  /** When true and autoCommit is true, also `git push` after each commit. */
+  autoPush: boolean;
+  /** Polling interval for the git-sync loop. */
+  commitIntervalMs: number;
 }
 
 const required = (name: string): string => {
@@ -59,6 +65,15 @@ export const readServerEnv = (): ServerEnv => {
   }
   const embedder = embedderRaw;
 
+  const autoCommit = parseFlag(process.env['VAULT_AUTO_COMMIT'], true);
+  const autoPush = parseFlag(process.env['VAULT_AUTO_PUSH'], false);
+
+  const intervalRaw = process.env['VAULT_COMMIT_INTERVAL_MS'] ?? '60000';
+  const commitIntervalMs = Number.parseInt(intervalRaw, 10);
+  if (!Number.isFinite(commitIntervalMs) || commitIntervalMs < 1000) {
+    throw new Error(`VAULT_COMMIT_INTERVAL_MS must be ≥ 1000 (got ${intervalRaw})`);
+  }
+
   return {
     vaultDataPath,
     vaultIngestPath,
@@ -69,7 +84,10 @@ export const readServerEnv = (): ServerEnv => {
     autoReindex,
     autoWatch,
     watchDebounceMs,
-    embedder
+    embedder,
+    autoCommit,
+    autoPush,
+    commitIntervalMs
   };
 };
 

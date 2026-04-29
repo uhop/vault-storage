@@ -8,6 +8,7 @@ import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {importVault} from '../importer/import.ts';
 import {readServerEnv} from './env.ts';
+import {startGitSync, type GitSyncHandle} from './git-sync.ts';
 import {startServer} from './server.ts';
 import {startWatcher, type WatcherHandle} from './watcher.ts';
 
@@ -51,6 +52,18 @@ export const main = async (): Promise<void> => {
     );
   }
 
+  let gitSync: GitSyncHandle | null = null;
+  if (env.autoCommit) {
+    gitSync = startGitSync({
+      vaultDataPath: env.vaultDataPath,
+      intervalMs: env.commitIntervalMs,
+      autoPush: env.autoPush
+    });
+    process.stdout.write(
+      `vault-storage: git-sync every ${env.commitIntervalMs}ms (push=${env.autoPush})\n`
+    );
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`\nvault-storage: ${signal} received, shutting down\n`);
     if (watcher) {
@@ -58,6 +71,10 @@ export const main = async (): Promise<void> => {
       // arrived during the debounce window.
       await watcher.flush();
       watcher.close();
+    }
+    if (gitSync) {
+      await gitSync.syncNow();
+      gitSync.close();
     }
     await handle.close();
     db.close();
