@@ -1,0 +1,44 @@
+{
+  "name": "vault-storage-mcp",
+  "version": "0.0.1",
+  "description": "MCP adapter for vault-storage. Exposes the REST API as MCP tools/resources for Claude Code.",
+  "type": "module",
+  "bin": {
+    "vault-storage-mcp": "src/index.ts"
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=25"
+  },
+  "scripts": {
+    "test": "tape6 --flags FO 'tests/test-*.ts'",
+    "ts-check": "tsc --noEmit",
+    "start": "node src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tape-six": "^1.8.0",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "vault-storage",
+    "knowledge-base"
+  ],
+  "author": "Eugene Lazutkin <eugene.lazutkin@gmail.com>",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/uhop/vault-storage.git",
+    "directory": "mcp"
+  }
+}
