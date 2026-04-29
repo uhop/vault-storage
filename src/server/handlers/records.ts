@@ -13,6 +13,7 @@ interface RecordRow {
   type: string;
   body: string;
   content_hash: string;
+  title: string | null;
   created: string;
   updated: string;
   last_referenced: string | null;
@@ -30,6 +31,7 @@ const rowToRecord = (row: RecordRow) => ({
   type: row.type as (typeof RECORD_TYPES)[number],
   body: row.body,
   contentHash: row.content_hash,
+  title: row.title,
   created: row.created,
   updated: row.updated,
   lastReferenced: row.last_referenced,

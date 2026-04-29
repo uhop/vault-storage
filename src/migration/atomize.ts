@@ -17,6 +17,7 @@
 import {readFileSync, writeFileSync, mkdirSync, unlinkSync, existsSync} from 'node:fs';
 import {basename, dirname, join} from 'node:path';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
+import {typeFromPath} from '../importer/type-from-path.ts';
 import {walkMarkdown} from '../importer/walk.ts';
 import type {RecordType} from '../records/types.ts';
 
@@ -161,16 +162,33 @@ export const splitFile = (input: SplitInput): SplitOutput => {
   const stem = basename(relativePath, '.md');
   const folderRel = join(dirname(relativePath), stem);
 
-  const inheritedKeys = ['type', 'tags', 'status', 'created'] as const;
+  const inheritedKeys = ['tags', 'status', 'created'] as const;
   const inheritedFm: Record<string, unknown> = {};
   for (const key of inheritedKeys) {
     if (data[key] !== undefined) inheritedFm[key] = data[key];
   }
-  // For atomized "running" files (decisions.md / learnings.md / queue.md /
-  // ideas.md / bugs.md / design.md / plan.md), pieces get a more specific type
-  // than the source's frontmatter — see PIECE_TYPE_BY_STEM above.
-  const overrideType = pieceTypeForSource(relativePath);
-  if (overrideType !== null) inheritedFm['type'] = overrideType;
+
+  // Type resolution priority for atomized pieces:
+  //   1. PIECE_TYPE_BY_STEM map (top-level project running files —
+  //      decisions/learnings/queue/etc).
+  //   2. typeFromPath of the destination piece path, when it yields a specific
+  //      sub-type (i.e., not the catch-all `project`/`permanent`). Example:
+  //      `projects/<n>/design/foo.md` atomized into `projects/<n>/design/foo/`
+  //      gives `design` from path; preferred over the source's explicit
+  //      `type: project`.
+  //   3. Inherited from the source's frontmatter `type:` value.
+  const stemOverride = pieceTypeForSource(relativePath);
+  let pieceType: unknown = stemOverride;
+  if (pieceType === null) {
+    // typeFromPath needs a representative piece path; pick a placeholder
+    // filename that's not _about.md (which would yield `meta`).
+    const samplePiecePath = join(dirname(relativePath), basename(relativePath, '.md'), 'piece.md');
+    const pathInferred = typeFromPath(samplePiecePath);
+    if (pathInferred !== 'project' && pathInferred !== 'permanent' && pathInferred !== 'meta') {
+      pieceType = pathInferred;
+    }
+  }
+  if (pieceType === null) pieceType = data['type'];
 
   const seenSlugs = new Map<string, number>();
   const pieces: SplitOutputPiece[] = sections.map((section, i) => {
@@ -182,6 +200,7 @@ export const splitFile = (input: SplitInput): SplitOutput => {
 
     const pieceFm: Record<string, unknown> = {
       title: section.heading,
+      ...(pieceType !== undefined && pieceType !== null ? {type: pieceType} : {}),
       ...inheritedFm,
       sequence_key: i + 1
     };

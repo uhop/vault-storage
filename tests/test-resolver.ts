@@ -10,6 +10,7 @@ const record = (recordId: string, filePath: string): VaultRecord => ({
   type: 'permanent',
   body: '',
   contentHash: 'h',
+  title: null,
   created: '2026-04-28',
   updated: '2026-04-28',
   lastReferenced: null,
@@ -55,5 +56,32 @@ test('WikilinkResolver', async t => {
   await t.test('empty input → null', t => {
     t.equal(resolver.resolve(''), null);
     t.equal(resolver.resolve('   '), null);
+  });
+});
+
+test('WikilinkResolver: folder fallback to _about.md', async t => {
+  const records = [
+    record('about', 'projects/blog/decisions/_about.md'),
+    record('p1', 'projects/blog/decisions/api-design.md'),
+    record('p2', 'projects/blog/decisions/auth-flow.md')
+  ];
+  const resolver = new WikilinkResolver(records);
+
+  await t.test('legacy file-level link redirects to folder _about.md', t => {
+    t.equal(resolver.resolve('projects/blog/decisions'), 'about', 'folder → _about.md');
+    t.equal(resolver.resolve('projects/blog/decisions.md'), 'about', 'with .md → _about.md');
+  });
+
+  await t.test('exact piece path still wins over folder fallback', t => {
+    t.equal(resolver.resolve('projects/blog/decisions/api-design'), 'p1', 'piece path resolves directly');
+    t.equal(resolver.resolve('projects/blog/decisions/api-design.md'), 'p1', 'piece path with .md');
+  });
+
+  await t.test('folder without _about.md does not match', t => {
+    const noAbout = [
+      record('p', 'projects/blog/decisions/api-design.md')
+    ];
+    const r2 = new WikilinkResolver(noAbout);
+    t.equal(r2.resolve('projects/blog/decisions'), null, 'no _about.md, no fallback');
   });
 });

@@ -148,6 +148,21 @@ test('splitFile: deeper-path source keeps inherited type', t => {
   t.equal(piece['type'], 'design', 'inherited type preserved');
 });
 
+test('splitFile: deeper-path source with mis-typed source FM gets path-derived type', t => {
+  // `projects/<name>/design/<file>.md` with explicit `type: project` should
+  // still produce pieces typed as `design` — the path is more reliable than
+  // the source's catch-all type. Caught on the live-vault deploy: constraints.md
+  // had type=project but its pieces should be design.
+  const sectionsBody = '## A\nbody\n## B\nbody\n';
+  const source = ['---', 'type: project', '---', sectionsBody].join('\n');
+  const result = splitFile({
+    relativePath: 'projects/vault-storage/design/constraints.md',
+    source
+  });
+  const piece = parseFrontmatter(result.pieces[0]!.content).data;
+  t.equal(piece['type'], 'design', 'path overrides catch-all `project` type');
+});
+
 test('splitFile: dedupes slug collisions', t => {
   const source = ['## Same\nfirst\n', '## same\nsecond\n', '## SAME\nthird\n'].join('\n');
   const result = splitFile({relativePath: 'a.md', source});

@@ -45,6 +45,8 @@ export interface VaultRecord {
   type: RecordType;
   body: string;
   contentHash: string;
+  /** Title from frontmatter; null when the source had no `title:` key. */
+  title: string | null;
   /** ISO 8601 string. */
   created: string;
   /** ISO 8601 string. */

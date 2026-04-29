@@ -13,8 +13,12 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 1, 'schema version is 1 after init');
-  t.deepEqual(result.applied, ['0001_init.sql'], 'init migration was applied');
+  t.equal(result.current, 2, 'schema version is 2 after init + add-title');
+  t.deepEqual(
+    result.applied,
+    ['0001_init.sql', '0002_add_title.sql'],
+    'all migrations applied in order'
+  );
 
   const names = (
     db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as {
@@ -42,7 +46,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 1, 'schema version stays at 1');
+  t.equal(second.current, 2, 'schema version stays at 2');
   db.close();
 });
 

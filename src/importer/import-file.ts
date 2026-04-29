@@ -53,6 +53,7 @@ export const importFile = (
   const created = asString(data['created']) ?? existing?.created ?? now;
   const updated = asString(data['updated']) ?? now;
   const priority = asNumber(data['priority']) ?? 0;
+  const title = asString(data['title']) ?? null;
 
   const record: VaultRecord = {
     recordId: existing?.recordId ?? uuidv7(),
@@ -62,6 +63,7 @@ export const importFile = (
     type,
     body,
     contentHash: hash,
+    title,
     created,
     updated,
     lastReferenced: existing?.lastReferenced ?? null,

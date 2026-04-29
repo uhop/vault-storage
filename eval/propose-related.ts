@@ -89,7 +89,8 @@ const rows: Row[] = rawRows.map(r => {
 const byId = new Map(rows.map(r => [r.id, r]));
 const vaultRecords: VaultRecord[] = rows.map(r => ({
   recordId: r.id, filePath: r.path, parentPath: null, sequenceKey: null,
-  type: 'permanent', body: r.body, contentHash: '', created: '', updated: '',
+  type: 'permanent', body: r.body, contentHash: '', title: r.title || null,
+  created: '', updated: '',
   lastReferenced: null, decayScore: 1, status: 'active', priority: 0, archivedAt: null
 }));
 const resolver = new WikilinkResolver(vaultRecords);

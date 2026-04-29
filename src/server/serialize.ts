@@ -8,6 +8,7 @@ export interface JsonRecord {
   type: string;
   status: string;
   priority: number;
+  title: string | null;
   created: string;
   updated: string;
   last_referenced: string | null;
@@ -40,6 +41,7 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     type: r.type,
     status: r.status,
     priority: r.priority,
+    title: r.title,
     created: r.created,
     updated: r.updated,
     last_referenced: r.lastReferenced,

@@ -112,6 +112,23 @@ test('second import detects body changes as "updated" with stable record_id', t 
   }
 });
 
+test('frontmatter title round-trips into the records.title column', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/with-title.md', '---\ntitle: Hello World\n---\nbody\n');
+    writeMd(root, 'topics/no-title.md', '---\ntags: []\n---\nbody\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    t.equal(repo.getByPath('topics/with-title.md')?.title, 'Hello World', 'title preserved');
+    t.equal(repo.getByPath('topics/no-title.md')?.title, null, 'absent title is null');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('explicit frontmatter type overrides path-derived type', t => {
   const {root, cleanup} = setupVault();
   try {

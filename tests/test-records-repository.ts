@@ -19,6 +19,7 @@ const makeRecord = (overrides: Partial<VaultRecord> = {}): VaultRecord => {
     type: 'permanent',
     body,
     contentHash: contentHash(body),
+    title: null,
     created: now,
     updated: now,
     lastReferenced: null,

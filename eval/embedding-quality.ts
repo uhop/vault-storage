@@ -411,7 +411,8 @@ const wikilinkContextSpotCheck = async (
 ): Promise<string> => {
   const vaultRecords: VaultRecord[] = records.map(r => ({
     recordId: r.id, filePath: r.path, parentPath: null, sequenceKey: null,
-    type: 'permanent', body: r.body, contentHash: '', created: '', updated: '',
+    type: 'permanent', body: r.body, contentHash: '', title: null,
+    created: '', updated: '',
     lastReferenced: null, decayScore: 1, status: 'active', priority: 0, archivedAt: null
   }));
   const resolver = new WikilinkResolver(vaultRecords);
