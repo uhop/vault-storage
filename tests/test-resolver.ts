@@ -57,6 +57,13 @@ test('WikilinkResolver', async t => {
     t.equal(resolver.resolve(''), null);
     t.equal(resolver.resolve('   '), null);
   });
+  await t.test('strips #anchor before lookup', t => {
+    t.equal(resolver.resolve('topics/alpha#some-section'), 'a');
+    t.equal(resolver.resolve('alpha#another'), 'a');
+  });
+  await t.test('pure-anchor target → null', t => {
+    t.equal(resolver.resolve('#heading'), null);
+  });
 });
 
 test('WikilinkResolver: folder fallback to _about.md', async t => {

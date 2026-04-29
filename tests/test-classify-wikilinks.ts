@@ -90,3 +90,51 @@ test('empty body returns empty', t => {
   t.equal(classifyBodyLinks('').length, 0, 'no links');
   t.equal(classifyBodyLinks('plain text, no links').length, 0, 'no links');
 });
+
+test('"superseded by" → supersedes edge with inverse direction', t => {
+  // Passive form: source is superseded by target → edge target→source.
+  const out = classifyBodyLinks('This idea is superseded by [[new-design]].');
+  t.equal(out[0]?.type, 'supersedes');
+  t.equal(out[0]?.inverse, true, 'inverse direction set');
+});
+
+test('"replaced by" → supersedes edge with inverse direction', t => {
+  const out = classifyBodyLinks('The old approach was replaced by [[new-approach]].');
+  t.equal(out[0]?.type, 'supersedes');
+  t.equal(out[0]?.inverse, true);
+});
+
+test('"extends" → derived-from edge', t => {
+  const out = classifyBodyLinks('## Relationship\nExtends [[base-design]]: first try the simple case.');
+  t.equal(out[0]?.type, 'derived-from');
+  t.notOk(out[0]?.inverse, 'active form, no inverse');
+});
+
+test('"extending" → derived-from edge', t => {
+  const out = classifyBodyLinks('Extending [[parent-pattern]] with one extra step.');
+  t.equal(out[0]?.type, 'derived-from');
+});
+
+test('"builds on" → derived-from edge', t => {
+  const out = classifyBodyLinks('Builds on [[foundation]] but adds caching.');
+  t.equal(out[0]?.type, 'derived-from');
+});
+
+test('wikilinks inside fenced code blocks are skipped', t => {
+  const body = ['intro [[real]]', '```bash', 'if [[ -n $x ]]; then echo "[[fake]]"; fi', '```', 'after [[also-real]]'].join('\n');
+  const out = classifyBodyLinks(body);
+  const targets = out.map(e => e.target).sort();
+  t.deepEqual(targets, ['also-real', 'real']);
+});
+
+test('inverse and direct edges to same target coexist', t => {
+  // Hypothetical: source mentions [[X]] casually elsewhere AND is superseded by [[X]].
+  const body = 'See [[X]] for context. This was superseded by [[X]].';
+  const out = classifyBodyLinks(body);
+  // Strongest active rule wins per direction; inverse is its own bucket.
+  const direct = out.find(e => !e.inverse);
+  const inverse = out.find(e => e.inverse);
+  t.ok(direct, 'has a direct edge');
+  t.ok(inverse, 'has an inverse edge');
+  t.equal(inverse?.type, 'supersedes');
+});

@@ -1,5 +1,5 @@
 import test from 'tape-six';
-import {extractRelatedFromFrontmatter, extractWikilinks} from '../src/markdown/wikilinks.ts';
+import {extractRelatedFromFrontmatter, extractWikilinks, maskCodeRegions} from '../src/markdown/wikilinks.ts';
 
 test('extractWikilinks', async t => {
   await t.test('finds a single link', t => {
@@ -22,6 +22,42 @@ test('extractWikilinks', async t => {
   });
   await t.test('ignores unclosed [[', t => {
     t.deepEqual(extractWikilinks('start [[unclosed and [[ok]]'), ['ok']);
+  });
+  await t.test('skips wikilinks inside fenced code blocks', t => {
+    const text = ['before [[real]]', '```bash', 'if [[ -z $x ]]; then echo [[fake]]; fi', '```', 'after [[also-real]]'].join('\n');
+    t.deepEqual(extractWikilinks(text), ['real', 'also-real']);
+  });
+  await t.test('skips wikilinks in tilde-fenced code blocks', t => {
+    const text = ['[[real]]', '~~~', '[[fake]]', '~~~'].join('\n');
+    t.deepEqual(extractWikilinks(text), ['real']);
+  });
+  await t.test('skips wikilinks inside inline code spans', t => {
+    t.deepEqual(extractWikilinks('see `[[fake]]` and [[real]]'), ['real']);
+  });
+  await t.test('skips POSIX character class lookalikes', t => {
+    t.deepEqual(extractWikilinks('regex: `[[:cntrl:]]` matches'), []);
+  });
+  await t.test('drops pure-anchor links', t => {
+    t.deepEqual(extractWikilinks('jump to [[#section]]'), []);
+  });
+  await t.test('keeps cross-doc anchor target intact (anchor stripped at resolve)', t => {
+    t.deepEqual(extractWikilinks('see [[Page#section]]'), ['Page#section']);
+  });
+});
+
+test('maskCodeRegions', async t => {
+  await t.test('preserves indices (replaces with same-length whitespace)', t => {
+    const input = 'a `code` b';
+    const masked = maskCodeRegions(input);
+    t.equal(masked.length, input.length);
+    t.equal(masked.indexOf('b'), input.indexOf('b'));
+  });
+  await t.test('does not blank fenced delimiters across newlines', t => {
+    const input = ['a', '```', 'inside', '```', 'b'].join('\n');
+    const masked = maskCodeRegions(input);
+    t.ok(masked.includes('a'));
+    t.ok(masked.includes('b'));
+    t.ok(!masked.includes('inside'));
   });
 });
 

@@ -77,6 +77,20 @@ test('end-to-end edge extraction from a synthetic vault', async t => {
       t.ok(targets.has(gamma!.recordId), 'related-to → gamma');
     });
 
+    await t.test('related-to is auto-mirrored per target', t => {
+      // Symmetric types fan out a mirror for each unique target, so beta and
+      // gamma both gain a related-to back to alpha.
+      const betaIn = edges.listInbound(alpha!.recordId).filter(e => e.type === 'related-to');
+      t.ok(
+        betaIn.some(e => e.fromId === beta!.recordId),
+        'beta → alpha mirror exists'
+      );
+      t.ok(
+        betaIn.some(e => e.fromId === gamma!.recordId),
+        'gamma → alpha mirror exists'
+      );
+    });
+
     await t.test("alpha body wikilink to beta produced a 'cites' edge", t => {
       const cites = edges
         .listOutbound(alpha!.recordId)
@@ -90,8 +104,11 @@ test('end-to-end edge extraction from a synthetic vault', async t => {
       t.equal(cites[0]?.toId, alpha!.recordId, 'cites → alpha');
     });
 
-    await t.test('gamma has no outbound edges', t => {
-      t.equal(edges.listOutbound(gamma!.recordId).length, 0, 'gamma references nothing');
+    await t.test('gamma has only the related-to mirror back to alpha', t => {
+      const out = edges.listOutbound(gamma!.recordId);
+      t.equal(out.length, 1, 'one outbound edge — the mirror');
+      t.equal(out[0]?.type, 'related-to');
+      t.equal(out[0]?.toId, alpha!.recordId);
     });
   } finally {
     teardown(fx);

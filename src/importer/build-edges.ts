@@ -121,6 +121,8 @@ const readFromDisk = (vaultRoot: string, relativePath: string): string => {
 interface ClassifiedTarget {
   target: string;
   type: Edge['type'];
+  /** When true, the edge runs target→source instead of source→target. */
+  inverse?: boolean;
 }
 
 const SYMMETRIC_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
@@ -136,7 +138,7 @@ const writeEdges = (
 ): number => {
   const seen = new Set<string>();
   let written = 0;
-  for (const {target, type} of targets) {
+  for (const {target, type, inverse} of targets) {
     const resolved = resolver.resolve(target);
     if (!resolved) {
       if (origin === 'frontmatter') summary.unresolvedFrontmatter++;
@@ -147,13 +149,15 @@ const writeEdges = (
       summary.selfReferences++;
       continue;
     }
-    const dedupKey = `${resolved}|${type}`;
+    const fromId = inverse ? resolved : source.recordId;
+    const toId = inverse ? source.recordId : resolved;
+    const dedupKey = `${fromId}|${toId}|${type}`;
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
 
     edges.upsert({
-      fromId: source.recordId,
-      toId: resolved,
+      fromId,
+      toId,
       type,
       weight: 1,
       note: null,
@@ -163,12 +167,12 @@ const writeEdges = (
 
     // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
     if (SYMMETRIC_TYPES.has(type)) {
-      const mirrorKey = `${source.recordId}|${type}|mirror`;
+      const mirrorKey = `${toId}|${fromId}|${type}`;
       if (!seen.has(mirrorKey)) {
         seen.add(mirrorKey);
         edges.upsert({
-          fromId: resolved,
-          toId: source.recordId,
+          fromId: toId,
+          toId: fromId,
           type,
           weight: 1,
           note: null,

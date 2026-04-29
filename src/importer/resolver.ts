@@ -12,6 +12,10 @@ import type {VaultRecord} from '../records/types.ts';
  *      with a `decisions/` folder of pieces; this keeps the old wikilinks
  *      resolving (to the folder-level "what is this" doc).
  *
+ * `[[Page#anchor]]` is normalized to `[[Page]]` before lookup — anchors are
+ * orthogonal to record identity. Pure-anchor links (`[[#heading]]`) return
+ * null since they reference the same document.
+ *
  * Built once per build-edges pass over a static record set; cheap to construct.
  */
 export class WikilinkResolver {
@@ -41,7 +45,12 @@ export class WikilinkResolver {
 
   /** Returns the record_id of the resolved target, or null when unresolvable. */
   resolve(linkText: string): string | null {
-    const text = linkText.trim();
+    const trimmed = linkText.trim();
+    if (!trimmed) return null;
+
+    // Strip `#anchor` suffix — `[[Page#section]]` resolves to `Page`.
+    const hashAt = trimmed.indexOf('#');
+    const text = hashAt === -1 ? trimmed : trimmed.slice(0, hashAt).trimEnd();
     if (!text) return null;
 
     const exact = this.#byPath.get(text);
