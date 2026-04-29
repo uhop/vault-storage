@@ -36,6 +36,20 @@ That's it. The container watches `VAULT_DATA_PATH_HOST` for markdown changes and
 
 To restrict to local-only or LAN access, set `VAULT_PUBLISH_HOST=127.0.0.1` (or your LAN IP) in `.env`. For TLS over the public internet, put a reverse proxy (Caddy / nginx / Cloudflare Tunnel) in front, or use Tailscale/WireGuard for private remote access.
 
+### Updating
+
+```bash
+bin/update.sh
+```
+
+Pulls the latest code, warns about new keys in `.env.example` that you haven't added to `.env`, builds an image tagged with both `:latest` and the short commit SHA, and recreates the container. To roll back, retag a previous SHA as `latest`:
+
+```bash
+docker tag vault-storage:<prev-sha> vault-storage:latest && docker compose up -d
+```
+
+Schema migrations apply automatically on container start.
+
 ## Setup (without Docker)
 
 Requires Node ≥ 25.
