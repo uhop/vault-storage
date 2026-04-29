@@ -23,3 +23,9 @@ coverage/
 # Project-level MCP config carries the bearer token in plaintext — keep it
 # out of git. Use .mcp.json.example as the committed template.
 .mcp.json
+
+# Per-deploy compose extensions (e.g., the Obsidian read-only mount used
+# during cutover). docker compose auto-merges compose.override.yaml on top
+# of the base compose.yaml. See compose.override.yaml.example for the
+# cutover template.
+compose.override.yaml
