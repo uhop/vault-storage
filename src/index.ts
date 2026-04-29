@@ -1,7 +1,8 @@
 // Entry point. Subcommands:
-//   node src/index.ts info                  # report DB version + extension info
-//   node src/index.ts import [vault-path]   # import a vault directory (path or $VAULT_INGEST_PATH)
-//   node src/index.ts serve                 # start the REST server
+//   node src/index.ts info                       # report DB version + extension info
+//   node src/index.ts import [vault-path]        # import a vault dir (path or $VAULT_INGEST_PATH)
+//   node src/index.ts migrate <source> <target>  # migrate Obsidian vault → vault-data tree
+//   node src/index.ts serve                      # start the REST server
 import {resolve} from 'node:path';
 import {openDatabase} from './db/connection.ts';
 import {runMigrations} from './db/migrate.ts';
@@ -10,6 +11,7 @@ import {embedPending} from './embeddings/embed-pass.ts';
 import {FakeEmbedder} from './embeddings/fake.ts';
 import type {Embedder} from './embeddings/types.ts';
 import {importVault} from './importer/import.ts';
+import {migrateVault} from './migration/import.ts';
 import {main as serveMain} from './server/index.ts';
 
 const argv = process.argv.slice(2);
@@ -42,6 +44,40 @@ if (subcommand === 'serve') {
         `vault-storage: db=${dbPath} schema=${migration.current} vec=${vecVersion} ` +
           `records=${recordCount} applied=[${migration.applied.join(', ')}]\n`
       );
+      break;
+    }
+    case 'migrate': {
+      const source = argv[1] ?? process.env['VAULT_INGEST_PATH'];
+      const target = argv[2] ?? process.env['VAULT_DATA_PATH'];
+      if (!source) die('usage: migrate <source> <target>  (or set VAULT_INGEST_PATH)');
+      if (!target) die('usage: migrate <source> <target>  (or set VAULT_DATA_PATH)');
+      const summary = migrateVault({
+        source: resolve(source as string),
+        target: resolve(target as string),
+        db
+      });
+      process.stdout.write(
+        `migrated ${summary.total} files: ` +
+          `${summary.backfilled} backfilled frontmatter, ` +
+          `${summary.filesWithTagRewrites} files had tag rewrites ` +
+          `(${summary.tagRewrites} total), ` +
+          `${summary.canonicalTagCount} canonical tags, ` +
+          `${summary.pluralCollapses.length} plural collapses ` +
+          `(${summary.durationMs} ms)\n`
+      );
+      if (summary.pluralCollapses.length > 0) {
+        process.stdout.write('plural collapses:\n');
+        for (const c of summary.pluralCollapses) {
+          process.stdout.write(`  ${c.plural} → ${c.singular}\n`);
+        }
+      }
+      if (summary.atomization) {
+        const a = summary.atomization;
+        process.stdout.write(
+          `atomization: ${a.atomized} files split into ${a.piecesWritten} pieces ` +
+            `(${a.optedOut} opted out, ${a.total} considered, ${a.durationMs} ms)\n`
+        );
+      }
       break;
     }
     case 'import': {
