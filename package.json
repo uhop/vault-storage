@@ -3,7 +3,23 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "AI-agent-first knowledge base. Markdown files are the source of truth; SQLite + sqlite-vec is a derived index. REST + MCP server.",
+  "description": "AI-agent-first knowledge base over markdown. SQLite + sqlite-vec for fast lookup, semantic search, and typed-edge traversal; BGE embeddings; REST server (MCP planned).",
+  "keywords": [
+    "knowledge-base",
+    "markdown",
+    "vault",
+    "obsidian",
+    "sqlite",
+    "sqlite-vec",
+    "vector-search",
+    "semantic-search",
+    "embeddings",
+    "bge",
+    "ai-agent",
+    "claude",
+    "rest-api",
+    "typescript"
+  ],
   "engines": {
     "node": ">=25"
   },
