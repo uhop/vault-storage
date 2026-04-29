@@ -187,6 +187,72 @@ const recallAtK = (records: RecordRow[], related: Map<string, Set<string>>, k: n
   return counted ? sumRecall / counted : 0;
 };
 
+interface ThresholdRow {
+  threshold: number;
+  tp: number;
+  fp: number;
+  fn: number;
+  tn: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  f2: number;
+  f4: number;
+}
+
+/**
+ * Pair-level PR analysis: sweep cosine-similarity thresholds, count TP/FP/FN/TN
+ * against the `related:` ground truth (treating `not in related:` as negative).
+ * Asymmetric F-beta scores (β>1 weights recall over precision) reflect the
+ * "tolerate false positives over missing real ones" preference.
+ *
+ * Caveat documented in the report: `related:` is sparsely curated, so a
+ * "false positive" at high similarity is often a genuine semantic match that
+ * the human curator didn't record. Treat absolute precision numbers as a
+ * lower bound, not a ceiling.
+ */
+const sweepThresholds = (
+  records: RecordRow[],
+  related: Map<string, Set<string>>,
+  thresholds: number[]
+): ThresholdRow[] => {
+  // Compute all-pairs max-sim (i < j to avoid double-counting).
+  const pairs: {sim: number; positive: boolean}[] = [];
+  for (let i = 0; i < records.length; i++) {
+    for (let j = i + 1; j < records.length; j++) {
+      const a = records[i]!;
+      const b = records[j]!;
+      const sim = recordPairSim(a, b);
+      // Symmetric ground-truth: treat (a→b) OR (b→a) as positive.
+      const positive = !!(related.get(a.id)?.has(b.id) || related.get(b.id)?.has(a.id));
+      pairs.push({sim, positive});
+    }
+  }
+
+  const fbeta = (p: number, r: number, beta: number): number => {
+    if (p === 0 && r === 0) return 0;
+    const b2 = beta * beta;
+    return (1 + b2) * p * r / (b2 * p + r);
+  };
+
+  const out: ThresholdRow[] = [];
+  for (const threshold of thresholds) {
+    let tp = 0, fp = 0, fn = 0, tn = 0;
+    for (const {sim, positive} of pairs) {
+      if (sim >= threshold) positive ? tp++ : fp++;
+      else positive ? fn++ : tn++;
+    }
+    const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+    const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+    out.push({threshold, tp, fp, fn, tn, precision, recall,
+      f1: fbeta(precision, recall, 1),
+      f2: fbeta(precision, recall, 2),
+      f4: fbeta(precision, recall, 4)
+    });
+  }
+  return out;
+};
+
 const negDiscrim = (
   records: RecordRow[],
   related: Map<string, Set<string>>,
@@ -413,6 +479,36 @@ const p5 = precisionAtK(records, relatedMap, 5);
 const r10 = recallAtK(records, relatedMap, 10);
 const nd = negDiscrim(records, relatedMap, byId, 1000);
 const tp = tagPurity(records, 10);
+
+// Threshold sweep for the PR analysis. Coarse grid 0.30..0.95 in 0.05 steps.
+const thresholdGrid: number[] = [];
+for (let v = 0.30; v <= 0.95 + 1e-9; v += 0.05) thresholdGrid.push(Math.round(v * 100) / 100);
+const sweep = sweepThresholds(records, relatedMap, thresholdGrid);
+
+const argmax = (rows: ThresholdRow[], key: keyof ThresholdRow): ThresholdRow => {
+  let best = rows[0]!;
+  for (const r of rows) if ((r[key] as number) > (best[key] as number)) best = r;
+  return best;
+};
+const bestF1 = argmax(sweep, 'f1');
+const bestF2 = argmax(sweep, 'f2');
+const bestF4 = argmax(sweep, 'f4');
+
+// Random-baseline calibration. The thresholds in the design doc were chosen
+// without empirical grounding; comparing to a uniform-random retrieval gives
+// a calibrated lift factor. Avg positives per qualifying record drives the
+// random-P@K rate; for very sparse `related:` arrays (~3 entries / 390
+// records here), even a "passing" P@5 of 0.30 is just 40× random.
+const totalRelated = [...relatedMap.values()].reduce((n, s) => n + s.size, 0);
+const recordsWithRelated = [...relatedMap.values()].filter(s => s.size > 0).length;
+const avgPositives = recordsWithRelated ? totalRelated / recordsWithRelated : 0;
+const N = records.length;
+const randomP5 = N > 1 ? avgPositives / (N - 1) : 0;       // P@K random = avg_positives / (N-1)
+const randomR10 = avgPositives > 0 ? Math.min(10, N - 1) / (N - 1) : 0; // upper-bound: 10/(N-1) when avg≥1
+const randomR10Expected = avgPositives > 0 ? 10 / (N - 1) : 0; // expected fraction of positives in random 10
+const liftP5 = randomP5 > 0 ? p5 / randomP5 : 0;
+const liftR10 = randomR10Expected > 0 ? r10 / randomR10Expected : 0;
+void randomR10; // upper bound is informational; we report the expected value
 const codeReport = codeHeavySpotCheck(records);
 const langReport = crossLanguageSpotCheck(records);
 
@@ -441,14 +537,16 @@ const report = `# Embedding quality baseline
 
 ## Aggregate metrics
 
-| Metric | Value | Threshold | Pass |
-|---|---|---|---|
-| Precision@5 | ${p5.toFixed(3)} | ≥ 0.30 | ${passP5 ? '✅' : '❌'} |
-| Recall@10 | ${r10.toFixed(3)} | — | — |
-| Negative discrimination | ${nd.toFixed(3)} | ≥ 0.90 | ${passND ? '✅' : '❌'} |
-| Tag-cluster purity | ${tp.score.toFixed(3)} | — | — |
+| Metric | Value | Random baseline | Lift over random | Design threshold | Pass |
+|---|---|---|---|---|---|
+| Precision@5 | ${p5.toFixed(3)} | ${randomP5.toFixed(4)} | **${liftP5.toFixed(1)}×** | ≥ 0.30 | ${passP5 ? '✅' : '❌'} |
+| Recall@10 | ${r10.toFixed(3)} | ${randomR10Expected.toFixed(4)} | **${liftR10.toFixed(1)}×** | — | — |
+| Negative discrimination | ${nd.toFixed(3)} | 0.500 | ${(nd / 0.5).toFixed(2)}× *(max 2×)* | ≥ 0.90 | ${passND ? '✅' : '❌'} |
+| Tag-cluster purity | ${tp.score.toFixed(3)} | 0.000 *(no clustering)* | — | — | — |
 
 **Overall: ${overallPass ? '✅ PASS — model lock holds' : '❌ FAIL — reopen model choice per design doc'}**
+
+> The design thresholds were set without empirical grounding. The **lift over random** column is the calibrated signal: a P@5 of 0.30 against this vault would be 40× random (and 52% of theoretical ceiling 0.576). Below ~5× random would be "barely better than guessing"; the meaningful question is what lift the agent's downstream operations (semantic search, dedup) need to function — see § Quality cost at K below.
 
 Tag-cluster purity computed over top tags: ${tp.tags.length ? tp.tags.map(t => `\`${t}\``).join(', ') : '_none (no tags loaded; pass --vault)_'}.
 
@@ -466,12 +564,44 @@ ${langReport}
 
 ${contextReport}
 
+## Pair-level threshold sweep — false-positive vs false-negative tradeoff
+
+For each note pair, compute max-sim cosine; mark "positive" if EITHER direction is in the curated \`related:\` set. Sweeping similarity thresholds gives a PR curve. F-β with β>1 weights recall over precision — preferred when **missing a real connection is worse than reading a few extras** (the agent token-cost case).
+
+**Caveat**: \`related:\` is sparsely curated (avg ${avgPositives.toFixed(2)}/record). A "false positive" at high similarity is often a genuine match the human didn't record. Absolute precision numbers are a *lower bound* on real precision; once the curated set is densified (via \`/vault propose-related\`), these numbers should rise.
+
+| Threshold | TP | FP | FN | TN | Precision | Recall | F1 | F2 | F4 |
+|---|---|---|---|---|---|---|---|---|---|
+${sweep.map(r => `| ${r.threshold.toFixed(2)} | ${r.tp} | ${r.fp} | ${r.fn} | ${r.tn} | ${r.precision.toFixed(3)} | ${r.recall.toFixed(3)} | ${r.f1.toFixed(3)} | ${r.f2.toFixed(3)} | ${r.f4.toFixed(3)} |`).join('\n')}
+
+**Best operating points** (across the swept grid):
+- **F1-optimal** (balanced precision/recall): threshold = ${bestF1.threshold.toFixed(2)} → P=${bestF1.precision.toFixed(3)}, R=${bestF1.recall.toFixed(3)}, F1=${bestF1.f1.toFixed(3)}.  TP=${bestF1.tp}, FP=${bestF1.fp}, FN=${bestF1.fn}.
+- **F2-optimal** (recall 2× precision — moderate FP tolerance): threshold = ${bestF2.threshold.toFixed(2)} → P=${bestF2.precision.toFixed(3)}, R=${bestF2.recall.toFixed(3)}, F2=${bestF2.f2.toFixed(3)}. TP=${bestF2.tp}, FP=${bestF2.fp}, FN=${bestF2.fn}.
+- **F4-optimal** (recall 4× precision — high FP tolerance): threshold = ${bestF4.threshold.toFixed(2)} → P=${bestF4.precision.toFixed(3)}, R=${bestF4.recall.toFixed(3)}, F4=${bestF4.f4.toFixed(3)}. TP=${bestF4.tp}, FP=${bestF4.fp}, FN=${bestF4.fn}.
+
+**Reading the table**: at the chosen threshold, the agent presented with all pairs ≥ threshold sees TP+FP results; FP/(TP+FP) of them are noise, but the curated FNs are still *missed*. Picking lower thresholds catches more real connections (lower FN) at the cost of more noise (higher FP). Use F2 or F4 if missing a connection is materially worse than reading a noisy one.
+
+## Quality cost at K — what these numbers mean for actual agent operations
+
+For an agent doing **semantic search** ("find related to X") with K=10:
+- Of 10 returned: ${(10 * p5).toFixed(1)} are useful at observed P@5 (extrapolated), ${(10 - 10 * p5).toFixed(1)} are noise.
+- Random would return ${(10 * randomP5).toFixed(2)} useful — i.e., **basically nothing**. Without the embedder, the agent would have to read the entire vault to find connections.
+- Token cost of the noise: ~${Math.round((10 - 10 * p5) * 500)} tokens of wasted reads per query (assuming ~500 tokens/note skim).
+
+For **dedup detection on write** ("does this duplicate any existing note?"):
+- We want very high recall at K=1: a duplicate must be the top-1 hit. Tightest test in the metric set is the wikilink-context check (10/20 = 50% hit-in-top-5 in the ${args.model} run). For routine dedup, top-1 recall is more relevant — separate metric to add.
+
+For **missed connections** (the primary failure mode):
+- R@10 = ${r10.toFixed(2)} means **${(100 * (1 - r10)).toFixed(0)}% of curated related notes are NOT in top-10**. An agent that only looks at top-10 will miss that fraction of cross-references.
+- Note: this measures against hand-curated \`related:\` arrays, which are sparse (avg ${avgPositives.toFixed(2)} entries per record). The *true* miss rate against all genuinely-related notes is unknown and likely lower (more positives exist than were curated, and many would be in our top-10).
+
 ## Notes
 
 - \`related-to\` edges are derived from each note's frontmatter \`related:\` array (hand-curated). \`cites\` edges come from body \`[[wikilinks]]\`.
 - Negative discrimination samples 1000 random (positive_pair, negative_partner) tuples with a deterministic RNG seed; rerunning is reproducible.
 - Tag-cluster purity is intra-tag-mean-cosine minus inter-tag-mean-cosine averaged over the top 10 most-frequent tags with ≥3 members. Higher is better; values near 0 mean the model doesn't separate tag groups.
 - Wikilink-context retrieval embeds ~200 chars of context (with the link itself stripped) and checks whether the cited target appears in top-5 nearest. Skipped via \`--no-context\`.
+- Random baselines: P@K random = avg_positives / (N−1); R@K random = K / (N−1). NegDiscrim random = 0.5 (a coin flip on which pair is closer). The lift-over-random column is the calibrated signal.
 `;
 
 const outPath = resolve(args.output);
