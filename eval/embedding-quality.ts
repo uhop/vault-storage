@@ -25,7 +25,8 @@ interface RecordRow {
   id: string;
   path: string;
   body: string;
-  vec: Float32Array;
+  /** One vector per chunk; record-pair similarity is max over chunk pairs. */
+  chunks: Float32Array[];
   tags: string[];
 }
 
@@ -34,19 +35,30 @@ interface CliArgs {
   vault: string | null;
   output: string;
   noContext: boolean;
+  model: string;
+  dim: number;
 }
 
 const parseArgs = (argv: string[]): CliArgs => {
-  const args: CliArgs = {db: '', vault: null, output: 'eval/baseline.md', noContext: false};
+  const args: CliArgs = {
+    db: '',
+    vault: null,
+    output: 'eval/baseline.md',
+    noContext: false,
+    model: 'Xenova/bge-small-en-v1.5',
+    dim: 384
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--db') args.db = argv[++i] ?? '';
     else if (a === '--vault') args.vault = argv[++i] ?? null;
     else if (a === '--output') args.output = argv[++i] ?? args.output;
     else if (a === '--no-context') args.noContext = true;
+    else if (a === '--model') args.model = argv[++i] ?? args.model;
+    else if (a === '--dim') args.dim = Number.parseInt(argv[++i] ?? '0', 10);
   }
   if (!args.db) {
-    process.stderr.write('usage: embedding-quality.ts --db <path> [--vault <root>] [--output <file>] [--no-context]\n');
+    process.stderr.write('usage: embedding-quality.ts --db <path> [--vault <root>] [--output <file>] [--no-context] [--model <hf-path>] [--dim <n>]\n');
     process.exit(2);
   }
   return args;
@@ -61,11 +73,41 @@ const cosine = (a: Float32Array, b: Float32Array): number => {
   return s; // vectors are L2-normalized → dot product == cosine similarity
 };
 
+/** Max-sim between any chunk of `query` and any chunk of `target`. */
+const recordPairSim = (query: RecordRow, target: RecordRow): number => {
+  let best = -Infinity;
+  for (const q of query.chunks) for (const t of target.chunks) {
+    const s = cosine(q, t);
+    if (s > best) best = s;
+  }
+  return best;
+};
+
+/** Max-sim between a single query vector and any chunk of `target`. */
+const queryRecordSim = (query: Float32Array, target: RecordRow): number => {
+  let best = -Infinity;
+  for (const t of target.chunks) {
+    const s = cosine(query, t);
+    if (s > best) best = s;
+  }
+  return best;
+};
+
 const topK = (queryId: string, queryVec: Float32Array, all: RecordRow[], k: number): string[] => {
   const scored: {id: string; sim: number}[] = [];
   for (const r of all) {
     if (r.id === queryId) continue;
-    scored.push({id: r.id, sim: cosine(queryVec, r.vec)});
+    scored.push({id: r.id, sim: queryRecordSim(queryVec, r)});
+  }
+  scored.sort((a, b) => b.sim - a.sim);
+  return scored.slice(0, k).map(s => s.id);
+};
+
+const topKRecord = (query: RecordRow, all: RecordRow[], k: number): string[] => {
+  const scored: {id: string; sim: number}[] = [];
+  for (const r of all) {
+    if (r.id === query.id) continue;
+    scored.push({id: r.id, sim: recordPairSim(query, r)});
   }
   scored.sort((a, b) => b.sim - a.sim);
   return scored.slice(0, k).map(s => s.id);
@@ -73,26 +115,39 @@ const topK = (queryId: string, queryVec: Float32Array, all: RecordRow[], k: numb
 
 const loadRecords = (db: ReturnType<typeof openDatabase>, vaultRoot: string | null): RecordRow[] => {
   const rows = db.prepare(
-    `SELECT r.record_id, r.file_path, r.body, v.embedding
-       FROM records r JOIN record_vec v ON v.record_id = r.record_id`
-  ).all() as Array<{record_id: string; file_path: string; body: string; embedding: Uint8Array}>;
+    `SELECT r.record_id, r.file_path, r.body, v.chunk_index, v.embedding
+       FROM records r JOIN record_vec v ON v.record_id = r.record_id
+       ORDER BY r.record_id, v.chunk_index`
+  ).all() as Array<{
+    record_id: string;
+    file_path: string;
+    body: string;
+    chunk_index: number | bigint;
+    embedding: Uint8Array;
+  }>;
 
-  const out: RecordRow[] = [];
+  // Group rows by record_id; chunks are already in chunk_index order.
+  const byId = new Map<string, RecordRow>();
   for (const row of rows) {
-    let tags: string[] = [];
-    if (vaultRoot) {
-      try {
-        const src = readFileSync(`${vaultRoot}/${row.file_path}`, 'utf8');
-        const fm = parseFrontmatter(src).data;
-        const t = fm['tags'];
-        if (Array.isArray(t)) tags = t.filter((x): x is string => typeof x === 'string');
-      } catch {
-        // file missing on disk; tags stay empty
+    let rec = byId.get(row.record_id);
+    if (!rec) {
+      let tags: string[] = [];
+      if (vaultRoot) {
+        try {
+          const src = readFileSync(`${vaultRoot}/${row.file_path}`, 'utf8');
+          const fm = parseFrontmatter(src).data;
+          const t = fm['tags'];
+          if (Array.isArray(t)) tags = t.filter((x): x is string => typeof x === 'string');
+        } catch {
+          // file missing on disk; tags stay empty
+        }
       }
+      rec = {id: row.record_id, path: row.file_path, body: row.body, chunks: [], tags};
+      byId.set(row.record_id, rec);
     }
-    out.push({id: row.record_id, path: row.file_path, body: row.body, vec: blobToFloat32(row.embedding), tags});
+    rec.chunks.push(blobToFloat32(row.embedding));
   }
-  return out;
+  return [...byId.values()];
 };
 
 const loadEdgesByType = (db: ReturnType<typeof openDatabase>, type: string): Array<{from: string; to: string}> =>
@@ -109,7 +164,7 @@ const precisionAtK = (records: RecordRow[], related: Map<string, Set<string>>, k
   for (const r of records) {
     const positives = related.get(r.id);
     if (!positives || positives.size === 0) continue;
-    const nearest = topK(r.id, r.vec, records, k);
+    const nearest = topKRecord(r, records, k);
     const hits = nearest.filter(id => positives.has(id)).length;
     sumPrecision += hits / k;
     counted++;
@@ -123,7 +178,7 @@ const recallAtK = (records: RecordRow[], related: Map<string, Set<string>>, k: n
   for (const r of records) {
     const positives = related.get(r.id);
     if (!positives || positives.size === 0) continue;
-    const nearest = new Set(topK(r.id, r.vec, records, k));
+    const nearest = new Set(topKRecord(r, records, k));
     let hits = 0;
     for (const p of positives) if (nearest.has(p)) hits++;
     sumRecall += hits / positives.size;
@@ -163,8 +218,8 @@ const negDiscrim = (
       break;
     }
     if (!cr) continue;
-    const posSim = cosine(ar.vec, br.vec);
-    const negSim = cosine(ar.vec, cr.vec);
+    const posSim = recordPairSim(ar, br);
+    const negSim = recordPairSim(ar, cr);
     if (posSim > negSim) wins++;
     total++;
   }
@@ -192,14 +247,14 @@ const tagPurity = (records: RecordRow[], topTagCount: number): {score: number; t
     let intra = 0, intraN = 0;
     for (let i = 0; i < inSet.length; i++)
       for (let j = i + 1; j < inSet.length; j++) {
-        intra += cosine(inSet[i]!.vec, inSet[j]!.vec);
+        intra += recordPairSim(inSet[i]!, inSet[j]!);
         intraN++;
       }
     let inter = 0, interN = 0;
     const sample = Math.min(outSet.length, 200);
     for (let i = 0; i < inSet.length; i++)
       for (let j = 0; j < sample; j++) {
-        inter += cosine(inSet[i]!.vec, outSet[j]!.vec);
+        inter += recordPairSim(inSet[i]!, outSet[j]!);
         interN++;
       }
     totalScore += (intra / intraN) - (inter / interN);
@@ -253,7 +308,7 @@ const codeHeavySpotCheck = (records: RecordRow[]): string => {
   if (ranked.length === 0) return '_(no records with ≥20% code lines)_';
   const lines = ['| Source | Code % | Top-5 nearest also code-heavy |', '|---|---|---|'];
   for (const {r, frac} of ranked) {
-    const nearest = topK(r.id, r.vec, records, 5);
+    const nearest = topKRecord(r, records, 5);
     const codeMatches = nearest.filter(id => {
       const target = records.find(x => x.id === id);
       return target && codeFraction(target.body) >= 0.10;
@@ -272,7 +327,7 @@ const crossLanguageSpotCheck = (records: RecordRow[]): string => {
   if (ranked.length === 0) return '_(no records with ≥2% non-Latin-script content — vault is English-only by content; typographic non-ASCII like em-dashes or box-drawing is correctly excluded)_';
   const lines = ['| Source | Non-Latin-script % | Top-3 nearest paths |', '|---|---|---|'];
   for (const {r, frac} of ranked) {
-    const nearest = topK(r.id, r.vec, records, 3);
+    const nearest = topKRecord(r, records, 3);
     const paths = nearest
       .map(id => records.find(x => x.id === id)?.path ?? '?')
       .map(p => `\`${p}\``)
@@ -363,7 +418,7 @@ const langReport = crossLanguageSpotCheck(records);
 
 let contextReport = '_(skipped via --no-context)_';
 if (!args.noContext) {
-  const embedder = new BgeEmbedder();
+  const embedder = new BgeEmbedder({modelName: args.model, dim: args.dim});
   contextReport = await wikilinkContextSpotCheck(records, cites, byId, embedder);
 }
 
@@ -377,7 +432,8 @@ const report = `# Embedding quality baseline
 - Date: ${new Date().toISOString().slice(0, 10)}
 - DB: \`${dbPath}\`
 - Records: ${records.length}
-- Model: \`Xenova/bge-small-en-v1.5\` (384-dim float32)
+- Total chunks: ${records.reduce((n, r) => n + r.chunks.length, 0)} (avg ${(records.reduce((n, r) => n + r.chunks.length, 0) / records.length).toFixed(2)} per record)
+- Model: \`${args.model}\` (${args.dim}-dim float32)
 - Records with at least one \`related-to\` edge: ${[...relatedMap.values()].filter(s => s.size > 0).length}
 - Total \`related-to\` edges: ${relatedRaw.length}
 - Total \`cites\` edges: ${cites.length}

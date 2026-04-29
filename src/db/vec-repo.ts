@@ -2,7 +2,7 @@ import type {DatabaseSync, StatementSync} from 'node:sqlite';
 
 export interface NearestHit {
   recordId: string;
-  /** Cosine distance: 0 = identical direction, 2 = opposite. Lower = more similar. */
+  /** Cosine distance of the record's BEST chunk. 0 = identical, 2 = opposite. */
   distance: number;
 }
 
@@ -10,28 +10,39 @@ const toBlob = (vec: Float32Array): Uint8Array =>
   new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
 
 /**
- * CRUD + nearest-neighbor over the `record_vec` virtual table (sqlite-vec).
- * Schema: `vec0(record_id TEXT PRIMARY KEY, embedding FLOAT[384])`. The
- * application keeps record_vec in sync with records — virtual tables can't
- * carry FK constraints, so insert/delete here mirrors records.
+ * CRUD + nearest-record over the chunked `record_vec` virtual table. One row
+ * per chunk; records may have multiple chunks. Document-level retrieval
+ * aggregates by taking each record's MIN chunk distance.
+ *
+ * Schema: `vec0(chunk_id TEXT PK, +record_id, +chunk_index, +content_hash, embedding FLOAT[384])`.
+ * Virtual tables can't carry FK constraints; the application keeps record_vec
+ * in sync with records — `setChunks` replaces a record's chunks atomically;
+ * `deleteRecord` mirrors record deletion.
  */
 export class RecordVecRepository {
   readonly #insert: StatementSync;
-  readonly #delete: StatementSync;
-  readonly #has: StatementSync;
-  readonly #count: StatementSync;
-  readonly #getHash: StatementSync;
-  readonly #nearest: StatementSync;
+  readonly #deleteByRecord: StatementSync;
+  readonly #hasRecord: StatementSync;
+  readonly #countChunks: StatementSync;
+  readonly #countRecords: StatementSync;
+  readonly #getRecordHash: StatementSync;
+  readonly #nearestChunks: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
-      'INSERT INTO record_vec (record_id, content_hash, embedding) VALUES (?, ?, ?)'
+      `INSERT INTO record_vec (chunk_id, record_id, chunk_index, content_hash, embedding)
+       VALUES (?, ?, ?, ?, ?)`
     );
-    this.#delete = db.prepare('DELETE FROM record_vec WHERE record_id = ?');
-    this.#has = db.prepare('SELECT 1 AS x FROM record_vec WHERE record_id = ? LIMIT 1');
-    this.#count = db.prepare('SELECT COUNT(*) AS n FROM record_vec');
-    this.#getHash = db.prepare('SELECT content_hash FROM record_vec WHERE record_id = ? LIMIT 1');
-    this.#nearest = db.prepare(
+    this.#deleteByRecord = db.prepare('DELETE FROM record_vec WHERE record_id = ?');
+    this.#hasRecord = db.prepare('SELECT 1 AS x FROM record_vec WHERE record_id = ? LIMIT 1');
+    this.#countChunks = db.prepare('SELECT COUNT(*) AS n FROM record_vec');
+    this.#countRecords = db.prepare('SELECT COUNT(DISTINCT record_id) AS n FROM record_vec');
+    this.#getRecordHash = db.prepare(
+      'SELECT content_hash FROM record_vec WHERE record_id = ? LIMIT 1'
+    );
+    // Pull a wider chunk-level top-N then aggregate to records by min distance.
+    // Caller tunes the chunk-fetch breadth via `chunkK` (default 5×k upstream).
+    this.#nearestChunks = db.prepare(
       `SELECT record_id, distance
          FROM record_vec
         WHERE embedding MATCH ?
@@ -40,47 +51,64 @@ export class RecordVecRepository {
     );
   }
 
-  insert(recordId: string, contentHash: string, vec: Float32Array): void {
-    this.#insert.run(recordId, contentHash, toBlob(vec));
-  }
-
   /**
-   * sqlite-vec virtual tables don't support UPSERT — emulate by DELETE + INSERT.
-   * Wrap in a transaction at the call site if atomicity matters across many rows.
+   * Replace all chunks for a record. Atomic: deletes the existing chunks and
+   * inserts the new ones. `chunks` and any per-chunk sub-arrays are zero-based;
+   * `chunk_id` is composed as `${recordId}:${index}`.
    */
-  upsert(recordId: string, contentHash: string, vec: Float32Array): void {
-    this.#delete.run(recordId);
-    this.#insert.run(recordId, contentHash, toBlob(vec));
+  setChunks(recordId: string, contentHash: string, chunks: Float32Array[]): void {
+    this.#deleteByRecord.run(recordId);
+    for (let i = 0; i < chunks.length; i++) {
+      const v = chunks[i]!;
+      // sqlite-vec aux INTEGER columns reject JS number — pass BigInt explicitly.
+      this.#insert.run(`${recordId}:${i}`, recordId, BigInt(i), contentHash, toBlob(v));
+    }
   }
 
-  /** Returns the content_hash recorded with the vector, or null if none. */
-  getContentHash(recordId: string): string | null {
-    const row = this.#getHash.get(recordId) as Record<string, unknown> | undefined as
+  /** Returns the content_hash recorded with this record's chunks, or null. */
+  getRecordContentHash(recordId: string): string | null {
+    const row = this.#getRecordHash.get(recordId) as Record<string, unknown> | undefined as
       | {content_hash: string | null}
       | undefined;
     return row?.content_hash ?? null;
   }
 
-  delete(recordId: string): boolean {
-    return this.#delete.run(recordId).changes > 0;
+  deleteRecord(recordId: string): boolean {
+    return this.#deleteByRecord.run(recordId).changes > 0;
   }
 
-  has(recordId: string): boolean {
-    return this.#has.get(recordId) !== undefined;
+  hasRecord(recordId: string): boolean {
+    return this.#hasRecord.get(recordId) !== undefined;
   }
 
-  count(): number {
-    const row = this.#count.get() as Record<string, unknown> as {n: number};
-    return row.n;
+  countChunks(): number {
+    return (this.#countChunks.get() as Record<string, unknown> as {n: number}).n;
   }
 
-  /** Top-k nearest by cosine distance. Self-matches included unless caller filters. */
-  nearest(query: Float32Array, k: number): NearestHit[] {
-    return (
-      this.#nearest.all(toBlob(query), k) as unknown[] as {
-        record_id: string;
-        distance: number;
-      }[]
-    ).map(r => ({recordId: r.record_id, distance: r.distance}));
+  countRecords(): number {
+    return (this.#countRecords.get() as Record<string, unknown> as {n: number}).n;
+  }
+
+  /**
+   * Top-k records by cosine distance, where each record's score is the
+   * min-distance over its chunks. Fetches a wider chunk-level top-N (default
+   * 5×k) and aggregates; `chunkK` lets a caller widen further if records
+   * average many chunks.
+   */
+  nearest(query: Float32Array, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
+    const chunkK = opts.chunkK ?? Math.max(k * 5, 20);
+    const rows = this.#nearestChunks.all(toBlob(query), chunkK) as unknown[] as {
+      record_id: string;
+      distance: number;
+    }[];
+    const best = new Map<string, number>();
+    for (const r of rows) {
+      const cur = best.get(r.record_id);
+      if (cur === undefined || r.distance < cur) best.set(r.record_id, r.distance);
+    }
+    return [...best.entries()]
+      .map(([recordId, distance]) => ({recordId, distance}))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, k);
   }
 }

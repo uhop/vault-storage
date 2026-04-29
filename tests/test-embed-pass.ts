@@ -60,8 +60,8 @@ test('embedPending', async t => {
       t.equal(summary.embedded, 3, 'all three embedded');
       t.equal(summary.upToDate, 0, 'none up-to-date yet');
       t.equal(summary.total, 3, 'total counts all records');
-      t.equal(fx.vecs.count(), 3, 'three vectors stored');
-      t.equal(fx.vecs.getContentHash(a.recordId), a.contentHash, 'hash matches body');
+      t.equal(fx.vecs.countRecords(), 3, 'three vectors stored');
+      t.equal(fx.vecs.getRecordContentHash(a.recordId), a.contentHash, 'hash matches body');
     } finally {
       fx.db.close();
     }
@@ -98,7 +98,7 @@ test('embedPending', async t => {
 
       const summary = await embedPending(fx.db, fx.embedder);
       t.equal(summary.embedded, 1, 'one re-embedded');
-      t.equal(fx.vecs.getContentHash(a.recordId), updated.contentHash, 'new hash recorded');
+      t.equal(fx.vecs.getRecordContentHash(a.recordId), updated.contentHash, 'new hash recorded');
 
       const newVec = await fx.embedder.embed(updated.body);
       t.notDeepEqual(
@@ -121,12 +121,12 @@ test('embedPending', async t => {
 
       // Pre-embed only `a`.
       const aVec = await fx.embedder.embed(a.body);
-      fx.vecs.insert(a.recordId, a.contentHash, aVec);
+      fx.vecs.setChunks(a.recordId, a.contentHash, [aVec]);
 
       const summary = await embedPending(fx.db, fx.embedder);
       t.equal(summary.embedded, 1, 'only b was pending');
       t.equal(summary.upToDate, 1, 'a was already up-to-date');
-      t.equal(fx.vecs.count(), 2, 'now two vectors total');
+      t.equal(fx.vecs.countRecords(), 2, 'now two vectors total');
     } finally {
       fx.db.close();
     }
@@ -140,7 +140,7 @@ test('embedPending', async t => {
       }
       const summary = await embedPending(fx.db, fx.embedder, {batchSize: 3});
       t.equal(summary.embedded, 10, 'all ten embedded across small batches');
-      t.equal(fx.vecs.count(), 10, 'all ten vectors stored');
+      t.equal(fx.vecs.countRecords(), 10, 'all ten vectors stored');
     } finally {
       fx.db.close();
     }

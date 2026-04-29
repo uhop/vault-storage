@@ -37,18 +37,28 @@ CREATE INDEX idx_records_priority    ON records(priority DESC, created) WHERE pr
 CREATE INDEX idx_records_type        ON records(type, status);
 
 -- ---------------------------------------------------------------------------
--- record_vec: BGE-small-en-v1.5 embeddings (384-dim float32).
+-- record_vec: BGE-small-en-v1.5 embeddings (384-dim float32). One row per
+-- chunk; a record may have multiple chunks when its body exceeds the model
+-- context (~512 tokens / ~1500 chars). Document-level retrieval aggregates
+-- per-record by taking the best (min-distance) chunk.
+--
 -- Virtual tables can't carry FK constraints; record_vec rows are kept in sync
 -- by the application layer (insert / delete on records mirrors here).
 --
--- The `+content_hash` auxiliary column tracks the body hash that produced
--- this vector. The embed pass joins record_vec ↔ records and re-embeds when
--- record_vec.content_hash != records.content_hash (i.e., body has changed
--- since this vector was computed).
+-- Aux columns (the `+`):
+--   record_id    — the parent record this chunk belongs to. Filterable, so
+--                  "fetch chunks for record X" is one indexed lookup.
+--   chunk_index  — ordering of chunks within the record (0-based).
+--   content_hash — the body hash that produced these chunks. The embed pass
+--                  joins record_vec ↔ records and re-embeds when
+--                  record_vec.content_hash != records.content_hash (i.e.,
+--                  body has changed since these chunks were computed).
 -- ---------------------------------------------------------------------------
 
 CREATE VIRTUAL TABLE record_vec USING vec0(
-  record_id     TEXT PRIMARY KEY,
+  chunk_id      TEXT PRIMARY KEY,
+  +record_id    TEXT,
+  +chunk_index  INTEGER,
   +content_hash TEXT,
   embedding     FLOAT[384]
 );

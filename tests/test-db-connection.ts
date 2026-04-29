@@ -77,10 +77,9 @@ test('record_vec stores and retrieves a 384-dim float32 embedding', t => {
   vec[1] = 0.5;
   vec[383] = -0.25;
 
-  db.prepare('INSERT INTO record_vec (record_id, embedding) VALUES (?, ?)').run(
-    'r1',
-    new Uint8Array(vec.buffer)
-  );
+  db.prepare(
+    'INSERT INTO record_vec (chunk_id, record_id, chunk_index, embedding) VALUES (?, ?, ?, ?)'
+  ).run('r1:0', 'r1', BigInt(0), new Uint8Array(vec.buffer));
 
   const row = db.prepare(`SELECT record_id FROM record_vec WHERE record_id = ?`).get('r1') as {
     record_id: string;

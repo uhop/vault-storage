@@ -1,14 +1,17 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordVecRepository} from '../db/vec-repo.ts';
+import {chunkBody} from './chunker.ts';
 import type {Embedder} from './types.ts';
 
 export interface EmbedSummary {
-  /** Vectors written this pass (new + refreshed). */
+  /** Records embedded this pass (new + refreshed). */
   embedded: number;
-  /** Records skipped because vector + content_hash already match. */
+  /** Records skipped because chunks + content_hash already match. */
   upToDate: number;
   /** Total records inspected. */
   total: number;
+  /** Total chunks written this pass. */
+  chunksWritten: number;
   durationMs: number;
 }
 
@@ -21,13 +24,15 @@ interface PendingRow {
 }
 
 /**
- * Compute embeddings for every record whose vector is missing or whose
- * content_hash no longer matches the record's body. Idempotent: a second run
- * over an unchanged vault embeds nothing.
+ * Compute embeddings for every record whose chunks are missing or whose
+ * content_hash no longer matches the record's body. Chunks the body via
+ * `chunkBody`, embeds each chunk, and replaces the record's chunk set
+ * atomically per record. Idempotent: a second run over an unchanged vault
+ * embeds nothing.
  *
- * Embedding runs **outside** the SQLite transaction (it's async); the upsert
- * then writes within a per-batch transaction so the DB is consistent at every
- * commit boundary.
+ * Embedding runs **outside** the SQLite transaction (it's async); the
+ * per-record upsert then writes within a per-batch transaction so the DB is
+ * consistent at every commit boundary.
  */
 export const embedPending = async (
   db: DatabaseSync,
@@ -43,10 +48,16 @@ export const embedPending = async (
   > as {n: number};
   const total = totalRow.n;
 
+  // Records whose chunks are missing or stale. The aux content_hash is per-row
+  // so any chunk's hash is sufficient (we set them atomically together).
   const pendingStmt = db.prepare(
     `SELECT r.record_id, r.body, r.content_hash
        FROM records r
-       LEFT JOIN record_vec v ON v.record_id = r.record_id
+       LEFT JOIN (
+         SELECT record_id, MAX(content_hash) AS content_hash
+           FROM record_vec
+          GROUP BY record_id
+       ) v ON v.record_id = r.record_id
       WHERE v.record_id IS NULL
          OR v.content_hash IS NULL
          OR v.content_hash != r.content_hash
@@ -56,31 +67,55 @@ export const embedPending = async (
 
   const vecs = new RecordVecRepository(db);
   let embedded = 0;
+  let chunksWritten = 0;
 
-  for (let i = 0; i < pending.length; i += batchSize) {
-    const batch = pending.slice(i, i + batchSize);
-    const vectors = await embedder.embedBatch(batch.map(r => r.body));
+  // Each record produces N chunks; embed in batches of `batchSize` chunks
+  // for throughput. We accumulate chunks across records, then commit when
+  // we hit a batch boundary.
+  type Pending = {row: PendingRow; chunkTexts: string[]; chunkVectors: Float32Array[]};
+  const buf: Pending[] = [];
+  let bufChunkCount = 0;
 
+  const flush = async (): Promise<void> => {
+    if (buf.length === 0) return;
+    const flatTexts: string[] = [];
+    for (const p of buf) flatTexts.push(...p.chunkTexts);
+    const flatVecs = await embedder.embedBatch(flatTexts);
+
+    let idx = 0;
     db.exec('BEGIN');
     try {
-      for (let j = 0; j < batch.length; j++) {
-        const row = batch[j]!;
-        const vec = vectors[j];
-        if (!vec) continue;
-        vecs.upsert(row.record_id, row.content_hash, vec);
+      for (const p of buf) {
+        const vecs_ = flatVecs.slice(idx, idx + p.chunkTexts.length);
+        idx += p.chunkTexts.length;
+        vecs.setChunks(p.row.record_id, p.row.content_hash, vecs_);
         embedded++;
+        chunksWritten += vecs_.length;
       }
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
       throw err;
     }
+    buf.length = 0;
+    bufChunkCount = 0;
+  };
+
+  for (const row of pending) {
+    const chunkTexts = chunkBody(row.body);
+    if (chunkTexts.length === 0) continue;
+    if (bufChunkCount + chunkTexts.length > batchSize && buf.length > 0) await flush();
+    buf.push({row, chunkTexts, chunkVectors: []});
+    bufChunkCount += chunkTexts.length;
+    if (bufChunkCount >= batchSize) await flush();
   }
+  await flush();
 
   return {
     embedded,
     upToDate: total - embedded,
     total,
+    chunksWritten,
     durationMs: Math.round(performance.now() - start)
   };
 };
