@@ -9,6 +9,8 @@
   },
   "scripts": {
     "test": "tape6 --flags FO 'tests/test-*.ts'",
+    "start": "node src/index.ts serve",
+    "import": "node src/index.ts import",
     "eval": "node eval/embedding-quality.ts",
     "ts-check": "tsc --noEmit",
     "lint": "prettier --check .",

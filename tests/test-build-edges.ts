@@ -109,15 +109,18 @@ test('buildEdges is idempotent — re-run is a no-op', async t => {
     writeMd(fx.root, 'topics/y.md', '---\ntitle: Y\n---\nbody\n');
 
     const first = importVault(fx.db, fx.root);
-    t.equal(first.edges.edgesCreated, 1, 'one edge on initial import');
+    // related: → related-to, plus auto-mirror (related-to is symmetric per edge-taxonomy).
+    t.equal(first.edges.edgesCreated, 2, 'one edge + auto-mirror on initial import');
 
     const second = buildEdges(fx.db, {vaultRoot: fx.root});
-    t.equal(second.edgesCreated, 1, 're-run reports the upsert (idempotent at DB level)');
+    t.equal(second.edgesCreated, 2, 're-run reports the upserts (idempotent at DB level)');
 
     const edges = new EdgesRepository(fx.db);
     const records = new RecordsRepository(fx.db);
     const x = records.getByPath('topics/x.md');
-    t.equal(edges.listOutbound(x!.recordId).length, 1, 'still exactly one edge');
+    const y = records.getByPath('topics/y.md');
+    t.equal(edges.listOutbound(x!.recordId).length, 1, 'x has one outbound (→ y)');
+    t.equal(edges.listOutbound(y!.recordId).length, 1, 'y has one outbound mirror (→ x)');
   } finally {
     teardown(fx);
   }

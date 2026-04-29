@@ -1,0 +1,120 @@
+import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
+import type {DatabaseSync} from 'node:sqlite';
+import {checkBearer} from './auth.ts';
+import type {ServerEnv} from './env.ts';
+import {
+  getRecordHandler,
+  getRecordMetaHandler,
+  listRecordsHandler
+} from './handlers/records.ts';
+import {putRecordHandler} from './handlers/records-write.ts';
+import {systemStatusHandler} from './handlers/system.ts';
+import {sendError} from './responses.ts';
+import {Router, type RequestContext} from './router.ts';
+
+export interface ServerHandle {
+  server: Server;
+  url: string;
+  /** Stop accepting new connections, close existing keep-alive sockets, then resolve. */
+  close: () => Promise<void>;
+}
+
+interface BuildOptions {
+  db: DatabaseSync;
+  env: ServerEnv;
+  schemaVersion: number;
+}
+
+export const buildRouter = (opts: BuildOptions): Router => {
+  const router = new Router();
+  router.get(
+    '/system/status',
+    systemStatusHandler({
+      db: opts.db,
+      schemaVersion: opts.schemaVersion,
+      vaultDataPath: opts.env.vaultDataPath
+    })
+  );
+  router.get('/sections', listRecordsHandler(opts.db));
+  router.get('/sections/{id}/meta', getRecordMetaHandler(opts.db));
+  router.get('/sections/{id}', getRecordHandler(opts.db));
+  router.put(
+    '/sections/{id}',
+    putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
+  return router;
+};
+
+const parseUrl = (req: IncomingMessage): {path: string; query: Record<string, string>} | null => {
+  if (!req.url) return null;
+  const u = new URL(req.url, 'http://placeholder');
+  const query: Record<string, string> = {};
+  for (const key of u.searchParams.keys()) {
+    const all = u.searchParams.getAll(key);
+    query[key] = all.join(',');
+  }
+  return {path: u.pathname, query};
+};
+
+const handleRequest =
+  (router: Router, env: ServerEnv) =>
+  async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    try {
+      if (!checkBearer(req, env.apiToken)) {
+        sendError(res, 401, 'unauthorized', 'missing or invalid bearer token');
+        return;
+      }
+
+      const parsed = parseUrl(req);
+      if (!parsed) {
+        sendError(res, 400, 'bad_request', 'malformed request URL');
+        return;
+      }
+
+      const match = router.match(req.method ?? 'GET', parsed.path);
+      if (match === null) {
+        sendError(res, 404, 'not_found', `no route: ${req.method} ${parsed.path}`);
+        return;
+      }
+      if (match === 'method-not-allowed') {
+        sendError(res, 405, 'method_not_allowed', `method not allowed for ${parsed.path}`);
+        return;
+      }
+
+      const ctx: RequestContext = {
+        req,
+        res,
+        path: parsed.path,
+        query: parsed.query,
+        params: match.params
+      };
+      await match.handler(ctx);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`request error: ${msg}\n`);
+      if (!res.headersSent) {
+        sendError(res, 500, 'internal', 'internal server error');
+      } else {
+        res.end();
+      }
+    }
+  };
+
+export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
+  const router = buildRouter(opts);
+  const server = createServer(handleRequest(router, opts.env));
+
+  return new Promise((resolveListening, reject) => {
+    server.once('error', reject);
+    server.listen(opts.env.port, opts.env.host, () => {
+      server.off('error', reject);
+      const url = `http://${opts.env.host}:${opts.env.port}`;
+      const close = (): Promise<void> =>
+        new Promise(resolveClosed => {
+          server.closeAllConnections();
+          server.close(() => resolveClosed());
+        });
+      resolveListening({server, url, close});
+    });
+  });
+};

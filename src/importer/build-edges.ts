@@ -1,10 +1,11 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {extractRelatedFromFrontmatter, extractWikilinks} from '../markdown/wikilinks.ts';
+import {extractRelatedFromFrontmatter} from '../markdown/wikilinks.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
 import {RecordsRepository} from '../records/repository.ts';
-import type {Edge, VaultRecord} from '../records/types.ts';
+import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
+import {classifyBodyLinks} from './classify-wikilinks.ts';
 import {WikilinkResolver} from './resolver.ts';
 
 export interface EdgeBuildSummary {
@@ -86,20 +87,17 @@ export const buildEdges = (
         edges,
         resolver,
         record,
-        related,
-        'related-to',
+        related.map(target => ({target, type: 'related-to' as EdgeType})),
         now,
         summary,
         'frontmatter'
       );
 
-      const bodyLinks = extractWikilinks(body);
       summary.edgesCreated += writeEdges(
         edges,
         resolver,
         record,
-        bodyLinks,
-        'cites',
+        classifyBodyLinks(body),
         now,
         summary,
         'body'
@@ -120,19 +118,25 @@ const readFromDisk = (vaultRoot: string, relativePath: string): string => {
   return readFileSync(abs, 'utf8');
 };
 
+interface ClassifiedTarget {
+  target: string;
+  type: Edge['type'];
+}
+
+const SYMMETRIC_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
+
 const writeEdges = (
   edges: EdgesRepository,
   resolver: WikilinkResolver,
   source: VaultRecord,
-  targets: string[],
-  type: Edge['type'],
+  targets: ClassifiedTarget[],
   now: string,
   summary: EdgeBuildSummary,
   origin: 'frontmatter' | 'body'
 ): number => {
   const seen = new Set<string>();
   let written = 0;
-  for (const target of targets) {
+  for (const {target, type} of targets) {
     const resolved = resolver.resolve(target);
     if (!resolved) {
       if (origin === 'frontmatter') summary.unresolvedFrontmatter++;
@@ -156,6 +160,23 @@ const writeEdges = (
       created: now
     });
     written++;
+
+    // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
+    if (SYMMETRIC_TYPES.has(type)) {
+      const mirrorKey = `${source.recordId}|${type}|mirror`;
+      if (!seen.has(mirrorKey)) {
+        seen.add(mirrorKey);
+        edges.upsert({
+          fromId: resolved,
+          toId: source.recordId,
+          type,
+          weight: 1,
+          note: null,
+          created: now
+        });
+        written++;
+      }
+    }
   }
   return written;
 };
