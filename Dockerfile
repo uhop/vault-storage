@@ -21,16 +21,19 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json package-lock.json ./
-COPY src ./src
-COPY tsconfig.json ./
+# Set ownership at copy-time via --chown so the final RUN doesn't need to
+# `chown -R` over /app/node_modules (thousands of onnxruntime/transformers
+# files — measured at ~28s on a 4-core box).
+COPY --chown=node:node --from=deps /app/node_modules ./node_modules
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node tsconfig.json ./
 
 # `node:25-slim` ships with a `node` user (uid 1000, gid 1000). Reuse it instead
 # of creating a custom one — covers the common host-uid case without conflict.
 # Hosts that need a different uid override via compose `user: "<uid>:<gid>"`.
 RUN mkdir -p /data /home/node/.cache/huggingface \
-    && chown -R node:node /data /home/node/.cache /app
+    && chown node:node /data /home/node/.cache /home/node/.cache/huggingface
 
 USER node
 
