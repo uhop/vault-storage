@@ -108,10 +108,10 @@ export const importFile = (
   }
 
   if (options.tags) {
-    const result = options.tags.syncTags(recordId, data['tags']);
+    const result = options.tags.syncTags(recordId, relativePath, data['tags']);
     if (result.rejected.length > 0) {
       process.stderr.write(
-        `tags ${relativePath}: ${result.rejected.length} unknown (${result.rejected.join(', ')})\n`
+        `tags ${relativePath}: ${result.rejected.length} unknown (${result.rejected.join(', ')}); ${result.suggestionsFiled} new_tag suggestion(s) filed\n`
       );
     }
   }

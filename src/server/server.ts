@@ -21,7 +21,7 @@ import {
 import {lintHandler} from './handlers/lint.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {systemStatusHandler} from './handlers/system.ts';
-import {listTagsHandler, recordsByTagHandler} from './handlers/tags.ts';
+import {addAliasHandler, addTaxonomyHandler, listTagsHandler, recordsByTagHandler} from './handlers/tags.ts';
 import {
   deleteVaultHandler,
   getVaultHandler,
@@ -70,6 +70,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
   const tagsDeps = {db: opts.db};
   router.get('/tags', listTagsHandler(tagsDeps));
   router.get('/tags/{tag}/records', recordsByTagHandler(tagsDeps));
+  router.post('/tags/taxonomy', addTaxonomyHandler(tagsDeps));
+  router.post('/tags/aliases', addAliasHandler(tagsDeps));
 
   const suggestionsDeps = {db: opts.db};
   router.get('/suggestions', listSuggestionsHandler(suggestionsDeps));

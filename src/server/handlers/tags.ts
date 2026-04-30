@@ -1,5 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {TagSuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import {RecordsRepository} from '../../records/repository.ts';
+import {readBodyText} from '../body.ts';
 import {parsePagination} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -8,6 +10,12 @@ import {toJsonRecord} from '../serialize.ts';
 interface TagsDeps {
   db: DatabaseSync;
 }
+
+// Tag taxonomy CHECK constraint (see schema 0001_init.sql):
+//   - lowercased, length > 0
+//   - first char [a-z0-9], remaining chars [a-z0-9-]
+const TAXONOMY_TAG_RE = /^[a-z0-9][a-z0-9-]*$/;
+const ALIAS_RE = /^[^A-Z]+$/; // schema enforces lowercase only; permissive otherwise.
 
 /**
  * GET /tags?prefix=&offset=&limit=
@@ -109,4 +117,220 @@ export const recordsByTagHandler =
       limit,
       total
     });
+  };
+
+interface AddTaxonomyBody {
+  tag?: string;
+  description?: string;
+}
+
+interface AddAliasBody {
+  alias?: string;
+  canonical?: string;
+}
+
+const parseJsonObject = async <T>(raw: string): Promise<T | string> => {
+  if (raw.trim().length === 0) return 'request body required';
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return 'request body must be a JSON object';
+    }
+    return parsed as T;
+  } catch (err) {
+    return `invalid JSON: ${(err as Error).message}`;
+  }
+};
+
+const linkBackfillAndAutoAccept = (
+  db: DatabaseSync,
+  filer: TagSuggestionFiler,
+  pendingTag: string,
+  canonical: string,
+  resolvedBy: 'taxonomy-add' | 'alias-add',
+  now: string
+): {linked: number; accepted: number} => {
+  // Pull every pending new_tag suggestion for this tag-as-rejected. Each
+  // carries the record_id where the tag was originally typed; INSERT OR
+  // IGNORE the canonical tag on that record so the link materializes
+  // immediately rather than waiting for the next per-record reindex.
+  const pending = db
+    .prepare(
+      `SELECT payload FROM suggestions
+        WHERE kind = 'new_tag'
+          AND status = 'pending'
+          AND json_extract(payload, '$.tag') = ?`
+    )
+    .all(pendingTag) as Array<{payload: string}>;
+  const linkInsert = db.prepare('INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
+  let linked = 0;
+  for (const row of pending) {
+    let parsed: NewTagSuggestionPayload;
+    try {
+      parsed = JSON.parse(row.payload) as NewTagSuggestionPayload;
+    } catch {
+      continue;
+    }
+    if (typeof parsed.record_id !== 'string') continue;
+    const result = linkInsert.run(parsed.record_id, canonical);
+    if (Number(result.changes) > 0) linked++;
+  }
+  const accepted = filer.autoAcceptByTag(pendingTag, resolvedBy, now);
+  return {linked, accepted};
+};
+
+/**
+ * POST /tags/taxonomy {tag, description?}
+ * Add a canonical tag to `tags_taxonomy`. Auto-links the new tag to records
+ * that had it rejected (via pending `new_tag` suggestions) and resolves
+ * those suggestions as `accepted` with `resolved_by='taxonomy-add'`.
+ *
+ * 400 — invalid tag shape (must match `[a-z0-9][a-z0-9-]*`).
+ * 409 — tag already in taxonomy.
+ */
+export const addTaxonomyHandler =
+  (deps: TagsDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    const body = await parseJsonObject<AddTaxonomyBody>(raw);
+    if (typeof body === 'string') {
+      sendError(ctx.res, 400, 'bad_request', body);
+      return;
+    }
+    const tag = body.tag;
+    if (typeof tag !== 'string' || tag.length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'tag is required');
+      return;
+    }
+    if (!TAXONOMY_TAG_RE.test(tag)) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'tag must match /^[a-z0-9][a-z0-9-]*$/ (lowercase, alphanumeric + hyphens)'
+      );
+      return;
+    }
+
+    const existing = deps.db
+      .prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?')
+      .get(tag) as {x: number} | undefined;
+    if (existing) {
+      sendError(ctx.res, 409, 'conflict', `tag '${tag}' already in taxonomy`);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const filer = new TagSuggestionFiler(deps.db);
+
+    deps.db.exec('BEGIN');
+    try {
+      deps.db
+        .prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)')
+        .run(tag, body.description ?? null, now);
+      const {linked, accepted} = linkBackfillAndAutoAccept(
+        deps.db,
+        filer,
+        tag,
+        tag,
+        'taxonomy-add',
+        now
+      );
+      deps.db.exec('COMMIT');
+      sendJson(ctx.res, 200, {tag, description: body.description ?? null, linked, accepted});
+    } catch (err) {
+      deps.db.exec('ROLLBACK');
+      sendError(ctx.res, 500, 'internal', `failed to add taxonomy entry: ${(err as Error).message}`);
+    }
+  };
+
+/**
+ * POST /tags/aliases {alias, canonical}
+ * Add an alias of an existing canonical tag. Auto-links records that had
+ * the alias rejected and resolves matching pending suggestions as
+ * `accepted` with `resolved_by='alias-add'`.
+ *
+ * 400 — invalid alias or missing canonical.
+ * 404 — canonical not in taxonomy.
+ * 409 — alias already exists.
+ */
+export const addAliasHandler =
+  (deps: TagsDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    const body = await parseJsonObject<AddAliasBody>(raw);
+    if (typeof body === 'string') {
+      sendError(ctx.res, 400, 'bad_request', body);
+      return;
+    }
+    const alias = body.alias;
+    const canonical = body.canonical;
+    if (typeof alias !== 'string' || alias.length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'alias is required');
+      return;
+    }
+    if (!ALIAS_RE.test(alias)) {
+      sendError(ctx.res, 400, 'bad_request', 'alias must be lowercase');
+      return;
+    }
+    if (typeof canonical !== 'string' || canonical.length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'canonical is required');
+      return;
+    }
+
+    const canonicalRow = deps.db
+      .prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?')
+      .get(canonical) as {x: number} | undefined;
+    if (!canonicalRow) {
+      sendError(ctx.res, 404, 'tag_not_found', `canonical '${canonical}' is not in the taxonomy`);
+      return;
+    }
+
+    const existing = deps.db
+      .prepare('SELECT canonical FROM tag_aliases WHERE alias = ?')
+      .get(alias) as {canonical: string} | undefined;
+    if (existing) {
+      sendError(
+        ctx.res,
+        409,
+        'conflict',
+        `alias '${alias}' already exists (→ '${existing.canonical}')`
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const filer = new TagSuggestionFiler(deps.db);
+
+    deps.db.exec('BEGIN');
+    try {
+      deps.db
+        .prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)')
+        .run(alias, canonical);
+      const {linked, accepted} = linkBackfillAndAutoAccept(
+        deps.db,
+        filer,
+        alias,
+        canonical,
+        'alias-add',
+        now
+      );
+      deps.db.exec('COMMIT');
+      sendJson(ctx.res, 200, {alias, canonical, linked, accepted});
+    } catch (err) {
+      deps.db.exec('ROLLBACK');
+      sendError(ctx.res, 500, 'internal', `failed to add alias: ${(err as Error).message}`);
+    }
   };

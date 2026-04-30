@@ -561,3 +561,192 @@ test('GET /suggestions?kind=edge_type filters by kind', async t => {
     cleanup();
   }
 });
+
+// ─── POST /tags/taxonomy ─────────────────────────────────────────────────────
+
+const seedNewTagSuggestion = (
+  db: DatabaseSync,
+  args: {id: string; tag: string; recordId: string; filePath: string}
+): void => {
+  db.prepare(
+    `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+     VALUES (?, 'new_tag', ?, ?, 'pending', ?)`
+  ).run(
+    args.id,
+    args.recordId,
+    JSON.stringify({tag: args.tag, record_id: args.recordId, file_path: args.filePath}),
+    '2026-04-30T00:00:00.000Z'
+  );
+};
+
+test('POST /tags/taxonomy adds canonical and auto-resolves pending new_tag suggestions', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      seedNewTagSuggestion(ctx.db, {
+        id: 'sug1',
+        tag: 'machine-learning',
+        recordId: alphaId,
+        filePath: 'topics/alpha.md'
+      });
+
+      const r = await fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'machine-learning', description: 'ML topics'})
+      });
+      t.equal(r.status, 200);
+      const body = r.body as {tag: string; linked: number; accepted: number};
+      t.equal(body.tag, 'machine-learning');
+      t.equal(body.linked, 1, 'one record linked to the new tag');
+      t.equal(body.accepted, 1, 'one suggestion auto-accepted');
+
+      // Tag now in taxonomy.
+      const tagRow = ctx.db
+        .prepare('SELECT description FROM tags_taxonomy WHERE tag = ?')
+        .get('machine-learning') as {description: string} | undefined;
+      t.equal(tagRow?.description, 'ML topics', 'description stored');
+
+      // Record carries the tag.
+      const linkRow = ctx.db
+        .prepare('SELECT 1 AS x FROM tags WHERE record_id = ? AND tag = ?')
+        .get(alphaId, 'machine-learning');
+      t.ok(linkRow, 'record→tag link established');
+
+      // Suggestion is accepted with resolved_by='taxonomy-add'.
+      const sug = ctx.db
+        .prepare('SELECT status, resolved_by FROM suggestions WHERE id = ?')
+        .get('sug1') as {status: string; resolved_by: string};
+      t.equal(sug.status, 'accepted');
+      t.equal(sug.resolved_by, 'taxonomy-add');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /tags/taxonomy returns 409 on duplicate', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db
+        .prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)')
+        .run('design', null, '2026-04-30');
+      const r = await fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'design'})
+      });
+      t.equal(r.status, 409);
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /tags/taxonomy returns 400 on invalid tag shape', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'Has Spaces'})
+      });
+      t.equal(r.status, 400);
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+// ─── POST /tags/aliases ──────────────────────────────────────────────────────
+
+test('POST /tags/aliases adds alias, links pending suggestions to canonical', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db
+        .prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)')
+        .run('machine-learning', null, '2026-04-30');
+
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      seedNewTagSuggestion(ctx.db, {
+        id: 'sug2',
+        tag: 'ml',
+        recordId: alphaId,
+        filePath: 'topics/alpha.md'
+      });
+
+      const r = await fetchAuthed(`${ctx.url}/tags/aliases`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({alias: 'ml', canonical: 'machine-learning'})
+      });
+      t.equal(r.status, 200);
+      const body = r.body as {alias: string; canonical: string; linked: number; accepted: number};
+      t.equal(body.linked, 1, 'record linked to the canonical');
+      t.equal(body.accepted, 1, 'suggestion auto-accepted');
+
+      // Alias stored.
+      const aliasRow = ctx.db
+        .prepare('SELECT canonical FROM tag_aliases WHERE alias = ?')
+        .get('ml') as {canonical: string};
+      t.equal(aliasRow.canonical, 'machine-learning');
+
+      // Record carries the canonical tag (NOT the alias).
+      const linkRow = ctx.db
+        .prepare('SELECT tag FROM tags WHERE record_id = ?')
+        .all(alphaId) as Array<{tag: string}>;
+      t.deepEqual(
+        linkRow.map(r => r.tag),
+        ['machine-learning'],
+        'canonical tag linked'
+      );
+
+      const sug = ctx.db
+        .prepare('SELECT status, resolved_by FROM suggestions WHERE id = ?')
+        .get('sug2') as {status: string; resolved_by: string};
+      t.equal(sug.resolved_by, 'alias-add');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /tags/aliases returns 404 if canonical missing', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/tags/aliases`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({alias: 'foo', canonical: 'does-not-exist'})
+      });
+      t.equal(r.status, 404);
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
