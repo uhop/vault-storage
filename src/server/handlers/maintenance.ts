@@ -44,6 +44,11 @@ export const findDuplicatesHandler =
       sendError(ctx.res, 400, 'bad_request', 'per_record must be a positive integer');
       return;
     }
+    const minBodyLength = parsePositiveInt(ctx.query['min_body_length'], 200);
+    if (minBodyLength === null) {
+      sendError(ctx.res, 400, 'bad_request', 'min_body_length must be a positive integer');
+      return;
+    }
     const limitRaw = ctx.query['limit'];
     let limit: number | undefined;
     if (limitRaw !== undefined) {
@@ -55,6 +60,6 @@ export const findDuplicatesHandler =
       limit = parsed;
     }
 
-    const summary = findDuplicates(deps.db, {maxDistance, perRecord, limit});
+    const summary = findDuplicates(deps.db, {maxDistance, perRecord, limit, minBodyLength});
     sendJson(ctx.res, 200, summary);
   };
