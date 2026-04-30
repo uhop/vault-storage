@@ -167,3 +167,70 @@ export class TagSuggestionFiler {
     return Number(this.#autoAcceptByTag.run(now, resolvedBy, tag).changes);
   }
 }
+
+export interface DuplicateSuggestionPayload {
+  /** Record IDs in canonical (sorted) order so the pair-key is symmetric. */
+  a_record: string;
+  a_path: string;
+  b_record: string;
+  b_path: string;
+  /** Cosine distance — 0 = identical, 1 = orthogonal, 2 = opposite. */
+  distance: number;
+}
+
+export class DuplicateSuggestionFiler {
+  readonly #findExisting: StatementSync;
+  readonly #insert: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    // Match either ordering of the pair (the maintenance scan canonicalizes,
+    // but defensive matching keeps idempotency intact across schema/scan changes).
+    this.#findExisting = db.prepare(
+      `SELECT id FROM suggestions
+       WHERE kind = 'duplicate'
+         AND (
+           (json_extract(payload, '$.a_record') = ? AND json_extract(payload, '$.b_record') = ?) OR
+           (json_extract(payload, '$.a_record') = ? AND json_extract(payload, '$.b_record') = ?)
+         )
+       LIMIT 1`
+    );
+    this.#insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, 'duplicate', ?, ?, 'pending', ?)`
+    );
+  }
+
+  /**
+   * File a pending `duplicate` suggestion for a high-similarity record pair.
+   * Idempotent on the unordered pair `{a_record, b_record}`. Returns true if
+   * filed; false if a prior suggestion (any status) already covers the pair.
+   *
+   * Caller is responsible for canonicalizing the pair (lower record_id first)
+   * before calling — the payload reflects whatever order is passed.
+   */
+  fileDuplicateSuggestion(args: {
+    aRecordId: string;
+    aPath: string;
+    bRecordId: string;
+    bPath: string;
+    distance: number;
+    now: string;
+  }): boolean {
+    const existing = this.#findExisting.get(
+      args.aRecordId,
+      args.bRecordId,
+      args.bRecordId,
+      args.aRecordId
+    );
+    if (existing) return false;
+    const payload: DuplicateSuggestionPayload = {
+      a_record: args.aRecordId,
+      a_path: args.aPath,
+      b_record: args.bRecordId,
+      b_path: args.bPath,
+      distance: args.distance
+    };
+    this.#insert.run(uuidv7(), args.aRecordId, JSON.stringify(payload), args.now);
+    return true;
+  }
+}
