@@ -7,6 +7,7 @@ import {embedPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {importVault} from '../importer/import.ts';
+import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startGitSync, type GitSyncHandle} from './git-sync.ts';
 import {startServer} from './server.ts';
@@ -30,6 +31,18 @@ export const main = async (): Promise<void> => {
         `${summary.unchanged} unchanged, ${summary.skipped} skipped, ` +
         `${summary.edges.edgesCreated} edges, ${embed.embedded} embedded ` +
         `(${summary.durationMs}+${embed.durationMs} ms)\n`
+    );
+  }
+
+  // Bring `record_doc_vec` up to current. Idempotent: skips records whose
+  // doc-vec content_hash already matches their chunks. Backfills retroactively
+  // for records embedded before doc-vec storage existed (schema 4 onwards).
+  const backfill = backfillDocVecs(db);
+  if (backfill.written > 0 || backfill.skipped > 0) {
+    process.stdout.write(
+      `vault-storage: doc-vec backfill — ${backfill.written} written, ` +
+        `${backfill.upToDate} up-to-date, ${backfill.skipped} skipped ` +
+        `(${backfill.durationMs} ms)\n`
     );
   }
 

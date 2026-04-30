@@ -14,7 +14,7 @@
 // records added since).
 
 import type {DatabaseSync} from 'node:sqlite';
-import {RecordVecRepository} from '../db/vec-repo.ts';
+import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
 import {DuplicateSuggestionFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {RecordType, VaultRecord} from '../records/types.ts';
@@ -97,7 +97,7 @@ export const findDuplicates = (
   const now = options.now ?? new Date().toISOString();
 
   const records = new RecordsRepository(db);
-  const vec = new RecordVecRepository(db);
+  const vec = new RecordDocVecRepository(db);
   const filer = new DuplicateSuggestionFiler(db);
 
   const all = records.listAll();

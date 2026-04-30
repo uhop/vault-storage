@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {meanPoolNormalize, RecordDocVecRepository} from '../db/doc-vec-repo.ts';
 import {RecordVecRepository} from '../db/vec-repo.ts';
 import {chunkBody} from './chunker.ts';
 import type {Embedder} from './types.ts';
@@ -12,6 +13,8 @@ export interface EmbedSummary {
   total: number;
   /** Total chunks written this pass. */
   chunksWritten: number;
+  /** Doc-level vectors written (one per record-with-chunks). */
+  docVecsWritten: number;
   durationMs: number;
 }
 
@@ -66,8 +69,10 @@ export const embedPending = async (
   const pending = pendingStmt.all() as unknown[] as PendingRow[];
 
   const vecs = new RecordVecRepository(db);
+  const docVecs = new RecordDocVecRepository(db);
   let embedded = 0;
   let chunksWritten = 0;
+  let docVecsWritten = 0;
 
   // Each record produces N chunks; embed in batches of `batchSize` chunks
   // for throughput. We accumulate chunks across records, then commit when
@@ -89,6 +94,14 @@ export const embedPending = async (
         const vecs_ = flatVecs.slice(idx, idx + p.chunkTexts.length);
         idx += p.chunkTexts.length;
         vecs.setChunks(p.row.record_id, p.row.content_hash, vecs_);
+        // Doc-level vector: mean-pool the chunk vectors and L2-renormalize.
+        // Drives whole-record operations (find-duplicates, clustering).
+        // record_vec stays the source of truth for chunk-level retrieval.
+        const doc = meanPoolNormalize(vecs_);
+        if (doc !== null) {
+          docVecs.setDocVec(p.row.record_id, p.row.content_hash, doc);
+          docVecsWritten++;
+        }
         embedded++;
         chunksWritten += vecs_.length;
       }
@@ -116,6 +129,7 @@ export const embedPending = async (
     upToDate: total - embedded,
     total,
     chunksWritten,
+    docVecsWritten,
     durationMs: Math.round(performance.now() - start)
   };
 };

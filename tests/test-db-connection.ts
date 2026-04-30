@@ -13,10 +13,10 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 3, 'schema version is 3 after init + add-title + sync-baseline');
+  t.equal(result.current, 4, 'schema version is 4 after init + add-title + sync-baseline + doc-vecs');
   t.deepEqual(
     result.applied,
-    ['0001_init.sql', '0002_add_title.sql', '0003_sync_baseline.sql'],
+    ['0001_init.sql', '0002_add_title.sql', '0003_sync_baseline.sql', '0004_doc_vecs.sql'],
     'all migrations applied in order'
   );
 
@@ -47,7 +47,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 3, 'schema version stays at 3');
+  t.equal(second.current, 4, 'schema version stays at 4');
   db.close();
 });
 
