@@ -1,12 +1,12 @@
 import test from 'tape-six';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
-import {VaultClient} from '../src/client.ts';
-import {registerResources} from '../src/resources.ts';
-import {registerTools} from '../src/tools.ts';
+import {VaultClient} from '../src/client.js';
+import {registerResources} from '../src/resources.js';
+import {registerTools} from '../src/tools.js';
 
-const noopFetch: typeof fetch = (() => Promise.resolve(new Response('{}'))) as typeof fetch;
+const noopFetch = () => Promise.resolve(new Response('{}'));
 
-const makeClient = (): VaultClient =>
+const makeClient = () =>
   new VaultClient({apiUrl: 'http://test', apiToken: 'tok', fetchImpl: noopFetch});
 
 test('registerTools runs without throwing', t => {

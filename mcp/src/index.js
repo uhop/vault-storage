@@ -7,14 +7,14 @@
 
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
-import {clientFromEnv} from './client.ts';
-import {registerResources} from './resources.ts';
-import {registerTools} from './tools.ts';
+import {clientFromEnv} from './client.js';
+import {registerResources} from './resources.js';
+import {registerTools} from './tools.js';
 
 const PACKAGE_NAME = 'vault-storage-mcp';
-const PACKAGE_VERSION = '0.0.1';
+const PACKAGE_VERSION = '0.0.2';
 
-const main = async (): Promise<void> => {
+const main = async () => {
   const client = clientFromEnv();
   const mcp = new McpServer(
     {name: PACKAGE_NAME, version: PACKAGE_VERSION},

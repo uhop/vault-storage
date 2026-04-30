@@ -1,38 +1,34 @@
 import test from 'tape-six';
-import {VaultClient, VaultClientError} from '../src/client.ts';
+import {VaultClient, VaultClientError} from '../src/client.js';
 
-const fakeFetch = (
-  responder: (url: string, init: RequestInit) => Promise<Response> | Response
-): typeof fetch => {
-  return ((url: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
-    const result = responder(typeof url === 'string' ? url : url.toString(), init);
-    return Promise.resolve(result);
-  }) as typeof fetch;
+const fakeFetch = responder => (url, init = {}) => {
+  const result = responder(typeof url === 'string' ? url : url.toString(), init);
+  return Promise.resolve(result);
 };
 
-const ok = (body: unknown, status = 200, contentType = 'application/json'): Response =>
+const ok = (body, status = 200, contentType = 'application/json') =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), {
     status,
     headers: {'Content-Type': contentType}
   });
 
-const err = (body: unknown, status: number): Response =>
+const err = (body, status) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), {
     status,
     headers: {'Content-Type': 'application/json'}
   });
 
-const makeClient = (responder: Parameters<typeof fakeFetch>[0]): VaultClient =>
+const makeClient = responder =>
   new VaultClient({apiUrl: 'http://test', apiToken: 'tok', fetchImpl: fakeFetch(responder)});
 
 test('VaultClient: getJson sends Bearer token and parses JSON', async t => {
-  let seenAuth: string | null = null;
+  let seenAuth = null;
   const c = makeClient((url, init) => {
-    seenAuth = (init.headers as Record<string, string>)['Authorization'] ?? null;
+    seenAuth = init.headers['Authorization'] ?? null;
     t.equal(url, 'http://test/system/status', 'request URL is correct');
     return ok({records: 7});
   });
-  const body = await c.getJson<{records: number}>('/system/status');
+  const body = await c.getJson('/system/status');
   t.equal(seenAuth, 'Bearer tok', 'Authorization header set');
   t.equal(body.records, 7, 'JSON parsed');
 });
@@ -53,10 +49,9 @@ test('VaultClient: HTTP 404 throws VaultClientError with code=not_found', async 
     t.fail('expected throw');
   } catch (e) {
     t.ok(e instanceof VaultClientError, 'throws VaultClientError');
-    const v = e as VaultClientError;
-    t.equal(v.status, 404, 'status preserved');
-    t.equal(v.code, 'record_not_found', 'code from server body');
-    t.equal(v.message, 'no such record', 'message from server body');
+    t.equal(e.status, 404, 'status preserved');
+    t.equal(e.code, 'record_not_found', 'code from server body');
+    t.equal(e.message, 'no such record', 'message from server body');
   }
 });
 
@@ -66,7 +61,7 @@ test('VaultClient: 401 maps to auth_failed when server omits code', async t => {
     await c.getJson('/anything');
     t.fail('expected throw');
   } catch (e) {
-    t.equal((e as VaultClientError).code, 'auth_failed', 'derived code');
+    t.equal(e.code, 'auth_failed', 'derived code');
   }
 });
 
@@ -76,17 +71,17 @@ test('VaultClient: network error wraps to code=network', async t => {
     await c.getJson('/anything');
     t.fail('expected throw');
   } catch (e) {
-    t.equal((e as VaultClientError).code, 'network', 'network code');
-    t.ok((e as VaultClientError).message.includes('ECONNREFUSED'), 'message preserved');
+    t.equal(e.code, 'network', 'network code');
+    t.ok(e.message.includes('ECONNREFUSED'), 'message preserved');
   }
 });
 
 test('VaultClient: putText sends text/markdown and returns void on 204', async t => {
-  let seenContentType: string | null = null;
-  let seenBody: string | undefined;
+  let seenContentType = null;
+  let seenBody;
   const c = makeClient((_url, init) => {
-    seenContentType = (init.headers as Record<string, string>)['Content-Type'] ?? null;
-    seenBody = init.body as string;
+    seenContentType = init.headers['Content-Type'] ?? null;
+    seenBody = init.body;
     return new Response(null, {status: 204});
   });
   await c.putText('/vault/topics/x.md', '## body');
@@ -95,21 +90,21 @@ test('VaultClient: putText sends text/markdown and returns void on 204', async t
 });
 
 test('VaultClient: postJson serializes body and returns parsed response', async t => {
-  let seenBody: string | undefined;
-  let seenContentType: string | null = null;
+  let seenBody;
+  let seenContentType = null;
   const c = makeClient((_url, init) => {
-    seenBody = init.body as string;
-    seenContentType = (init.headers as Record<string, string>)['Content-Type'] ?? null;
+    seenBody = init.body;
+    seenContentType = init.headers['Content-Type'] ?? null;
     return ok({ok: true});
   });
-  const r = await c.postJson<{ok: boolean}>('/sync/from-obsidian', {dry_run: true});
+  const r = await c.postJson('/sync/from-obsidian', {dry_run: true});
   t.equal(seenContentType, 'application/json', 'Content-Type=application/json');
   t.equal(seenBody, JSON.stringify({dry_run: true}), 'body JSON-encoded');
   t.equal(r.ok, true, 'response parsed');
 });
 
 test('VaultClient: deletePath returns void on 204', async t => {
-  let seenMethod: string | undefined;
+  let seenMethod;
   const c = makeClient((_url, init) => {
     seenMethod = init.method;
     return new Response(null, {status: 204});

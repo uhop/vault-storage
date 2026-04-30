@@ -2,9 +2,8 @@
 // vault-storage server. Input schemas are inlined (closed enums, default
 // values) so the agent learns the canonical surface at tool-discovery time.
 
-import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
-import {VaultClient, VaultClientError} from './client.ts';
+import {VaultClientError} from './client.js';
 
 const RECORD_TYPE = z.enum([
   'idea',
@@ -54,59 +53,51 @@ const SUGGESTION_KIND = z.enum([
 
 const SUGGESTION_STATUS = z.enum(['pending', 'accepted', 'rejected']);
 
-interface ToolResult {
-  [key: string]: unknown;
-  content: Array<{type: 'text'; text: string}>;
-  isError?: boolean;
-}
-
-const json = (value: unknown): ToolResult => ({
+const json = value => ({
   content: [{type: 'text', text: JSON.stringify(value, null, 2)}]
 });
 
-const text = (value: string): ToolResult => ({content: [{type: 'text', text: value}]});
+const text = value => ({content: [{type: 'text', text: value}]});
 
 /**
  * Wrap a tool handler so any VaultClientError surfaces as `isError: true`
  * with structured details — the agent sees a consistent shape for every
  * REST failure and the underlying error code.
  */
-const wrap = <Args, R>(handler: (args: Args) => Promise<R>) =>
-  async (args: Args): Promise<ToolResult> => {
-    try {
-      const result = await handler(args);
-      if (result === undefined || result === null) return text('OK');
-      if (typeof result === 'string') return text(result);
-      return json(result);
-    } catch (err) {
-      if (err instanceof VaultClientError) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(
-                {
-                  error: err.message,
-                  code: err.code,
-                  status: err.status,
-                  details: err.details
-                },
-                null,
-                2
-              )
-            }
-          ],
-          isError: true
-        };
-      }
-      throw err;
+const wrap = handler => async args => {
+  try {
+    const result = await handler(args);
+    if (result === undefined || result === null) return text('OK');
+    if (typeof result === 'string') return text(result);
+    return json(result);
+  } catch (err) {
+    if (err instanceof VaultClientError) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                error: err.message,
+                code: err.code,
+                status: err.status,
+                details: err.details
+              },
+              null,
+              2
+            )
+          }
+        ],
+        isError: true
+      };
     }
-  };
+    throw err;
+  }
+};
 
-const csv = (arr: string[] | undefined): string | undefined =>
-  arr && arr.length > 0 ? arr.join(',') : undefined;
+const csv = arr => (arr && arr.length > 0 ? arr.join(',') : undefined);
 
-export const registerTools = (mcp: McpServer, client: VaultClient): void => {
+export const registerTools = (mcp, client) => {
   // ── search ────────────────────────────────────────────────────────────────
   mcp.registerTool(
     'vault_search',

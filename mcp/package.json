@@ -4,10 +4,10 @@
   "description": "MCP adapter for vault-storage. Exposes the REST API as MCP tools/resources for Claude Code.",
   "type": "module",
   "bin": {
-    "vault-storage-mcp": "dist/index.js"
+    "vault-storage-mcp": "src/index.js"
   },
   "files": [
-    "dist/",
+    "src/",
     "README.md",
     "LICENSE"
   ],
@@ -15,20 +15,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "tape6 --flags FO 'tests/test-*.ts'",
-    "ts-check": "tsc --noEmit",
-    "start": "node src/index.ts",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "prepublishOnly": "npm run build"
+    "test": "tape6 --flags FO 'tests/test-*.js'",
+    "start": "node src/index.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "tape-six": "^1.8.0",
-    "typescript": "^5.9.3"
+    "tape-six": "^1.8.0"
   },
   "keywords": [
     "mcp",
