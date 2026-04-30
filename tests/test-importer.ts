@@ -112,6 +112,40 @@ test('second import detects body changes as "updated" with stable record_id', t 
   }
 });
 
+test('importFile detects created/updated FM changes as "updated" (body unchanged)', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      ['---', 'title: X', 'created: 2026-04-20', 'updated: 2026-04-20', '---', 'body', ''].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    const before = repo.getByPath('topics/x.md');
+    t.equal(before?.created, '2026-04-20', 'initial created');
+    t.equal(before?.updated, '2026-04-20', 'initial updated');
+
+    // Change only `updated:` in frontmatter; body unchanged → content_hash stable.
+    writeMd(
+      root,
+      'topics/x.md',
+      ['---', 'title: X', 'created: 2026-04-20', 'updated: 2026-04-30', '---', 'body', ''].join('\n')
+    );
+    const second = importVault(db, root);
+    t.equal(second.updated, 1, 'FM-only updated change triggers updated path');
+    t.equal(second.unchanged, 0, 'not classified as unchanged');
+    const after = repo.getByPath('topics/x.md');
+    t.equal(after?.updated, '2026-04-30', 'DB row reflects new updated');
+    t.equal(after?.recordId, before?.recordId, 'record_id stable across update');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('frontmatter title round-trips into the records.title column', t => {
   const {root, cleanup} = setupVault();
   try {

@@ -63,7 +63,7 @@ export const importFile = (
   const status = isRecordStatus(fmStatus) ? fmStatus : DEFAULT_STATUS;
 
   const created = asString(data['created']) ?? existing?.created ?? now;
-  const updated = asString(data['updated']) ?? now;
+  const updated = asString(data['updated']) ?? existing?.updated ?? now;
   const priority = asNumber(data['priority']) ?? 0;
   const title = asString(data['title']) ?? null;
 
@@ -73,7 +73,9 @@ export const importFile = (
     existing.type === type &&
     existing.status === status &&
     existing.title === title &&
-    existing.priority === priority;
+    existing.priority === priority &&
+    existing.created === created &&
+    existing.updated === updated;
 
   let recordId: string;
   let action: 'inserted' | 'updated' | 'unchanged';
