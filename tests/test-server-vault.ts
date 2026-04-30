@@ -412,13 +412,13 @@ test('PUT /vault/{path} rejects non-md extensions', async t => {
   }
 });
 
-test('PUT /vault/{path} rejects auto-managed frontmatter keys', async t => {
+test('PUT /vault/{path} rejects DB-only frontmatter keys', async t => {
   const {root, cleanup} = setupVault();
   try {
     seed(root);
     const ctx = await startTestServer(root);
     try {
-      const md = ['---', "created: '2020-01-01'", '---', 'body', ''].join('\n');
+      const md = ['---', "content_hash: 'deadbeef'", '---', 'body', ''].join('\n');
       const r = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
         method: 'PUT',
         headers: {'Content-Type': 'text/markdown'},
@@ -426,6 +426,42 @@ test('PUT /vault/{path} rejects auto-managed frontmatter keys', async t => {
       });
       t.equal(r.status, 400, '400 bad request');
       t.equal((r.body as {code: string}).code, 'frontmatter_auto_managed', 'auto_managed code');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} accepts created/updated round-trip; indexer overrides', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const md = [
+        '---',
+        'title: Alpha',
+        "created: '2099-01-01'",
+        "updated: '2099-01-01'",
+        '---',
+        'Round-trip body.',
+        ''
+      ].join('\n');
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(r.status, 204, '204 no content');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('created: 2026-04-01'), 'created preserved from disk, not request');
+      t.notOk(onDisk.includes('2099-01-01'), 'request created/updated discarded');
+      const today = new Date().toISOString().slice(0, 10);
+      t.ok(onDisk.includes(`updated: ${today}`), 'updated stamped to today');
+      t.ok(onDisk.includes('Round-trip body.'), 'body replaced');
     } finally {
       await teardown(ctx);
     }

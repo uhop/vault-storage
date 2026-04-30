@@ -4,21 +4,26 @@ import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts
 import type {VaultRecord} from '../records/types.ts';
 
 /**
- * Frontmatter keys the API rejects on PUT/PATCH because they are auto-managed
- * by the indexer. Writes that include any of these → 400.
+ * Frontmatter keys the API rejects on PUT/PATCH because they are DB-only.
+ * Writes that include any of these → 400.
  *
  * `record_id` and `content_hash` come from DB identity, not user input.
- * `created` is set on first import; preserved on update.
- * `updated`, `last_referenced`, `decay_score` are reflection-time fields.
+ * `last_referenced` and `decay_score` are reflection-time fields.
  */
 const AUTO_MANAGED_KEYS = new Set([
   'record_id',
   'content_hash',
-  'created',
-  'updated',
   'last_referenced',
   'decay_score'
 ]);
+
+/**
+ * Frontmatter keys the API silently drops from request input. The indexer is
+ * authoritative for these — `created` is preserved from disk/record, `updated`
+ * is force-stamped to now. Round-trip writers (read → modify → write) can leave
+ * them in the payload without 400-ing.
+ */
+const INDEXER_OVERRIDE_KEYS = new Set(['created', 'updated']);
 
 export class WriterError extends Error {
   readonly code: string;
@@ -94,6 +99,11 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     );
   }
 
+  const sanitizedRequestFm: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(requestFm)) {
+    if (!INDEXER_OVERRIDE_KEYS.has(k)) sanitizedRequestFm[k] = v;
+  }
+
   let existingFm: Record<string, unknown> = {};
   if (existsSync(absolutePath)) {
     const onDisk = readFileSync(absolutePath, 'utf8');
@@ -108,7 +118,7 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     };
   }
 
-  const merged: Record<string, unknown> = {...existingFm, ...requestFm};
+  const merged: Record<string, unknown> = {...existingFm, ...sanitizedRequestFm};
   merged['updated'] = now.slice(0, 10);
   if (!('created' in merged)) {
     merged['created'] = existing ? existing.created.slice(0, 10) : now.slice(0, 10);

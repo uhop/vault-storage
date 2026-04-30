@@ -199,7 +199,7 @@ export const registerTools = (mcp: McpServer, client: VaultClient): void => {
     'vault_update_piece',
     {
       description:
-        'Replace a record body via /sections/{id} PUT. Body is full markdown (frontmatter optional; user-authored keys only — auto-managed keys like created/updated are rejected).',
+        'Replace a record body via /sections/{id} PUT. Body is full markdown (frontmatter optional; user-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected).',
       inputSchema: {
         record_id: z.string().min(1),
         markdown: z.string().describe('Full markdown content (frontmatter optional)')
@@ -226,7 +226,7 @@ export const registerTools = (mcp: McpServer, client: VaultClient): void => {
     'vault_write_file',
     {
       description:
-        'Create or replace a file at a vault-relative path. Body is full markdown. Frontmatter auto-managed keys (created, updated, content_hash, etc.) are rejected.',
+        'Create or replace a file at a vault-relative path. Body is full markdown. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected.',
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         markdown: z.string()

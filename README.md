@@ -105,7 +105,7 @@ All endpoints require `Authorization: Bearer <token>`.
 | GET    | `/sections`                | List records. Filters: `type`, `status`, `file_path`, `file_prefix`, `priority_min/max`, `updated_since`, `record_ids`. Pagination: `offset`, `limit` (max 100). |
 | GET    | `/sections/{record_id}`    | Read a record by ID. `?exclude=body` for a meta-only fetch.        |
 | GET    | `/sections/{record_id}/meta` | Frontmatter projection only (no body).                           |
-| PUT    | `/sections/{record_id}`    | Replace body (`Content-Type: text/markdown`). Frontmatter-aware: user keys merged, auto-managed keys rejected. |
+| PUT    | `/sections/{record_id}`    | Replace body (`Content-Type: text/markdown`). Frontmatter-aware: user keys merged; `created`/`updated` accepted but indexer-overridden; DB-only keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) rejected. |
 
 More endpoints (search, edges, suggestions) are coming with the MCP layer.
 

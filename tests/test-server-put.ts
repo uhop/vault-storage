@@ -161,7 +161,7 @@ test('PUT /sections/{id} accepts body without frontmatter', async t => {
   }
 });
 
-test('PUT /sections/{id} rejects auto-managed frontmatter keys', async t => {
+test('PUT /sections/{id} rejects DB-only frontmatter keys', async t => {
   const {root, cleanup} = setupVault();
   try {
     seed(root);
@@ -171,7 +171,7 @@ test('PUT /sections/{id} rejects auto-managed frontmatter keys', async t => {
       const newMd = [
         '---',
         'title: Alpha',
-        "created: '2026-01-01'",
+        "record_id: 'fake-id'",
         '---',
         'body',
         ''
@@ -187,6 +187,43 @@ test('PUT /sections/{id} rejects auto-managed frontmatter keys', async t => {
         'frontmatter_auto_managed',
         'code=frontmatter_auto_managed'
       );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} accepts created/updated round-trip; indexer overrides', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const newMd = [
+        '---',
+        'title: Alpha',
+        "created: '2099-01-01'",
+        "updated: '2099-01-01'",
+        '---',
+        'Round-trip body.',
+        ''
+      ].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: newMd
+      });
+      t.equal(put.status, 204, '204 no content');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('created: 2026-04-01'), 'created preserved from disk, not request');
+      t.notOk(onDisk.includes('2099-01-01'), 'request created/updated discarded');
+      const today = new Date().toISOString().slice(0, 10);
+      t.ok(onDisk.includes(`updated: ${today}`), 'updated stamped to today');
+      t.ok(onDisk.includes('Round-trip body.'), 'body replaced');
     } finally {
       await teardown(ctx);
     }
