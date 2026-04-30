@@ -54,6 +54,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 120s
+    labels:
+      - homepage.group=Hosted
+      - homepage.name=Vault Storage
+      - homepage.href=https://github.com/uhop/vault-storage
+      - homepage.description=AI-agent vault — markdown indexed with embeddings + typed edges; REST + MCP
 
 volumes:
   vault-hf-cache:
