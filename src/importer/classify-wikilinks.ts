@@ -23,6 +23,14 @@ export interface Classified {
    * the target, so the directional edge points the other way.
    */
   inverse?: boolean;
+  /**
+   * Surrounding body text — populated only for `type: 'cites'` (the classifier's
+   * default fallback for un-cued links). Used by build-edges to file
+   * `edge_type` suggestions so the agent can review default-cites and promote
+   * them to a more specific type via the source record's frontmatter `edges:`
+   * map. Other types are confidently classified and need no review context.
+   */
+  context?: string;
 }
 
 interface Pattern {
@@ -97,7 +105,10 @@ const WIKILINK_RE = /\[\[([^\]\n|[]+?)(?:\|[^\]]*)?\]\]/g;
 export const classifyBodyLinks = (body: string): Classified[] => {
   // Key: `${target}|${inverse ? 'I' : 'D'}`. Inverse and direct edges to the
   // same target coexist as separate entries — they're distinct edges in the DB.
-  const byKey = new Map<string, {target: string; type: EdgeType; inverse: boolean}>();
+  const byKey = new Map<
+    string,
+    {target: string; type: EdgeType; inverse: boolean; context?: string}
+  >();
   // Mask code regions so `[[ -z $x ]]` and `` `[[Page]]` `` don't surface as
   // wikilinks. Indices are preserved (replaced with same-length whitespace),
   // so the keyword windows still align with the original body for context.
@@ -134,13 +145,26 @@ export const classifyBodyLinks = (body: string): Classified[] => {
     const key = `${target}|${inverse ? 'I' : 'D'}`;
     const prior = byKey.get(key);
     if (prior === undefined || edgeRank(type) < edgeRank(prior.type)) {
-      byKey.set(key, {target, type, inverse});
+      const entry: {target: string; type: EdgeType; inverse: boolean; context?: string} = {
+        target,
+        type,
+        inverse
+      };
+      if (type === 'cites') {
+        // Capture wider context for suggestion-filing (~120 chars on each side).
+        const cStart = Math.max(0, at - 120);
+        const cEnd = Math.min(body.length, at + match[0].length + 120);
+        entry.context = body.slice(cStart, cEnd).replace(/\s+/g, ' ').trim();
+      }
+      byKey.set(key, entry);
     }
   }
 
-  return [...byKey.values()].map(({target, type, inverse}) =>
-    inverse ? {target, type, inverse: true} : {target, type}
-  );
+  return [...byKey.values()].map(({target, type, inverse, context}) => {
+    const out: Classified = inverse ? {target, type, inverse: true} : {target, type};
+    if (context !== undefined) out.context = context;
+    return out;
+  });
 };
 
 /** Lower rank = stronger / more specific edge type. `cites` is the weakest. */

@@ -238,3 +238,190 @@ test('edge types: related: → related-to, body links → cites', async t => {
     teardown(fx);
   }
 });
+
+test('default-cites edges file pending edge_type suggestions (idempotent)', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'a.md',
+      ['---', 'title: A', '---', 'A mentions [[b]] in passing.', ''].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+
+    const first = importVault(fx.db, fx.root);
+    t.equal(first.edges.suggestionsFiled, 1, 'one suggestion filed for the default-cites edge');
+
+    const records = new RecordsRepository(fx.db);
+    const a = records.getByPath('a.md');
+    const b = records.getByPath('b.md');
+
+    const rows = fx.db
+      .prepare(
+        `SELECT id, kind, subject_id, payload, status FROM suggestions WHERE kind = 'edge_type'`
+      )
+      .all() as Array<{id: string; kind: string; subject_id: string; payload: string; status: string}>;
+    t.equal(rows.length, 1, 'exactly one suggestion row');
+    t.equal(rows[0]?.subject_id, a!.recordId, 'subject_id is the source record');
+    t.equal(rows[0]?.status, 'pending', 'status pending');
+    const payload = JSON.parse(rows[0]!.payload) as {
+      from_record: string;
+      to_record: string;
+      from_path: string;
+      to_path: string;
+      classifier_type: string;
+      context: string;
+    };
+    t.equal(payload.from_record, a!.recordId, 'payload.from_record');
+    t.equal(payload.to_record, b!.recordId, 'payload.to_record');
+    t.equal(payload.from_path, 'a.md', 'payload.from_path');
+    t.equal(payload.to_path, 'b.md', 'payload.to_path');
+    t.equal(payload.classifier_type, 'cites', 'classifier_type recorded');
+    t.ok(payload.context.includes('mentions [[b]]'), 'context surrounds the wikilink');
+
+    const second = importVault(fx.db, fx.root);
+    t.equal(second.edges.suggestionsFiled, 0, 're-import files no new suggestions');
+    const after = fx.db
+      .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`)
+      .get() as {n: number};
+    t.equal(after.n, 1, 'still exactly one suggestion');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('keyword-cued body wikilinks are NOT filed as suggestions', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'a.md',
+      ['---', 'title: A', '---', 'A is derived from [[b]] and supersedes [[c]].', ''].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+    writeMd(fx.root, 'c.md', '---\ntitle: C\n---\nbody\n');
+
+    const summary = importVault(fx.db, fx.root);
+    t.equal(summary.edges.suggestionsFiled, 0, 'classified edges never trigger suggestions');
+
+    const n = (
+      fx.db
+        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`)
+        .get() as {n: number}
+    ).n;
+    t.equal(n, 0, 'no suggestions in DB');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('frontmatter `edges:` overrides default-cites and skips suggestion-filing', async t => {
+  const fx = setup();
+  try {
+    // First import: default-cites + suggestion filed.
+    writeMd(
+      fx.root,
+      'a.md',
+      ['---', 'title: A', '---', 'A mentions [[b]] vaguely.', ''].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+
+    const first = importVault(fx.db, fx.root);
+    t.equal(first.edges.suggestionsFiled, 1, 'first pass files a suggestion');
+    t.equal(first.edges.fmOverridesApplied, 0, 'no FM overrides yet');
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const a = records.getByPath('a.md');
+    const b = records.getByPath('b.md');
+
+    const beforeOverride = edges
+      .listOutbound(a!.recordId)
+      .find(e => e.toId === b!.recordId);
+    t.equal(beforeOverride?.type, 'cites', 'edge starts as default cites');
+
+    // Agent's resolution: write `edges: { b: derived-from }` into a.md frontmatter,
+    // then re-import. The override pins the edge type and clears the queue.
+    writeMd(
+      fx.root,
+      'a.md',
+      [
+        '---',
+        'title: A',
+        'edges:',
+        '  b: derived-from',
+        '---',
+        'A mentions [[b]] vaguely.',
+        ''
+      ].join('\n')
+    );
+
+    const second = importVault(fx.db, fx.root);
+    t.equal(second.edges.fmOverridesApplied, 1, 'FM override applied once');
+    t.equal(second.edges.suggestionsFiled, 0, 'no new suggestions after override');
+
+    const afterOverride = edges
+      .listOutbound(a!.recordId)
+      .find(e => e.toId === b!.recordId);
+    t.equal(afterOverride?.type, 'derived-from', 'edge promoted to derived-from');
+
+    const stale = edges
+      .listOutbound(a!.recordId)
+      .find(e => e.toId === b!.recordId && e.type === 'cites');
+    t.equal(stale, undefined, 'old cites edge GC-collected');
+
+    // The previously-pending suggestion auto-resolves to accepted when the FM
+    // override is applied — clears the queue without requiring an explicit
+    // POST /suggestions/{id}/accept call.
+    const sugg = fx.db
+      .prepare(
+        `SELECT status, resolved_by FROM suggestions WHERE kind = 'edge_type'`
+      )
+      .get() as {status: string; resolved_by: string | null};
+    t.equal(sugg.status, 'accepted', 'pending suggestion auto-resolved to accepted');
+    t.equal(sugg.resolved_by, 'fm-override', 'resolved_by attributes the auto-promotion');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('FM `edges:` with explicit cites prevents suggestion-filing for that pair', async t => {
+  const fx = setup();
+  try {
+    // The user reviewed the link and decided cites is correct — explicit
+    // `b: cites` clears it from the review queue without changing the type.
+    writeMd(
+      fx.root,
+      'a.md',
+      [
+        '---',
+        'title: A',
+        'edges:',
+        '  b: cites',
+        '---',
+        'A mentions [[b]] in passing.',
+        ''
+      ].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+
+    const summary = importVault(fx.db, fx.root);
+    t.equal(summary.edges.suggestionsFiled, 0, 'explicit cites entry skips filing');
+
+    const n = (
+      fx.db
+        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`)
+        .get() as {n: number}
+    ).n;
+    t.equal(n, 0, 'no suggestion filed for reviewed-as-cites');
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const a = records.getByPath('a.md');
+    const b = records.getByPath('b.md');
+    const edge = edges.listOutbound(a!.recordId).find(e => e.toId === b!.recordId);
+    t.equal(edge?.type, 'cites', 'edge stays as cites');
+  } finally {
+    teardown(fx);
+  }
+});

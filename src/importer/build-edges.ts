@@ -1,12 +1,16 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {extractRelatedFromFrontmatter} from '../markdown/wikilinks.ts';
+import {extractEdgesFromFrontmatter, extractRelatedFromFrontmatter} from '../markdown/wikilinks.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
+import {EDGE_TYPES} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
+import {EdgeSuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
+
+const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 
 export interface EdgeBuildSummary {
   /** Edges actually written to the DB (idempotent — re-runs over the same content yield 0). */
@@ -19,6 +23,10 @@ export interface EdgeBuildSummary {
   unresolvedBody: number;
   /** Wikilinks pointing at the source record itself; skipped. */
   selfReferences: number;
+  /** Frontmatter `edges:` overrides applied (cites → user-pinned type). */
+  fmOverridesApplied: number;
+  /** New `edge_type` suggestions filed for unreviewed default-cites edges. */
+  suggestionsFiled: number;
   durationMs: number;
 }
 
@@ -59,6 +67,11 @@ export const buildEdges = (
   const edges = new EdgesRepository(db);
   const all = records.listAll();
   const resolver = new WikilinkResolver(all);
+  const filer = new EdgeSuggestionFiler(db);
+
+  // O(1) lookup from record_id to record (used to render to_path in suggestion payloads).
+  const byRecordId = new Map<string, VaultRecord>();
+  for (const r of all) byRecordId.set(r.recordId, r);
 
   const source = options.vaultRoot ? fsBodySource(options.vaultRoot) : dbBodySource();
   const now = options.now ?? new Date().toISOString();
@@ -69,6 +82,8 @@ export const buildEdges = (
     unresolvedFrontmatter: 0,
     unresolvedBody: 0,
     selfReferences: 0,
+    fmOverridesApplied: 0,
+    suggestionsFiled: 0,
     durationMs: 0
   };
   const start = performance.now();
@@ -94,6 +109,19 @@ export const buildEdges = (
       const fmData = parseFrontmatter(frontmatterText).data;
       const related = extractRelatedFromFrontmatter(fmData);
 
+      // FM `edges:` map: target string → edge type. The user's per-record
+      // override for the body-wikilink classifier. Resolve target strings to
+      // record_ids so build-edges can match by toId regardless of which slug
+      // form ([[foo]] vs [[topics/foo]]) the body uses.
+      const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, EDGE_TYPE_SET);
+      const fmOverrides = new Map<string, EdgeType>(); // toId → type
+      for (const [target, type] of fmEdgesRaw) {
+        const resolved = resolver.resolve(target);
+        if (resolved && resolved !== record.recordId) {
+          fmOverrides.set(resolved, type as EdgeType);
+        }
+      }
+
       summary.edgesCreated += writeEdges(
         edges,
         resolver,
@@ -106,17 +134,69 @@ export const buildEdges = (
         touchKey
       );
 
+      // Body wikilinks: classify, apply FM overrides, write, then file
+      // suggestions for default-cites the user hasn't yet decided on.
+      const classified = classifyBodyLinks(body);
+      const adjusted: ClassifiedTarget[] = [];
+      const citesNeedingReview: Array<{toId: string; context: string}> = [];
+
+      for (const c of classified) {
+        const resolved = resolver.resolve(c.target);
+        if (!resolved || resolved === record.recordId) {
+          // Pass through to writeEdges so its existing summary counters fire.
+          adjusted.push(c.inverse ? {target: c.target, type: c.type, inverse: true} : {target: c.target, type: c.type});
+          continue;
+        }
+        let finalType = c.type;
+        const override = fmOverrides.get(resolved);
+        if (c.type === 'cites' && override !== undefined) {
+          finalType = override;
+          summary.fmOverridesApplied++;
+          // If a pending suggestion already exists for this pair (e.g. the
+          // user edited FM manually after filing), auto-resolve it.
+          filer.autoAcceptOnFmOverride(record.recordId, resolved, now);
+        }
+        adjusted.push(
+          c.inverse
+            ? {target: c.target, type: finalType, inverse: true}
+            : {target: c.target, type: finalType}
+        );
+        if (c.type === 'cites' && override === undefined && c.context !== undefined) {
+          citesNeedingReview.push({toId: resolved, context: c.context});
+        }
+      }
+
       summary.edgesCreated += writeEdges(
         edges,
         resolver,
         record,
-        classifyBodyLinks(body),
+        adjusted,
         now,
         summary,
         'body',
         touched,
         touchKey
       );
+
+      // File one suggestion per (fromRecord, toRecord) for unreviewed default-cites.
+      // The filer is idempotent: a suggestion of any status for the same pair
+      // is left in place.
+      const filedFor = new Set<string>();
+      for (const {toId, context} of citesNeedingReview) {
+        if (filedFor.has(toId)) continue;
+        filedFor.add(toId);
+        const toRecord = byRecordId.get(toId);
+        if (!toRecord) continue;
+        const filed = filer.fileEdgeTypeSuggestion({
+          fromRecordId: record.recordId,
+          fromPath: record.filePath,
+          toRecordId: toId,
+          toPath: toRecord.filePath,
+          context,
+          now
+        });
+        if (filed) summary.suggestionsFiled++;
+      }
     }
 
     // GC pass: any edge in the DB not covered by the current run is stale.

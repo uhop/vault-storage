@@ -52,3 +52,32 @@ export const extractRelatedFromFrontmatter = (data: {[key: string]: unknown}): s
   }
   return out;
 };
+
+/**
+ * Read the `edges:` map from frontmatter — a per-record override for the
+ * body-wikilink classifier. Each entry is `<target>: <edge-type>`, where
+ * `<target>` is a wikilink target as written in the body (slug or path form,
+ * e.g. `topics/foo` or `foo`) and `<edge-type>` is one of the canonical edge
+ * types from `EDGE_TYPES`.
+ *
+ * Used by build-edges to override the classifier's default `cites` for
+ * ambiguous body wikilinks. An explicit `target: cites` entry is meaningful —
+ * it marks "reviewed, cites is correct", distinct from no-entry (= unreviewed).
+ *
+ * Invalid entries (unknown edge types, non-string values) are silently
+ * skipped; the parser is permissive so a typo doesn't crash the indexer.
+ */
+export const extractEdgesFromFrontmatter = (
+  data: {[key: string]: unknown},
+  validTypes: ReadonlySet<string>
+): Map<string, string> => {
+  const out = new Map<string, string>();
+  const raw = data['edges'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [target, type] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof type !== 'string') continue;
+    if (!validTypes.has(type)) continue;
+    out.set(target, type);
+  }
+  return out;
+};
