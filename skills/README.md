@@ -16,7 +16,9 @@ caveats below before installing — paths and assumptions may need substitution.
 | `skills/vault-check-drift/`       | Drift check between project state and the vault-recorded baseline. Used by `/vault resume`.        |
 | `skills/vault-propose-related/`   | Densify the knowledge graph by proposing missing `related:` cross-references using BGE retrieval.  |
 | `skills/vault-search/`            | Single-shot search against the vault (`POST /search/simple/`). Lexical + semantic.                 |
-| `../bin/vault-curl`               | `curl` wrapper that prepends `$VAULT_API_URL` and the auth header. Required by all four skills.    |
+| `skills/vault-similar/`           | Embedding nearest-neighbours of a record (`GET /sections/{id}/similar`). vault-storage only.       |
+| `skills/vault-graph/`             | Typed-edge neighborhood walk (`GET /sections/{id}/neighborhood`). vault-storage only.              |
+| `../bin/vault-curl`               | `curl` wrapper that prepends `$VAULT_API_URL` and the auth header. Required by all six skills.     |
 
 ### Known gap — `vault-lint`
 
@@ -58,7 +60,7 @@ server's `.env` (see top-level README).
 From the root of this repo:
 
 ```bash
-cp -r skills/vault skills/vault-check-drift skills/vault-propose-related skills/vault-search ~/.claude/skills/
+cp -r skills/vault skills/vault-check-drift skills/vault-propose-related skills/vault-search skills/vault-similar skills/vault-graph ~/.claude/skills/
 ```
 
 Skills under `~/.claude/skills/` are user-scope — visible from every project.
