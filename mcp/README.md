@@ -1,4 +1,4 @@
-# vault-storage-mcp
+# @uhop/vault-storage-mcp
 
 MCP adapter for [vault-storage](https://github.com/uhop/vault-storage). Exposes
 the REST API as MCP tools and resources for Claude Code (and any other
@@ -17,7 +17,7 @@ In your Claude Code MCP config (`~/.claude/.mcp.json` or per-project
   "mcpServers": {
     "vault": {
       "command": "npx",
-      "args": ["-y", "vault-storage-mcp@latest"],
+      "args": ["-y", "@uhop/vault-storage-mcp@latest"],
       "env": {
         "VAULT_API_URL": "http://your-host:8123",
         "VAULT_API_TOKEN": "<bearer-token>"
