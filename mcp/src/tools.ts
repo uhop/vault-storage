@@ -448,4 +448,14 @@ export const registerTools = (mcp: McpServer, client: VaultClient): void => {
     },
     wrap(async () => client.getJson('/system/status'))
   );
+
+  mcp.registerTool(
+    'vault_lint',
+    {
+      description:
+        'Run integrity checks (bug-finding, not hygiene) over the vault DB. Categories: embedding hash drift, records without embeddings, orphan embeddings, temporal anomalies (updated < created or future stamps), dangling tag aliases. Returns {ok, total_issues, checks: {[name]: {count, samples}}}; samples are capped at 10 per check. Cheap (~50ms on a few-thousand-record vault); safe to call from session-start flows like /vault resume.',
+      inputSchema: {}
+    },
+    wrap(async () => client.getJson('/system/lint'))
+  );
 };

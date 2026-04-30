@@ -175,13 +175,20 @@ Rebuild context from the vault.
    details). If drift is detected, surface the report at the top of the
    resume output before reading logs — the vault's view of the project may
    be stale, and the recorded logs reflect that stale view.
-2. Read the 3 most recent session logs in `logs/`.
-3. Read relevant project notes for the current working directory.
-4. Summarize current state and what's left to do. If `check-drift` flagged
+2. **Integrity lint** — call `vault_lint` (or `vault-curl /system/lint -s`).
+   Cheap (~50ms). If `ok=false`, surface the non-zero check categories at
+   the top of the resume output (with counts and the first sample id per
+   category). These are bug indicators in the data — embedding drift,
+   missing embeddings, orphaned chunks, temporal anomalies, dangling tag
+   aliases. Do not auto-fix; report and let the user decide. If `ok=true`,
+   omit lint from the output entirely.
+3. Read the 3 most recent session logs in `logs/`.
+4. Read relevant project notes for the current working directory.
+5. Summarize current state and what's left to do. If `check-drift` flagged
    new commits / tags / publishes that aren't reflected in `projects/<name>`
    notes, update those notes to match (or at minimum flag the divergence in
    the summary).
-5. After syncing, run `check-drift --update` so the baseline captures the
+6. After syncing, run `check-drift --update` so the baseline captures the
    refreshed view and the next resume starts from a clean slate.
 
 ### /vault check [--update]

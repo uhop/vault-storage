@@ -102,6 +102,7 @@ All endpoints require `Authorization: Bearer <token>`.
 | Method | Path                       | Purpose                                                            |
 | ------ | -------------------------- | ------------------------------------------------------------------ |
 | GET    | `/system/status`           | Schema version, record / edge / suggestion counts.                 |
+| GET    | `/system/lint`             | Integrity checks (bug-finding): embedding hash drift, missing/orphan embeddings, temporal anomalies, dangling tag aliases. Returns `{ok, total_issues, checks}`. ~50ms; safe on session-start flows. |
 | GET    | `/sections`                | List records. Filters: `type`, `status`, `file_path`, `file_prefix`, `priority_min/max`, `updated_since`, `record_ids`. Pagination: `offset`, `limit` (max 100). |
 | GET    | `/sections/{record_id}`    | Read a record by ID. `?exclude=body` for a meta-only fetch.        |
 | GET    | `/sections/{record_id}/meta` | Frontmatter projection only (no body).                           |

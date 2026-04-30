@@ -18,6 +18,7 @@ import {
   listSuggestionsHandler,
   rejectSuggestionHandler
 } from './handlers/suggestions.ts';
+import {lintHandler} from './handlers/lint.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {systemStatusHandler} from './handlers/system.ts';
 import {listTagsHandler, recordsByTagHandler} from './handlers/tags.ts';
@@ -54,6 +55,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
       vaultDataPath: opts.env.vaultDataPath
     })
   );
+  router.get('/system/lint', lintHandler({db: opts.db}));
   router.get('/sections', listRecordsHandler(opts.db));
   router.get('/sections/{id}/neighborhood', neighborhoodHandler({db: opts.db}));
   router.get('/sections/{id}/similar', similarHandler({db: opts.db}));
