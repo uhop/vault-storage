@@ -54,6 +54,10 @@ export const neighborhoodHandler =
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
     }
+    // Phase E: bump last_referenced on the root only. Reachable neighbours
+    // discovered by traversal are not bumped — single agent query
+    // shouldn't reinforce a transitive cluster.
+    records.bumpLastReferenced(id);
 
     const types = parseEdgeTypes(ctx.query['via']);
     if (typeof types === 'string') {
@@ -162,6 +166,7 @@ export const backlinksHandler =
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
     }
+    records.bumpLastReferenced(id);
 
     const types = parseEdgeTypes(ctx.query['type']);
     if (typeof types === 'string') {

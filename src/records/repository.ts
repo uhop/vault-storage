@@ -50,6 +50,7 @@ export class RecordsRepository {
   readonly #listByParent: StatementSync;
   readonly #listAll: StatementSync;
   readonly #countAll: StatementSync;
+  readonly #bumpLastReferenced: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
@@ -92,6 +93,9 @@ export class RecordsRepository {
     );
     this.#listAll = db.prepare('SELECT * FROM records ORDER BY file_path');
     this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
+    this.#bumpLastReferenced = db.prepare(
+      'UPDATE records SET last_referenced = ? WHERE record_id = ?'
+    );
   }
 
   insert(r: VaultRecord): void {
@@ -170,5 +174,16 @@ export class RecordsRepository {
     // COUNT(*) always returns one row, so undefined isn't reachable here.
     const row = this.#countAll.get() as Record<string, unknown> as {n: number};
     return row.n;
+  }
+
+  /**
+   * Update `last_referenced` to mark a record as freshly read by an agent
+   * or user. Per Phase E (decay), single-record reads (GET /sections/{id},
+   * /vault/{path}, /sections/{id}/{neighborhood,similar,backlinks}) bump
+   * this timestamp; bulk listings do not. Used by the lazy decay-score
+   * computation: `score = exp(-lambda * (now - last_referenced) / day)`.
+   */
+  bumpLastReferenced(recordId: string, now: string = new Date().toISOString()): void {
+    this.#bumpLastReferenced.run(now, recordId);
   }
 }

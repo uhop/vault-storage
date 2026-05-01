@@ -29,6 +29,9 @@ export const similarHandler =
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
     }
+    // Phase E: bump last_referenced on the target record only. Neighbours
+    // are not bumped — that would cascade-bump on every nn lookup.
+    records.bumpLastReferenced(id);
 
     const kRaw = ctx.query['k'];
     let k = kRaw === undefined ? 10 : Number.parseInt(kRaw, 10);

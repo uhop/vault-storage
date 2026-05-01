@@ -72,6 +72,13 @@ export const getRecordHandler =
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
     }
+    // Phase E: bump last_referenced for decay-score reinforcement. Single-
+    // record reads count as a reference; the bulk listing path does not.
+    // Update both the DB row and the in-memory copy so this response
+    // reflects the freshly-bumped clock (decay_score = 1.0).
+    const refStamp = new Date().toISOString();
+    db.prepare('UPDATE records SET last_referenced = ? WHERE record_id = ?').run(refStamp, id);
+    row.last_referenced = refStamp;
     const includeBody = ctx.query['exclude'] !== 'body';
     sendJson(ctx.res, 200, toJsonRecord(rowToRecord(row), {includeBody}));
   };

@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
+import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -87,4 +88,23 @@ export const findCompactionCandidatesHandler =
     }
     const summary = findCompactionCandidates(deps.db, {minPieceCount});
     sendJson(ctx.res, 200, summary);
+  };
+
+/**
+ * POST /maintenance/find-retention-candidates
+ *
+ * Per-type calendar retention scan. Files `archive_candidate`
+ * suggestions for records past their type's age threshold (default
+ * thresholds per design: log > 90d, query > 180d, fleeting > 30d,
+ * queue-item with status='done' for > 90d, bug-report with
+ * status='done' for > 180d). Idempotent on `(record_id, status='pending')`.
+ *
+ * Returns `{scanned, qualifying, filed, durationMs}`.
+ */
+export const findRetentionCandidatesHandler =
+  (deps: MaintenanceDeps): Handler =>
+  ctx => {
+    const summary = findRetentionCandidates(deps.db);
+    sendJson(ctx.res, 200, summary);
+    void ctx;
   };

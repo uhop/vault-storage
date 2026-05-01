@@ -1,3 +1,4 @@
+import {computeDecayScore} from '../records/decay.ts';
 import type {Edge, VaultRecord} from '../records/types.ts';
 import {contentHash} from '../util/hash.ts';
 
@@ -62,7 +63,7 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     created: r.created,
     updated: r.updated,
     last_referenced: r.lastReferenced,
-    decay_score: r.decayScore,
+    decay_score: computeDecayScore(r),
     content_hash: r.contentHash,
     body_hash: contentHash(r.body),
     archived_at: r.archivedAt

@@ -292,6 +292,82 @@ test('GET /sections/{id} surfaces both content_hash and body_hash', async t => {
   }
 });
 
+test('GET /sections/{id} bumps last_referenced (decay reinforcement)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id ?? '';
+
+      // Snapshot before — no read has happened yet.
+      const before = db
+        .prepare('SELECT last_referenced FROM records WHERE record_id = ?')
+        .get(id) as {last_referenced: string | null};
+      t.equal(before.last_referenced, null, 'last_referenced starts null');
+
+      await authedFetch(`${url}/sections/${id}`);
+
+      const after = db
+        .prepare('SELECT last_referenced FROM records WHERE record_id = ?')
+        .get(id) as {last_referenced: string | null};
+      t.ok(typeof after.last_referenced === 'string', 'last_referenced now set');
+      t.ok(
+        Date.parse(after.last_referenced!) > Date.now() - 5_000,
+        'set to ~now (within 5s)'
+      );
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /sections/{id} response includes decay_score field', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id ?? '';
+
+      const {body} = await authedFetch(`${url}/sections/${id}`);
+      const r = body as {decay_score: number};
+      t.equal(typeof r.decay_score, 'number', 'decay_score present');
+      // Just-bumped on this read → score = 1.0 (within float tolerance).
+      t.ok(r.decay_score > 0.999, `decay_score ~1.0 immediately after read; got ${r.decay_score}`);
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /sections/{id} bulk listing does NOT bump last_referenced', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      // Bulk listing — should NOT cascade-bump every record's clock.
+      await authedFetch(`${url}/sections?type=permanent&limit=50`);
+      const rows = db
+        .prepare('SELECT last_referenced FROM records')
+        .all() as Array<{last_referenced: string | null}>;
+      const bumped = rows.filter(r => r.last_referenced !== null).length;
+      t.equal(bumped, 0, 'bulk list does not bump');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('GET /sections/{id}?exclude=body omits body', async t => {
   const {root, cleanup} = setupVault();
   try {

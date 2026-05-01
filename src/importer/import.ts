@@ -1,7 +1,11 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordsRepository} from '../records/repository.ts';
 import {buildEdges, type EdgeBuildSummary} from './build-edges.ts';
-import {AgentEnrichmentStaleFiler, TagSuggestionFiler} from './file-suggestions.ts';
+import {
+  AgentEnrichmentStaleFiler,
+  ArchiveCandidateFiler,
+  TagSuggestionFiler
+} from './file-suggestions.ts';
 import {importFile} from './import-file.ts';
 import {TagsImporter} from './import-tags.ts';
 import {walkMarkdown} from './walk.ts';
@@ -29,6 +33,7 @@ export const importVault = (db: DatabaseSync, vaultRoot: string): ImportSummary 
   const tags = new TagsImporter(db);
   const agentStale = new AgentEnrichmentStaleFiler(db);
   const tagSuggestion = new TagSuggestionFiler(db);
+  const archiveCandidate = new ArchiveCandidateFiler(db);
   const start = performance.now();
   const now = new Date().toISOString();
 
@@ -46,7 +51,8 @@ export const importVault = (db: DatabaseSync, vaultRoot: string): ImportSummary 
         const result = importFile(records, file.relativePath, file.absolutePath, now, {
           tags,
           agentStale,
-          tagSuggestion
+          tagSuggestion,
+          archiveCandidate
         });
         if (result.action === 'inserted') inserted++;
         else if (result.action === 'updated') updated++;

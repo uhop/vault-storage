@@ -404,6 +404,92 @@ export class CompactionCandidateFiler {
   }
 }
 
+export interface ArchiveCandidatePayload {
+  record_id: string;
+  file_path: string;
+  type: string;
+  status: string;
+  /** Days since the timestamp that triggered the threshold (typically `updated`). */
+  age_days: number;
+  /** Threshold the record crossed (e.g. "log > 90d"). */
+  rule: string;
+}
+
+/**
+ * `archive_candidate` — the per-type retention scan flagged a record as
+ * past its calendar threshold (logs > 90d, queries > 180d, queue-items
+ * with status='done' for > 90d, etc.). The agent (or user) decides
+ * whether to flip status to 'archived' or reject the suggestion.
+ *
+ * Idempotent on `(record_id, status='pending')`. Auto-resolves with
+ * `resolved_by='archived'` when the record's status becomes
+ * 'archived' on next import (the user/skill flipped FM in response).
+ */
+export class ArchiveCandidateFiler {
+  readonly #findExisting: StatementSync;
+  readonly #insert: StatementSync;
+  readonly #autoAcceptForRecord: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    this.#findExisting = db.prepare(
+      `SELECT id FROM suggestions
+       WHERE kind = 'archive_candidate'
+         AND status = 'pending'
+         AND subject_id = ?
+       LIMIT 1`
+    );
+    this.#insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, 'archive_candidate', ?, ?, 'pending', ?)`
+    );
+    this.#autoAcceptForRecord = db.prepare(
+      `UPDATE suggestions
+          SET status = 'accepted',
+              resolved_at = ?,
+              resolved_by = 'archived'
+        WHERE kind = 'archive_candidate'
+          AND status = 'pending'
+          AND subject_id = ?`
+    );
+  }
+
+  /**
+   * File a pending archive_candidate. Returns true if filed; false if a
+   * pending suggestion already exists for the record.
+   */
+  fileCandidate(args: {
+    recordId: string;
+    filePath: string;
+    type: string;
+    status: string;
+    ageDays: number;
+    rule: string;
+    now: string;
+  }): boolean {
+    const existing = this.#findExisting.get(args.recordId);
+    if (existing) return false;
+    const payload: ArchiveCandidatePayload = {
+      record_id: args.recordId,
+      file_path: args.filePath,
+      type: args.type,
+      status: args.status,
+      age_days: args.ageDays,
+      rule: args.rule
+    };
+    this.#insert.run(uuidv7(), args.recordId, JSON.stringify(payload), args.now);
+    return true;
+  }
+
+  /**
+   * Auto-accept any pending archive_candidate for a record that's now
+   * been moved to status='archived'. Returns true if a pending was
+   * promoted.
+   */
+  autoAcceptForRecord(recordId: string, now: string): boolean {
+    return this.#autoAcceptForRecord.run(now, recordId).changes > 0;
+  }
+}
+
 export interface AgentEnrichmentStalePayload {
   record_id: string;
   file_path: string;

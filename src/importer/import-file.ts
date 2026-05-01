@@ -10,7 +10,11 @@ import {
 } from '../records/types.ts';
 import {contentHash, embedInputHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
-import type {AgentEnrichmentStaleFiler, TagSuggestionFiler} from './file-suggestions.ts';
+import type {
+  AgentEnrichmentStaleFiler,
+  ArchiveCandidateFiler,
+  TagSuggestionFiler
+} from './file-suggestions.ts';
 import type {TagsImporter} from './import-tags.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
 
@@ -104,6 +108,13 @@ export interface ImportFileOptions {
    * comparison goes through TagsImporter).
    */
   tagSuggestion?: TagSuggestionFiler;
+  /**
+   * When provided, auto-resolves any pending `archive_candidate` suggestion
+   * for a record whose FM status has flipped to `archived`. The retention
+   * scan files the suggestions; this hook closes the loop on the import side
+   * once the user (or skill) acts.
+   */
+  archiveCandidate?: ArchiveCandidateFiler;
 }
 
 /**
@@ -225,6 +236,13 @@ export const importFile = (
         });
       }
     }
+  }
+
+  // Archive-candidate auto-resolve. When a record's FM status reaches
+  // `archived`, any pending archive_candidate for it is moot — accept it
+  // as resolved on the import side so the suggestions queue tracks reality.
+  if (options.archiveCandidate && status === 'archived') {
+    options.archiveCandidate.autoAcceptForRecord(recordId, now);
   }
 
   // Agent-enrichment staleness check. Only meaningful when both fields are
