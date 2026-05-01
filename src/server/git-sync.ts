@@ -11,9 +11,9 @@
 //   - All git invocations are wrapped: missing git, non-repo, network errors
 //     all surface as warnings, not crashes.
 
-import {spawn} from 'node:child_process';
-import {existsSync} from 'node:fs';
-import {join} from 'node:path';
+import type {DatabaseSync} from 'node:sqlite';
+import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
+import {getCurrentHead, isGitRepo, runGit} from '../util/git.ts';
 
 export interface GitSyncOptions {
   vaultDataPath: string;
@@ -28,6 +28,14 @@ export interface GitSyncOptions {
    */
   authorName?: string;
   authorEmail?: string;
+  /**
+   * When provided, advance `meta.last_indexed_commit` to the new HEAD
+   * after each successful auto-commit. Keeps the multi-writer reindex
+   * anchor in sync with reality so a subsequent post-pull diff sees a
+   * clean range. Optional — bulk-import callers can manage the anchor
+   * themselves.
+   */
+  db?: DatabaseSync;
   log?: (msg: string) => void;
   onError?: (err: unknown) => void;
 }
@@ -37,30 +45,6 @@ export interface GitSyncHandle {
   syncNow: () => Promise<void>;
   close: () => void;
 }
-
-interface GitResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-const runGit = (cwd: string, args: string[]): Promise<GitResult> =>
-  new Promise(resolve => {
-    const proc = spawn('git', args, {cwd, stdio: ['ignore', 'pipe', 'pipe']});
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', d => {
-      stdout += d.toString('utf8');
-    });
-    proc.stderr.on('data', d => {
-      stderr += d.toString('utf8');
-    });
-    proc.on('close', code => resolve({exitCode: code ?? -1, stdout, stderr}));
-    proc.on('error', err => resolve({exitCode: -1, stdout, stderr: String(err)}));
-  });
-
-const isGitRepo = (path: string): boolean =>
-  existsSync(join(path, '.git')) || existsSync(join(path, '.git/HEAD'));
 
 const defaultSubject = (n: number): string => `vault-storage auto-commit (${n} file${n === 1 ? '' : 's'})`;
 
@@ -111,6 +95,15 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
       return;
     }
     log(`git-sync: committed ${dirtyLines.length} change(s)`);
+
+    // Advance the multi-writer reindex anchor so a later post-pull diff
+    // sees a coherent `last_indexed_commit..HEAD` range. The watcher
+    // already imported the file changes that produced this commit; we
+    // just need the anchor to track HEAD.
+    if (opts.db) {
+      const head = await getCurrentHead(vaultDataPath);
+      if (head) setLastIndexedCommit(opts.db, head);
+    }
 
     if (autoPush) {
       const push = await runGit(vaultDataPath, ['push']);

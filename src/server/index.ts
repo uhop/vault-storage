@@ -7,6 +7,8 @@ import {embedPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {importVault} from '../importer/import.ts';
+import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
+import {getCurrentHead} from '../util/git.ts';
 import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startGitSync, type GitSyncHandle} from './git-sync.ts';
@@ -26,6 +28,10 @@ export const main = async (): Promise<void> => {
     process.stdout.write(`vault-storage: initial reindex of ${env.vaultDataPath}…\n`);
     const summary = importVault(db, env.vaultDataPath);
     const embed = await embedPending(db, embedder);
+    // Pin the multi-writer reindex anchor to the current HEAD so a
+    // subsequent post-pull diff has a clean range.
+    const head = await getCurrentHead(env.vaultDataPath);
+    if (head) setLastIndexedCommit(db, head);
     process.stdout.write(
       `vault-storage: reindex done — ${summary.inserted} new, ${summary.updated} updated, ` +
         `${summary.unchanged} unchanged, ${summary.skipped} skipped, ` +
@@ -72,7 +78,8 @@ export const main = async (): Promise<void> => {
       intervalMs: env.commitIntervalMs,
       autoPush: env.autoPush,
       authorName: env.gitAuthorName,
-      authorEmail: env.gitAuthorEmail
+      authorEmail: env.gitAuthorEmail,
+      db
     });
     process.stdout.write(
       `vault-storage: git-sync every ${env.commitIntervalMs}ms (push=${env.autoPush})\n`

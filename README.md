@@ -186,6 +186,36 @@ Use `rclone`, `rsync`, or any encryption-aware wrapper instead of
 tool all live on the host — none enter the container. Bucket-level
 versioning preserves history at no application cost.
 
+## Multi-writer (git-as-sync)
+
+The vault-data tree is a normal git repo. Multiple machines can each
+run their own vault-storage instance against the same shared remote;
+synchronization is via `git pull` / `git push`, not the application
+layer. Each machine maintains its own local SQLite (the DB is a
+derived index — reconstructable from files in O(records) embed time).
+
+After a `git pull` lands new commits on a non-primary machine, the
+local DB lags. Bring it up to date with the incremental reindex:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8123/maintenance/incremental-reindex
+```
+
+It diffs `meta.last_indexed_commit..HEAD`, dispatches per-file:
+- modified / added → re-imports through the normal pipeline (tags,
+  agent block, suggestions, edges)
+- deleted → drops the row
+- renamed → preserves `record_id` by updating the path key
+
+If the recorded anchor is no longer in HEAD's ancestry (force-push,
+rebase) the call falls back to a full `importVault` and re-pins HEAD.
+Force a full reindex any time with `?full=true`.
+
+Merge conflicts are the user's responsibility — resolve via standard
+git, then run incremental reindex. The model is "git is the
+synchronization layer; the DB is per-machine derivative state."
+
 ## Tests
 
 ```bash

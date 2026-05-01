@@ -3,6 +3,10 @@ import type {DatabaseSync} from 'node:sqlite';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
+import {
+  clearLastIndexedCommit,
+  incrementalReindex
+} from '../../maintenance/incremental-reindex.ts';
 import {snapshotDb} from '../snapshot.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -130,6 +134,39 @@ export const findRetentionCandidatesHandler =
  * or set VAULT_BACKUP_S3_BUCKET to enable the auto-poll loop that does
  * the same internally.
  */
+/**
+ * POST /maintenance/incremental-reindex[?full=true]
+ *
+ * Re-import only the markdown files that changed between
+ * `meta.last_indexed_commit` and current HEAD. Renames preserve
+ * record_id; deletes drop the row; modifies/adds run through the
+ * normal importFile path (tags, agent block, suggestions, edges).
+ *
+ * Falls back to a full importVault when the recorded anchor is no
+ * longer in HEAD's ancestry (force-push / rebase) — and on bootstrap
+ * runs a full import to pin HEAD. `?full=true` forces the full path
+ * regardless of state (the explicit escape hatch).
+ *
+ * Returns `{fromCommit, toCommit, changedFiles, imported, deleted,
+ * renamed, fellBack, durationMs}`.
+ */
+export const incrementalReindexHandler =
+  (deps: SnapshotDeps): Handler =>
+  async ctx => {
+    if (ctx.query['full'] === 'true') clearLastIndexedCommit(deps.db);
+    try {
+      const summary = await incrementalReindex(deps.db, deps.vaultDataPath);
+      sendJson(ctx.res, 200, summary);
+    } catch (err) {
+      sendError(
+        ctx.res,
+        500,
+        'incremental_reindex_failed',
+        `incremental reindex failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
 export const snapshotHandler =
   (deps: SnapshotDeps): Handler =>
   async ctx => {
