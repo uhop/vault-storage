@@ -171,19 +171,20 @@ curl -X POST -H "Authorization: Bearer $VAULT_API_TOKEN" \
 ```
 
 ```bash
-# Host-side cron, daily 03:30 (Chicago example): snapshot then ship via
-# the user's tooling. `jot` is one option (encryption + S3 in one call):
+# Host-side cron, daily 03:30: snapshot then ship via whatever upload
+# tool you have on hand. The vault-data tree is bind-mounted on the
+# host, so the snapshot file lands at a path the host can read directly.
 30 3 * * * \
   curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
        http://localhost:8123/maintenance/snapshot && \
-  jot put /media/raid/Vault-Data/.snapshots/vault.sqlite.gz \
-          vault-storage/vault.sqlite -a gz.age
+  aws s3 cp /media/raid/Vault-Data/.snapshots/vault.sqlite.gz \
+            s3://${YOUR_BUCKET}/vault-storage/vault.sqlite.gz
 ```
 
-Substitute `aws s3 cp`, `rclone`, `rsync`, etc. as preferred. Encryption
-keys, S3 credentials, and the upload tool live on the host — none enter
-the container. Bucket-level versioning preserves history at no
-application cost.
+Use `rclone`, `rsync`, or any encryption-aware wrapper instead of
+`aws s3 cp` as preferred. Encryption keys, credentials, and the upload
+tool all live on the host — none enter the container. Bucket-level
+versioning preserves history at no application cost.
 
 ## Tests
 

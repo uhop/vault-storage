@@ -11,9 +11,10 @@
 // Architecture: the server produces the snapshot inside its own DB
 // connection (where VACUUM INTO is safe under concurrent writes); the
 // host-side picks the file up off the bind-mount and ships it offsite.
-// Encryption keys, S3 credentials, and the upload tool (`jot`, `aws s3
-// cp`, `rclone`, etc) all live on the host — none of them belong inside
-// the container. See compose.yaml for the recommended host-cron snippet.
+// Encryption keys, S3 credentials, and the upload tool (`aws s3 cp`,
+// `rclone`, `rsync`, etc) all live on the host — none of them belong
+// inside the container. See README.md § Backup for the recommended
+// host-cron snippet.
 
 import {createReadStream, createWriteStream, existsSync, mkdirSync, statSync, unlinkSync} from 'node:fs';
 import {dirname} from 'node:path';
