@@ -1,7 +1,13 @@
 import {readFileSync} from 'node:fs';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../records/repository.ts';
-import {RECORD_STATUSES, type RecordStatus, type VaultRecord} from '../records/types.ts';
+import {
+  PRIORITY_ALIASES,
+  RECORD_STATUSES,
+  STATUS_ALIASES,
+  type RecordStatus,
+  type VaultRecord
+} from '../records/types.ts';
 import {contentHash, embedInputHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
 import type {AgentEnrichmentStaleFiler, TagSuggestionFiler} from './file-suggestions.ts';
@@ -11,14 +17,37 @@ import {isRecordType, typeFromPath} from './type-from-path.ts';
 const DEFAULT_STATUS: RecordStatus = 'active';
 const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 
-const isRecordStatus = (value: unknown): value is RecordStatus =>
-  typeof value === 'string' && STATUS_SET.has(value);
-
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
 
-const asNumber = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+/**
+ * Normalize FM `status` into a canonical {@link RecordStatus}. Canonical
+ * values pass through; known legacy aliases (`completed`, `in-progress`,
+ * etc.) map to their canonical equivalents per closed-enums design.
+ * Unknown values fall back to the default.
+ */
+const normalizeStatus = (raw: unknown): RecordStatus => {
+  if (typeof raw !== 'string') return DEFAULT_STATUS;
+  if (STATUS_SET.has(raw)) return raw as RecordStatus;
+  const aliased = STATUS_ALIASES[raw];
+  if (aliased !== undefined) return aliased;
+  return DEFAULT_STATUS;
+};
+
+/**
+ * Normalize FM `priority` into the canonical integer. Numbers pass
+ * through (any finite int; the field is open-ended). Named aliases
+ * (`low`/`normal`/`high`/`critical`) map per closed-enums design.
+ * Anything else defaults to 0.
+ */
+const normalizePriority = (raw: unknown): number => {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string') {
+    const aliased = PRIORITY_ALIASES[raw];
+    if (aliased !== undefined) return aliased;
+  }
+  return 0;
+};
 
 interface AgentBlock {
   summary: string | null;
@@ -105,12 +134,11 @@ export const importFile = (
   const fmType = data['type'];
   const type = isRecordType(fmType) ? fmType : typeFromPath(relativePath);
 
-  const fmStatus = data['status'];
-  const status = isRecordStatus(fmStatus) ? fmStatus : DEFAULT_STATUS;
+  const status = normalizeStatus(data['status']);
 
   const created = asString(data['created']) ?? existing?.created ?? now;
   const updated = asString(data['updated']) ?? existing?.updated ?? now;
-  const priority = asNumber(data['priority']) ?? 0;
+  const priority = normalizePriority(data['priority']);
   const title = asString(data['title']) ?? null;
   const agent = readAgentBlock(data);
 

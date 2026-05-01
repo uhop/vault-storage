@@ -661,6 +661,58 @@ test('tag_suggestion skipped when agent block missing or non-array tags_suggeste
   }
 });
 
+test('importer normalizes legacy status aliases per closed-enums design', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/a.md', '---\ntitle: A\nstatus: completed\n---\nbody A\n');
+    writeMd(root, 'topics/b.md', '---\ntitle: B\nstatus: in-progress\n---\nbody B\n');
+    writeMd(root, 'topics/c.md', '---\ntitle: C\nstatus: stub\n---\nbody C\n');
+    writeMd(root, 'topics/d.md', '---\ntitle: D\nstatus: archive\n---\nbody D\n');
+    writeMd(root, 'topics/e.md', '---\ntitle: E\nstatus: not-a-real-status\n---\nbody E\n');
+    writeMd(root, 'topics/f.md', '---\ntitle: F\n---\nbody F\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    t.equal(repo.getByPath('topics/a.md')?.status, 'done', 'completed -> done');
+    t.equal(repo.getByPath('topics/b.md')?.status, 'active', 'in-progress -> active');
+    t.equal(repo.getByPath('topics/c.md')?.status, 'draft', 'stub -> draft');
+    t.equal(repo.getByPath('topics/d.md')?.status, 'archived', 'archive -> archived');
+    t.equal(repo.getByPath('topics/e.md')?.status, 'active', 'unknown -> default active');
+    t.equal(repo.getByPath('topics/f.md')?.status, 'active', 'absent -> default active');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer normalizes named priority aliases; integers pass through', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/low.md', '---\ntitle: L\npriority: low\n---\nbody\n');
+    writeMd(root, 'topics/high.md', '---\ntitle: H\npriority: high\n---\nbody\n');
+    writeMd(root, 'topics/critical.md', '---\ntitle: C\npriority: critical\n---\nbody\n');
+    writeMd(root, 'topics/twenty-two.md', '---\ntitle: T\npriority: 22\n---\nbody\n');
+    writeMd(root, 'topics/neg.md', '---\ntitle: N\npriority: -5\n---\nbody\n');
+    writeMd(root, 'topics/junk.md', '---\ntitle: J\npriority: super-critical\n---\nbody\n');
+    writeMd(root, 'topics/none.md', '---\ntitle: A\n---\nbody\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    t.equal(repo.getByPath('topics/low.md')?.priority, -1, 'low -> -1');
+    t.equal(repo.getByPath('topics/high.md')?.priority, 1, 'high -> 1');
+    t.equal(repo.getByPath('topics/critical.md')?.priority, 2, 'critical -> 2');
+    t.equal(repo.getByPath('topics/twenty-two.md')?.priority, 22, 'open-ended int passes through');
+    t.equal(repo.getByPath('topics/neg.md')?.priority, -5, 'negative int passes through');
+    t.equal(repo.getByPath('topics/junk.md')?.priority, 0, 'unknown name -> default 0');
+    t.equal(repo.getByPath('topics/none.md')?.priority, 0, 'absent -> default 0');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('walker skips .git and .obsidian directories', t => {
   const {root, cleanup} = setupVault();
   try {

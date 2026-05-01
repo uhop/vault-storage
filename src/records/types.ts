@@ -23,6 +23,39 @@ export type RecordType = (typeof RECORD_TYPES)[number];
 export const RECORD_STATUSES = ['active', 'draft', 'done', 'superseded', 'archived'] as const;
 export type RecordStatus = (typeof RECORD_STATUSES)[number];
 
+/**
+ * Pre-canonicalization aliases for `status`. Per closed-enums design the
+ * 14 legacy values collapse into 5; the importer maps known aliases
+ * explicitly so legacy FM values keep their intent (e.g. `completed`
+ * stays a completion record, not silently coerced to `active`). Unknown
+ * values still fall back to the default.
+ */
+export const STATUS_ALIASES: Readonly<Record<string, RecordStatus>> = {
+  completed: 'done',
+  shipped: 'done',
+  processed: 'done',
+  'done-round-1': 'done',
+  'in-progress': 'active',
+  paused: 'active',
+  idea: 'draft',
+  stub: 'draft',
+  design: 'draft',
+  archive: 'archived'
+};
+
+/**
+ * Pre-canonicalization aliases for `priority`. Per closed-enums design
+ * priority is open-ended integer; these named aliases are sugar on FM
+ * input. The integer is canonical (stored as-is, no normalization on
+ * read).
+ */
+export const PRIORITY_ALIASES: Readonly<Record<string, number>> = {
+  low: -1,
+  normal: 0,
+  high: 1,
+  critical: 2
+};
+
 export const EDGE_TYPES = [
   'supersedes',
   'revises',
