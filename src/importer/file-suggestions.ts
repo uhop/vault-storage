@@ -10,8 +10,12 @@
 // Resolution is via POST /tags/taxonomy (add canonical) or POST /tags/aliases
 // (add as alias of an existing canonical), which the skill drives.
 //
-// Both filers idempotent: a suggestion of any status for the same key (pair
-// for edges, tag+record for tags) blocks re-filing. Re-imports of unchanged
+// `tag_suggestion` — agent-judged additions from `agent.tags_suggested`.
+// Distinct from `new_tag`: the tag is *not yet* on the record's FM `tags:`,
+// the agent thinks it should be. Resolution = the user adds the tag to FM,
+// reimport detects it now-realized, auto-accepts. Or user rejects.
+//
+// All filers idempotent on a kind-specific key. Re-imports of unchanged
 // content produce no new suggestions.
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
@@ -103,7 +107,7 @@ export interface NewTagSuggestionPayload {
   file_path: string;
 }
 
-export class TagSuggestionFiler {
+export class NewTagSuggestionFiler {
   readonly #findExisting: StatementSync;
   readonly #insert: StatementSync;
   readonly #autoAcceptByTag: StatementSync;
@@ -165,6 +169,88 @@ export class TagSuggestionFiler {
    */
   autoAcceptByTag(tag: string, resolvedBy: 'taxonomy-add' | 'alias-add', now: string): number {
     return Number(this.#autoAcceptByTag.run(now, resolvedBy, tag).changes);
+  }
+}
+
+export interface TagSuggestionPayload {
+  tag: string;
+  record_id: string;
+  file_path: string;
+}
+
+/**
+ * `tag_suggestion` — agent-judged tag additions from `agent.tags_suggested`.
+ * The tag is NOT (yet) on the record's FM `tags:`; the agent thinks it
+ * should be. Distinct from `new_tag` (which is fired when an unknown tag
+ * IS on FM but isn't in the taxonomy).
+ *
+ * Idempotent on `(record_id, tag, status='pending')`. Auto-resolves to
+ * `accepted` with `resolved_by='tag-realized'` on the next import where
+ * the tag is now in the record's `tags` table — i.e., the user (or an
+ * agent) added the tag to FM and the importer accepted it.
+ */
+export class TagSuggestionFiler {
+  readonly #findExisting: StatementSync;
+  readonly #insert: StatementSync;
+  readonly #autoAcceptForRecordTag: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    this.#findExisting = db.prepare(
+      `SELECT id FROM suggestions
+       WHERE kind = 'tag_suggestion'
+         AND status = 'pending'
+         AND json_extract(payload, '$.tag') = ?
+         AND json_extract(payload, '$.record_id') = ?
+       LIMIT 1`
+    );
+    this.#insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, 'tag_suggestion', ?, ?, 'pending', ?)`
+    );
+    this.#autoAcceptForRecordTag = db.prepare(
+      `UPDATE suggestions
+          SET status = 'accepted',
+              resolved_at = ?,
+              resolved_by = 'tag-realized'
+        WHERE kind = 'tag_suggestion'
+          AND status = 'pending'
+          AND json_extract(payload, '$.record_id') = ?
+          AND json_extract(payload, '$.tag') = ?`
+    );
+  }
+
+  /**
+   * File a pending `tag_suggestion` for `(record, tag)`. Idempotent on the
+   * pending row — accepted/rejected entries don't block re-filing, so a
+   * suggestion that was rejected can later be re-suggested (e.g., the body
+   * changed, the agent re-suggests).
+   *
+   * Returns true if filed; false if a pending suggestion already exists.
+   */
+  fileTagSuggestion(args: {
+    recordId: string;
+    filePath: string;
+    tag: string;
+    now: string;
+  }): boolean {
+    const existing = this.#findExisting.get(args.tag, args.recordId);
+    if (existing) return false;
+    const payload: TagSuggestionPayload = {
+      tag: args.tag,
+      record_id: args.recordId,
+      file_path: args.filePath
+    };
+    this.#insert.run(uuidv7(), args.recordId, JSON.stringify(payload), args.now);
+    return true;
+  }
+
+  /**
+   * Auto-accept any pending `tag_suggestion` for `(record, tag)` when the
+   * tag now appears on the record's actual tag set (via FM edit + reimport).
+   * Returns true if a pending suggestion was promoted.
+   */
+  autoAcceptForRecordTag(recordId: string, tag: string, now: string): boolean {
+    return this.#autoAcceptForRecordTag.run(now, recordId, tag).changes > 0;
   }
 }
 

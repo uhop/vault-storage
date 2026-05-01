@@ -16,19 +16,44 @@
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {normalizeTag} from '../migration/tags.ts';
-import {TagSuggestionFiler} from './file-suggestions.ts';
+import {NewTagSuggestionFiler} from './file-suggestions.ts';
 
 export class TagsImporter {
   readonly #deleteForRecord: StatementSync;
   readonly #insertTag: StatementSync;
   readonly #lookupAlias: StatementSync;
-  readonly #filer: TagSuggestionFiler;
+  readonly #selectForRecord: StatementSync;
+  readonly #filer: NewTagSuggestionFiler;
 
   constructor(db: DatabaseSync) {
     this.#deleteForRecord = db.prepare('DELETE FROM tags WHERE record_id = ?');
     this.#insertTag = db.prepare('INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
     this.#lookupAlias = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?');
-    this.#filer = new TagSuggestionFiler(db);
+    this.#selectForRecord = db.prepare('SELECT tag FROM tags WHERE record_id = ?');
+    this.#filer = new NewTagSuggestionFiler(db);
+  }
+
+  /**
+   * Return the set of canonical tags actually realized on the record (post-
+   * normalization, post-alias-resolution, taxonomy-accepted). Used by the
+   * tag_suggestion auto-accept path to detect when a suggested tag is now
+   * present on FM and the suggestion can be promoted.
+   */
+  getTagsForRecord(recordId: string): Set<string> {
+    const rows = this.#selectForRecord.all(recordId) as Array<{tag: string}>;
+    return new Set(rows.map(r => r.tag));
+  }
+
+  /**
+   * Resolve a raw tag string through the same pipeline `syncTags` uses:
+   * normalize, then look up the alias map. Returns the canonical form or
+   * the normalized form when no alias applies. Returns null on empty input.
+   */
+  resolveTag(raw: string): string | null {
+    const norm = normalizeTag(raw);
+    if (norm.length === 0) return null;
+    const aliasRow = this.#lookupAlias.get(norm) as {canonical: string} | undefined;
+    return aliasRow?.canonical ?? norm;
   }
 
   /**

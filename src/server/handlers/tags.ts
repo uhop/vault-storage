@@ -1,5 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {TagSuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
+import {NewTagSuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {parsePagination} from '../query.ts';
@@ -144,7 +144,7 @@ const parseJsonObject = async <T>(raw: string): Promise<T | string> => {
 
 const linkBackfillAndAutoAccept = (
   db: DatabaseSync,
-  filer: TagSuggestionFiler,
+  filer: NewTagSuggestionFiler,
   pendingTag: string,
   canonical: string,
   resolvedBy: 'taxonomy-add' | 'alias-add',
@@ -227,7 +227,7 @@ export const addTaxonomyHandler =
     }
 
     const now = new Date().toISOString();
-    const filer = new TagSuggestionFiler(deps.db);
+    const filer = new NewTagSuggestionFiler(deps.db);
 
     deps.db.exec('BEGIN');
     try {
@@ -312,7 +312,7 @@ export const addAliasHandler =
     }
 
     const now = new Date().toISOString();
-    const filer = new TagSuggestionFiler(deps.db);
+    const filer = new NewTagSuggestionFiler(deps.db);
 
     deps.db.exec('BEGIN');
     try {

@@ -440,6 +440,227 @@ test('importer skips stale check when agent block missing or partial', t => {
   }
 });
 
+const seedTagsTaxonomy = (db: DatabaseSync): void => {
+  db.exec(`
+    INSERT INTO tags_taxonomy (tag, description, added) VALUES
+      ('design', null, '2026-04-29'),
+      ('research', null, '2026-04-29'),
+      ('storage', null, '2026-04-29');
+    INSERT INTO tag_aliases (alias, canonical) VALUES
+      ('storages', 'storage');
+  `);
+};
+
+const pendingTagSuggestionCount = (db: DatabaseSync): number =>
+  Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM suggestions
+           WHERE kind = 'tag_suggestion' AND status = 'pending'`
+        )
+        .get() as {n: number}
+    ).n
+  );
+
+test('importer files tag_suggestion for agent.tags_suggested entries not on FM', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [research, storage]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+
+    const rows = db
+      .prepare(
+        `SELECT json_extract(payload, '$.tag') AS tag,
+                json_extract(payload, '$.record_id') AS record_id,
+                status
+           FROM suggestions
+          WHERE kind = 'tag_suggestion'
+          ORDER BY tag`
+      )
+      .all() as Array<{tag: string; record_id: string; status: string}>;
+    t.equal(rows.length, 2, 'two tag_suggestion rows filed');
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['research', 'storage'],
+      'one per suggested tag not yet on FM'
+    );
+    t.ok(rows.every(r => r.status === 'pending'), 'all pending');
+
+    // Re-import — idempotent on the pending pair.
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 2, 're-import does not duplicate');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer skips filing tag_suggestion for tags already realized on FM', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design, research]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [design, research]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 0, 'no suggestions when all suggested tags realized');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer auto-accepts pending tag_suggestion when tag becomes realized', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    // Pass 1: research suggested but not on FM.
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [research]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 1, 'one pending suggestion after first import');
+
+    // Pass 2: user (or agent) added research to FM tags. Suggestion auto-accepts.
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design, research]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [research]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 0, 'pending cleared on realization');
+    const accepted = db
+      .prepare(
+        `SELECT status, resolved_by FROM suggestions
+         WHERE kind = 'tag_suggestion'`
+      )
+      .all() as Array<{status: string; resolved_by: string}>;
+    t.equal(accepted.length, 1);
+    t.equal(accepted[0]?.status, 'accepted');
+    t.equal(accepted[0]?.resolved_by, 'tag-realized', 'resolved_by signals realization path');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('tag_suggestion alias-resolves before comparison', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    // 'storages' (alias) resolves to 'storage' (canonical). FM has 'storage';
+    // suggested 'storages' should auto-accept, not file a duplicate.
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [storage]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [storages]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 0, 'alias resolves to realized canonical, no pending');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('tag_suggestion skipped when agent block missing or non-array tags_suggested', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/none.md', '---\ntitle: N\ntags: [design]\n---\nbody\n');
+    writeMd(
+      root,
+      'topics/malformed.md',
+      [
+        '---',
+        'title: M',
+        'tags: [design]',
+        'agent:',
+        '  summary: "ok"',
+        '  tags_suggested: "not an array"',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 0, 'no suggestions when block missing or malformed');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('walker skips .git and .obsidian directories', t => {
   const {root, cleanup} = setupVault();
   try {

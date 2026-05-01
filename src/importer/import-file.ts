@@ -4,7 +4,7 @@ import type {RecordsRepository} from '../records/repository.ts';
 import {RECORD_STATUSES, type RecordStatus, type VaultRecord} from '../records/types.ts';
 import {contentHash, embedInputHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
-import type {AgentEnrichmentStaleFiler} from './file-suggestions.ts';
+import type {AgentEnrichmentStaleFiler, TagSuggestionFiler} from './file-suggestions.ts';
 import type {TagsImporter} from './import-tags.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
 
@@ -23,24 +23,31 @@ const asNumber = (value: unknown): number | undefined =>
 interface AgentBlock {
   summary: string | null;
   derivedFromHash: string | null;
+  tagsSuggested: string[];
 }
 
 /**
- * Extract `agent.summary` and `agent.derived_from_hash` from frontmatter.
- * Anything malformed (non-object `agent:`, non-string fields) is treated as
- * absent — the chunker / embedder fall back to body-only.
+ * Extract `agent.summary`, `agent.derived_from_hash`, and `agent.tags_suggested`
+ * from frontmatter. Anything malformed (non-object `agent:`, non-string fields,
+ * non-array `tags_suggested`) is treated as absent — the chunker / embedder
+ * fall back to body-only and no suggestions are filed.
  */
 const readAgentBlock = (data: Record<string, unknown>): AgentBlock => {
   const raw = data['agent'];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return {summary: null, derivedFromHash: null};
+    return {summary: null, derivedFromHash: null, tagsSuggested: []};
   }
   const block = raw as Record<string, unknown>;
   const summary = asString(block['summary']);
   const derivedFromHash = asString(block['derived_from_hash']);
+  const rawTagsSuggested = block['tags_suggested'];
+  const tagsSuggested = Array.isArray(rawTagsSuggested)
+    ? rawTagsSuggested.filter((t): t is string => typeof t === 'string' && t.length > 0)
+    : [];
   return {
     summary: summary && summary.length > 0 ? summary : null,
-    derivedFromHash: derivedFromHash && derivedFromHash.length > 0 ? derivedFromHash : null
+    derivedFromHash: derivedFromHash && derivedFromHash.length > 0 ? derivedFromHash : null,
+    tagsSuggested
   };
 };
 
@@ -60,6 +67,14 @@ export interface ImportFileOptions {
    * pending stale suggestions for records that are no longer stale.
    */
   agentStale?: AgentEnrichmentStaleFiler;
+  /**
+   * When provided, files `tag_suggestion` entries for tags listed in
+   * `agent.tags_suggested` that are not yet realized on the record. Auto-
+   * resolves pending suggestions when a previously-suggested tag is now in
+   * the record's tag set. Requires `tags` to also be set (the tag-set
+   * comparison goes through TagsImporter).
+   */
+  tagSuggestion?: TagSuggestionFiler;
 }
 
 /**
@@ -155,6 +170,32 @@ export const importFile = (
       process.stderr.write(
         `tags ${relativePath}: ${result.rejected.length} unknown (${result.rejected.join(', ')}); ${result.suggestionsFiled} new_tag suggestion(s) filed\n`
       );
+    }
+  }
+
+  // Agent-judged tag suggestions. Each tag in `agent.tags_suggested` that
+  // isn't already on the record's resolved tag set files a pending
+  // `tag_suggestion`. Tags that ARE realized auto-accept any prior pending
+  // suggestion (the user/agent followed through). Requires both options.tags
+  // and options.tagSuggestion — without TagsImporter we can't tell what's
+  // realized, so the comparison would be unsafe.
+  if (options.tagSuggestion && options.tags && agent.tagsSuggested.length > 0) {
+    const realized = options.tags.getTagsForRecord(recordId);
+    const seen = new Set<string>();
+    for (const raw of agent.tagsSuggested) {
+      const tag = options.tags.resolveTag(raw);
+      if (tag === null || seen.has(tag)) continue;
+      seen.add(tag);
+      if (realized.has(tag)) {
+        options.tagSuggestion.autoAcceptForRecordTag(recordId, tag, now);
+      } else {
+        options.tagSuggestion.fileTagSuggestion({
+          recordId,
+          filePath: relativePath,
+          tag,
+          now
+        });
+      }
     }
   }
 
