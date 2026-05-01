@@ -197,6 +197,121 @@ test('PUT /sections/{id} rejects DB-only frontmatter keys', async t => {
   }
 });
 
+test('PUT /sections/{id} rejects unknown status values (closed-enum hardening)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const md = ['---', 'title: Alpha', 'status: not-a-real-status', '---', 'body', ''].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 400);
+      t.equal((put.body as {code: string}).code, 'invalid_enum_value');
+      t.ok(
+        ((put.body as {error: string}).error || '').includes('unknown status'),
+        'error names the field'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} accepts legacy status aliases (round-trip safe)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const md = ['---', 'title: Alpha', 'status: completed', '---', 'body', ''].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 204, 'legacy alias accepted');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} rejects unknown type values', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const md = ['---', 'title: Alpha', 'type: madeup', '---', 'body', ''].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 400);
+      t.equal((put.body as {code: string}).code, 'invalid_enum_value');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} rejects unknown priority alias; integers and known aliases pass', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+
+      // Integer always OK.
+      const intMd = ['---', 'title: Alpha', 'priority: 22', '---', 'body', ''].join('\n');
+      let put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: intMd
+      });
+      t.equal(put.status, 204, 'integer priority accepted');
+
+      // Known alias OK.
+      const aliasMd = ['---', 'title: Alpha', 'priority: high', '---', 'body', ''].join('\n');
+      put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: aliasMd
+      });
+      t.equal(put.status, 204, 'named alias accepted');
+
+      // Unknown string rejected.
+      const badMd = ['---', 'title: Alpha', 'priority: super-critical', '---', 'body', ''].join('\n');
+      put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: badMd
+      });
+      t.equal(put.status, 400, 'unknown alias rejected');
+      t.equal((put.body as {code: string}).code, 'invalid_enum_value');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /sections/{id} rejects double-frontmatter PUT bodies', async t => {
   // Defense against the 2026-05-01 sub-agent failure mode: a helper script
   // appended the original full file (FM + body) to a new FM block, the

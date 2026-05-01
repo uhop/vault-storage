@@ -1,7 +1,13 @@
 import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
-import type {VaultRecord} from '../records/types.ts';
+import {
+  PRIORITY_ALIASES,
+  RECORD_STATUSES,
+  RECORD_TYPES,
+  STATUS_ALIASES,
+  type VaultRecord
+} from '../records/types.ts';
 
 /**
  * Frontmatter keys the API rejects on PUT/PATCH because they are DB-only.
@@ -24,6 +30,44 @@ const AUTO_MANAGED_KEYS = new Set([
  * them in the payload without 400-ing.
  */
 const INDEXER_OVERRIDE_KEYS = new Set(['created', 'updated']);
+
+const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
+const TYPE_SET: ReadonlySet<string> = new Set(RECORD_TYPES);
+const STATUS_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(STATUS_ALIASES));
+const PRIORITY_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(PRIORITY_ALIASES));
+
+/**
+ * Validate a single closed-enum FM field. Pass-through if the value is
+ * canonical or a known alias (preserves round-trip ergonomics on legacy
+ * FMs); reject typos with a clear error so authoring mistakes surface
+ * at the API boundary rather than silently coercing to a default.
+ *
+ * Returns null on accept; an error string when the value should 400.
+ */
+const validateClosedEnum = (
+  field: 'status' | 'type',
+  value: unknown,
+  canonical: ReadonlySet<string>,
+  aliases: ReadonlySet<string>
+): string | null => {
+  if (value === undefined || value === null) return null; // missing → indexer default
+  if (typeof value !== 'string') return `${field} must be a string`;
+  if (canonical.has(value)) return null;
+  if (aliases.has(value)) return null;
+  const expected = [...canonical].sort().join(', ');
+  const aliasNote = aliases.size > 0 ? ` (or aliases: ${[...aliases].sort().join(', ')})` : '';
+  return `unknown ${field} value '${value}' — expected one of: ${expected}${aliasNote}`;
+};
+
+const validatePriority = (value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value)) return null;
+  if (typeof value === 'string' && PRIORITY_ALIAS_KEYS.has(value)) return null;
+  if (typeof value === 'string') {
+    return `unknown priority alias '${value}' — expected an integer or one of: ${[...PRIORITY_ALIAS_KEYS].sort().join(', ')}`;
+  }
+  return 'priority must be an integer or a named alias';
+};
 
 /**
  * Detect a body that itself begins with a frontmatter-shaped opening:
@@ -131,6 +175,16 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
       400
     );
   }
+
+  // Closed-enum field validation: status, type, priority. Canonical values
+  // and known aliases pass; anything else 400s so authoring typos surface
+  // at the boundary rather than silently coercing to the default.
+  const statusErr = validateClosedEnum('status', requestFm['status'], STATUS_SET, STATUS_ALIAS_KEYS);
+  if (statusErr) throw new WriterError(statusErr, 'invalid_enum_value', 400);
+  const typeErr = validateClosedEnum('type', requestFm['type'], TYPE_SET, new Set());
+  if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);
+  const priorityErr = validatePriority(requestFm['priority']);
+  if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
 
   const sanitizedRequestFm: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(requestFm)) {
