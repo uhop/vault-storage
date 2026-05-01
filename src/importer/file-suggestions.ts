@@ -490,6 +490,69 @@ export class ArchiveCandidateFiler {
   }
 }
 
+export interface UpgradeSignalPayload {
+  signal: string;
+  current: number;
+  threshold: number;
+  recommendation: string;
+}
+
+/**
+ * `inefficiency_detected` and `infrastructure_upgrade` — filed by the
+ * time-to-upgrade evaluator when a backend-shape signal trips. Different
+ * kinds for different remediation flavours:
+ *
+ * - `inefficiency_detected`: tune-and-stay (VACUUM, prune, raise an index
+ *   limit).
+ * - `infrastructure_upgrade`: the recommended remedy is migrating to a
+ *   more robust backend (Postgres+pgvector+AGE per the design's
+ *   backend-comparison doc).
+ *
+ * Idempotent on `(kind, signal, status='pending')`. The same (kind,
+ * signal) pair never re-files while one is pending — the existing
+ * suggestion's payload reflects the most recent observation, but
+ * resolving (accept / reject) lets the next scan re-fire if the signal
+ * is still tripping.
+ */
+export class UpgradeSignalFiler {
+  readonly #findExisting: StatementSync;
+  readonly #insert: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    this.#findExisting = db.prepare(
+      `SELECT id FROM suggestions
+       WHERE kind = ?
+         AND status = 'pending'
+         AND json_extract(payload, '$.signal') = ?
+       LIMIT 1`
+    );
+    this.#insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, ?, NULL, ?, 'pending', ?)`
+    );
+  }
+
+  fileSignal(args: {
+    kind: 'inefficiency_detected' | 'infrastructure_upgrade';
+    signal: string;
+    current: number;
+    threshold: number;
+    recommendation: string;
+    now: string;
+  }): boolean {
+    const existing = this.#findExisting.get(args.kind, args.signal);
+    if (existing) return false;
+    const payload: UpgradeSignalPayload = {
+      signal: args.signal,
+      current: args.current,
+      threshold: args.threshold,
+      recommendation: args.recommendation
+    };
+    this.#insert.run(uuidv7(), args.kind, JSON.stringify(payload), args.now);
+    return true;
+  }
+}
+
 export interface AgentEnrichmentStalePayload {
   record_id: string;
   file_path: string;

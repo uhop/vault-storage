@@ -3,6 +3,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
+import {findUpgradeSignals} from '../../maintenance/find-upgrade-signals.ts';
 import {
   clearLastIndexedCommit,
   incrementalReindex
@@ -134,6 +135,25 @@ export const findRetentionCandidatesHandler =
  * or set VAULT_BACKUP_S3_BUCKET to enable the auto-poll loop that does
  * the same internally.
  */
+/**
+ * POST /maintenance/find-upgrade-signals
+ *
+ * Inspect the live DB and file `inefficiency_detected` /
+ * `infrastructure_upgrade` suggestions for any tripped signal:
+ * record_count_high / record_count_migrate, db_bytes_high,
+ * edge_fanout_high, review_backlog_high. Idempotent on
+ * `(kind, signal, status='pending')`. Reports only — never auto-migrates.
+ *
+ * Returns `{scanned, tripped, filed, durationMs, observed}`.
+ */
+export const findUpgradeSignalsHandler =
+  (deps: MaintenanceDeps): Handler =>
+  ctx => {
+    const summary = findUpgradeSignals(deps.db);
+    sendJson(ctx.res, 200, summary);
+    void ctx;
+  };
+
 /**
  * POST /maintenance/incremental-reindex[?full=true]
  *
