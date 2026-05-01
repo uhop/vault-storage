@@ -564,6 +564,83 @@ test('GET /suggestions?kind=edge_type filters by kind', async t => {
   }
 });
 
+test('GET /suggestions/summary groups pending by kind', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      seedSuggestion(ctx.db, {id: 'a1', kind: 'edge_type'});
+      seedSuggestion(ctx.db, {id: 'a2', kind: 'edge_type'});
+      seedSuggestion(ctx.db, {id: 'a3', kind: 'edge_type'});
+      seedSuggestion(ctx.db, {id: 'b1', kind: 'duplicate'});
+      seedSuggestion(ctx.db, {id: 'c1', kind: 'new_tag'});
+      // accepted ones must be excluded from the default pending summary
+      seedSuggestion(ctx.db, {id: 'z1', kind: 'edge_type'});
+      ctx.db
+        .prepare(`UPDATE suggestions SET status = 'accepted', resolved_at = '2026-04-30' WHERE id = 'z1'`)
+        .run();
+
+      const r = await fetchAuthed(`${ctx.url}/suggestions/summary`);
+      t.equal(r.status, 200, '200 ok');
+      const env = r.body as {statuses: string[]; total: number; by_kind: Record<string, number>};
+      t.deepEqual(env.statuses, ['pending'], 'default status filter');
+      t.equal(env.total, 5, 'total pending excludes accepted');
+      t.equal(env.by_kind['edge_type'], 3, 'edge_type=3');
+      t.equal(env.by_kind['duplicate'], 1, 'duplicate=1');
+      t.equal(env.by_kind['new_tag'], 1, 'new_tag=1');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /suggestions/summary?status=accepted filters status', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      seedSuggestion(ctx.db, {id: 'p1', kind: 'edge_type'});
+      seedSuggestion(ctx.db, {id: 'a1', kind: 'duplicate'});
+      ctx.db
+        .prepare(`UPDATE suggestions SET status = 'accepted', resolved_at = '2026-04-30' WHERE id = 'a1'`)
+        .run();
+      const r = await fetchAuthed(`${ctx.url}/suggestions/summary?status=accepted`);
+      const env = r.body as {total: number; by_kind: Record<string, number>};
+      t.equal(env.total, 1, 'only accepted counted');
+      t.equal(env.by_kind['duplicate'], 1, 'duplicate=1');
+      t.equal(env.by_kind['edge_type'], undefined, 'no pending edge_type');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /suggestions/summary returns empty by_kind when nothing matches', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      // No suggestions seeded.
+      const r = await fetchAuthed(`${ctx.url}/suggestions/summary`);
+      t.equal(r.status, 200, '200 ok');
+      const env = r.body as {total: number; by_kind: Record<string, number>};
+      t.equal(env.total, 0, 'total=0');
+      t.deepEqual(env.by_kind, {}, 'empty map');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── POST /tags/taxonomy ─────────────────────────────────────────────────────
 
 const seedNewTagSuggestion = (

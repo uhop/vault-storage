@@ -120,6 +120,50 @@ export const listSuggestionsHandler =
     });
   };
 
+/**
+ * GET /suggestions/summary?status=pending
+ *
+ * Per-kind counts of suggestions in the requested status set (default
+ * `pending`). Surfaced at session start by `/vault resume` so the agent
+ * sees the review backlog at a glance — cheaper than `?limit=…` round-trips
+ * per kind.
+ */
+export const summarySuggestionsHandler =
+  (deps: SuggestionsDeps): Handler =>
+  ctx => {
+    const statusesRaw = splitCsv(ctx.query['status']);
+    const statuses = statusesRaw.length > 0 ? statusesRaw : ['pending'];
+    for (const s of statuses) {
+      if (!SUGGESTION_STATUSES.has(s)) {
+        sendError(ctx.res, 400, 'bad_request', `unknown suggestion status: ${s}`);
+        return;
+      }
+    }
+
+    const rows = deps.db
+      .prepare(
+        `SELECT kind, COUNT(*) AS n
+           FROM suggestions
+           WHERE status IN (${statuses.map(() => '?').join(',')})
+           GROUP BY kind
+           ORDER BY n DESC, kind ASC`
+      )
+      .all(...statuses) as Array<{kind: string; n: number}>;
+
+    const byKind: Record<string, number> = {};
+    let total = 0;
+    for (const r of rows) {
+      byKind[r.kind] = r.n;
+      total += r.n;
+    }
+
+    sendJson(ctx.res, 200, {
+      statuses,
+      total,
+      by_kind: byKind
+    });
+  };
+
 /** GET /suggestions/{id} — single suggestion. */
 export const getSuggestionHandler =
   (deps: SuggestionsDeps): Handler =>

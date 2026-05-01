@@ -17,7 +17,8 @@ import {
   acceptSuggestionHandler,
   getSuggestionHandler,
   listSuggestionsHandler,
-  rejectSuggestionHandler
+  rejectSuggestionHandler,
+  summarySuggestionsHandler
 } from './handlers/suggestions.ts';
 import {lintHandler} from './handlers/lint.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
@@ -76,6 +77,9 @@ export const buildRouter = (opts: BuildOptions): Router => {
 
   const suggestionsDeps = {db: opts.db};
   router.get('/suggestions', listSuggestionsHandler(suggestionsDeps));
+  // `/summary` registered before `/{id}` so the literal path wins over the
+  // wildcard match (router currently uses registration-order precedence).
+  router.get('/suggestions/summary', summarySuggestionsHandler(suggestionsDeps));
   router.get('/suggestions/{id}', getSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/accept', acceptSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/reject', rejectSuggestionHandler(suggestionsDeps));

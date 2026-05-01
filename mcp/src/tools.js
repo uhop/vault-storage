@@ -378,6 +378,22 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_suggestions_summary',
+    {
+      description:
+        'Per-kind counts of suggestions in the requested status set (default pending). Cheap one-shot — surfaced at /vault resume to show review-queue backlog without fetching items.',
+      inputSchema: {
+        status: z.array(SUGGESTION_STATUS).optional()
+      }
+    },
+    wrap(async args =>
+      client.getJson('/suggestions/summary', {
+        status: csv(args.status)
+      })
+    )
+  );
+
+  mcp.registerTool(
     'vault_accept_suggestion',
     {
       description:
