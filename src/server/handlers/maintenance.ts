@@ -1,12 +1,19 @@
+import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
+import {snapshotDb} from '../snapshot.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
 interface MaintenanceDeps {
   db: DatabaseSync;
+}
+
+interface SnapshotDeps {
+  db: DatabaseSync;
+  vaultDataPath: string;
 }
 
 const parsePositiveFloat = (raw: string | undefined, fallback: number): number | null => {
@@ -107,4 +114,36 @@ export const findRetentionCandidatesHandler =
     const summary = findRetentionCandidates(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
+  };
+
+/**
+ * POST /maintenance/snapshot
+ *
+ * Produce a single-file gzip-compressed SQLite snapshot of the live DB
+ * via VACUUM INTO (safe under concurrent reads/writes on WAL). Default
+ * destination: `${VAULT_DATA_PATH}/.snapshots/vault.sqlite.gz`. Override
+ * with `?path=<vault-relative-path>` (must stay under VAULT_DATA_PATH).
+ *
+ * Returns `{path, bytes, durationMs}`.
+ *
+ * Tier 2 backup per C2: pair this with a host-side cron + `aws s3 cp`,
+ * or set VAULT_BACKUP_S3_BUCKET to enable the auto-poll loop that does
+ * the same internally.
+ */
+export const snapshotHandler =
+  (deps: SnapshotDeps): Handler =>
+  async ctx => {
+    const defaultPath = join(deps.vaultDataPath, '.snapshots', 'vault.sqlite.gz');
+    const path = ctx.query['path'] ? join(deps.vaultDataPath, ctx.query['path']) : defaultPath;
+    try {
+      const result = await snapshotDb(deps.db, path);
+      sendJson(ctx.res, 200, result);
+    } catch (err) {
+      sendError(
+        ctx.res,
+        500,
+        'snapshot_failed',
+        `snapshot failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   };

@@ -150,6 +150,41 @@ session:
 The two stack: skills can call the MCP tools, or fall back to `vault-curl`
 when MCP isn't configured. Both share the same backend.
 
+## Backup
+
+Two-tier strategy:
+
+**Tier 1 (default on):** every dirty markdown file is auto-committed by
+the in-server git-sync loop (`VAULT_AUTO_COMMIT=true`, default). Optional
+`VAULT_AUTO_PUSH=true` to also push to the configured remote. The
+content tree (markdown + frontmatter) is fully recoverable from any clone.
+
+**Tier 2 (optional):** `vault.sqlite` snapshot for DB-only state — the
+suggestions queue, embeddings, `last_referenced` timestamps. The server
+exposes a snapshot mechanic; the host wires the offsite shipment.
+
+```bash
+# In-container: produce a gzip-compressed snapshot. Default destination:
+# ${VAULT_DATA_PATH}/.snapshots/vault.sqlite.gz (under the bind-mount).
+curl -X POST -H "Authorization: Bearer $VAULT_API_TOKEN" \
+  http://localhost:8123/maintenance/snapshot
+```
+
+```bash
+# Host-side cron, daily 03:30 (Chicago example): snapshot then ship via
+# the user's tooling. `jot` is one option (encryption + S3 in one call):
+30 3 * * * \
+  curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+       http://localhost:8123/maintenance/snapshot && \
+  jot put /media/raid/Vault-Data/.snapshots/vault.sqlite.gz \
+          vault-storage/vault.sqlite -a gz.age
+```
+
+Substitute `aws s3 cp`, `rclone`, `rsync`, etc. as preferred. Encryption
+keys, S3 credentials, and the upload tool live on the host — none enter
+the container. Bucket-level versioning preserves history at no
+application cost.
+
 ## Tests
 
 ```bash

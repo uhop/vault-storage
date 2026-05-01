@@ -13,7 +13,8 @@ import {putRecordHandler} from './handlers/records-write.ts';
 import {
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
-  findRetentionCandidatesHandler
+  findRetentionCandidatesHandler,
+  snapshotHandler
 } from './handlers/maintenance.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
@@ -114,6 +115,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post(
     '/maintenance/find-retention-candidates',
     findRetentionCandidatesHandler({db: opts.db})
+  );
+  router.post(
+    '/maintenance/snapshot',
+    snapshotHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
 
   return router;
