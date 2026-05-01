@@ -56,6 +56,19 @@ export interface VaultRecord {
   status: RecordStatus;
   priority: number;
   archivedAt: string | null;
+  /**
+   * Agent-derived summary from the source FM `agent.summary` (per design
+   * doc agent-frontmatter-enrichment). Prepended to each chunk at embed time
+   * as a HyDE-style retrieval anchor. Null when the source has no `agent:`
+   * block — chunker falls back to body-only.
+   */
+  agentSummary: string | null;
+  /**
+   * Body content_hash recorded by the LLM when it generated `agent.summary`.
+   * Compare to current `contentHash` to detect staleness. Null when no
+   * `agent:` block exists.
+   */
+  agentDerivedFromHash: string | null;
 }
 
 export interface Edge {

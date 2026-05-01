@@ -24,6 +24,7 @@ interface PendingRow {
   record_id: string;
   body: string;
   content_hash: string;
+  agent_summary: string | null;
 }
 
 /**
@@ -53,8 +54,11 @@ export const embedPending = async (
 
   // Records whose chunks are missing or stale. The aux content_hash is per-row
   // so any chunk's hash is sufficient (we set them atomically together).
+  // `r.content_hash` already incorporates `agent_summary` (see
+  // `embedInputHash`), so a summary-only edit invalidates here just like a
+  // body edit.
   const pendingStmt = db.prepare(
-    `SELECT r.record_id, r.body, r.content_hash
+    `SELECT r.record_id, r.body, r.content_hash, r.agent_summary
        FROM records r
        LEFT JOIN (
          SELECT record_id, MAX(content_hash) AS content_hash
@@ -115,7 +119,7 @@ export const embedPending = async (
   };
 
   for (const row of pending) {
-    const chunkTexts = chunkBody(row.body);
+    const chunkTexts = chunkBody(row.body, {summary: row.agent_summary});
     if (chunkTexts.length === 0) continue;
     if (bufChunkCount + chunkTexts.length > batchSize && buf.length > 0) await flush();
     buf.push({row, chunkTexts, chunkVectors: []});

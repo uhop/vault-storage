@@ -21,6 +21,8 @@ interface RecordRow {
   status: string;
   priority: number;
   archived_at: string | null;
+  agent_summary: string | null;
+  agent_derived_from_hash: string | null;
 }
 
 const rowToRecord = (row: RecordRow) => ({
@@ -38,7 +40,9 @@ const rowToRecord = (row: RecordRow) => ({
   decayScore: row.decay_score,
   status: row.status as (typeof RECORD_STATUSES)[number],
   priority: row.priority,
-  archivedAt: row.archived_at
+  archivedAt: row.archived_at,
+  agentSummary: row.agent_summary,
+  agentDerivedFromHash: row.agent_derived_from_hash
 });
 
 const SORT_COLUMNS: Record<string, string> = {

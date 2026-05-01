@@ -413,7 +413,7 @@ const wikilinkContextSpotCheck = async (
     recordId: r.id, filePath: r.path, parentPath: null, sequenceKey: null,
     type: 'permanent', body: r.body, contentHash: '', title: null,
     created: '', updated: '',
-    lastReferenced: null, decayScore: 1, status: 'active', priority: 0, archivedAt: null
+    lastReferenced: null, decayScore: 1, status: 'active', priority: 0, archivedAt: null, agentSummary: null, agentDerivedFromHash: null
   }));
   const resolver = new WikilinkResolver(vaultRecords);
 

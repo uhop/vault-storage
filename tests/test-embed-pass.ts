@@ -7,7 +7,7 @@ import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import type {VaultRecord} from '../src/records/types.ts';
-import {contentHash} from '../src/util/hash.ts';
+import {contentHash, embedInputHash} from '../src/util/hash.ts';
 import {uuidv7} from '../src/util/uuid.ts';
 
 const makeRecord = (path: string, body: string): VaultRecord => ({
@@ -25,7 +25,9 @@ const makeRecord = (path: string, body: string): VaultRecord => ({
   decayScore: 1,
   status: 'active',
   priority: 0,
-  archivedAt: null
+  archivedAt: null,
+  agentSummary: null,
+  agentDerivedFromHash: null
 });
 
 interface Fixture {
@@ -128,6 +130,80 @@ test('embedPending', async t => {
       t.equal(summary.embedded, 1, 'only b was pending');
       t.equal(summary.upToDate, 1, 'a was already up-to-date');
       t.equal(fx.vecs.countRecords(), 2, 'now two vectors total');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('agent.summary is embedded into chunk text', async t => {
+    const fx = setup();
+    try {
+      const summary = 'TLDR — three sentences distilling the doc.';
+      const body = 'distinct body content that does not contain the summary text';
+      const r = makeRecord('topics/a.md', body);
+      r.agentSummary = summary;
+      r.agentDerivedFromHash = contentHash(body);
+      r.contentHash = embedInputHash(body, summary);
+      fx.records.insert(r);
+
+      await embedPending(fx.db, fx.embedder);
+
+      // The fake embedder is deterministic per-input. Embedding the
+      // summary-prepended chunk text should match the on-disk vector;
+      // embedding body alone should NOT.
+      const expectedVec = await fx.embedder.embed(`${summary}\n\n${body}`);
+      const bodyOnlyVec = await fx.embedder.embed(body);
+
+      const stored = fx.db
+        .prepare('SELECT embedding FROM record_vec WHERE record_id = ?')
+        .get(r.recordId) as {embedding: Uint8Array};
+      const storedFloats = new Float32Array(
+        stored.embedding.buffer,
+        stored.embedding.byteOffset,
+        stored.embedding.byteLength / 4
+      );
+      t.deepEqual(
+        Array.from(storedFloats),
+        Array.from(expectedVec),
+        'stored chunk vector matches summary+body'
+      );
+      t.notDeepEqual(
+        Array.from(storedFloats),
+        Array.from(bodyOnlyVec),
+        'stored chunk vector differs from body-only embedding'
+      );
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('summary-only change re-embeds (content_hash drift)', async t => {
+    const fx = setup();
+    try {
+      const body = 'unchanged body content';
+      const r = makeRecord('topics/a.md', body);
+      r.agentSummary = 'first summary';
+      r.contentHash = embedInputHash(body, r.agentSummary);
+      fx.records.insert(r);
+      const first = await embedPending(fx.db, fx.embedder);
+      t.equal(first.embedded, 1, 'first pass embeds');
+
+      // New summary, same body — embedInputHash changes, embedPending must
+      // pick the record back up.
+      const updated = {
+        ...r,
+        agentSummary: 'second, different summary',
+        contentHash: embedInputHash(body, 'second, different summary')
+      };
+      fx.records.upsertByPath(updated);
+
+      const second = await embedPending(fx.db, fx.embedder);
+      t.equal(second.embedded, 1, 'summary-only edit triggers re-embed');
+      t.equal(
+        fx.vecs.getRecordContentHash(r.recordId),
+        updated.contentHash,
+        'new hash recorded'
+      );
     } finally {
       fx.db.close();
     }

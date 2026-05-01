@@ -16,6 +16,10 @@ export interface JsonRecord {
   content_hash: string;
   archived_at: string | null;
   body?: string;
+  /** Agent-derived summary (HyDE prefix). Only present when set. */
+  agent_summary?: string;
+  /** Body content_hash recorded at LLM derivation. Only present when set. */
+  agent_derived_from_hash?: string;
 }
 
 export interface JsonEdge {
@@ -50,6 +54,8 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     archived_at: r.archivedAt
   };
   if (opts.includeBody !== false) out.body = r.body;
+  if (r.agentSummary !== null) out.agent_summary = r.agentSummary;
+  if (r.agentDerivedFromHash !== null) out.agent_derived_from_hash = r.agentDerivedFromHash;
   return out;
 };
 

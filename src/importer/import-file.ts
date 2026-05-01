@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {RECORD_STATUSES, type RecordStatus, type VaultRecord} from '../records/types.ts';
-import {contentHash} from '../util/hash.ts';
+import {embedInputHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
 import type {TagsImporter} from './import-tags.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
@@ -18,6 +18,30 @@ const asString = (value: unknown): string | undefined =>
 
 const asNumber = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+interface AgentBlock {
+  summary: string | null;
+  derivedFromHash: string | null;
+}
+
+/**
+ * Extract `agent.summary` and `agent.derived_from_hash` from frontmatter.
+ * Anything malformed (non-object `agent:`, non-string fields) is treated as
+ * absent — the chunker / embedder fall back to body-only.
+ */
+const readAgentBlock = (data: Record<string, unknown>): AgentBlock => {
+  const raw = data['agent'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {summary: null, derivedFromHash: null};
+  }
+  const block = raw as Record<string, unknown>;
+  const summary = asString(block['summary']);
+  const derivedFromHash = asString(block['derived_from_hash']);
+  return {
+    summary: summary && summary.length > 0 ? summary : null,
+    derivedFromHash: derivedFromHash && derivedFromHash.length > 0 ? derivedFromHash : null
+  };
+};
 
 export interface ImportFileResult {
   /** 'inserted' on first import, 'updated' on subsequent runs. */
@@ -53,7 +77,6 @@ export const importFile = (
   const source = readFileSync(absolutePath, 'utf8');
   const {data, body} = parseFrontmatter(source);
 
-  const hash = contentHash(body);
   const existing = records.getByPath(relativePath);
 
   const fmType = data['type'];
@@ -66,6 +89,13 @@ export const importFile = (
   const updated = asString(data['updated']) ?? existing?.updated ?? now;
   const priority = asNumber(data['priority']) ?? 0;
   const title = asString(data['title']) ?? null;
+  const agent = readAgentBlock(data);
+
+  // Hashes the embedding input (body + agent.summary when present) so
+  // summary-only edits drive reembedding the same way body edits do.
+  // Falls back to body-only when there's no agent block — the entire
+  // current vault until enrich-all runs.
+  const hash = embedInputHash(body, agent.summary);
 
   const isUnchanged =
     !!existing &&
@@ -75,7 +105,9 @@ export const importFile = (
     existing.title === title &&
     existing.priority === priority &&
     existing.created === created &&
-    existing.updated === updated;
+    existing.updated === updated &&
+    existing.agentSummary === agent.summary &&
+    existing.agentDerivedFromHash === agent.derivedFromHash;
 
   let recordId: string;
   let action: 'inserted' | 'updated' | 'unchanged';
@@ -99,7 +131,9 @@ export const importFile = (
       decayScore: existing?.decayScore ?? 1,
       status,
       priority,
-      archivedAt: existing?.archivedAt ?? null
+      archivedAt: existing?.archivedAt ?? null,
+      agentSummary: agent.summary,
+      agentDerivedFromHash: agent.derivedFromHash
     };
 
     records.upsertByPath(record);

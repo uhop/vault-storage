@@ -23,7 +23,9 @@ const makeRecord = (id: string, path: string, body = 'b'): VaultRecord => ({
   decayScore: 1,
   status: 'active',
   priority: 0,
-  archivedAt: null
+  archivedAt: null,
+  agentSummary: null,
+  agentDerivedFromHash: null
 });
 
 interface Fixture {

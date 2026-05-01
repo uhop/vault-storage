@@ -17,6 +17,8 @@ interface RecordRow {
   status: string;
   priority: number;
   archived_at: string | null;
+  agent_summary: string | null;
+  agent_derived_from_hash: string | null;
 }
 
 const rowToRecord = (row: RecordRow): VaultRecord => ({
@@ -34,7 +36,9 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
   decayScore: row.decay_score,
   status: row.status as RecordStatus,
   priority: row.priority,
-  archivedAt: row.archived_at
+  archivedAt: row.archived_at,
+  agentSummary: row.agent_summary,
+  agentDerivedFromHash: row.agent_derived_from_hash
 });
 
 export class RecordsRepository {
@@ -51,29 +55,33 @@ export class RecordsRepository {
     this.#insert = db.prepare(
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, title,
-         created, updated, last_referenced, decay_score, status, priority, archived_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         created, updated, last_referenced, decay_score, status, priority, archived_at,
+         agent_summary, agent_derived_from_hash
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // Upsert keyed on file_path. ON CONFLICT preserves record_id and created.
     this.#upsert = db.prepare(
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, title,
-         created, updated, last_referenced, decay_score, status, priority, archived_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         created, updated, last_referenced, decay_score, status, priority, archived_at,
+         agent_summary, agent_derived_from_hash
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(file_path) DO UPDATE SET
-         parent_path     = excluded.parent_path,
-         sequence_key    = excluded.sequence_key,
-         type            = excluded.type,
-         body            = excluded.body,
-         content_hash    = excluded.content_hash,
-         title           = excluded.title,
-         updated         = excluded.updated,
-         last_referenced = excluded.last_referenced,
-         decay_score     = excluded.decay_score,
-         status          = excluded.status,
-         priority        = excluded.priority,
-         archived_at     = excluded.archived_at`
+         parent_path             = excluded.parent_path,
+         sequence_key            = excluded.sequence_key,
+         type                    = excluded.type,
+         body                    = excluded.body,
+         content_hash            = excluded.content_hash,
+         title                   = excluded.title,
+         updated                 = excluded.updated,
+         last_referenced         = excluded.last_referenced,
+         decay_score             = excluded.decay_score,
+         status                  = excluded.status,
+         priority                = excluded.priority,
+         archived_at             = excluded.archived_at,
+         agent_summary           = excluded.agent_summary,
+         agent_derived_from_hash = excluded.agent_derived_from_hash`
     );
 
     this.#getById = db.prepare('SELECT * FROM records WHERE record_id = ?');
@@ -102,7 +110,9 @@ export class RecordsRepository {
       r.decayScore,
       r.status,
       r.priority,
-      r.archivedAt
+      r.archivedAt,
+      r.agentSummary,
+      r.agentDerivedFromHash
     );
   }
 
@@ -123,7 +133,9 @@ export class RecordsRepository {
       r.decayScore,
       r.status,
       r.priority,
-      r.archivedAt
+      r.archivedAt,
+      r.agentSummary,
+      r.agentDerivedFromHash
     );
   }
 

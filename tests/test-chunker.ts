@@ -76,4 +76,31 @@ test('chunkBody', async t => {
     const fenceCount = out.reduce((n, c) => n + (c.match(/```/g)?.length ?? 0), 0);
     t.equal(fenceCount % 2, 0, 'fence delimiters are paired across the chunks');
   });
+
+  await t.test('summary is prepended to every chunk', t => {
+    const summary = 'TLDR — concise distillation.';
+    const body = `## A\n\n${'a'.repeat(800)}\n\n## B\n\n${'b'.repeat(800)}`;
+    const out = chunkBody(body, {maxChars: 1000, summary});
+    t.equal(out.length, 2, 'one chunk per section');
+    for (const chunk of out) {
+      t.ok(chunk.startsWith(`${summary}\n\n`), 'chunk leads with summary prefix');
+    }
+  });
+
+  await t.test('summary prepended on hard-split single paragraph too', t => {
+    const summary = 'TLDR.';
+    const body = 'a'.repeat(3000); // hard-split path (no headers, > HARD_CAP)
+    const out = chunkBody(body, {maxChars: 1500, summary});
+    t.ok(out.length >= 2, 'multi-chunk via hard-split');
+    for (const chunk of out) t.ok(chunk.startsWith(`${summary}\n\n`), 'each chunk has summary prefix');
+  });
+
+  await t.test('null/empty summary is a no-op (no prefix added)', t => {
+    const body = 'just one paragraph';
+    const a = chunkBody(body, {summary: null});
+    const b = chunkBody(body, {summary: ''});
+    const c = chunkBody(body);
+    t.deepEqual(a, c, 'null summary === no summary');
+    t.deepEqual(b, c, 'empty summary === no summary');
+  });
 });

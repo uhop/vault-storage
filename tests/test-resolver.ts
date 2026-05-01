@@ -17,7 +17,9 @@ const record = (recordId: string, filePath: string): VaultRecord => ({
   decayScore: 1,
   status: 'active',
   priority: 0,
-  archivedAt: null
+  archivedAt: null,
+  agentSummary: null,
+  agentDerivedFromHash: null
 });
 
 test('WikilinkResolver', async t => {

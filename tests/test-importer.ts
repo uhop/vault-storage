@@ -251,6 +251,103 @@ test('importFile picks up tags-only frontmatter edits via the unchanged path', t
   }
 });
 
+test('importer parses agent.summary and agent.derived_from_hash from FM', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/enriched.md',
+      [
+        '---',
+        'title: Enriched',
+        'tags: []',
+        'agent:',
+        '  summary: "One-line distillation of the document."',
+        '  derived_from_hash: deadbeef',
+        '  key_concepts: [a, b]',
+        '---',
+        'body content',
+        ''
+      ].join('\n')
+    );
+    writeMd(root, 'topics/plain.md', '---\ntitle: Plain\n---\nbody\n');
+
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+
+    const repo = new RecordsRepository(db);
+    const enriched = repo.getByPath('topics/enriched.md');
+    t.equal(enriched?.agentSummary, 'One-line distillation of the document.', 'summary read');
+    t.equal(enriched?.agentDerivedFromHash, 'deadbeef', 'derived_from_hash read');
+
+    const plain = repo.getByPath('topics/plain.md');
+    t.equal(plain?.agentSummary, null, 'no agent block → null summary');
+    t.equal(plain?.agentDerivedFromHash, null, 'no agent block → null hash');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer treats malformed agent block as missing', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/bad.md',
+      // agent: as a scalar string, not a mapping — must not crash, must default to null.
+      ['---', 'title: Bad', 'agent: "not a mapping"', '---', 'body', ''].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    const r = repo.getByPath('topics/bad.md');
+    t.equal(r?.agentSummary, null, 'string agent → null summary');
+    t.equal(r?.agentDerivedFromHash, null, 'string agent → null hash');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('summary-only edit triggers re-import (changes content_hash)', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const initial = [
+      '---',
+      'title: T',
+      'agent:',
+      '  summary: "first summary"',
+      '  derived_from_hash: aaaa',
+      '---',
+      'unchanged body',
+      ''
+    ].join('\n');
+    writeMd(root, 'topics/t.md', initial);
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    const first = importVault(db, root);
+    t.equal(first.inserted, 1, 'inserted on first pass');
+
+    // Same body, different summary. content_hash must change because the
+    // chunker input changed.
+    const updated = initial.replace('first summary', 'second summary');
+    writeMd(root, 'topics/t.md', updated);
+    const second = importVault(db, root);
+    t.equal(second.updated, 1, 'summary-only edit treated as changed');
+    t.equal(second.unchanged, 0, 'not unchanged');
+
+    const repo = new RecordsRepository(db);
+    const r = repo.getByPath('topics/t.md');
+    t.equal(r?.agentSummary, 'second summary', 'summary refreshed');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('walker skips .git and .obsidian directories', t => {
   const {root, cleanup} = setupVault();
   try {

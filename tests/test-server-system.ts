@@ -81,7 +81,11 @@ test('GET /system/status with valid token returns indexer status', async t => {
     t.equal(status, 200, '200 ok');
     const payload = body as Record<string, unknown>;
     t.equal(payload['ok'], true, 'ok=true');
-    t.equal(payload['schema_version'], 4, 'schema_version=4 (records + add-title + sync-baseline + doc-vecs)');
+    t.equal(
+      payload['schema_version'],
+      5,
+      'schema_version=5 (init+title+sync+doc-vecs+agent-enrichment)'
+    );
     t.equal(payload['records'], 0, 'records=0 on empty DB');
     t.equal(payload['edges'], 0, 'edges=0 on empty DB');
     t.equal(payload['pending_suggestions'], 0, 'pending_suggestions=0 on empty DB');

@@ -27,6 +27,8 @@ const makeRecord = (overrides: Partial<VaultRecord> = {}): VaultRecord => {
     status: 'active',
     priority: 0,
     archivedAt: null,
+    agentSummary: null,
+    agentDerivedFromHash: null,
     ...overrides
   };
 };
