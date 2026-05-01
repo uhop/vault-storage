@@ -1,4 +1,5 @@
 import type {Edge, VaultRecord} from '../records/types.ts';
+import {contentHash} from '../util/hash.ts';
 
 export interface JsonRecord {
   record_id: string;
@@ -13,7 +14,19 @@ export interface JsonRecord {
   updated: string;
   last_referenced: string | null;
   decay_score: number;
+  /**
+   * Embedding-input hash. Drives chunk-set invalidation. Equals
+   * `body_hash` for records without an `agent.summary`; differs once a
+   * summary is mixed in (`embedInputHash(body, summary)`). Don't use this
+   * to populate `agent.derived_from_hash` — use `body_hash` for that.
+   */
   content_hash: string;
+  /**
+   * Pure body hash (`sha256(body)`). The value `/vault-enrich-all` writes
+   * into `agent.derived_from_hash` so staleness detection sees a clean
+   * body-vs-body comparison even after a summary is set.
+   */
+  body_hash: string;
   archived_at: string | null;
   body?: string;
   /** Agent-derived summary (HyDE prefix). Only present when set. */
@@ -51,6 +64,7 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     last_referenced: r.lastReferenced,
     decay_score: r.decayScore,
     content_hash: r.contentHash,
+    body_hash: contentHash(r.body),
     archived_at: r.archivedAt
   };
   if (opts.includeBody !== false) out.body = r.body;

@@ -265,6 +265,33 @@ test('GET /sections/{id} returns the record with body', async t => {
   }
 });
 
+test('GET /sections/{id} surfaces both content_hash and body_hash', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {body} = await authedFetch(`${url}/sections/${id}`);
+      const r = body as {body: string; content_hash: string; body_hash: string};
+      // For unenriched records (no agent.summary), body_hash and content_hash
+      // must agree — both equal `sha256(body)`. The split matters only once
+      // a summary is mixed into content_hash via embedInputHash.
+      t.equal(typeof r.body_hash, 'string', 'body_hash present');
+      t.equal(r.body_hash.length, 64, 'body_hash is sha256 hex');
+      t.equal(r.body_hash, r.content_hash, 'body_hash == content_hash for unenriched record');
+      const {createHash} = await import('node:crypto');
+      const expected = createHash('sha256').update(r.body).digest('hex');
+      t.equal(r.body_hash, expected, 'body_hash == sha256(body)');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('GET /sections/{id}?exclude=body omits body', async t => {
   const {root, cleanup} = setupVault();
   try {
