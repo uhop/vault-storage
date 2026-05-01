@@ -25,6 +25,23 @@ const AUTO_MANAGED_KEYS = new Set([
  */
 const INDEXER_OVERRIDE_KEYS = new Set(['created', 'updated']);
 
+/**
+ * Detect a body that itself begins with a frontmatter-shaped opening:
+ * `---\n…\n---` within the first ~50 lines. Used to reject malformed
+ * PUTs whose body is the original full-file content (FM + body) appended
+ * to a new FM block — a common helper-script bug that would silently
+ * destroy the body. A standalone `---` thematic break at the body's
+ * start is allowed (no closing `---` line nearby).
+ */
+const looksLikeAnotherFmBlock = (body: string): boolean => {
+  if (!body.startsWith('---\n')) return false;
+  const lines = body.split('\n');
+  for (let i = 1; i < Math.min(lines.length, 51); i++) {
+    if (lines[i] === '---') return true;
+  }
+  return false;
+};
+
 export class WriterError extends Error {
   readonly code: string;
   readonly status: number;
@@ -89,6 +106,22 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
   const absolutePath = ensureSafePath(vaultDataPath, filePath);
 
   const {data: requestFm, body: requestBody} = parseFrontmatter(requestMarkdown);
+
+  // Defense against malformed PUTs: when a body itself begins with a
+  // frontmatter-shaped opening (`---\n…\n---\n`), the caller almost
+  // certainly appended the original file's full content (its own FM + body)
+  // to a new FM block. parseFrontmatter would still grab the first block
+  // as FM, the writer would replace the body with the leftover, and the
+  // result on disk would be two FM blocks with no body. We saw this exact
+  // failure mode wipe 15 files on 2026-05-01 (a sub-agent's PUT-helper
+  // bug). Reject at the boundary instead of silently destroying content.
+  if (looksLikeAnotherFmBlock(requestBody)) {
+    throw new WriterError(
+      'request body begins with another frontmatter-style block (`---\\n…\\n---`) — almost certainly a malformed PUT (the caller likely appended the original file to a new FM block, which would silently destroy the body). Construct the PUT body as `---\\n<merged FM>\\n---\\n<body>` with a single FM block.',
+      'malformed_double_frontmatter',
+      400
+    );
+  }
 
   const violations = Object.keys(requestFm).filter(k => AUTO_MANAGED_KEYS.has(k));
   if (violations.length > 0) {

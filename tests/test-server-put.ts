@@ -197,6 +197,84 @@ test('PUT /sections/{id} rejects DB-only frontmatter keys', async t => {
   }
 });
 
+test('PUT /sections/{id} rejects double-frontmatter PUT bodies', async t => {
+  // Defense against the 2026-05-01 sub-agent failure mode: a helper script
+  // appended the original full file (FM + body) to a new FM block, the
+  // writer would silently produce double-FM with no body. Reject at the
+  // boundary so the caller's bug surfaces as a 400 instead of data loss.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const malformed = [
+        '---',
+        'title: Alpha',
+        'related:',
+        '  - "[[other]]"',
+        '---',
+        '---',
+        'title: Alpha',
+        'tags: [foo]',
+        '---',
+        'original body'
+      ].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: malformed
+      });
+      t.equal(put.status, 400, '400 bad request');
+      t.equal(
+        (put.body as {code: string}).code,
+        'malformed_double_frontmatter',
+        'code=malformed_double_frontmatter'
+      );
+
+      // Body should be unchanged on disk — no partial write.
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('Alpha original body.'), 'on-disk body untouched');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} allows body with thematic-break `---` (single, no closing)', async t => {
+  // A body that begins with `---` but no closing `---` line within 50 lines
+  // is a thematic break, not a malformed FM block. Allow.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const md = [
+        '---',
+        'title: Alpha',
+        '---',
+        '---',
+        '',
+        'Body after a thematic-break opening, no closing dash-line within 50.',
+        ''
+      ].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 204, 'thematic-break body accepted');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /sections/{id} accepts created/updated round-trip; indexer overrides', async t => {
   const {root, cleanup} = setupVault();
   try {
