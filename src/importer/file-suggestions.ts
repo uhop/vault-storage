@@ -321,6 +321,89 @@ export class DuplicateSuggestionFiler {
   }
 }
 
+export interface CompactionCandidatePayload {
+  folder_path: string;
+  piece_count: number;
+  total_bytes: number;
+  oldest_created: string;
+  newest_created: string;
+}
+
+/**
+ * `compaction_candidate` — a folder of pieces has accumulated enough
+ * content (piece-count threshold) to warrant a compaction pass. The agent
+ * (via `/vault-compact <folder>`) decides what to archive and writes the
+ * summary; this filer just surfaces "this folder is ripe."
+ *
+ * Not record-scoped — `subject_id` is null. Idempotent on
+ * `(folder_path, status='pending')`. Auto-resolves with
+ * `resolved_by='no-longer-eligible'` on the next scan where the folder
+ * has dropped below the threshold (typical trigger: `/vault-compact`
+ * archived the bulk of the pieces, leaving only the recent ones).
+ */
+export class CompactionCandidateFiler {
+  readonly #findExisting: StatementSync;
+  readonly #insert: StatementSync;
+  readonly #autoAcceptForFolder: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    this.#findExisting = db.prepare(
+      `SELECT id FROM suggestions
+       WHERE kind = 'compaction_candidate'
+         AND status = 'pending'
+         AND json_extract(payload, '$.folder_path') = ?
+       LIMIT 1`
+    );
+    this.#insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, 'compaction_candidate', NULL, ?, 'pending', ?)`
+    );
+    this.#autoAcceptForFolder = db.prepare(
+      `UPDATE suggestions
+          SET status = 'accepted',
+              resolved_at = ?,
+              resolved_by = 'no-longer-eligible'
+        WHERE kind = 'compaction_candidate'
+          AND status = 'pending'
+          AND json_extract(payload, '$.folder_path') = ?`
+    );
+  }
+
+  /**
+   * File a pending suggestion for `folder_path`. Returns true if filed,
+   * false if a pending suggestion already exists for the folder.
+   */
+  fileCandidate(args: {
+    folderPath: string;
+    pieceCount: number;
+    totalBytes: number;
+    oldestCreated: string;
+    newestCreated: string;
+    now: string;
+  }): boolean {
+    const existing = this.#findExisting.get(args.folderPath);
+    if (existing) return false;
+    const payload: CompactionCandidatePayload = {
+      folder_path: args.folderPath,
+      piece_count: args.pieceCount,
+      total_bytes: args.totalBytes,
+      oldest_created: args.oldestCreated,
+      newest_created: args.newestCreated
+    };
+    this.#insert.run(uuidv7(), JSON.stringify(payload), args.now);
+    return true;
+  }
+
+  /**
+   * Auto-accept any pending `compaction_candidate` for `folder_path`
+   * when the folder no longer qualifies (post-compaction or after
+   * pieces were moved). Returns true if a pending was promoted.
+   */
+  autoAcceptForFolder(folderPath: string, now: string): boolean {
+    return this.#autoAcceptForFolder.run(now, folderPath).changes > 0;
+  }
+}
+
 export interface AgentEnrichmentStalePayload {
   record_id: string;
   file_path: string;

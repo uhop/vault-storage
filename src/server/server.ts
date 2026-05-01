@@ -10,7 +10,7 @@ import {
   listRecordsHandler
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
-import {findDuplicatesHandler} from './handlers/maintenance.ts';
+import {findCompactionCandidatesHandler, findDuplicatesHandler} from './handlers/maintenance.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
 import {
@@ -103,6 +103,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   );
 
   router.post('/maintenance/find-duplicates', findDuplicatesHandler({db: opts.db}));
+  router.post(
+    '/maintenance/find-compaction-candidates',
+    findCompactionCandidatesHandler({db: opts.db})
+  );
 
   return router;
 };

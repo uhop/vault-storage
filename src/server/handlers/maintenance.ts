@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -61,5 +62,29 @@ export const findDuplicatesHandler =
     }
 
     const summary = findDuplicates(deps.db, {maxDistance, perRecord, limit, minBodyLength});
+    sendJson(ctx.res, 200, summary);
+  };
+
+/**
+ * POST /maintenance/find-compaction-candidates?min_piece_count=
+ *
+ * Group every record by parent folder and file `compaction_candidate`
+ * suggestions for folders whose piece count crosses the threshold
+ * (default 30). Skips `topics/` (concept notes, not running-files) and
+ * any path containing `/archive/` or `/sync/` segments. Auto-resolves
+ * any pending suggestion whose folder no longer qualifies (post-compact
+ * sweep).
+ *
+ * Returns `{scanned, qualifying, filed, autoResolved, durationMs}`.
+ */
+export const findCompactionCandidatesHandler =
+  (deps: MaintenanceDeps): Handler =>
+  ctx => {
+    const minPieceCount = parsePositiveInt(ctx.query['min_piece_count'], 30);
+    if (minPieceCount === null) {
+      sendError(ctx.res, 400, 'bad_request', 'min_piece_count must be a positive integer');
+      return;
+    }
+    const summary = findCompactionCandidates(deps.db, {minPieceCount});
     sendJson(ctx.res, 200, summary);
   };
