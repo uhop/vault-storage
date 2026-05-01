@@ -641,6 +641,141 @@ test('GET /suggestions/summary returns empty by_kind when nothing matches', asyn
   }
 });
 
+test('POST /suggestions creates a pending suggestion', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/suggestions`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          kind: 'contradiction_candidate',
+          subject_id: 'rec-1',
+          payload: {note: 'A says X, B says not X', a_record: 'rec-1', b_record: 'rec-2'}
+        })
+      });
+      t.equal(r.status, 201, '201 created');
+      const created = r.body as {id: string; kind: string; status: string; payload: unknown};
+      t.ok(created.id && created.id.length > 0, 'id assigned');
+      t.equal(created.kind, 'contradiction_candidate', 'kind echoed');
+      t.equal(created.status, 'pending', 'starts pending');
+      t.deepEqual(
+        created.payload,
+        {note: 'A says X, B says not X', a_record: 'rec-1', b_record: 'rec-2'},
+        'payload round-tripped'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /suggestions rejects unknown kind', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/suggestions`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({kind: 'bogus_kind', payload: {}})
+      });
+      t.equal(r.status, 400, '400 bad_request');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /suggestions rejects missing payload', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/suggestions`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({kind: 'contradiction_candidate'})
+      });
+      t.equal(r.status, 400, '400 bad_request');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /suggestions/{id}/reopen reverts an accepted suggestion to pending', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      seedSuggestion(ctx.db, {id: 's1', kind: 'edge_type'});
+      // Accept it.
+      const accept = await fetchAuthed(`${ctx.url}/suggestions/s1/accept`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}'
+      });
+      t.equal(accept.status, 200, 'accept ok');
+
+      const reopen = await fetchAuthed(`${ctx.url}/suggestions/s1/reopen`, {method: 'POST'});
+      t.equal(reopen.status, 200, '200 ok');
+      const body = reopen.body as {status: string; resolved_at: string | null; resolved_by: string | null};
+      t.equal(body.status, 'pending', 'now pending');
+      t.equal(body.resolved_at, null, 'resolved_at cleared');
+      t.equal(body.resolved_by, null, 'resolved_by cleared');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /suggestions/{id}/reopen on already-pending returns 409', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      seedSuggestion(ctx.db, {id: 's1', kind: 'edge_type'});
+      const r = await fetchAuthed(`${ctx.url}/suggestions/s1/reopen`, {method: 'POST'});
+      t.equal(r.status, 409, '409 already_pending');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /suggestions/{unknown}/reopen returns 404', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/suggestions/nope/reopen`, {method: 'POST'});
+      t.equal(r.status, 404, '404 suggestion_not_found');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── POST /tags/taxonomy ─────────────────────────────────────────────────────
 
 const seedNewTagSuggestion = (

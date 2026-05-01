@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {uuidv7} from '../../util/uuid.ts';
 import {readBodyText} from '../body.ts';
 import {parsePagination, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
@@ -19,7 +20,8 @@ const SUGGESTION_KINDS: ReadonlySet<string> = new Set([
   'new_tag',
   'inefficiency_detected',
   'infrastructure_upgrade',
-  'frontmatter_inference_ambiguous'
+  'frontmatter_inference_ambiguous',
+  'agent_enrichment_stale'
 ]);
 const SUGGESTION_STATUSES: ReadonlySet<string> = new Set(['pending', 'accepted', 'rejected']);
 
@@ -267,3 +269,130 @@ export const acceptSuggestionHandler = (deps: SuggestionsDeps): Handler =>
 /** POST /suggestions/{id}/reject — mark rejected. */
 export const rejectSuggestionHandler = (deps: SuggestionsDeps): Handler =>
   makeResolveHandler(deps, 'rejected');
+
+interface CreateBody {
+  kind?: unknown;
+  subject_id?: unknown;
+  payload?: unknown;
+}
+
+/**
+ * POST /suggestions
+ *
+ * File a new pending suggestion from the agent side. Used for kinds the
+ * indexer can't deterministically detect — `contradiction_candidate`,
+ * `tag_suggestion` (agent-judged additions), future agent-driven kinds.
+ * Indexer-driven filers (`edge_type`, `new_tag`, `duplicate`,
+ * `agent_enrichment_stale`) live behind their own idempotency keys; this
+ * handler does no dedup, so agents calling repeatedly produce repeated
+ * suggestions. Caller is responsible for any pre-check via GET /suggestions.
+ *
+ * Body: `{kind: string, subject_id?: string|null, payload: object}`.
+ * `kind` must be in the closed enum. `payload` is stored as JSON; arbitrary
+ * shape is up to the kind's convention.
+ *
+ * Returns 201 with the created row (same shape as GET /suggestions/{id}).
+ */
+export const createSuggestionHandler =
+  (deps: SuggestionsDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    if (raw.trim().length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'request body required');
+      return;
+    }
+
+    let body: CreateBody;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        sendError(ctx.res, 400, 'bad_request', 'request body must be a JSON object');
+        return;
+      }
+      body = parsed as CreateBody;
+    } catch (err) {
+      sendError(ctx.res, 400, 'bad_request', `invalid JSON: ${(err as Error).message}`);
+      return;
+    }
+
+    if (typeof body.kind !== 'string' || !SUGGESTION_KINDS.has(body.kind)) {
+      sendError(ctx.res, 400, 'bad_request', `kind must be one of: ${[...SUGGESTION_KINDS].join(', ')}`);
+      return;
+    }
+    if (body.payload === undefined || body.payload === null || typeof body.payload !== 'object' || Array.isArray(body.payload)) {
+      sendError(ctx.res, 400, 'bad_request', 'payload must be a JSON object');
+      return;
+    }
+    let subjectId: string | null = null;
+    if (body.subject_id !== undefined && body.subject_id !== null) {
+      if (typeof body.subject_id !== 'string' || body.subject_id.length === 0) {
+        sendError(ctx.res, 400, 'bad_request', 'subject_id must be a non-empty string when set');
+        return;
+      }
+      subjectId = body.subject_id;
+    }
+
+    const id = uuidv7();
+    const now = new Date().toISOString();
+    deps.db
+      .prepare(
+        `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+         VALUES (?, ?, ?, ?, 'pending', ?)`
+      )
+      .run(id, body.kind, subjectId, JSON.stringify(body.payload), now);
+
+    const row = deps.db
+      .prepare(
+        `SELECT id, kind, subject_id, payload, status, created, resolved_at, resolved_by
+           FROM suggestions WHERE id = ?`
+      )
+      .get(id) as unknown as SuggestionRow;
+    sendJson(ctx.res, 201, rowToJson(row));
+  };
+
+/**
+ * POST /suggestions/{id}/reopen
+ *
+ * Move an accepted or rejected suggestion back to `pending` and clear
+ * `resolved_at` + `resolved_by`. Escape hatch for misclicks. 409 when the
+ * suggestion is already pending; 404 when unknown.
+ */
+export const reopenSuggestionHandler =
+  (deps: SuggestionsDeps): Handler =>
+  ctx => {
+    const id = ctx.params['id'];
+    if (!id) {
+      sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
+      return;
+    }
+    const existing = deps.db
+      .prepare('SELECT id, status FROM suggestions WHERE id = ?')
+      .get(id) as {id: string; status: string} | undefined;
+    if (!existing) {
+      sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
+      return;
+    }
+    if (existing.status === 'pending') {
+      sendError(ctx.res, 409, 'already_pending', 'suggestion is already pending');
+      return;
+    }
+    deps.db
+      .prepare(
+        `UPDATE suggestions SET status = 'pending', resolved_at = NULL, resolved_by = NULL
+          WHERE id = ?`
+      )
+      .run(id);
+    const row = deps.db
+      .prepare(
+        `SELECT id, kind, subject_id, payload, status, created, resolved_at, resolved_by
+           FROM suggestions WHERE id = ?`
+      )
+      .get(id) as unknown as SuggestionRow;
+    sendJson(ctx.res, 200, rowToJson(row));
+  };

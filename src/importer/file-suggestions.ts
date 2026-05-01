@@ -234,3 +234,86 @@ export class DuplicateSuggestionFiler {
     return true;
   }
 }
+
+export interface AgentEnrichmentStalePayload {
+  record_id: string;
+  file_path: string;
+  /** Body content_hash recorded by the LLM at derivation time. */
+  agent_derived_from_hash: string;
+  /** Body content_hash *now*; the divergence is the staleness signal. */
+  current_body_hash: string;
+}
+
+/**
+ * `agent_enrichment_stale` — the source FM has both `agent.summary` and
+ * `agent.derived_from_hash` but the recorded hash no longer matches the
+ * body's current hash. The LLM saw an older body; a refresh pass should
+ * regenerate the agent block.
+ *
+ * Idempotent on `record_id` (one pending stale per record). Auto-resolves
+ * to `accepted` with `resolved_by='hash-matched'` on the next import where
+ * `agent.derived_from_hash === current body hash` again — i.e., the agent
+ * block was refreshed (likely via `/vault-enrich-all`).
+ */
+export class AgentEnrichmentStaleFiler {
+  readonly #findExisting: StatementSync;
+  readonly #insert: StatementSync;
+  readonly #autoAcceptForRecord: StatementSync;
+
+  constructor(db: DatabaseSync) {
+    this.#findExisting = db.prepare(
+      `SELECT id FROM suggestions
+       WHERE kind = 'agent_enrichment_stale'
+         AND status = 'pending'
+         AND subject_id = ?
+       LIMIT 1`
+    );
+    this.#insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, 'agent_enrichment_stale', ?, ?, 'pending', ?)`
+    );
+    this.#autoAcceptForRecord = db.prepare(
+      `UPDATE suggestions
+          SET status = 'accepted',
+              resolved_at = ?,
+              resolved_by = 'hash-matched'
+        WHERE kind = 'agent_enrichment_stale'
+          AND status = 'pending'
+          AND subject_id = ?`
+    );
+  }
+
+  /**
+   * File a pending stale-enrichment suggestion for a record. Returns true
+   * if filed; false if a prior pending suggestion already exists for the
+   * record (only `pending` blocks re-filing — accepted/rejected entries
+   * don't, so a re-flagged-and-resolved record can be flagged again later).
+   */
+  fileStaleSuggestion(args: {
+    recordId: string;
+    filePath: string;
+    agentDerivedFromHash: string;
+    currentBodyHash: string;
+    now: string;
+  }): boolean {
+    const existing = this.#findExisting.get(args.recordId);
+    if (existing) return false;
+    const payload: AgentEnrichmentStalePayload = {
+      record_id: args.recordId,
+      file_path: args.filePath,
+      agent_derived_from_hash: args.agentDerivedFromHash,
+      current_body_hash: args.currentBodyHash
+    };
+    this.#insert.run(uuidv7(), args.recordId, JSON.stringify(payload), args.now);
+    return true;
+  }
+
+  /**
+   * Resolve any pending stale-enrichment suggestions for a record (called
+   * when a fresh import shows the agent hash matches the body hash again).
+   * Returns the count of suggestions auto-accepted.
+   */
+  autoAcceptForRecord(recordId: string, now: string): number {
+    return Number(this.#autoAcceptForRecord.run(now, recordId).changes);
+  }
+}

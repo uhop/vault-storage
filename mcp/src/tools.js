@@ -48,7 +48,8 @@ const SUGGESTION_KIND = z.enum([
   'new_tag',
   'inefficiency_detected',
   'infrastructure_upgrade',
-  'frontmatter_inference_ambiguous'
+  'frontmatter_inference_ambiguous',
+  'agent_enrichment_stale'
 ]);
 
 const SUGGESTION_STATUS = z.enum(['pending', 'accepted', 'rejected']);
@@ -425,6 +426,38 @@ export const registerTools = (mcp, client) => {
         `/suggestions/${encodeURIComponent(id)}/reject`,
         resolved_by ? {resolved_by} : undefined
       )
+    )
+  );
+
+  mcp.registerTool(
+    'vault_reopen_suggestion',
+    {
+      description:
+        'Move an accepted/rejected suggestion back to pending and clear resolved_at/resolved_by. Escape hatch for misclicks. 409 when already pending.',
+      inputSchema: {id: z.string().min(1)}
+    },
+    wrap(async ({id}) =>
+      client.postJson(`/suggestions/${encodeURIComponent(id)}/reopen`, undefined)
+    )
+  );
+
+  mcp.registerTool(
+    'vault_create_suggestion',
+    {
+      description:
+        'File a new pending suggestion from the agent side. Use for kinds the indexer cannot deterministically detect — contradiction_candidate, agent-judged tag_suggestion, etc. No dedup at this layer; agent is responsible for any pre-check via vault_list_suggestions.',
+      inputSchema: {
+        kind: SUGGESTION_KIND,
+        subject_id: z.string().optional(),
+        payload: z.record(z.string(), z.unknown())
+      }
+    },
+    wrap(async args =>
+      client.postJson('/suggestions', {
+        kind: args.kind,
+        subject_id: args.subject_id,
+        payload: args.payload
+      })
     )
   );
 

@@ -2,8 +2,9 @@ import {readFileSync} from 'node:fs';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {RECORD_STATUSES, type RecordStatus, type VaultRecord} from '../records/types.ts';
-import {embedInputHash} from '../util/hash.ts';
+import {contentHash, embedInputHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
+import type {AgentEnrichmentStaleFiler} from './file-suggestions.ts';
 import type {TagsImporter} from './import-tags.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
 
@@ -52,6 +53,13 @@ export interface ImportFileResult {
 export interface ImportFileOptions {
   /** When provided, syncs the record's tag set from frontmatter `tags:`. */
   tags?: TagsImporter;
+  /**
+   * When provided, files an `agent_enrichment_stale` suggestion for records
+   * whose FM has both `agent.summary` and `agent.derived_from_hash` but the
+   * recorded hash diverges from the body's current hash. Auto-resolves
+   * pending stale suggestions for records that are no longer stale.
+   */
+  agentStale?: AgentEnrichmentStaleFiler;
 }
 
 /**
@@ -147,6 +155,25 @@ export const importFile = (
       process.stderr.write(
         `tags ${relativePath}: ${result.rejected.length} unknown (${result.rejected.join(', ')}); ${result.suggestionsFiled} new_tag suggestion(s) filed\n`
       );
+    }
+  }
+
+  // Agent-enrichment staleness check. Only meaningful when both fields are
+  // populated — partial blocks (summary without hash, or vice versa) are
+  // ambiguous and silently skipped.
+  if (options.agentStale && agent.summary !== null && agent.derivedFromHash !== null) {
+    const bodyHash = contentHash(body);
+    if (agent.derivedFromHash === bodyHash) {
+      // Fresh again — auto-accept any pending stale suggestion for this record.
+      options.agentStale.autoAcceptForRecord(recordId, now);
+    } else {
+      options.agentStale.fileStaleSuggestion({
+        recordId,
+        filePath: relativePath,
+        agentDerivedFromHash: agent.derivedFromHash,
+        currentBodyHash: bodyHash,
+        now
+      });
     }
   }
 

@@ -83,8 +83,8 @@ test('GET /system/status with valid token returns indexer status', async t => {
     t.equal(payload['ok'], true, 'ok=true');
     t.equal(
       payload['schema_version'],
-      5,
-      'schema_version=5 (init+title+sync+doc-vecs+agent-enrichment)'
+      6,
+      'schema_version=6 (all migrations through agent-enrichment-stale kind)'
     );
     t.equal(payload['records'], 0, 'records=0 on empty DB');
     t.equal(payload['edges'], 0, 'edges=0 on empty DB');

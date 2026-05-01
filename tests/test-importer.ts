@@ -2,10 +2,26 @@ import test from 'tape-six';
 import {mkdtempSync, mkdirSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {importVault} from '../src/importer/import.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
+import {contentHash} from '../src/util/hash.ts';
+
+const bodyHash = (body: string): string => contentHash(body);
+
+const pendingStaleCount = (db: DatabaseSync): number =>
+  Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM suggestions
+           WHERE kind = 'agent_enrichment_stale' AND status = 'pending'`
+        )
+        .get() as {n: number}
+    ).n
+  );
 
 const writeMd = (root: string, relativePath: string, content: string): void => {
   const abs = join(root, relativePath);
@@ -342,6 +358,82 @@ test('summary-only edit triggers re-import (changes content_hash)', t => {
     const repo = new RecordsRepository(db);
     const r = repo.getByPath('topics/t.md');
     t.equal(r?.agentSummary, 'second summary', 'summary refreshed');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer files agent_enrichment_stale when derived_from_hash diverges', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    // The frontmatter parser preserves bytes after the closing `---\n`, so
+    // the importer hashes whatever bytes the body has — trailing newline
+    // included. Compose the file content body-first, then compute the hash
+    // against the same bytes the importer will see.
+    const writeWithMatchingHash = (summary: string, bodyBytes: string, hashOverride?: string) => {
+      const fm = [
+        '---',
+        'title: Doc',
+        'agent:',
+        `  summary: ${JSON.stringify(summary)}`,
+        '  derived_from_hash: ' + (hashOverride ?? bodyHash(bodyBytes)),
+        '---',
+        ''
+      ].join('\n');
+      writeMd(root, 'topics/d.md', fm + bodyBytes);
+    };
+
+    // First pass: agent block present, hash matches body — fresh.
+    const body1 = 'first body content\n';
+    writeWithMatchingHash('first summary', body1);
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    t.equal(pendingStaleCount(db), 0, 'no stale suggestion when hash matches');
+
+    // Second pass: body edited, agent.derived_from_hash still old → stale.
+    const body2 = 'edited body content (LLM has not seen this yet)\n';
+    writeWithMatchingHash('first summary', body2, bodyHash(body1));
+    importVault(db, root);
+    t.equal(pendingStaleCount(db), 1, 'stale suggestion filed after body diverges');
+
+    // Third pass: re-importing the same stale state must not duplicate.
+    importVault(db, root);
+    t.equal(pendingStaleCount(db), 1, 'idempotent — no duplicate stale suggestion');
+
+    // Fourth pass: refresh the agent block to match the new body.
+    writeWithMatchingHash('second summary (refreshed)', body2);
+    importVault(db, root);
+    t.equal(pendingStaleCount(db), 0, 'auto-resolved when hash matches body again');
+    const accepted = db
+      .prepare(
+        `SELECT status, resolved_by FROM suggestions
+         WHERE kind = 'agent_enrichment_stale'`
+      )
+      .all() as Array<{status: string; resolved_by: string}>;
+    t.equal(accepted.length, 1, 'one stale row total (now resolved)');
+    t.equal(accepted[0]?.status, 'accepted', 'resolved');
+    t.equal(accepted[0]?.resolved_by, 'hash-matched', 'resolved_by signals auto-accept path');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer skips stale check when agent block missing or partial', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/none.md', '---\ntitle: No agent\n---\nbody\n');
+    writeMd(
+      root,
+      'topics/partial.md',
+      ['---', 'title: Partial', 'agent:', '  summary: "no hash"', '---', 'body', ''].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    t.equal(pendingStaleCount(db), 0, 'no stale suggestion for missing/partial agent');
     db.close();
   } finally {
     cleanup();

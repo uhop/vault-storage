@@ -12,6 +12,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {embedPending} from '../embeddings/embed-pass.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges} from '../importer/build-edges.ts';
+import {AgentEnrichmentStaleFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
 import {TagsImporter} from '../importer/import-tags.ts';
 import {RecordsRepository} from '../records/repository.ts';
@@ -65,6 +66,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
 
   const records = new RecordsRepository(db);
   const tags = new TagsImporter(db);
+  const agentStale = new AgentEnrichmentStaleFiler(db);
 
   const pending = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
@@ -99,7 +101,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             }
             continue;
           }
-          importFile(records, relativePath, abs, now, {tags});
+          importFile(records, relativePath, abs, now, {tags, agentStale});
           imported++;
         } catch (err) {
           errors++;

@@ -15,9 +15,11 @@ import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
 import {
   acceptSuggestionHandler,
+  createSuggestionHandler,
   getSuggestionHandler,
   listSuggestionsHandler,
   rejectSuggestionHandler,
+  reopenSuggestionHandler,
   summarySuggestionsHandler
 } from './handlers/suggestions.ts';
 import {lintHandler} from './handlers/lint.ts';
@@ -77,12 +79,14 @@ export const buildRouter = (opts: BuildOptions): Router => {
 
   const suggestionsDeps = {db: opts.db};
   router.get('/suggestions', listSuggestionsHandler(suggestionsDeps));
+  router.post('/suggestions', createSuggestionHandler(suggestionsDeps));
   // `/summary` registered before `/{id}` so the literal path wins over the
   // wildcard match (router currently uses registration-order precedence).
   router.get('/suggestions/summary', summarySuggestionsHandler(suggestionsDeps));
   router.get('/suggestions/{id}', getSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/accept', acceptSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/reject', rejectSuggestionHandler(suggestionsDeps));
+  router.post('/suggestions/{id}/reopen', reopenSuggestionHandler(suggestionsDeps));
 
   const vaultDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath};
   router.get('/vault/', getVaultRootHandler(vaultDeps));
