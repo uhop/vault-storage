@@ -70,7 +70,9 @@ export const main = async (): Promise<void> => {
     gitSync = startGitSync({
       vaultDataPath: env.vaultDataPath,
       intervalMs: env.commitIntervalMs,
-      autoPush: env.autoPush
+      autoPush: env.autoPush,
+      authorName: env.gitAuthorName,
+      authorEmail: env.gitAuthorEmail
     });
     process.stdout.write(
       `vault-storage: git-sync every ${env.commitIntervalMs}ms (push=${env.autoPush})\n`

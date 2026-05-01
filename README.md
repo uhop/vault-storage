@@ -80,6 +80,8 @@ Environment variables:
 | `VAULT_AUTO_COMMIT`        | no       | Periodic `git add && git commit` of the vault tree. Default `true`.          |
 | `VAULT_AUTO_PUSH`          | no       | `git push` after each auto-commit. Default `false` (manual push).            |
 | `VAULT_COMMIT_INTERVAL_MS` | no       | Poll interval for auto-commit. Default `60000`.                              |
+| `VAULT_GIT_AUTHOR_NAME`    | no       | Author name for auto-commits. Default `vault-storage`.                       |
+| `VAULT_GIT_AUTHOR_EMAIL`   | no       | Author email for auto-commits. Default `vault-storage@localhost`.            |
 
 Put these in `~/.env` (sourced by `.bashrc`) or pass on the command line.
 

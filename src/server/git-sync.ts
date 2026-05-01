@@ -21,6 +21,13 @@ export interface GitSyncOptions {
   autoPush?: boolean;
   /** Override the commit subject; default includes the file count. */
   commitSubject?: (changedFiles: number) => string;
+  /**
+   * Author/committer identity for `git commit`. Passed via `-c user.name=…
+   * -c user.email=…` so the container doesn't need a global gitconfig.
+   * Defaults: `vault-storage` / `vault-storage@localhost`.
+   */
+  authorName?: string;
+  authorEmail?: string;
   log?: (msg: string) => void;
   onError?: (err: unknown) => void;
 }
@@ -62,6 +69,14 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
   const intervalMs = opts.intervalMs ?? 60_000;
   const autoPush = opts.autoPush ?? false;
   const commitSubject = opts.commitSubject ?? defaultSubject;
+  const authorName = opts.authorName ?? 'vault-storage';
+  const authorEmail = opts.authorEmail ?? 'vault-storage@localhost';
+  const identityArgs = [
+    '-c',
+    `user.name=${authorName}`,
+    '-c',
+    `user.email=${authorEmail}`
+  ];
   const log = opts.log ?? (msg => process.stdout.write(`vault-storage: ${msg}\n`));
   const onError =
     opts.onError ?? (err => process.stderr.write(`git-sync: ${err instanceof Error ? err.message : String(err)}\n`));
@@ -88,7 +103,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
       return;
     }
     const subject = commitSubject(dirtyLines.length);
-    const commit = await runGit(vaultDataPath, ['commit', '-m', subject]);
+    const commit = await runGit(vaultDataPath, [...identityArgs, 'commit', '-m', subject]);
     if (commit.exitCode !== 0) {
       // "nothing to commit" can happen if files were only in .gitignore.
       const benign = /nothing to commit/i.test(commit.stdout) || /nothing to commit/i.test(commit.stderr);

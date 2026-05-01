@@ -36,7 +36,9 @@ const makeEnv = (port: number, dataPath: string): ServerEnv => ({
   embedder: 'fake',
   autoCommit: false,
   autoPush: false,
-  commitIntervalMs: 60000
+  commitIntervalMs: 60000,
+  gitAuthorName: 'vault-storage',
+  gitAuthorEmail: 'vault-storage@localhost'
 });
 
 const startTestServer = async (

@@ -25,6 +25,9 @@ export interface ServerEnv {
   autoPush: boolean;
   /** Polling interval for the git-sync loop. */
   commitIntervalMs: number;
+  /** Author/committer identity passed to `git commit` via `-c`. */
+  gitAuthorName: string;
+  gitAuthorEmail: string;
 }
 
 const required = (name: string): string => {
@@ -74,6 +77,9 @@ export const readServerEnv = (): ServerEnv => {
     throw new Error(`VAULT_COMMIT_INTERVAL_MS must be ≥ 1000 (got ${intervalRaw})`);
   }
 
+  const gitAuthorName = process.env['VAULT_GIT_AUTHOR_NAME'] ?? 'vault-storage';
+  const gitAuthorEmail = process.env['VAULT_GIT_AUTHOR_EMAIL'] ?? 'vault-storage@localhost';
+
   return {
     vaultDataPath,
     vaultIngestPath,
@@ -87,7 +93,9 @@ export const readServerEnv = (): ServerEnv => {
     embedder,
     autoCommit,
     autoPush,
-    commitIntervalMs
+    commitIntervalMs,
+    gitAuthorName,
+    gitAuthorEmail
   };
 };
 
