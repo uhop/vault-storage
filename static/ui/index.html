@@ -94,6 +94,7 @@
     <a href="/ui/search.html">search</a>
     <a href="/ui/projects.html">projects</a>
     <a href="/ui/tags.html">tags</a>
+    <a href="/ui/raw.html">raw</a>
     <a href="/ui/note.html">note</a>
   </nav>
   <div class="spacer"></div>
@@ -239,10 +240,53 @@ function setSlot(key, value, sub, cls) {
 
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
+function renderRawInboxTile(data) {
+  const ready = data.ready ?? [];
+  const drafts = data.drafts ?? [];
+  const existing = document.querySelector('[data-slot="raw-inbox"]');
+  if (ready.length === 0 && drafts.length === 0) {
+    if (existing) existing.remove();
+    return;
+  }
+  const value = String(ready.length + drafts.length);
+  const cls = ready.length > 0 ? 'warn' : '';
+  const sub = `ready: ${ready.length} · drafts: ${drafts.length}`;
+  if (existing) {
+    existing.querySelector('.value').textContent = value;
+    existing.querySelector('.value').className = `value ${cls}`;
+    existing.querySelector('.sub').textContent = sub;
+    return;
+  }
+  const card = document.createElement('a');
+  card.className = 'card';
+  card.href = '/ui/raw.html';
+  card.style.textDecoration = 'none';
+  card.style.color = 'inherit';
+  card.dataset.slot = 'raw-inbox';
+  card.innerHTML = `
+    <p class="label">Raw inbox</p>
+    <p class="value ${cls}">${value}</p>
+    <p class="sub">${sub}</p>
+  `;
+  $('#stats').appendChild(card);
+}
+
 function recommend(summary, lint, details) {
   const recs = [];
   const k = summary.by_kind ?? {};
   const compactFolders = details?.compactFolders ?? [];
+  const rawInbox = details?.rawInbox ?? {ready: [], drafts: []};
+  if (rawInbox.ready.length > 0) {
+    const list = rawInbox.ready
+      .slice(0, 5)
+      .map(it => `<a href="/ui/note.html?path=${encodeURIComponent(it.path)}"><code>${esc(it.path)}</code></a>`)
+      .join(', ');
+    const more = rawInbox.ready.length > 5 ? ` … +${rawInbox.ready.length - 5} more` : '';
+    recs.push({
+      title: `${rawInbox.ready.length} raw note${rawInbox.ready.length === 1 ? '' : 's'} ready for ingest`,
+      why: `Run <code>/vault ingest</code> to compile into topics, projects, and queues. Files: ${list}${more}. <a href="/ui/raw.html">Open inbox</a>.`
+    });
+  }
   if (k.edge_type) recs.push({
     title: `${k.edge_type} pending edge_type suggestions`,
     why: `Run <code>/vault-review-edges</code> to triage. Sonnet sub-agent for bulk; default to <code>cites</code> when in doubt.`,
@@ -370,9 +414,13 @@ async function refresh() {
   renderSkeleton();
   if (!getToken()) { showAuthDialog(); return; }
 
-  let summary = null, lint = null, compactFolders = [];
+  let summary = null, lint = null, compactFolders = [], rawInbox = {ready: [], drafts: []};
   try {
     await Promise.all([
+      api('/maintenance/raw-inbox').then(d => {
+        rawInbox = d;
+        renderRawInboxTile(d);
+      }),
       api('/system/status').then(d => {
         setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
         setSlot('edges', fmtCount(d.edges));
@@ -407,7 +455,7 @@ async function refresh() {
         setSlot('lint', lbl, '/system/lint', lvl);
       })
     ]);
-    renderRecs(recommend(summary, lint, { compactFolders }));
+    renderRecs(recommend(summary, lint, { compactFolders, rawInbox }));
     fetchRecent();
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') {
