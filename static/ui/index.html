@@ -155,9 +155,12 @@ function setSlot(key, value, sub, cls) {
   }
 }
 
-function recommend(summary, lint) {
+const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
+
+function recommend(summary, lint, details) {
   const recs = [];
   const k = summary.by_kind ?? {};
+  const compactFolders = details?.compactFolders ?? [];
   if (k.edge_type) recs.push({
     title: `${k.edge_type} pending edge_type suggestions`,
     why: `Run <code>/vault-review-edges</code> to triage. Sonnet sub-agent for bulk; default to <code>cites</code> when in doubt.`,
@@ -175,10 +178,17 @@ function recommend(summary, lint) {
     title: `${k.tag_suggestion} agent-proposed tag adds`,
     why: `Run <code>/vault-review-tags --kind=tag_suggestion</code> to accept or reject per record.`
   });
-  if (k.compaction_candidate) recs.push({
-    title: `${k.compaction_candidate} folders past compaction threshold`,
-    why: `Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
-  });
+  if (k.compaction_candidate) {
+    const list = compactFolders
+      .map(f => `<code>${esc(f.folder_path)}</code> (${f.piece_count})`)
+      .join(', ');
+    recs.push({
+      title: `${k.compaction_candidate} folders past compaction threshold`,
+      why: list
+        ? `${list}. Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
+        : `Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
+    });
+  }
   if (k.archive_candidate) recs.push({
     title: `${k.archive_candidate} retention candidates`,
     why: `Stale records past per-type retention. Mark archived or extend lifetime.`
@@ -192,11 +202,20 @@ function recommend(summary, lint) {
     why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
     level: k.infrastructure_upgrade ? 'warn' : ''
   });
-  if (!lint.ok) recs.push({
-    title: `${lint.total_issues} integrity-lint issues`,
-    why: `Inspect via <code>GET /system/lint</code> — embedding drift / missing embeddings / orphans / temporal anomalies / dangling aliases.`,
-    level: 'bad'
-  });
+  if (!lint.ok) {
+    const broken = Object.entries(lint.checks ?? {})
+      .filter(([, c]) => c.count > 0)
+      .map(([name, c]) => {
+        const samples = (c.samples ?? []).slice(0, 2).map(s => esc(s.id ?? s)).join(', ');
+        return `<code>${name}</code>: ${c.count}${samples ? ` (e.g. ${samples})` : ''}`;
+      })
+      .join('<br>');
+    recs.push({
+      title: `${lint.total_issues} integrity-lint issues`,
+      why: broken || `Inspect via <code>GET /system/lint</code>.`,
+      level: 'bad'
+    });
+  }
   return recs;
 }
 
@@ -226,7 +245,7 @@ async function refresh() {
   renderSkeleton();
   if (!getToken()) { showAuthDialog(); return; }
 
-  let summary = null, lint = null;
+  let summary = null, lint = null, compactFolders = [];
   try {
     await Promise.all([
       api('/system/status').then(d => {
@@ -236,12 +255,16 @@ async function refresh() {
         setSlot('sqlite-vec', d.sqlite_vec_version);
         $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
       }),
-      api('/suggestions/summary').then(d => {
+      api('/suggestions/summary').then(async d => {
         summary = d;
         const total = d.total ?? 0;
         setSlot('pending', fmtCount(total),
           total ? Object.entries(d.by_kind).map(([k,v]) => `${k}:${v}`).join(' ') : 'queue clear',
           total ? (total > 50 ? 'warn' : '') : 'ok');
+        if (d.by_kind?.compaction_candidate) {
+          const r = await api('/suggestions?kind=compaction_candidate&status=pending&limit=20');
+          compactFolders = (r.items ?? []).map(s => s.payload ?? {});
+        }
       }),
       api('/system/lint').then(d => {
         lint = d;
@@ -250,7 +273,7 @@ async function refresh() {
         setSlot('lint', lbl, '/system/lint', lvl);
       })
     ]);
-    renderRecs(recommend(summary, lint));
+    renderRecs(recommend(summary, lint, { compactFolders }));
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') {
       showAuthDialog();
