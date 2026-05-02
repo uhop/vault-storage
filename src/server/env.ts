@@ -28,6 +28,8 @@ export interface ServerEnv {
   /** Author/committer identity passed to `git commit` via `-c`. */
   gitAuthorName: string;
   gitAuthorEmail: string;
+  /** Directory served at /ui/. Empty string disables the UI surface. */
+  uiStaticPath: string;
 }
 
 const required = (name: string): string => {
@@ -80,6 +82,8 @@ export const readServerEnv = (): ServerEnv => {
   const gitAuthorName = process.env['VAULT_GIT_AUTHOR_NAME'] ?? 'vault-storage';
   const gitAuthorEmail = process.env['VAULT_GIT_AUTHOR_EMAIL'] ?? 'vault-storage@localhost';
 
+  const uiStaticPath = process.env['VAULT_UI_STATIC_PATH'] ?? 'static';
+
   return {
     vaultDataPath,
     vaultIngestPath,
@@ -95,7 +99,8 @@ export const readServerEnv = (): ServerEnv => {
     autoPush,
     commitIntervalMs,
     gitAuthorName,
-    gitAuthorEmail
+    gitAuthorEmail,
+    uiStaticPath
   };
 };
 

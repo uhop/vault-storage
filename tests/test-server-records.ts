@@ -38,7 +38,8 @@ const makeEnv = (port: number, dataPath: string): ServerEnv => ({
   autoPush: false,
   commitIntervalMs: 60000,
   gitAuthorName: 'vault-storage',
-  gitAuthorEmail: 'vault-storage@localhost'
+  gitAuthorEmail: 'vault-storage@localhost',
+  uiStaticPath: ''
 });
 
 const startTestServer = async (

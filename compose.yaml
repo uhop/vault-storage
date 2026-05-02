@@ -57,7 +57,11 @@ services:
     labels:
       - homepage.group=Hosted
       - homepage.name=Vault Storage
-      - homepage.href=https://github.com/uhop/vault-storage
+      # Set VAULT_HOMEPAGE_HREF in .env to your reachable URL, e.g.
+      # `http://croc.lan:8123/ui/`. The default points at the dashboard
+      # served from this container; the GitHub URL fallback is the
+      # placeholder for fresh checkouts.
+      - homepage.href=${VAULT_HOMEPAGE_HREF:-https://github.com/uhop/vault-storage}
       - homepage.description=AI-agent vault — markdown indexed with embeddings + typed edges; REST + MCP
 
 volumes:

@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>vault-storage — dashboard</title>
+<style>
+  :root {
+    --bg: #fafafa; --fg: #111; --muted: #666; --line: #ddd;
+    --card: #fff; --accent: #0366d6; --warn: #b25b00; --bad: #c0392b; --ok: #1a7f37;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --fg: #e8e8e8; --muted: #9aa0a6; --line: #2c2f36;
+      --card: #1d2025; --accent: #4d9fff; --warn: #d39230; --bad: #ff6b5e; --ok: #58c47b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+  header nav { display: flex; gap: .8rem; font-size: .9rem; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  header nav a[aria-current] { color: var(--fg); }
+  header .spacer { flex: 1; }
+  main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .8rem 1rem; }
+  .card .label { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; margin: 0; }
+  .card .value { font-size: 1.6rem; line-height: 1.2; margin: .2rem 0 0; font-variant-numeric: tabular-nums; }
+  .card .sub { color: var(--muted); font-size: .8rem; margin-top: .25rem; font-family: var(--mono); }
+  .card .value.ok { color: var(--ok); } .card .value.warn { color: var(--warn); } .card .value.bad { color: var(--bad); }
+  section.recs { margin-top: 1.5rem; }
+  section.recs h2 { font-size: 1rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
+  .rec { display: flex; gap: .8rem; align-items: flex-start; padding: .7rem 1rem; border-left: 3px solid var(--accent); background: var(--card); border-radius: 0 6px 6px 0; margin-bottom: .5rem; }
+  .rec.warn { border-left-color: var(--warn); }
+  .rec.bad { border-left-color: var(--bad); }
+  .rec .body { flex: 1; }
+  .rec .title { font-weight: 600; }
+  .rec .why { color: var(--muted); font-size: .9rem; margin-top: .15rem; }
+  .rec code { font-family: var(--mono); font-size: .85em; background: rgba(127,127,127,.12); padding: .1em .4em; border-radius: 3px; }
+  .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
+  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
+  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
+  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
+  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
+  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
+  button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .footer { color: var(--muted); font-size: .8rem; padding: 1rem; text-align: center; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <h1>vault-storage</h1>
+  <nav>
+    <a href="/ui/" aria-current="page">dashboard</a>
+  </nav>
+  <div class="spacer"></div>
+  <button id="settings" title="Settings">⚙</button>
+</header>
+<main id="root">
+  <div class="grid" id="stats"></div>
+  <section class="recs">
+    <h2>Recommended actions</h2>
+    <div id="recs"></div>
+  </section>
+</main>
+<div class="footer" id="footer"></div>
+
+<dialog id="auth-dlg">
+  <h2>API token</h2>
+  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
+  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <button id="auth-cancel">Cancel</button>
+    <button id="auth-ok" class="primary">Save</button>
+  </div>
+</dialog>
+
+<script type="module">
+const TOKEN_KEY = 'vault.token';
+const $ = sel => document.querySelector(sel);
+
+const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
+const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
+
+async function api(path) {
+  const token = getToken();
+  if (!token) throw new Error('no-token');
+  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) throw new Error('unauthorized');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function fmtCount(n) { return n.toLocaleString(); }
+function fmtAge(iso) {
+  if (!iso) return '—';
+  const t = Date.parse(iso); if (!Number.isFinite(t)) return iso;
+  const d = (Date.now() - t) / 1000;
+  if (d < 60) return Math.floor(d) + 's ago';
+  if (d < 3600) return Math.floor(d/60) + 'm ago';
+  if (d < 86400) return Math.floor(d/3600) + 'h ago';
+  return Math.floor(d/86400) + 'd ago';
+}
+function shortSha(s) { return s ? s.slice(0, 7) : '—'; }
+
+function renderStats(status, summary, lint) {
+  const total = summary.total ?? 0;
+  const lintLevel = lint.ok ? 'ok' : (lint.total_issues > 5 ? 'bad' : 'warn');
+  const lintLabel = lint.ok ? 'clean' : `${lint.total_issues} issue${lint.total_issues === 1 ? '' : 's'}`;
+  const cards = [
+    { label: 'Records',  value: fmtCount(status.records),  sub: `schema ${status.schema_version}` },
+    { label: 'Edges',    value: fmtCount(status.edges),    sub: '' },
+    { label: 'Pending suggestions', value: fmtCount(total), sub: total ? Object.entries(summary.by_kind).map(([k,v]) => `${k}:${v}`).join(' ') : 'queue clear', cls: total ? (total > 50 ? 'warn' : '') : 'ok' },
+    { label: 'Integrity lint', value: lintLabel, sub: '/system/lint', cls: lintLevel },
+    { label: 'Last indexed', value: shortSha(status.last_indexed_commit), sub: status.last_indexed_commit ? '' : 'unset' },
+    { label: 'sqlite-vec',     value: status.sqlite_vec_version, sub: '' }
+  ];
+  $('#stats').innerHTML = cards.map(c => `
+    <div class="card">
+      <p class="label">${c.label}</p>
+      <p class="value ${c.cls ?? ''}">${c.value}</p>
+      ${c.sub ? `<p class="sub">${c.sub}</p>` : ''}
+    </div>
+  `).join('');
+}
+
+function recommend(summary, lint) {
+  const recs = [];
+  const k = summary.by_kind ?? {};
+  if (k.edge_type) recs.push({
+    title: `${k.edge_type} pending edge_type suggestions`,
+    why: `Run <code>/vault-review-edges</code> to triage. Sonnet sub-agent for bulk; default to <code>cites</code> when in doubt.`,
+    level: k.edge_type > 200 ? 'warn' : ''
+  });
+  if (k.duplicate) recs.push({
+    title: `${k.duplicate} pending duplicate pairs`,
+    why: `Run <code>/vault-review-duplicates</code> to confirm/relate/contradict.`
+  });
+  if (k.new_tag) recs.push({
+    title: `${k.new_tag} unknown tags awaiting taxonomy decisions`,
+    why: `Run <code>/vault-review-tags</code> to canonicalize, alias, or reject.`
+  });
+  if (k.tag_suggestion) recs.push({
+    title: `${k.tag_suggestion} agent-proposed tag adds`,
+    why: `Run <code>/vault-review-tags --kind=tag_suggestion</code> to accept or reject per record.`
+  });
+  if (k.compaction_candidate) recs.push({
+    title: `${k.compaction_candidate} folders past compaction threshold`,
+    why: `Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
+  });
+  if (k.archive_candidate) recs.push({
+    title: `${k.archive_candidate} retention candidates`,
+    why: `Stale records past per-type retention. Mark archived or extend lifetime.`
+  });
+  if (k.agent_enrichment_stale) recs.push({
+    title: `${k.agent_enrichment_stale} stale enrichment blocks`,
+    why: `Run <code>/vault-enrich-all</code> with the stale list to refresh derived summaries.`
+  });
+  if (k.inefficiency_detected || k.infrastructure_upgrade) recs.push({
+    title: `Backend-shape signals filed`,
+    why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
+    level: k.infrastructure_upgrade ? 'warn' : ''
+  });
+  if (!lint.ok) recs.push({
+    title: `${lint.total_issues} integrity-lint issues`,
+    why: `Inspect via <code>GET /system/lint</code> — embedding drift / missing embeddings / orphans / temporal anomalies / dangling aliases.`,
+    level: 'bad'
+  });
+  return recs;
+}
+
+function renderRecs(recs) {
+  if (recs.length === 0) {
+    $('#recs').innerHTML = `<div class="empty">No actions recommended. Vault is healthy.</div>`;
+    return;
+  }
+  $('#recs').innerHTML = recs.map(r => `
+    <div class="rec ${r.level ?? ''}">
+      <div class="body">
+        <div class="title">${r.title}</div>
+        <div class="why">${r.why}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function showAuthDialog() {
+  const dlg = $('#auth-dlg');
+  $('#auth-input').value = getToken();
+  dlg.showModal();
+  $('#auth-input').focus();
+}
+
+async function refresh() {
+  if (!getToken()) { showAuthDialog(); return; }
+  try {
+    const [status, summary, lint] = await Promise.all([
+      api('/system/status'),
+      api('/suggestions/summary'),
+      api('/system/lint')
+    ]);
+    renderStats(status, summary, lint);
+    renderRecs(recommend(summary, lint));
+    $('#footer').textContent = `vault: ${status.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') {
+      showAuthDialog();
+      return;
+    }
+    $('#root').innerHTML = `<div class="err">Failed to load: ${e.message}</div>`;
+  }
+}
+
+$('#settings').addEventListener('click', showAuthDialog);
+$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+$('#auth-ok').addEventListener('click', () => {
+  setToken($('#auth-input').value.trim());
+  $('#auth-dlg').close();
+  refresh();
+});
+$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+
+refresh();
+</script>
+</body>
+</html>

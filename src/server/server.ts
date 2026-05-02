@@ -41,6 +41,7 @@ import {
 } from './handlers/vault.ts';
 import {sendError} from './responses.ts';
 import {Router, type RequestContext} from './router.ts';
+import {staticHandler} from './handlers/static.ts';
 
 export interface ServerHandle {
   server: Server;
@@ -128,8 +129,23 @@ export const buildRouter = (opts: BuildOptions): Router => {
     incrementalReindexHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
 
+  if (opts.env.uiStaticPath) {
+    const uiHandler = staticHandler({rootDir: opts.env.uiStaticPath, indexFile: 'index.html'});
+    router.get('/ui', uiHandler);
+    router.get('/ui/', uiHandler);
+    router.get('/ui/{path}', uiHandler);
+  }
+
   return router;
 };
+
+/**
+ * The `/ui/` prefix serves the unauthenticated shell. The page calls API
+ * endpoints with the bearer the user pasted into localStorage, so the
+ * shell itself doesn't need it. Anyone on the LAN can load the HTML; only
+ * a token holder can read or write data.
+ */
+const isPublicPath = (path: string): boolean => path === '/ui' || path.startsWith('/ui/');
 
 const parseUrl = (req: IncomingMessage): {path: string; query: Record<string, string>} | null => {
   if (!req.url) return null;
@@ -146,14 +162,14 @@ const handleRequest =
   (router: Router, env: ServerEnv) =>
   async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
-      if (!checkBearer(req, env.apiToken)) {
-        sendError(res, 401, 'unauthorized', 'missing or invalid bearer token');
-        return;
-      }
-
       const parsed = parseUrl(req);
       if (!parsed) {
         sendError(res, 400, 'bad_request', 'malformed request URL');
+        return;
+      }
+
+      if (!isPublicPath(parsed.path) && !checkBearer(req, env.apiToken)) {
+        sendError(res, 401, 'unauthorized', 'missing or invalid bearer token');
         return;
       }
 

@@ -27,6 +27,7 @@ WORKDIR /app
 COPY --chown=node:node --from=deps /app/node_modules ./node_modules
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node src ./src
+COPY --chown=node:node static ./static
 COPY --chown=node:node tsconfig.json ./
 
 # `node:25-slim` ships with a `node` user (uid 1000, gid 1000). Reuse it instead
