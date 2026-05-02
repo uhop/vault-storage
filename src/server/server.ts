@@ -17,6 +17,7 @@ import {
   findRetentionCandidatesHandler,
   findUpgradeSignalsHandler,
   incrementalReindexHandler,
+  rawInboxHandler,
   runAllScansHandler,
   snapshotHandler
 } from './handlers/maintenance.ts';
@@ -140,6 +141,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/maintenance/find-upgrade-signals', findUpgradeSignalsHandler({db: opts.db}));
   router.post('/maintenance/cleanup-lint', cleanupLintHandler({db: opts.db}));
   router.post('/maintenance/run-all', runAllScansHandler({db: opts.db}));
+  router.get(
+    '/maintenance/raw-inbox',
+    rawInboxHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
   router.post(
     '/maintenance/snapshot',
     snapshotHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})

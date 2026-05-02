@@ -9,6 +9,7 @@ import {
   clearLastIndexedCommit,
   incrementalReindex
 } from '../../maintenance/incremental-reindex.ts';
+import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {snapshotDb} from '../snapshot.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -239,6 +240,24 @@ export const cleanupLintHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
     const summary = cleanupLint(deps.db);
+    sendJson(ctx.res, 200, summary);
+    void ctx;
+  };
+
+/**
+ * GET /maintenance/raw-inbox
+ *
+ * Inspect the vault's `raw/` quick-capture inbox. Top-level `.md` files
+ * (excluding `_about.md` and the `archive/` subfolder) are split into
+ * ready (FM `ready: true`) and drafts (no flag). The dashboard uses this
+ * to surface a "run /vault ingest" reminder when ready notes accumulate
+ * — and to nudge the user when drafts are sitting around in case the
+ * `ready` flip was forgotten.
+ */
+export const rawInboxHandler =
+  (deps: SnapshotDeps): Handler =>
+  ctx => {
+    const summary = scanRawInbox(deps.vaultDataPath);
     sendJson(ctx.res, 200, summary);
     void ctx;
   };
