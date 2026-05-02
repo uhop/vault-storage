@@ -82,7 +82,7 @@ export const readServerEnv = (): ServerEnv => {
   const gitAuthorName = process.env['VAULT_GIT_AUTHOR_NAME'] ?? 'vault-storage';
   const gitAuthorEmail = process.env['VAULT_GIT_AUTHOR_EMAIL'] ?? 'vault-storage@localhost';
 
-  const uiStaticPath = process.env['VAULT_UI_STATIC_PATH'] ?? 'static';
+  const uiStaticPath = process.env['VAULT_UI_STATIC_PATH'] ?? 'static/ui';
 
   return {
     vaultDataPath,
