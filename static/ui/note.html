@@ -217,6 +217,7 @@
   <button id="save">Save</button>
   <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
   <button id="recent" hidden>Recent</button>
+  <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
   <button id="del" class="danger" hidden>Delete</button>
 </div>
 <div class="err" id="err" hidden></div>
@@ -270,6 +271,15 @@
   <ul id="wiki-results" class="wiki-results"></ul>
   <div class="row">
     <button id="wiki-cancel">Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="backlinks-dlg">
+  <h2>Backlinks</h2>
+  <p id="backlinks-count">No notes link to this one.</p>
+  <ul id="backlinks-list" class="recent-list"></ul>
+  <div class="row">
+    <button id="backlinks-close">Close</button>
   </div>
 </dialog>
 
@@ -386,6 +396,7 @@ async function loadExisting(path) {
     }
     $('#editor').disabled = false;
     $('#editor').focus();
+    fetchBacklinks();
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
     showError(`Failed to load: ${e.message}`);
@@ -406,6 +417,62 @@ function initCapture() {
   const v = $('#editor').value;
   $('#editor').setSelectionRange(v.length, v.length);
 }
+
+// Backlinks --------------------------------------------------------
+const fetchBacklinks = async () => {
+  if (!state.path) return;
+  try {
+    const resolveRes = await api(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
+    const resolved = await resolveRes.json();
+    state.recordId = resolved.record_id;
+    const blRes = await api(`/sections/${state.recordId}/backlinks?limit=50`);
+    const data = await blRes.json();
+    state.backlinks = data.items ?? [];
+    state.backlinksTotal = data.total ?? state.backlinks.length;
+    const btn = $('#backlinks');
+    if (state.backlinksTotal === 0) {
+      btn.hidden = true;
+    } else {
+      btn.hidden = false;
+      btn.textContent = `Backlinks (${state.backlinksTotal})`;
+    }
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') return;
+    // Backlinks are nice-to-have; don't surface errors to the user.
+  }
+};
+
+const openBacklinks = () => {
+  const list = $('#backlinks-list');
+  const items = state.backlinks ?? [];
+  const total = state.backlinksTotal ?? 0;
+  $('#backlinks-count').textContent =
+    total === 0
+      ? 'No notes link to this one.'
+      : `${total} note${total === 1 ? '' : 's'} link${total === 1 ? 's' : ''} to this one${
+          items.length < total ? ` (showing first ${items.length})` : ''
+        }.`;
+  if (items.length === 0) {
+    list.innerHTML = '<li class="empty">None.</li>';
+  } else {
+    list.innerHTML = items
+      .map(bl => {
+        const fr = bl.from_record;
+        const t = bl.edge?.type ?? 'cites';
+        const title = fr.title || fr.file_path.split('/').pop().replace(/\.md$/, '');
+        return `
+          <li>
+            <a href="/ui/note.html?path=${encodeURIComponent(fr.file_path)}">
+              <span class="title">${esc(title)}</span>
+              <span class="meta">${esc(fr.file_path)} · ${esc(t)}</span>
+            </a>
+          </li>
+        `;
+      })
+      .join('');
+  }
+  $('#backlinks-dlg').showModal();
+};
 
 // Wikilink picker --------------------------------------------------
 let wikiResults = [];
@@ -649,6 +716,9 @@ $('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
 
 $('#wiki-pick').addEventListener('click', openWikiPicker);
 $('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
+
+$('#backlinks').addEventListener('click', openBacklinks);
+$('#backlinks-close').addEventListener('click', () => $('#backlinks-dlg').close());
 
 $('#wiki-search').addEventListener('input', () => {
   const q = $('#wiki-search').value.trim();
