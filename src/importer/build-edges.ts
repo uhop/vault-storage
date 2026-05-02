@@ -27,6 +27,8 @@ export interface EdgeBuildSummary {
   fmOverridesApplied: number;
   /** New `edge_type` suggestions filed for unreviewed default-cites edges. */
   suggestionsFiled: number;
+  /** Archived records skipped — outbound edges are not extracted from `status: archived` notes. */
+  archivedSkipped: number;
   durationMs: number;
 }
 
@@ -84,6 +86,7 @@ export const buildEdges = (
     selfReferences: 0,
     fmOverridesApplied: 0,
     suggestionsFiled: 0,
+    archivedSkipped: 0,
     durationMs: 0
   };
   const start = performance.now();
@@ -99,6 +102,15 @@ export const buildEdges = (
   db.exec('BEGIN');
   try {
     for (const record of all) {
+      // Archived notes are kept for inbound wikilink resolution only.
+      // Skip outbound extraction so they don't bloat fanout; their stale
+      // outbound edges from pre-archive content will be GC'd at the end of
+      // this pass since none land in `touched`.
+      if (record.status === 'archived') {
+        summary.archivedSkipped++;
+        continue;
+      }
+
       const body = source.read(record);
 
       // Frontmatter `related:` is on the file itself, not the record body.

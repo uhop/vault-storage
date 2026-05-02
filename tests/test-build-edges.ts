@@ -425,3 +425,87 @@ test('FM `edges:` with explicit cites prevents suggestion-filing for that pair',
     teardown(fx);
   }
 });
+
+test('archived records contribute no outbound edges; inbound to them still resolves', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      '_index.md',
+      [
+        '---',
+        'title: Master Index (archived)',
+        'status: archived',
+        'related:',
+        '  - "[[topics/alpha]]"',
+        '---',
+        'See [[topics/alpha]] and [[topics/beta]].',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      ['---', 'title: Alpha', '---', 'Alpha cites [[_index]] for historical context.', ''].join('\n')
+    );
+    writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
+
+    const summary = importVault(fx.db, fx.root);
+    t.equal(summary.edges.archivedSkipped, 1, 'one archived record skipped');
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const idx = records.getByPath('_index.md');
+    const alpha = records.getByPath('topics/alpha.md');
+    t.ok(idx && alpha, 'records imported');
+
+    t.equal(edges.listOutbound(idx!.recordId).length, 0, 'no outbound edges from archived note');
+
+    const inbound = edges.listOutbound(alpha!.recordId).find(e => e.toId === idx!.recordId);
+    t.ok(inbound, 'inbound to archived note still resolves (alpha → _index)');
+    t.equal(inbound?.type, 'cites', 'inbound classified as cites');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('buildEdges deletes stale outbound edges when a record is archived after the fact', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'hub.md',
+      ['---', 'title: Hub', '---', 'Cites [[topics/a]] and [[topics/b]].', ''].join('\n')
+    );
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A\n---\n');
+    writeMd(fx.root, 'topics/b.md', '---\ntitle: B\n---\n');
+
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const hub = records.getByPath('hub.md');
+    t.equal(edges.listOutbound(hub!.recordId).length, 2, 'two outbound before archiving');
+
+    // Flip status to archived and re-import.
+    writeMd(
+      fx.root,
+      'hub.md',
+      [
+        '---',
+        'title: Hub',
+        'status: archived',
+        '---',
+        'Cites [[topics/a]] and [[topics/b]].',
+        ''
+      ].join('\n')
+    );
+    const second = importVault(fx.db, fx.root);
+    t.equal(second.edges.archivedSkipped, 1);
+    t.ok(second.edges.edgesDeleted >= 2, 'stale outbound GC\'d on next pass');
+
+    t.equal(edges.listOutbound(hub!.recordId).length, 0, 'archived note has no outbound');
+  } finally {
+    teardown(fx);
+  }
+});
