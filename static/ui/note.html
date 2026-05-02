@@ -457,16 +457,56 @@ const parseHeadings = text => {
   return headings;
 };
 
+// Measure where a character offset would visually land inside a textarea.
+// Builds a hidden div mirroring the textarea's wrap-relevant styles, places
+// a marker span at the offset, and reads its position. The mirror approach
+// is the standard way to get visual line position from a textarea — line
+// counting alone misses soft-wrapped long lines, which drift the cursor
+// noticeably on long notes (queue.md, learnings.md).
+const measureCaretTop = (ta, offset) => {
+  const cs = getComputedStyle(ta);
+  const mirror = document.createElement('div');
+  for (const p of [
+    'boxSizing', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+    'fontVariant', 'fontStretch', 'lineHeight', 'letterSpacing',
+    'wordSpacing', 'tabSize', 'whiteSpace', 'wordBreak', 'overflowWrap',
+    'wordWrap', 'textTransform', 'textIndent', 'direction',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'
+  ]) {
+    mirror.style[p] = cs[p];
+  }
+  mirror.style.position = 'absolute';
+  mirror.style.visibility = 'hidden';
+  mirror.style.top = '0';
+  mirror.style.left = '-9999px';
+  mirror.style.width = ta.offsetWidth + 'px';
+  mirror.style.height = 'auto';
+  mirror.style.whiteSpace = 'pre-wrap';
+  mirror.style.overflowWrap = 'break-word';
+
+  const text = ta.value;
+  mirror.appendChild(document.createTextNode(text.slice(0, offset)));
+  const marker = document.createElement('span');
+  marker.textContent = text.charAt(offset) || '​';
+  mirror.appendChild(marker);
+  if (offset < text.length) {
+    mirror.appendChild(document.createTextNode(text.slice(offset + 1)));
+  }
+
+  document.body.appendChild(mirror);
+  const top = marker.offsetTop;
+  document.body.removeChild(mirror);
+  return top;
+};
+
 const jumpInEditor = offset => {
   const ta = $('#editor');
   ta.focus();
   ta.setSelectionRange(offset, offset);
-  // Approximate scroll: line number × line-height, with the heading parked
-  // ~1/3 of the way down the visible viewport.
-  const before = ta.value.slice(0, offset);
-  const lineNumber = (before.match(/\n/g) ?? []).length;
-  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 22;
-  ta.scrollTop = Math.max(0, lineNumber * lineHeight - ta.clientHeight / 3);
+  const top = measureCaretTop(ta, offset);
+  ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
 };
 
 const jumpInPreview = index => {
