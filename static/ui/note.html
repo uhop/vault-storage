@@ -216,6 +216,7 @@
   </span>
   <button id="save">Save</button>
   <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
+  <button id="outline" title="Outline (jump to heading)">Outline</button>
   <button id="recent" hidden>Recent</button>
   <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
   <button id="del" class="danger" hidden>Delete</button>
@@ -280,6 +281,15 @@
   <ul id="backlinks-list" class="recent-list"></ul>
   <div class="row">
     <button id="backlinks-close">Close</button>
+  </div>
+</dialog>
+
+<dialog id="outline-dlg">
+  <h2>Outline</h2>
+  <p id="outline-count"></p>
+  <ul id="outline-list" class="recent-list"></ul>
+  <div class="row">
+    <button id="outline-close">Close</button>
   </div>
 </dialog>
 
@@ -417,6 +427,73 @@ function initCapture() {
   const v = $('#editor').value;
   $('#editor').setSelectionRange(v.length, v.length);
 }
+
+// Outline ----------------------------------------------------------
+const parseHeadings = text => {
+  // Skip leading frontmatter so `# title` lines inside FM aren't headings.
+  const fmMatch = /^---\n[\s\S]*?\n---\n/.exec(text);
+  const headStart = fmMatch ? fmMatch[0].length : 0;
+  const lines = text.split('\n');
+  const headings = [];
+  let inFence = false;
+  let runningOffset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (runningOffset < headStart) {
+      runningOffset += line.length + 1;
+      continue;
+    }
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      runningOffset += line.length + 1;
+      continue;
+    }
+    if (!inFence) {
+      const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+      if (m) headings.push({level: m[1].length, text: m[2], offset: runningOffset});
+    }
+    runningOffset += line.length + 1;
+  }
+  return headings;
+};
+
+const jumpToOffset = offset => {
+  const ta = $('#editor');
+  ta.focus();
+  ta.setSelectionRange(offset, offset);
+  // Approximate scroll: line number × line-height, with the heading parked
+  // ~1/3 of the way down the visible viewport.
+  const before = ta.value.slice(0, offset);
+  const lineNumber = (before.match(/\n/g) ?? []).length;
+  const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 22;
+  ta.scrollTop = Math.max(0, lineNumber * lineHeight - ta.clientHeight / 3);
+};
+
+const openOutline = () => {
+  const headings = parseHeadings($('#editor').value);
+  const list = $('#outline-list');
+  $('#outline-count').textContent =
+    headings.length === 0
+      ? 'No headings in this note.'
+      : `${headings.length} heading${headings.length === 1 ? '' : 's'}.`;
+  if (headings.length === 0) {
+    list.innerHTML = '<li class="empty">Add headings (`# `, `## `, …) to jump around long notes.</li>';
+  } else {
+    list.innerHTML = headings
+      .map(
+        h => `
+          <li>
+            <a href="#" class="outline-item" data-offset="${h.offset}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
+              <span class="title">${esc(h.text)}</span>
+              <span class="meta">H${h.level}</span>
+            </a>
+          </li>
+        `
+      )
+      .join('');
+  }
+  $('#outline-dlg').showModal();
+};
 
 // Backlinks --------------------------------------------------------
 const fetchBacklinks = async () => {
@@ -719,6 +796,19 @@ $('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
 
 $('#backlinks').addEventListener('click', openBacklinks);
 $('#backlinks-close').addEventListener('click', () => $('#backlinks-dlg').close());
+
+$('#outline').addEventListener('click', openOutline);
+$('#outline-close').addEventListener('click', () => $('#outline-dlg').close());
+$('#outline-list').addEventListener('click', e => {
+  const item = e.target.closest('a.outline-item');
+  if (!item) return;
+  e.preventDefault();
+  const offset = Number(item.dataset.offset);
+  if (Number.isFinite(offset)) {
+    $('#outline-dlg').close();
+    jumpToOffset(offset);
+  }
+});
 
 $('#wiki-search').addEventListener('input', () => {
   const q = $('#wiki-search').value.trim();
