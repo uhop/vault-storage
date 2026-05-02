@@ -457,7 +457,7 @@ const parseHeadings = text => {
   return headings;
 };
 
-const jumpToOffset = offset => {
+const jumpInEditor = offset => {
   const ta = $('#editor');
   ta.focus();
   ta.setSelectionRange(offset, offset);
@@ -467,6 +467,34 @@ const jumpToOffset = offset => {
   const lineNumber = (before.match(/\n/g) ?? []).length;
   const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 22;
   ta.scrollTop = Math.max(0, lineNumber * lineHeight - ta.clientHeight / 3);
+};
+
+const jumpInPreview = index => {
+  // Pick the Nth heading element in the rendered output. The parser and
+  // marked agree on heading order for ATX headings (the convention in
+  // this vault); setext headings would mismatch but they're rare here.
+  const headings = $('#preview').querySelectorAll('h1, h2, h3, h4, h5, h6');
+  const target = headings[index];
+  if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+};
+
+const jumpToHeading = (offset, index) => {
+  // Editor pane is hidden in `preview` mode; preview pane is hidden in
+  // `edit` mode. Dispatch to whichever surface is visible (or both in
+  // `split`). If the preview is empty (we just rendered an edit-only
+  // session), fall back to scrolling the editor.
+  const previewMode = document.body.dataset.view;
+  if (previewMode === 'preview') {
+    // Trigger a render in case it's stale, then jump.
+    $('#preview').value = $('#editor').value;
+    requestAnimationFrame(() => jumpInPreview(index));
+  } else if (previewMode === 'edit') {
+    jumpInEditor(offset);
+  } else {
+    // split: jump both surfaces.
+    jumpInEditor(offset);
+    requestAnimationFrame(() => jumpInPreview(index));
+  }
 };
 
 const openOutline = () => {
@@ -481,9 +509,9 @@ const openOutline = () => {
   } else {
     list.innerHTML = headings
       .map(
-        h => `
+        (h, i) => `
           <li>
-            <a href="#" class="outline-item" data-offset="${h.offset}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
+            <a href="#" class="outline-item" data-offset="${h.offset}" data-index="${i}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
               <span class="title">${esc(h.text)}</span>
               <span class="meta">H${h.level}</span>
             </a>
@@ -804,9 +832,10 @@ $('#outline-list').addEventListener('click', e => {
   if (!item) return;
   e.preventDefault();
   const offset = Number(item.dataset.offset);
-  if (Number.isFinite(offset)) {
+  const index = Number(item.dataset.index);
+  if (Number.isFinite(offset) && Number.isFinite(index)) {
     $('#outline-dlg').close();
-    jumpToOffset(offset);
+    jumpToHeading(offset, index);
   }
 });
 
