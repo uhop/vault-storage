@@ -128,6 +128,32 @@
   .preview th, .preview td { padding: .35rem .6rem; border: 1px solid var(--line); text-align: left; }
   .preview th { background: rgba(127,127,127,.08); }
   .preview img { max-width: 100%; height: auto; }
+  .insert-row {
+    display: none;
+    position: fixed;
+    left: 0; right: 0;
+    bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    padding: .35rem .5rem;
+    gap: .3rem;
+    overflow-x: auto;
+    z-index: 10;
+    -webkit-user-select: none; user-select: none;
+  }
+  .insert-row button {
+    flex-shrink: 0;
+    min-width: 2.4rem;
+    padding: .55rem .65rem;
+    font-family: var(--mono); font-size: .9rem;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
+    color: var(--fg); cursor: pointer;
+  }
+  .insert-row button:active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  @media (max-width: 767px) {
+    body[data-editor-focused] .insert-row { display: flex; }
+    body[data-editor-focused] textarea#editor { padding-bottom: 4rem; }
+  }
   .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border-bottom: 1px solid var(--bad); flex-shrink: 0; font-size: .9rem; }
   dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
   dialog::backdrop { background: rgba(0,0,0,.5); }
@@ -135,6 +161,18 @@
   dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
   dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
   dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
+  dialog#recent-dlg { max-width: 32rem; width: 90vw; }
+  .recent-list { list-style: none; padding: 0; margin: 0 0 .8rem; max-height: 60vh; overflow-y: auto; }
+  .recent-list li { padding: 0; margin: .15rem 0; }
+  .recent-list a {
+    display: flex; flex-direction: column; gap: .15rem;
+    padding: .55rem .7rem; border-radius: 4px;
+    text-decoration: none; color: var(--fg);
+  }
+  .recent-list a:hover { background: rgba(127,127,127,.12); }
+  .recent-list .title { font-weight: 600; font-size: .95rem; }
+  .recent-list .meta { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
+  .recent-list .empty { padding: .8rem; color: var(--muted); text-align: center; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -158,6 +196,7 @@
     <button data-mode="preview" aria-pressed="false" title="Rendered preview only">preview</button>
   </span>
   <button id="save">Save</button>
+  <button id="recent" hidden>Recent</button>
   <button id="del" class="danger" hidden>Delete</button>
 </div>
 <div class="err" id="err" hidden></div>
@@ -167,6 +206,15 @@
     <div class="preview" id="preview"></div>
   </div>
 </main>
+<div class="insert-row" id="insert-row" aria-label="Markdown shortcuts">
+  <button type="button" tabindex="-1" data-insert-wrap="**" title="Bold">**</button>
+  <button type="button" tabindex="-1" data-insert-wrap="_" title="Italic">_</button>
+  <button type="button" tabindex="-1" data-insert-wrap="`" title="Inline code">`</button>
+  <button type="button" tabindex="-1" data-insert-wrap="[[" data-insert-end="]]" title="Wikilink">[[ ]]</button>
+  <button type="button" tabindex="-1" data-insert-prefix="# " title="Heading">#</button>
+  <button type="button" tabindex="-1" data-insert-prefix="- " title="List item">- </button>
+  <button type="button" tabindex="-1" data-insert-prefix="- [ ] " title="Task">[ ]</button>
+</div>
 
 <dialog id="auth-dlg">
   <h2>API token</h2>
@@ -184,6 +232,15 @@
   <div class="row">
     <button id="del-cancel">Cancel</button>
     <button id="del-confirm" class="danger primary">Delete</button>
+  </div>
+</dialog>
+
+<dialog id="recent-dlg">
+  <h2>Recent notes</h2>
+  <p>Open a recent <code>raw/</code> note, or close to keep writing here.</p>
+  <ul id="recent-list" class="recent-list"></ul>
+  <div class="row">
+    <button id="recent-close">Close</button>
   </div>
 </dialog>
 
@@ -398,6 +455,7 @@ async function loadExisting(path) {
 function initCapture() {
   $('#path').textContent = 'new — unsaved';
   $('#del').hidden = true;
+  $('#recent').hidden = false;
   const draft = loadDraft();
   $('#editor').value = draft ?? STARTER_TEMPLATE;
   state.serverContent = '';
@@ -407,6 +465,39 @@ function initCapture() {
   // Place cursor at end so the user starts typing body content after the FM.
   const v = $('#editor').value;
   $('#editor').setSelectionRange(v.length, v.length);
+}
+
+async function openRecent() {
+  const list = $('#recent-list');
+  list.innerHTML = '<li class="empty"><span class="spinner"></span> loading…</li>';
+  $('#recent-dlg').showModal();
+  try {
+    const res = await api('/sections?file_prefix=raw&exclude=body&limit=50');
+    const data = await res.json();
+    const items = (data.items ?? [])
+      .filter(r => !r.file_path.includes('/archive/'))
+      .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
+      .slice(0, 10);
+    if (items.length === 0) {
+      list.innerHTML = '<li class="empty">No recent notes in <code>raw/</code>.</li>';
+      return;
+    }
+    list.innerHTML = items.map(r => `
+      <li>
+        <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
+          <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
+          <span class="meta">${esc(r.file_path)} · ${esc(r.updated ?? '')}</span>
+        </a>
+      </li>
+    `).join('');
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') {
+      $('#recent-dlg').close();
+      showAuthDialog();
+      return;
+    }
+    list.innerHTML = `<li class="empty">Failed to load: ${esc(e.message)}</li>`;
+  }
 }
 
 // view modes ------------------------------------------------------
@@ -473,6 +564,7 @@ async function save() {
     dropDraft();
     $('#path').textContent = state.path;
     $('#del').hidden = false;
+    $('#recent').hidden = true;
     // Update URL so refresh stays on this note.
     if (location.search === '' || params.get('path') !== state.path) {
       const newUrl = `?path=${encodeURIComponent(state.path)}`;
@@ -525,12 +617,76 @@ $('#save').addEventListener('click', save);
 $('#del').addEventListener('click', () => $('#del-dlg').showModal());
 $('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
 $('#del-confirm').addEventListener('click', () => { $('#del-dlg').close(); del(); });
+$('#recent').addEventListener('click', openRecent);
+$('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
 
 // View-mode toggle (Edit / Split / Preview).
 $$('.modes button').forEach(btn => {
   btn.addEventListener('click', () => setViewMode(btn.dataset.mode));
 });
 setViewMode(viewMode);
+
+// Mobile insert-row -----------------------------------------------
+const insertWrap = (open, close) => {
+  const ta = $('#editor');
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const before = ta.value.slice(0, start);
+  const sel = ta.value.slice(start, end);
+  const after = ta.value.slice(end);
+  const tail = close ?? open;
+  ta.value = before + open + sel + tail + after;
+  if (sel.length === 0) {
+    const pos = start + open.length;
+    ta.setSelectionRange(pos, pos);
+  } else {
+    ta.setSelectionRange(start, end + open.length + tail.length);
+  }
+  ta.dispatchEvent(new Event('input', {bubbles: true}));
+};
+
+const insertPrefix = prefix => {
+  const ta = $('#editor');
+  const cursor = ta.selectionStart;
+  const lineStart = ta.value.lastIndexOf('\n', cursor - 1) + 1;
+  ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart);
+  const newPos = cursor + prefix.length;
+  ta.setSelectionRange(newPos, newPos);
+  ta.dispatchEvent(new Event('input', {bubbles: true}));
+};
+
+$$('#insert-row button').forEach(btn => {
+  // Prevent the button from stealing focus from the textarea on tap.
+  btn.addEventListener('mousedown', e => e.preventDefault());
+  btn.addEventListener('click', e => {
+    e.preventDefault();
+    if (btn.dataset.insertWrap !== undefined) {
+      insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
+    } else if (btn.dataset.insertPrefix !== undefined) {
+      insertPrefix(btn.dataset.insertPrefix);
+    }
+  });
+});
+
+$('#editor').addEventListener('focus', () => {
+  document.body.dataset.editorFocused = '1';
+});
+$('#editor').addEventListener('blur', () => {
+  delete document.body.dataset.editorFocused;
+});
+
+// Track the on-screen keyboard via visualViewport so the insert-row
+// floats above the keyboard rather than being covered by it.
+if (window.visualViewport) {
+  const adjustKeyboardOffset = () => {
+    const vv = window.visualViewport;
+    const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--kb-offset', `${offset}px`);
+  };
+  window.visualViewport.addEventListener('resize', adjustKeyboardOffset);
+  window.visualViewport.addEventListener('scroll', adjustKeyboardOffset);
+  adjustKeyboardOffset();
+}
 
 // Cmd/Ctrl-S manual save.
 document.addEventListener('keydown', e => {
