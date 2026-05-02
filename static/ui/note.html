@@ -115,6 +115,12 @@
     font-family: var(--mono); font-size: .9em;
     background: rgba(127,127,127,.08); padding: .05em .3em; border-radius: 3px;
   }
+  .preview a.wikilink.resolving { opacity: .65; }
+  .preview a.wikilink.unresolved {
+    color: var(--bad); text-decoration: line-through;
+    background: rgba(192,57,43,.12); cursor: not-allowed;
+  }
+  .preview a.wikilink.unresolved:hover { text-decoration: line-through; }
   .preview ul, .preview ol { padding-left: 1.5rem; }
   .preview li { margin: .2rem 0; }
   .preview hr { border: 0; border-top: 1px solid var(--line); margin: 1.5rem 0; }
@@ -238,6 +244,51 @@ const renderPreview = text => {
   const {fm, body} = splitFrontmatter(text);
   const fmHtml = fm ? `<pre class="frontmatter">${esc(fm)}</pre>` : '';
   return fmHtml + marked.parse(body);
+};
+
+// Per-page cache for wikilink resolutions. Keyed by target string; value is
+// either {ui_url, file_path} on hit or null on 404. Misses are cached too so
+// re-renders don't hammer /resolve. Cleared on note load (path change).
+const wikilinkCache = new Map();
+
+const resolveWikilink = async target => {
+  if (wikilinkCache.has(target)) return wikilinkCache.get(target);
+  const promise = (async () => {
+    try {
+      const res = await api(`/resolve?wikilink=${encodeURIComponent(target)}`);
+      return await res.json();
+    } catch (e) {
+      if (e.message === 'unauthorized' || e.message === 'no-token') throw e;
+      return null;
+    }
+  })();
+  wikilinkCache.set(target, promise);
+  return promise;
+};
+
+const decorateWikilinks = async () => {
+  const links = $$('#preview a.wikilink');
+  await Promise.all([...links].map(async a => {
+    const target = a.dataset.wikilink;
+    if (!target) return;
+    a.classList.add('resolving');
+    let resolved = null;
+    try {
+      resolved = await resolveWikilink(target);
+    } catch (e) {
+      // Auth error — skip; the page-level handler will surface the dialog.
+      a.classList.remove('resolving');
+      return;
+    }
+    a.classList.remove('resolving');
+    if (resolved) {
+      a.href = resolved.ui_url;
+      a.title = resolved.file_path;
+    } else {
+      a.classList.add('unresolved');
+      a.title = 'Wikilink not resolved';
+    }
+  }));
 };
 
 const STARTER_TEMPLATE = `---
@@ -381,6 +432,7 @@ const schedulePreview = () => {
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     $('#preview').innerHTML = renderPreview($('#editor').value);
+    decorateWikilinks();
   }, PREVIEW_DEBOUNCE_MS);
 };
 

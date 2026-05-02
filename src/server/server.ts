@@ -31,6 +31,7 @@ import {
   summarySuggestionsHandler
 } from './handlers/suggestions.ts';
 import {lintHandler} from './handlers/lint.ts';
+import {resolveHandler} from './handlers/resolve.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {systemStatusHandler} from './handlers/system.ts';
 import {addAliasHandler, addTaxonomyHandler, listTagsHandler, recordsByTagHandler} from './handlers/tags.ts';
@@ -107,6 +108,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
+
+  router.get('/resolve', resolveHandler({db: opts.db}));
 
   router.post(
     '/sync/from-obsidian',
