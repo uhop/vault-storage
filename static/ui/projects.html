@@ -161,10 +161,12 @@ const renderProject = (name, q) => {
     </div>`;
     return;
   }
+  const path = `projects/${encodeURIComponent(name)}/queue.md`;
   card.innerHTML = `
     <div class="head">
       <span class="name" data-name="${esc(name)}">${esc(name)}</span>
-      <a class="edit" href="/ui/note.html?path=projects/${encodeURIComponent(name)}/queue.md" title="Edit queue.md">edit queue</a>
+      <a class="edit" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
+      <a class="edit" href="/ui/note.html?path=${path}" title="Edit queue.md">edit</a>
       <span class="meta">${esc(q.updated ?? '—')} · <span class="open ${openClass(q.openTasks)}">${q.openTasks} open</span> / ${q.openTasks + q.doneTasks} total</span>
     </div>
     <div class="summary">${esc(q.summary)}</div>

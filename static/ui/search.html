@@ -185,11 +185,13 @@ const renderResults = (results, mode) => {
       const ctx = highlightSnippet(m.context, m.match);
       return `<div>… ${ctx} …</div>`;
     }).join('');
+    const path = encodeURIComponent(r.filename);
     return `
       <div class="result" data-idx="${i}">
         <div class="head">
           <span class="filename" data-path="${esc(r.filename)}">${esc(r.filename)}</span>
-          <a class="edit" href="/ui/note.html?path=${encodeURIComponent(r.filename)}" title="Edit">edit</a>
+          <a class="edit" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
+          <a class="edit" href="/ui/note.html?path=${path}" title="Edit">edit</a>
           <span class="score">${fmtScore(r.score, mode)}</span>
         </div>
         ${snippets ? `<div class="snippets">${snippets}</div>` : ''}

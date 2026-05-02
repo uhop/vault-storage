@@ -203,7 +203,7 @@
 <main>
   <div class="panes">
     <textarea id="editor" spellcheck="true" placeholder="Start typing… frontmatter at the top, body below."></textarea>
-    <div class="preview" id="preview"></div>
+    <vault-markdown class="preview" id="preview" show-frontmatter></vault-markdown>
   </div>
 </main>
 <div class="insert-row" id="insert-row" aria-label="Markdown shortcuts">
@@ -245,7 +245,7 @@
 </dialog>
 
 <script type="module">
-import {marked} from '/ui/vendor/marked.esm.js';
+import '/ui/components/vault-markdown.js';
 
 const TOKEN_KEY = 'vault.token';
 const DRAFT_PREFIX = 'vault.draft.';
@@ -258,95 +258,6 @@ const $$ = sel => document.querySelectorAll(sel);
 const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
 const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
-
-// Wikilink extension for marked: [[target]] and [[target|alias]] become
-// styled <a class="wikilink" data-wikilink="<target>"> elements. Click
-// resolution lands in Phase-4 v2 step (b) once GET /resolve?wikilink ships.
-marked.use({
-  extensions: [
-    {
-      name: 'wikilink',
-      level: 'inline',
-      start(src) {
-        const i = src.indexOf('[[');
-        return i === -1 ? undefined : i;
-      },
-      tokenizer(src) {
-        const match = /^\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/.exec(src);
-        if (match) {
-          return {
-            type: 'wikilink',
-            raw: match[0],
-            target: match[1],
-            alias: match[2] ?? null
-          };
-        }
-        return undefined;
-      },
-      renderer(token) {
-        const display = token.alias ?? token.target;
-        return `<a class="wikilink" data-wikilink="${esc(token.target)}">${esc(display)}</a>`;
-      }
-    }
-  ]
-});
-marked.setOptions({gfm: true, breaks: false});
-
-const splitFrontmatter = text => {
-  const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
-  return m ? {fm: m[1], body: m[2]} : {fm: null, body: text};
-};
-
-const renderPreview = text => {
-  const {fm, body} = splitFrontmatter(text);
-  const fmHtml = fm ? `<pre class="frontmatter">${esc(fm)}</pre>` : '';
-  return fmHtml + marked.parse(body);
-};
-
-// Per-page cache for wikilink resolutions. Keyed by target string; value is
-// either {ui_url, file_path} on hit or null on 404. Misses are cached too so
-// re-renders don't hammer /resolve. Cleared on note load (path change).
-const wikilinkCache = new Map();
-
-const resolveWikilink = async target => {
-  if (wikilinkCache.has(target)) return wikilinkCache.get(target);
-  const promise = (async () => {
-    try {
-      const res = await api(`/resolve?wikilink=${encodeURIComponent(target)}`);
-      return await res.json();
-    } catch (e) {
-      if (e.message === 'unauthorized' || e.message === 'no-token') throw e;
-      return null;
-    }
-  })();
-  wikilinkCache.set(target, promise);
-  return promise;
-};
-
-const decorateWikilinks = async () => {
-  const links = $$('#preview a.wikilink');
-  await Promise.all([...links].map(async a => {
-    const target = a.dataset.wikilink;
-    if (!target) return;
-    a.classList.add('resolving');
-    let resolved = null;
-    try {
-      resolved = await resolveWikilink(target);
-    } catch (e) {
-      // Auth error — skip; the page-level handler will surface the dialog.
-      a.classList.remove('resolving');
-      return;
-    }
-    a.classList.remove('resolving');
-    if (resolved) {
-      a.href = resolved.ui_url;
-      a.title = resolved.file_path;
-    } else {
-      a.classList.add('unresolved');
-      a.title = 'Wikilink not resolved';
-    }
-  }));
-};
 
 const STARTER_TEMPLATE = `---
 type: fleeting
@@ -501,9 +412,17 @@ async function openRecent() {
 }
 
 // view modes ------------------------------------------------------
-let viewMode = localStorage.getItem(VIEW_KEY);
-if (viewMode !== 'edit' && viewMode !== 'split' && viewMode !== 'preview') {
-  viewMode = window.innerWidth >= 768 ? 'split' : 'edit';
+// Precedence: URL `?view=` (one-shot for "open as rendered" affordances) >
+// localStorage (sticky user preference) > viewport-derived default.
+const urlView = new URLSearchParams(location.search).get('view');
+let viewMode;
+if (urlView === 'edit' || urlView === 'split' || urlView === 'preview') {
+  viewMode = urlView;
+} else {
+  viewMode = localStorage.getItem(VIEW_KEY);
+  if (viewMode !== 'edit' && viewMode !== 'split' && viewMode !== 'preview') {
+    viewMode = window.innerWidth >= 768 ? 'split' : 'edit';
+  }
 }
 document.body.dataset.view = viewMode;
 
@@ -522,8 +441,7 @@ const schedulePreview = () => {
   if (viewMode === 'edit') return;
   if (previewTimer) clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
-    $('#preview').innerHTML = renderPreview($('#editor').value);
-    decorateWikilinks();
+    $('#preview').value = $('#editor').value;
   }, PREVIEW_DEBOUNCE_MS);
 };
 
