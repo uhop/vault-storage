@@ -27,6 +27,8 @@
   .card .label { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; margin: 0; }
   .card .value { font-size: 1.6rem; line-height: 1.2; margin: .2rem 0 0; font-variant-numeric: tabular-nums; }
   .card .sub { color: var(--muted); font-size: .8rem; margin-top: .25rem; font-family: var(--mono); overflow-wrap: anywhere; }
+  .card .breakdown { display: flex; flex-wrap: wrap; column-gap: .5rem; row-gap: .15rem; }
+  .card .breakdown > span { white-space: nowrap; }
   .card .value.ok { color: var(--ok); } .card .value.warn { color: var(--warn); } .card .value.bad { color: var(--bad); }
   section.recs { margin-top: 1.5rem; }
   section.recs h2 { font-size: 1rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
@@ -228,7 +230,8 @@ function setSlot(key, value, sub, cls) {
       subEl.className = 'sub';
       card.appendChild(subEl);
     }
-    subEl.textContent = sub;
+    if (sub instanceof Node) subEl.replaceChildren(sub);
+    else subEl.textContent = sub;
   } else if (subEl) {
     subEl.remove();
   }
@@ -380,8 +383,17 @@ async function refresh() {
       api('/suggestions/summary').then(async d => {
         summary = d;
         const total = d.total ?? 0;
-        setSlot('pending', fmtCount(total),
-          total ? Object.entries(d.by_kind).map(([k,v]) => `${k}:${v}`).join(' ') : 'queue clear',
+        let breakdown = 'queue clear';
+        if (total) {
+          breakdown = document.createElement('span');
+          breakdown.className = 'breakdown';
+          for (const [k, v] of Object.entries(d.by_kind)) {
+            const pair = document.createElement('span');
+            pair.textContent = `${k}:${v}`;
+            breakdown.appendChild(pair);
+          }
+        }
+        setSlot('pending', fmtCount(total), breakdown,
           total ? (total > 50 ? 'warn' : '') : 'ok');
         if (d.by_kind?.compaction_candidate) {
           const r = await api('/suggestions?kind=compaction_candidate&status=pending&limit=20');
