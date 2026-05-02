@@ -159,6 +159,11 @@ export const buildRouter = (opts: BuildOptions): Router => {
     router.get('/ui', uiHandler);
     router.get('/ui/', uiHandler);
     router.get('/ui/{path}', uiHandler);
+    // Browsers auto-request /favicon.ico; reuse the file the UI ships.
+    router.get('/favicon.ico', ctx => {
+      ctx.params['path'] = 'favicon.ico';
+      return uiHandler(ctx);
+    });
   }
 
   return router;
@@ -170,7 +175,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
  * shell itself doesn't need it. Anyone on the LAN can load the HTML; only
  * a token holder can read or write data.
  */
-const isPublicPath = (path: string): boolean => path === '/ui' || path.startsWith('/ui/');
+const isPublicPath = (path: string): boolean =>
+  path === '/ui' || path.startsWith('/ui/') || path === '/favicon.ico';
 
 const parseUrl = (req: IncomingMessage): {path: string; query: Record<string, string>} | null => {
   if (!req.url) return null;

@@ -143,6 +143,19 @@ test('GET /system/status still requires bearer (UI carve-out is /ui/ only)', asy
   });
 });
 
+test('GET /favicon.ico serves the file from the UI dir without bearer auth', async t => {
+  await withStaticDir(async dir => {
+    writeFileSync(join(dir, 'index.html'), 'root');
+    writeFileSync(join(dir, 'favicon.ico'), 'ICO-BYTES');
+    await withServer(dir, async url => {
+      const res = await fetch(`${url}/favicon.ico`);
+      t.equal(res.status, 200, '200 OK');
+      t.equal(res.headers.get('content-type'), 'image/x-icon', 'ico mime');
+      t.equal(await res.text(), 'ICO-BYTES', 'served favicon body');
+    });
+  });
+});
+
 test('uiStaticPath empty string disables /ui/ surface', async t => {
   await withServer('', async url => {
     const res = await fetch(`${url}/ui/`);
