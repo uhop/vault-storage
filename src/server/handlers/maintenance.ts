@@ -1,3 +1,4 @@
+import {createReadStream, statSync} from 'node:fs';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {cleanupLint} from '../../maintenance/cleanup-lint.ts';
@@ -312,6 +313,43 @@ export const folderListingHandler =
     const path = ctx.query['path'] ?? '';
     const listing = listFolder(deps.db, path);
     sendJson(ctx.res, 200, listing);
+  };
+
+/**
+ * GET /maintenance/snapshot-download?name=<filename>
+ *
+ * Stream a snapshot file from `<vaultDataPath>/.snapshots/<name>` as
+ * `application/gzip`. The vault GET handler decodes file bodies as
+ * UTF-8 (correct for markdown), which mangles binary; this endpoint
+ * is the byte-faithful path for retrieving backups for offline
+ * analysis. Hardened against path traversal.
+ */
+export const snapshotDownloadHandler =
+  (deps: SnapshotDeps): Handler =>
+  ctx => {
+    const name = ctx.query['name'];
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
+      sendError(ctx.res, 400, 'bad_request', 'name must be a bare filename under .snapshots/');
+      return;
+    }
+    const abs = join(deps.vaultDataPath, '.snapshots', name);
+    let stat;
+    try {
+      stat = statSync(abs);
+    } catch {
+      sendError(ctx.res, 404, 'not_found', 'snapshot not found');
+      return;
+    }
+    if (!stat.isFile()) {
+      sendError(ctx.res, 404, 'not_found', 'not a file');
+      return;
+    }
+    ctx.res.writeHead(200, {
+      'Content-Type': 'application/gzip',
+      'Content-Length': String(stat.size),
+      'Content-Disposition': `attachment; filename="${name}"`
+    });
+    createReadStream(abs).pipe(ctx.res);
   };
 
 export const snapshotHandler =
