@@ -38,6 +38,7 @@ import {
   deleteVaultHandler,
   getVaultHandler,
   getVaultRootHandler,
+  moveVaultHandler,
   putVaultHandler
 } from './handlers/vault.ts';
 import {sendError} from './responses.ts';
@@ -102,6 +103,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/vault/{path}', getVaultHandler(vaultDeps));
   router.put('/vault/{path}', putVaultHandler(vaultDeps));
   router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
+  router.post('/vault/move', moveVaultHandler(vaultDeps));
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));

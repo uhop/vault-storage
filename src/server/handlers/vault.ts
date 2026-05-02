@@ -1,6 +1,6 @@
-import {existsSync, readFileSync, readdirSync, statSync, unlinkSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync} from 'node:fs';
 import type {ServerResponse} from 'node:http';
-import {basename, join} from 'node:path';
+import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {
@@ -234,6 +234,98 @@ export const deleteVaultHandler =
 
     if (onDisk) unlinkSync(abs);
     if (existing) records.delete(existing.recordId);
+
+    sendNoContent(ctx.res);
+  };
+
+/**
+ * POST /vault/move — atomic file rename that preserves `record_id`.
+ *
+ * Body: `{from: "<source>", to: "<dest>"}`. Both must be vault-relative
+ * `.md` paths.
+ *
+ * Use case: `/vault-compact` archives pieces by moving them into
+ * `<folder>/archive/<YYYY>/`. The naive shape (DELETE old + PUT new)
+ * generated a fresh `record_id` under the archive path, which made the
+ * EdgeTypeFiler refile every body wikilink as a new `cites` suggestion
+ * (idempotency key is `(from_record, to_record)`). This endpoint renames
+ * the file on disk and updates `records.file_path` on the existing row
+ * — `record_id` survives, and so do the edges / tags / suggestions /
+ * embeddings derived from it.
+ *
+ * Returns 204 on success, 404 if source missing, 409 on destination
+ * conflict, 400 on invalid paths.
+ */
+export const moveVaultHandler =
+  (deps: VaultDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendError(ctx.res, 400, 'invalid_json', 'request body must be JSON');
+      return;
+    }
+    const body = parsed as {from?: unknown; to?: unknown};
+    const fromPath = body.from;
+    const toPath = body.to;
+    if (typeof fromPath !== 'string' || typeof toPath !== 'string') {
+      sendError(ctx.res, 400, 'invalid_path', 'both `from` and `to` must be strings');
+      return;
+    }
+    if (!fromPath.endsWith('.md') || !toPath.endsWith('.md')) {
+      sendError(ctx.res, 400, 'invalid_path', 'both paths must end with .md');
+      return;
+    }
+    if (fromPath.endsWith('/') || toPath.endsWith('/')) {
+      sendError(ctx.res, 400, 'invalid_path', 'paths must not end with a slash');
+      return;
+    }
+    if (fromPath === toPath) {
+      sendError(ctx.res, 400, 'invalid_path', '`from` and `to` are identical');
+      return;
+    }
+
+    const fromAbs = safePathOrError(deps.vaultDataPath, fromPath, ctx.res);
+    if (fromAbs === null) return;
+    const toAbs = safePathOrError(deps.vaultDataPath, toPath, ctx.res);
+    if (toAbs === null) return;
+
+    const records = new RecordsRepository(deps.db);
+    const existing = records.getByPath(fromPath);
+    if (!existing) {
+      sendError(ctx.res, 404, 'not_found', `no record at ${fromPath}`);
+      return;
+    }
+    if (records.getByPath(toPath)) {
+      sendError(ctx.res, 409, 'conflict', `destination already exists in records: ${toPath}`);
+      return;
+    }
+    if (!existsSync(fromAbs)) {
+      sendError(ctx.res, 404, 'not_found', `source file not found on disk: ${fromPath}`);
+      return;
+    }
+    if (existsSync(toAbs)) {
+      sendError(ctx.res, 409, 'conflict', `destination file already exists on disk: ${toPath}`);
+      return;
+    }
+
+    // Disk rename first (more likely to fail than a single-row UPDATE).
+    // mkdirSync is idempotent with `recursive: true`; harmless if dir exists.
+    mkdirSync(dirname(toAbs), {recursive: true});
+    renameSync(fromAbs, toAbs);
+
+    // DB update — preserves record_id, and therefore every reference to it
+    // (edges, tags, suggestions, embeddings, agent block).
+    records.updateFilePath(existing.recordId, toPath);
 
     sendNoContent(ctx.res);
   };

@@ -51,6 +51,7 @@ export class RecordsRepository {
   readonly #listAll: StatementSync;
   readonly #countAll: StatementSync;
   readonly #bumpLastReferenced: StatementSync;
+  readonly #updateFilePath: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
@@ -95,6 +96,9 @@ export class RecordsRepository {
     this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
     this.#bumpLastReferenced = db.prepare(
       'UPDATE records SET last_referenced = ? WHERE record_id = ?'
+    );
+    this.#updateFilePath = db.prepare(
+      'UPDATE records SET file_path = ? WHERE record_id = ?'
     );
   }
 
@@ -159,6 +163,17 @@ export class RecordsRepository {
 
   delete(id: string): boolean {
     const result = this.#delete.run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Update only `file_path`, preserving `record_id` and every other column.
+   * Used by `POST /vault/move` to rename a file without rebuilding edges,
+   * embeddings, or refiling suggestions — body content_hash is unchanged
+   * so derived state remains valid; only the path field needs to follow.
+   */
+  updateFilePath(recordId: string, newFilePath: string): boolean {
+    const result = this.#updateFilePath.run(newFilePath, recordId);
     return result.changes > 0;
   }
 

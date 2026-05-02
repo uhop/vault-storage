@@ -527,3 +527,191 @@ test('GET /vault/topics/alpha.md without auth returns 401', async t => {
     cleanup();
   }
 });
+
+test('POST /vault/move renames file + preserves record_id', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const before = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      t.equal(before.status, 200, 'source readable before move');
+
+      const beforeRow = ctx.db
+        .prepare('SELECT record_id FROM records WHERE file_path = ?')
+        .get('topics/alpha.md') as {record_id: string} | undefined;
+      t.ok(beforeRow?.record_id, 'record exists at source path');
+      const recordIdBefore = beforeRow!.record_id;
+
+      const r = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.md', to: 'topics/archive/2026/alpha.md'})
+      });
+      t.equal(r.status, 204, '204 no content');
+
+      // File moved on disk
+      t.equal(existsSync(join(root, 'topics/alpha.md')), false, 'source file gone');
+      t.equal(existsSync(join(root, 'topics/archive/2026/alpha.md')), true, 'destination file present');
+
+      // Same record_id on the new path
+      const afterRow = ctx.db
+        .prepare('SELECT record_id FROM records WHERE file_path = ?')
+        .get('topics/archive/2026/alpha.md') as {record_id: string} | undefined;
+      t.equal(afterRow?.record_id, recordIdBefore, 'record_id preserved across move');
+
+      // Old path no longer in DB
+      const oldRow = ctx.db
+        .prepare('SELECT record_id FROM records WHERE file_path = ?')
+        .get('topics/alpha.md') as {record_id: string} | undefined;
+      t.equal(oldRow, undefined, 'old path removed from records');
+
+      // Read at new path works
+      const after = await fetchAuthed(`${ctx.url}/vault/topics/archive/2026/alpha.md`);
+      t.equal(after.status, 200, 'destination readable');
+      t.equal(after.raw, before.raw, 'body byte-identical after move');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/move 404 on missing source', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/nope.md', to: 'topics/archive/nope.md'})
+      });
+      t.equal(r.status, 404, '404 not found');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/move 409 when destination exists', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.md', to: 'topics/beta.md'})
+      });
+      t.equal(r.status, 409, '409 conflict');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/move 400 on invalid paths', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      // Non-md extension
+      const r1 = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.txt', to: 'topics/archive/alpha.txt'})
+      });
+      t.equal(r1.status, 400, 'non-md extension rejected');
+
+      // Identical paths
+      const r2 = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.md', to: 'topics/alpha.md'})
+      });
+      t.equal(r2.status, 400, 'identical paths rejected');
+
+      // Missing fields
+      const r3 = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.md'})
+      });
+      t.equal(r3.status, 400, 'missing `to` rejected');
+
+      // Invalid JSON
+      const r4 = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: 'not json'
+      });
+      t.equal(r4.status, 400, 'invalid JSON rejected');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/move preserves edges keyed on record_id', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    // Add a wikilink in alpha → beta to create an edge.
+    writeMd(
+      root,
+      'topics/alpha.md',
+      `---
+title: Alpha
+type: permanent
+status: active
+created: 2026-04-01
+updated: 2026-04-01
+---
+Alpha references [[topics/beta]].
+`
+    );
+    const ctx = await startTestServer(root);
+    try {
+      // Edge count before move
+      const edgesBefore = ctx.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM edges
+            WHERE from_id = (SELECT record_id FROM records WHERE file_path = ?)`
+        )
+        .get('topics/alpha.md') as {n: number};
+      t.ok(edgesBefore.n >= 1, 'at least one outbound edge before move');
+
+      // Move alpha to archive
+      const r = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.md', to: 'topics/archive/2026/alpha.md'})
+      });
+      t.equal(r.status, 204, 'move ok');
+
+      // Edge count after move — edges reference record_id, which we preserved
+      const edgesAfter = ctx.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM edges
+            WHERE from_id = (SELECT record_id FROM records WHERE file_path = ?)`
+        )
+        .get('topics/archive/2026/alpha.md') as {n: number};
+      t.equal(edgesAfter.n, edgesBefore.n, 'outbound edge count unchanged after move');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
