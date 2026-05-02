@@ -189,6 +189,41 @@ export const incrementalReindexHandler =
   };
 
 /**
+ * POST /maintenance/run-all
+ *
+ * Bundle for "I want all the maintenance scans to refresh their queues."
+ * Calls find-duplicates, find-compaction-candidates, find-retention-
+ * candidates, and find-upgrade-signals with default knobs, returns each
+ * scan's summary keyed by name. Doesn't run anything destructive (no
+ * cleanup-lint, no compaction archive). Pairs with the dashboard's
+ * "Run scans" button so the user can refresh suggestion queues without
+ * dropping to the shell for four separate POSTs.
+ *
+ * Returns `{duplicates, compaction, retention, upgrade, durationMs}`.
+ */
+export const runAllScansHandler =
+  (deps: MaintenanceDeps): Handler =>
+  ctx => {
+    const start = Date.now();
+    const duplicates = findDuplicates(deps.db, {
+      maxDistance: 0.1,
+      perRecord: 10,
+      minBodyLength: 200
+    });
+    const compaction = findCompactionCandidates(deps.db, {minPieceCount: 30});
+    const retention = findRetentionCandidates(deps.db);
+    const upgrade = findUpgradeSignals(deps.db);
+    sendJson(ctx.res, 200, {
+      duplicates,
+      compaction,
+      retention,
+      upgrade,
+      durationMs: Date.now() - start
+    });
+    void ctx;
+  };
+
+/**
  * POST /maintenance/cleanup-lint
  *
  * Auto-fix the lint categories with deterministic cleanup paths

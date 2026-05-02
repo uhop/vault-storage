@@ -61,6 +61,15 @@
     .recent-row { flex-wrap: wrap; gap: .25rem; }
     .recent-row .path { width: 100%; }
   }
+  section.ops { margin-top: 1.5rem; }
+  section.ops h2 { font-size: 1rem; margin: 0 0 .4rem; color: var(--muted); font-weight: 600; }
+  .ops-help { color: var(--muted); font-size: .85rem; margin: 0 0 .6rem; }
+  .ops-btn { padding: .4rem .8rem; font-size: .9rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
+  .ops-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .ops-btn:disabled { opacity: .7; cursor: progress; }
+  .ops-btn.done { border-color: var(--ok); color: var(--ok); }
+  .ops-btn.failed { border-color: var(--bad); color: var(--bad); }
+  .ops-result { margin-left: .6rem; color: var(--muted); font-size: .85rem; font-family: var(--mono); }
   .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
@@ -99,6 +108,12 @@
     <h2>Recently updated</h2>
     <div id="recent"></div>
   </section>
+  <section class="ops">
+    <h2>Maintenance</h2>
+    <p class="ops-help">Refresh suggestion queues. Runs four read-only scans (duplicates, compaction candidates, retention candidates, upgrade signals). No destructive actions.</p>
+    <button id="run-scans" class="ops-btn">Run scans</button>
+    <span id="run-scans-result" class="ops-result"></span>
+  </section>
 </main>
 <div class="footer" id="footer"></div>
 
@@ -119,10 +134,11 @@ const $ = sel => document.querySelector(sel);
 const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
 const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
 
-async function api(path) {
+async function api(path, init = {}) {
   const token = getToken();
   if (!token) throw new Error('no-token');
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+  const headers = { ...(init.headers ?? {}), Authorization: `Bearer ${token}` };
+  const res = await fetch(path, { ...init, headers });
   if (res.status === 401) throw new Error('unauthorized');
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -403,6 +419,38 @@ document.addEventListener('click', e => {
   const btn = e.target.closest('button.rec-action');
   if (btn) runAction(btn);
 });
+
+const runScans = async () => {
+  const btn = $('#run-scans');
+  const result = $('#run-scans-result');
+  btn.disabled = true;
+  btn.classList.remove('done', 'failed');
+  btn.innerHTML = '<span class="spinner"></span> running…';
+  result.textContent = '';
+  try {
+    const data = await api('/maintenance/run-all', { method: 'POST' });
+    btn.classList.add('done');
+    btn.textContent = 'done ✓';
+    const filed =
+      (data.duplicates?.filed ?? 0) +
+      (data.compaction?.filed ?? 0) +
+      (data.retention?.filed ?? 0) +
+      (data.upgrade?.filed ?? 0);
+    result.textContent = `${filed} new suggestion${filed === 1 ? '' : 's'} filed · ${data.durationMs}ms`;
+    setTimeout(() => {
+      btn.classList.remove('done');
+      btn.disabled = false;
+      btn.textContent = 'Run scans';
+      refresh();
+    }, 1500);
+  } catch (e) {
+    btn.classList.add('failed');
+    btn.textContent = `failed: ${e.message}`;
+    btn.disabled = false;
+  }
+};
+
+$('#run-scans').addEventListener('click', runScans);
 
 refresh();
 </script>
