@@ -114,25 +114,13 @@
 </dialog>
 
 <script type="module">
-const TOKEN_KEY = 'vault.token';
+import {api, apiJson, getToken, setToken} from '/ui/api.js';
 const RECENT_KEY = 'vault.recent-searches';
 const RECENT_MAX = 8;
 const $ = sel => document.querySelector(sel);
 
-const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
-const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
-
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
-async function api(path, init = {}) {
-  const token = getToken();
-  if (!token) throw new Error('no-token');
-  const headers = { ...(init.headers ?? {}), Authorization: `Bearer ${token}` };
-  const res = await fetch(path, { ...init, headers });
-  if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res;
-}
 
 const getRecents = () => {
   try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); } catch { return []; }
@@ -203,8 +191,7 @@ const search = async () => {
   try {
     const params = new URLSearchParams({ query: q });
     if (mode === 'semantic') params.set('mode', 'semantic');
-    const res = await api(`/search/simple/?${params.toString()}`, { method: 'POST' });
-    const data = await res.json();
+    const data = await apiJson(`/search/simple/?${params.toString()}`, { method: 'POST' });
     pushRecent(q);
     renderResults(data, mode);
   } catch (e) {

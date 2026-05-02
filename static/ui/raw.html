@@ -116,22 +116,10 @@
 
 <script type="module" src="/ui/theme.js"></script>
 <script type="module">
-const TOKEN_KEY = 'vault.token';
+import {apiJson, getToken, setToken} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
 
-const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
-const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
-
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
-
-async function api(path) {
-  const token = getToken();
-  if (!token) throw new Error('no-token');
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
-  if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
 
 const renderList = items => items
   .map(it => {
@@ -184,8 +172,7 @@ async function refresh() {
   }
   $('#content').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
   try {
-    const data = await api('/maintenance/raw-inbox');
-    render(data);
+    render(await apiJson('/maintenance/raw-inbox'));
   } catch (e) {
     if (e.message === 'unauthorized') {
       $('#content').innerHTML = '<div class="err">Unauthorized. Check the token in settings.</div>';

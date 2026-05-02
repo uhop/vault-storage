@@ -123,23 +123,11 @@
 </dialog>
 
 <script type="module">
-const TOKEN_KEY = 'vault.token';
+import {apiJson, getToken, setToken} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
 
-const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
-const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
-
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
-
-async function api(path) {
-  const token = getToken();
-  if (!token) throw new Error('no-token');
-  const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
-  if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
 
 let allTags = [];
 let activeTag = null;
@@ -168,7 +156,7 @@ const renderTagList = filter => {
 const fetchTags = async () => {
   $('#tag-list').innerHTML = '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
   try {
-    const data = await api('/tags?limit=1000');
+    const data = await apiJson('/tags?limit=1000');
     allTags = (Array.isArray(data) ? data : data.items ?? [])
       .sort((a, b) => b.record_count - a.record_count);
     $('#tag-total').textContent = `· ${allTags.length} total`;
@@ -187,7 +175,7 @@ const fetchRecordsForTag = async tag => {
   $('#records-heading').textContent = `Records tagged ${tag}`;
   $('#records').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
   try {
-    const data = await api(`/tags/${encodeURIComponent(tag)}/records`);
+    const data = await apiJson(`/tags/${encodeURIComponent(tag)}/records`);
     const items = Array.isArray(data) ? data : data.items ?? [];
     if (items.length === 0) {
       $('#records').innerHTML = '<div class="empty">No records.</div>';

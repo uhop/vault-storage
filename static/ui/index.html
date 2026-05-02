@@ -133,21 +133,8 @@
 </dialog>
 
 <script type="module">
-const TOKEN_KEY = 'vault.token';
+import {api, apiJson, getToken, setToken} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
-
-const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
-const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
-
-async function api(path, init = {}) {
-  const token = getToken();
-  if (!token) throw new Error('no-token');
-  const headers = { ...(init.headers ?? {}), Authorization: `Bearer ${token}` };
-  const res = await fetch(path, { ...init, headers });
-  if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
 
 function fmtCount(n) { return n.toLocaleString(); }
 function fmtAge(iso) {
@@ -208,7 +195,7 @@ const renderRecent = items => {
 
 const fetchRecent = async () => {
   try {
-    const data = await api('/sections?exclude=body&limit=30');
+    const data = await apiJson('/sections?exclude=body&limit=30');
     const items = (data.items ?? [])
       .filter(r => !r.file_path.includes('/archive/') && !r.file_path.includes('/sync/'))
       .filter(r => !r.file_path.split('/').pop().startsWith('_'))
@@ -387,17 +374,13 @@ async function runAction(btn) {
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner"></span> ${action.busyLabel ?? 'working…'}`;
   try {
-    const res = await fetch(action.endpoint, {
-      method: action.method ?? 'POST',
-      headers: { Authorization: `Bearer ${getToken()}` }
-    });
-    if (res.status === 401) { showAuthDialog(); return; }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await api(action.endpoint, { method: action.method ?? 'POST' });
     btn.classList.add('done');
     btn.textContent = action.doneLabel ?? 'done';
     await new Promise(r => setTimeout(r, 600));
     refresh();
   } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
     btn.classList.remove('done');
     btn.classList.add('failed');
     btn.textContent = `failed: ${e.message}`;
@@ -419,18 +402,18 @@ async function refresh() {
   let summary = null, lint = null, compactFolders = [], rawInbox = {ready: [], drafts: []};
   try {
     await Promise.all([
-      api('/maintenance/raw-inbox').then(d => {
+      apiJson('/maintenance/raw-inbox').then(d => {
         rawInbox = d;
         renderRawInboxTile(d);
       }),
-      api('/system/status').then(d => {
+      apiJson('/system/status').then(d => {
         setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
         setSlot('edges', fmtCount(d.edges));
         setSlot('last-indexed', shortSha(d.last_indexed_commit), d.last_indexed_commit ? null : 'unset');
         setSlot('sqlite-vec', d.sqlite_vec_version);
         $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
       }),
-      api('/suggestions/summary').then(async d => {
+      apiJson('/suggestions/summary').then(async d => {
         summary = d;
         const total = d.total ?? 0;
         let breakdown = 'queue clear';
@@ -446,11 +429,11 @@ async function refresh() {
         setSlot('pending', fmtCount(total), breakdown,
           total ? (total > 50 ? 'warn' : '') : 'ok');
         if (d.by_kind?.compaction_candidate) {
-          const r = await api('/suggestions?kind=compaction_candidate&status=pending&limit=20');
+          const r = await apiJson('/suggestions?kind=compaction_candidate&status=pending&limit=20');
           compactFolders = (r.items ?? []).map(s => s.payload ?? {});
         }
       }),
-      api('/system/lint').then(d => {
+      apiJson('/system/lint').then(d => {
         lint = d;
         const lvl = d.ok ? 'ok' : (d.total_issues > 5 ? 'bad' : 'warn');
         const lbl = d.ok ? 'clean' : `${d.total_issues} issue${d.total_issues === 1 ? '' : 's'}`;
@@ -490,7 +473,7 @@ const runScans = async () => {
   btn.innerHTML = '<span class="spinner"></span> running…';
   result.textContent = '';
   try {
-    const data = await api('/maintenance/run-all', { method: 'POST' });
+    const data = await apiJson('/maintenance/run-all', { method: 'POST' });
     btn.classList.add('done');
     btn.textContent = 'done ✓';
     const filed =

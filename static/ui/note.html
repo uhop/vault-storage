@@ -291,8 +291,8 @@
 
 <script type="module">
 import '/ui/components/vault-markdown.js';
+import {api, apiJson, getToken, setToken} from '/ui/api.js';
 
-const TOKEN_KEY = 'vault.token';
 const DRAFT_PREFIX = 'vault.draft.';
 const VIEW_KEY = 'vault.view-mode';
 const DEBOUNCE_MS = 1500;
@@ -300,8 +300,6 @@ const PREVIEW_DEBOUNCE_MS = 150;
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
 
-const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
-const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 const STARTER_TEMPLATE = `---
@@ -317,21 +315,6 @@ const newCapturePath = () => {
   const p = n => String(n).padStart(2, '0');
   return `raw/${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.md`;
 };
-
-async function api(path, init = {}) {
-  const token = getToken();
-  if (!token) throw new Error('no-token');
-  const headers = { ...(init.headers ?? {}), Authorization: `Bearer ${token}` };
-  const res = await fetch(path, { ...init, headers });
-  if (res.status === 401) throw new Error('unauthorized');
-  if (res.status === 404) throw new Error('not-found');
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { const body = await res.json(); if (body?.error) msg = body.error; } catch {}
-    throw new Error(msg);
-  }
-  return res;
-}
 
 const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
@@ -563,11 +546,9 @@ const openOutline = () => {
 const fetchBacklinks = async () => {
   if (!state.path) return;
   try {
-    const resolveRes = await api(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
-    const resolved = await resolveRes.json();
+    const resolved = await apiJson(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
     state.recordId = resolved.record_id;
-    const blRes = await api(`/sections/${state.recordId}/backlinks?limit=50`);
-    const data = await blRes.json();
+    const data = await apiJson(`/sections/${state.recordId}/backlinks?limit=50`);
     state.backlinks = data.items ?? [];
     state.backlinksTotal = data.total ?? state.backlinks.length;
     const btn = $('#backlinks');
@@ -670,14 +651,10 @@ const wikiSearchOnce = async q => {
   wikiAbort = new AbortController();
   try {
     const params = new URLSearchParams({query: q});
-    const res = await fetch(`/search/simple/?${params}`, {
+    const data = await apiJson(`/search/simple/?${params}`, {
       method: 'POST',
-      headers: {Authorization: `Bearer ${getToken()}`},
       signal: wikiAbort.signal
     });
-    if (res.status === 401) { showAuthDialog(); return; }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
     const items = (Array.isArray(data) ? data : [])
       .filter(r => r.filename !== state.path)
       .slice(0, 10)
@@ -700,8 +677,7 @@ async function openRecent() {
   list.innerHTML = '<li class="empty"><span class="spinner"></span> loading…</li>';
   $('#recent-dlg').showModal();
   try {
-    const res = await api('/sections?file_prefix=raw&exclude=body&limit=50');
-    const data = await res.json();
+    const data = await apiJson('/sections?file_prefix=raw&exclude=body&limit=50');
     const items = (data.items ?? [])
       .filter(r => !r.file_path.includes('/archive/'))
       .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
