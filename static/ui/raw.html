@@ -54,6 +54,15 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .hint { color: var(--muted); font-size: .85rem; margin: 0 0 1rem; }
   .hint code { font-size: .8rem; background: rgba(127,127,127,.12); padding: 0 .25rem; border-radius: 3px; }
+  .toolbar { display: flex; gap: .5rem; align-items: center; margin: 0 0 1rem; }
+  .toolbar a.btn {
+    display: inline-flex; align-items: center; gap: .35rem;
+    padding: .45rem .8rem; border: 1px solid var(--accent); border-radius: 4px;
+    background: var(--accent); color: #fff; text-decoration: none;
+    font: inherit; font-size: .9rem;
+  }
+  .toolbar a.btn:hover { filter: brightness(1.08); }
+  .toolbar a.btn .plus { font-weight: 600; font-size: 1.1em; line-height: 1; }
   dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
   dialog::backdrop { background: rgba(0,0,0,.5); }
   dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
@@ -83,6 +92,12 @@
     <code>ready: true</code> in frontmatter when one is ripe; run
     <code>/vault ingest</code> to compile ready notes into topics, projects, and queues.
   </p>
+
+  <div class="toolbar">
+    <a class="btn" href="/ui/note.html" title="Create a new note (saves to raw/&lt;timestamp&gt;.md)">
+      <span class="plus">+</span> New note
+    </a>
+  </div>
 
   <div id="content">
     <div class="empty"><span class="spinner"></span> loading…</div>
