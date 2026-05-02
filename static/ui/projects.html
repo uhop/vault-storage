@@ -31,6 +31,8 @@
   header nav a[aria-current] { color: var(--fg); }
   header .spacer { flex: 1; }
   main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
+  .filterbar { display: flex; align-items: center; gap: .5rem; margin-bottom: .8rem; font-size: .85rem; color: var(--muted); }
+  .filterbar label { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; }
   button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .proj { padding: .7rem .9rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: .5rem; background: var(--card); }
@@ -77,6 +79,9 @@
   <button id="settings" title="Settings">⚙</button>
 </header>
 <main>
+  <div class="filterbar">
+    <label><input type="checkbox" id="show-done"> show <code>[x]</code> items in expanded view</label>
+  </div>
   <div id="projects"></div>
 </main>
 <div class="footer" id="footer"></div>
@@ -93,7 +98,9 @@
 
 <script type="module">
 const TOKEN_KEY = 'vault.token';
+const SHOW_DONE_KEY = 'vault.show-done';
 const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
 
 const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
 const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
@@ -183,16 +190,36 @@ const sortAndReorder = projects => {
   }
 };
 
-const expandProject = async card => {
+const stripDoneTasks = body =>
+  body.split('\n')
+    .filter(line => !/^[ \t]*- \[x\]/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+
+const renderBody = (card, showDone) => {
+  const body = card.querySelector('.body');
+  if (!body || !card._queueText) return;
+  body.textContent = showDone ? card._queueText : stripDoneTasks(card._queueText);
+};
+
+const showDoneState = () => localStorage.getItem(SHOW_DONE_KEY) === '1';
+const setShowDone = on => {
+  if (on) localStorage.setItem(SHOW_DONE_KEY, '1');
+  else localStorage.removeItem(SHOW_DONE_KEY);
+};
+
+const expandProject = card => {
   if (card.classList.contains('open')) {
     card.classList.remove('open');
     return;
   }
   card.classList.add('open');
-  const body = card.querySelector('.body');
-  if (!body || body.dataset.loaded === '1') return;
-  body.textContent = card._queueText ?? '';
-  body.dataset.loaded = '1';
+  renderBody(card, showDoneState());
+};
+
+const reRenderOpenBodies = () => {
+  const showDone = showDoneState();
+  $$('.proj.open').forEach(card => renderBody(card, showDone));
 };
 
 const showAuthDialog = () => {
@@ -254,6 +281,12 @@ document.addEventListener('click', e => {
     const card = name.closest('.proj');
     expandProject(card);
   }
+});
+
+$('#show-done').checked = showDoneState();
+$('#show-done').addEventListener('change', e => {
+  setShowDone(e.target.checked);
+  reRenderOpenBodies();
 });
 
 refresh();
