@@ -57,6 +57,8 @@
     cursor: pointer; word-break: break-all;
   }
   .result .filename:hover { text-decoration: underline; }
+  .result .edit { font-size: .8rem; color: var(--muted); text-decoration: none; padding: .1em .4em; border: 1px solid var(--line); border-radius: 3px; }
+  .result .edit:hover { color: var(--fg); border-color: var(--muted); }
   .result .score { color: var(--muted); font-size: .8rem; }
   .result .snippets { margin-top: .4rem; font-size: .85rem; color: var(--muted); font-family: var(--mono); }
   .result .snippets div { padding: .15rem 0; word-break: break-word; }
@@ -88,6 +90,7 @@
     <a href="/ui/">dashboard</a>
     <a href="/ui/search.html" aria-current="page">search</a>
     <a href="/ui/projects.html">projects</a>
+    <a href="/ui/note.html">note</a>
   </nav>
   <div class="spacer"></div>
   <button id="settings" title="Settings">⚙</button>
@@ -186,6 +189,7 @@ const renderResults = (results, mode) => {
       <div class="result" data-idx="${i}">
         <div class="head">
           <span class="filename" data-path="${esc(r.filename)}">${esc(r.filename)}</span>
+          <a class="edit" href="/ui/note.html?path=${encodeURIComponent(r.filename)}" title="Edit">edit</a>
           <span class="score">${fmtScore(r.score, mode)}</span>
         </div>
         ${snippets ? `<div class="snippets">${snippets}</div>` : ''}

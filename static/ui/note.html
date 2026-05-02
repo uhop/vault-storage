@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>vault-storage — note</title>
+<style>
+  :root {
+    --bg: #fafafa; --fg: #111; --muted: #666; --line: #ddd;
+    --card: #fff; --accent: #0366d6; --warn: #b25b00; --bad: #c0392b; --ok: #1a7f37;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --fg: #e8e8e8; --muted: #9aa0a6; --line: #2c2f36;
+      --card: #1d2025; --accent: #4d9fff; --warn: #d39230; --bad: #ff6b5e; --ok: #58c47b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+    height: 100dvh;
+    display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+  header nav { display: flex; gap: .8rem; font-size: .9rem; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  header nav a[aria-current] { color: var(--fg); }
+  header .spacer { flex: 1; }
+  button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--bad); border-color: var(--bad); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .5rem 1rem; border-bottom: 1px solid var(--line); flex-shrink: 0; background: var(--card); }
+  .toolbar .path { flex: 1; min-width: 0; font-family: var(--mono); font-size: .85rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: .35rem;
+    padding: .25rem .55rem; border-radius: 999px; font-size: .8rem; font-family: var(--mono);
+    background: rgba(127,127,127,.12); color: var(--muted);
+  }
+  .pill.editing { color: var(--muted); }
+  .pill.saving  { color: var(--accent); }
+  .pill.saved   { color: var(--ok); }
+  .pill.offline { color: var(--bad); }
+  .pill .spinner { width: .7em; height: .7em; border-width: 1.5px; }
+  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  main {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+  }
+  textarea#editor {
+    flex: 1; min-height: 0; width: 100%;
+    padding: 1rem; border: 0; outline: none;
+    font-family: var(--mono); font-size: .9rem; line-height: 1.55;
+    background: var(--bg); color: var(--fg);
+    resize: none; tab-size: 2;
+  }
+  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border-bottom: 1px solid var(--bad); flex-shrink: 0; font-size: .9rem; }
+  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
+  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
+  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
+  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>vault-storage</h1>
+  <nav>
+    <a href="/ui/">dashboard</a>
+    <a href="/ui/search.html">search</a>
+    <a href="/ui/projects.html">projects</a>
+    <a href="/ui/note.html" aria-current="page">note</a>
+  </nav>
+  <div class="spacer"></div>
+  <button id="settings" title="Settings">⚙</button>
+</header>
+<div class="toolbar">
+  <span class="path" id="path">new — unsaved</span>
+  <span class="pill" id="status">idle</span>
+  <button id="save">Save</button>
+  <button id="del" class="danger" hidden>Delete</button>
+</div>
+<div class="err" id="err" hidden></div>
+<main>
+  <textarea id="editor" spellcheck="true" placeholder="Start typing… frontmatter at the top, body below."></textarea>
+</main>
+
+<dialog id="auth-dlg">
+  <h2>API token</h2>
+  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
+  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <button id="auth-cancel">Cancel</button>
+    <button id="auth-ok" class="primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="del-dlg">
+  <h2>Delete this note?</h2>
+  <p id="del-msg">This will remove the file from the vault. Cannot be undone via the UI.</p>
+  <div class="row">
+    <button id="del-cancel">Cancel</button>
+    <button id="del-confirm" class="danger primary">Delete</button>
+  </div>
+</dialog>
+
+<script type="module">
+const TOKEN_KEY = 'vault.token';
+const DRAFT_PREFIX = 'vault.draft.';
+const DEBOUNCE_MS = 1500;
+const $ = sel => document.querySelector(sel);
+
+const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
+const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
+const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
+
+const STARTER_TEMPLATE = `---
+type: fleeting
+status: active
+tags: []
+---
+
+`;
+
+const newCapturePath = () => {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `raw/${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.md`;
+};
+
+async function api(path, init = {}) {
+  const token = getToken();
+  if (!token) throw new Error('no-token');
+  const headers = { ...(init.headers ?? {}), Authorization: `Bearer ${token}` };
+  const res = await fetch(path, { ...init, headers });
+  if (res.status === 401) throw new Error('unauthorized');
+  if (res.status === 404) throw new Error('not-found');
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const body = await res.json(); if (body?.error) msg = body.error; } catch {}
+    throw new Error(msg);
+  }
+  return res;
+}
+
+const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
+
+// state -----------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const state = {
+  path: params.get('path') ?? null,        // null = new capture
+  serverContent: '',                       // last-known server content
+  dirty: false,                            // editor != serverContent
+  saveTimer: null,
+  lastSavedAt: null
+};
+
+// status pill -----------------------------------------------------
+const setStatus = (kind, label) => {
+  const el = $('#status');
+  el.className = 'pill ' + kind;
+  el.innerHTML = kind === 'saving'
+    ? '<span class="spinner"></span> saving…'
+    : esc(label);
+};
+
+const fmtTime = d => {
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+// draft staging ---------------------------------------------------
+const draftKey = () => DRAFT_PREFIX + (state.path ?? 'new');
+const stageDraft = body => localStorage.setItem(draftKey(), body);
+const dropDraft = () => localStorage.removeItem(draftKey());
+const loadDraft = () => localStorage.getItem(draftKey());
+
+// load / capture init ---------------------------------------------
+async function init() {
+  if (!getToken()) { showAuthDialog(); return; }
+  if (state.path) {
+    await loadExisting(state.path);
+  } else {
+    initCapture();
+  }
+  $('#editor').addEventListener('input', onInput);
+  window.addEventListener('beforeunload', e => {
+    if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+}
+
+async function loadExisting(path) {
+  $('#path').textContent = path;
+  $('#del').hidden = false;
+  $('#editor').disabled = true;
+  setStatus('saving', 'loading…');
+  try {
+    const res = await api(`/vault/${encodePath(path)}`);
+    const text = await res.text();
+    const draft = loadDraft();
+    if (draft && draft !== text) {
+      // Recover from a previous session that didn't reach the server.
+      state.serverContent = text;
+      $('#editor').value = draft;
+      state.dirty = true;
+      setStatus('offline', 'unsynced draft restored');
+    } else {
+      state.serverContent = text;
+      $('#editor').value = text;
+      setStatus('saved', `loaded ${fmtTime(new Date())}`);
+    }
+    $('#editor').disabled = false;
+    $('#editor').focus();
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
+    showError(`Failed to load: ${e.message}`);
+  }
+}
+
+function initCapture() {
+  $('#path').textContent = 'new — unsaved';
+  $('#del').hidden = true;
+  const draft = loadDraft();
+  $('#editor').value = draft ?? STARTER_TEMPLATE;
+  state.serverContent = '';
+  state.dirty = !!draft;
+  setStatus('editing', state.dirty ? 'unsaved draft restored' : 'new note');
+  $('#editor').focus();
+  // Place cursor at end so the user starts typing body content after the FM.
+  const v = $('#editor').value;
+  $('#editor').setSelectionRange(v.length, v.length);
+}
+
+// edit + autosave -------------------------------------------------
+function onInput() {
+  const body = $('#editor').value;
+  state.dirty = body !== state.serverContent;
+  if (!state.dirty) {
+    setStatus('saved', state.lastSavedAt ? `saved ${fmtTime(state.lastSavedAt)}` : 'no changes');
+    return;
+  }
+  stageDraft(body);
+  setStatus('editing', 'editing');
+  if (state.saveTimer) clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(save, DEBOUNCE_MS);
+}
+
+async function save() {
+  if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+  const body = $('#editor').value;
+  if (!state.dirty && state.path) return;
+  if (!state.path) state.path = newCapturePath();
+  setStatus('saving', '');
+  try {
+    await api(`/vault/${encodePath(state.path)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/markdown' },
+      body
+    });
+    state.serverContent = body;
+    state.dirty = false;
+    state.lastSavedAt = new Date();
+    // Clear both the per-path draft and the capture-mode "new" key — on a
+    // first capture save the staged draft lives under "new" but dropDraft()
+    // now keys by the freshly-assigned path.
+    localStorage.removeItem(DRAFT_PREFIX + 'new');
+    dropDraft();
+    $('#path').textContent = state.path;
+    $('#del').hidden = false;
+    // Update URL so refresh stays on this note.
+    if (location.search === '' || params.get('path') !== state.path) {
+      const newUrl = `?path=${encodeURIComponent(state.path)}`;
+      history.replaceState(null, '', newUrl);
+      params.set('path', state.path);
+    }
+    setStatus('saved', `saved ${fmtTime(state.lastSavedAt)}`);
+    hideError();
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
+    setStatus('offline', 'offline; will retry');
+    showError(`Save failed: ${e.message}`);
+  }
+}
+
+async function del() {
+  if (!state.path) return;
+  try {
+    await api(`/vault/${encodePath(state.path)}`, { method: 'DELETE' });
+    dropDraft();
+    state.dirty = false;
+    location.href = '/ui/projects.html';
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
+    showError(`Delete failed: ${e.message}`);
+  }
+}
+
+const showError = msg => { $('#err').textContent = msg; $('#err').hidden = false; };
+const hideError = () => { $('#err').hidden = true; };
+
+const showAuthDialog = () => {
+  const dlg = $('#auth-dlg');
+  $('#auth-input').value = getToken();
+  dlg.showModal();
+  $('#auth-input').focus();
+};
+
+// wiring ----------------------------------------------------------
+$('#settings').addEventListener('click', showAuthDialog);
+$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+$('#auth-ok').addEventListener('click', () => {
+  setToken($('#auth-input').value.trim());
+  $('#auth-dlg').close();
+  init();
+});
+$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+
+$('#save').addEventListener('click', save);
+$('#del').addEventListener('click', () => $('#del-dlg').showModal());
+$('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
+$('#del-confirm').addEventListener('click', () => { $('#del-dlg').close(); del(); });
+
+// Cmd/Ctrl-S manual save.
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    save();
+  }
+});
+
+init();
+</script>
+</body>
+</html>

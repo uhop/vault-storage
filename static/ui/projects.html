@@ -37,6 +37,8 @@
   .proj .head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
   .proj .name { font-family: var(--mono); font-size: .95rem; color: var(--accent); cursor: pointer; word-break: break-all; }
   .proj .name:hover { text-decoration: underline; }
+  .proj .edit { font-size: .8rem; color: var(--muted); text-decoration: none; padding: .1em .4em; border: 1px solid var(--line); border-radius: 3px; }
+  .proj .edit:hover { color: var(--fg); border-color: var(--muted); }
   .proj .meta { color: var(--muted); font-size: .8rem; font-family: var(--mono); }
   .proj .meta .open { color: var(--fg); }
   .proj .meta .open.warn { color: var(--warn); }
@@ -69,6 +71,7 @@
     <a href="/ui/">dashboard</a>
     <a href="/ui/search.html">search</a>
     <a href="/ui/projects.html" aria-current="page">projects</a>
+    <a href="/ui/note.html">note</a>
   </nav>
   <div class="spacer"></div>
   <button id="settings" title="Settings">⚙</button>
@@ -154,6 +157,7 @@ const renderProject = (name, q) => {
   card.innerHTML = `
     <div class="head">
       <span class="name" data-name="${esc(name)}">${esc(name)}</span>
+      <a class="edit" href="/ui/note.html?path=projects/${encodeURIComponent(name)}/queue.md" title="Edit queue.md">edit queue</a>
       <span class="meta">${esc(q.updated ?? '—')} · <span class="open ${openClass(q.openTasks)}">${q.openTasks} open</span> / ${q.openTasks + q.doneTasks} total</span>
     </div>
     <div class="summary">${esc(q.summary)}</div>
