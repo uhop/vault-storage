@@ -30,6 +30,7 @@ import {
   reopenSuggestionHandler,
   summarySuggestionsHandler
 } from './handlers/suggestions.ts';
+import {commitHandler} from './handlers/commit.ts';
 import {lintHandler} from './handlers/lint.ts';
 import {resolveHandler} from './handlers/resolve.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
@@ -110,6 +111,16 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
 
   router.get('/resolve', resolveHandler({db: opts.db}));
+
+  router.post(
+    '/commit',
+    commitHandler({
+      db: opts.db,
+      vaultDataPath: opts.env.vaultDataPath,
+      authorName: opts.env.gitAuthorName,
+      authorEmail: opts.env.gitAuthorEmail
+    })
+  );
 
   router.post(
     '/sync/from-obsidian',
