@@ -376,3 +376,55 @@ test('GET /system/lint caps samples at 10 per check', async t => {
     t.equal(r.checks['records_without_embeddings']?.samples.length, 10, 'samples capped at 10');
   });
 });
+
+test('POST /maintenance/embed-pending re-embeds records without embeddings', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-pending-1',
+      file_path: 'topics/pending-1.md',
+      body: 'pending body 1',
+      content_hash: 'hash-pending-1'
+    });
+    insertRecord(db, {
+      record_id: 'rec-pending-2',
+      file_path: 'topics/pending-2.md',
+      body: 'pending body 2',
+      content_hash: 'hash-pending-2'
+    });
+
+    const {status, body} = await fetchJson(`${url}/maintenance/embed-pending`, {method: 'POST'});
+    t.equal(status, 200);
+    const summary = body as {embedded: number; total: number};
+    t.equal(summary.embedded, 2, 'both records embedded');
+    t.equal(summary.total, 2);
+
+    // Idempotent: a second call has nothing pending.
+    const second = await fetchJson(`${url}/maintenance/embed-pending`, {method: 'POST'});
+    const s2 = second.body as {embedded: number};
+    t.equal(s2.embedded, 0, 'no work on second pass');
+  });
+});
+
+test('POST /maintenance/embed-pending parallel calls do not double-embed', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-parallel',
+      file_path: 'topics/parallel.md',
+      body: 'body',
+      content_hash: 'h'
+    });
+
+    // With FakeEmbedder the pass is fast; the two calls may or may not
+    // actually coalesce. Either way the record is embedded exactly once:
+    // one call sees pending=1 and embeds; the other sees pending=0.
+    const [a, b] = await Promise.all([
+      fetchJson(`${url}/maintenance/embed-pending`, {method: 'POST'}),
+      fetchJson(`${url}/maintenance/embed-pending`, {method: 'POST'})
+    ]);
+    t.equal(a.status, 200);
+    t.equal(b.status, 200);
+    const sumA = (a.body as {embedded: number}).embedded;
+    const sumB = (b.body as {embedded: number}).embedded;
+    t.equal(sumA + sumB, 1, 'one call embeds; the other observes nothing pending');
+  });
+});

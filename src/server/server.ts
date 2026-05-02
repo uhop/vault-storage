@@ -12,6 +12,7 @@ import {
 import {putRecordHandler} from './handlers/records-write.ts';
 import {
   cleanupLintHandler,
+  embedPendingHandler,
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
   findRetentionCandidatesHandler,
@@ -140,6 +141,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   );
   router.post('/maintenance/find-upgrade-signals', findUpgradeSignalsHandler({db: opts.db}));
   router.post('/maintenance/cleanup-lint', cleanupLintHandler({db: opts.db}));
+  router.post(
+    '/maintenance/embed-pending',
+    embedPendingHandler({db: opts.db, embedder: opts.embedder})
+  );
   router.post('/maintenance/run-all', runAllScansHandler({db: opts.db}));
   router.get(
     '/maintenance/raw-inbox',

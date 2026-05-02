@@ -10,6 +10,8 @@ import {
   incrementalReindex
 } from '../../maintenance/incremental-reindex.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
+import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
+import type {Embedder} from '../../embeddings/types.ts';
 import {snapshotDb} from '../snapshot.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -21,6 +23,11 @@ interface MaintenanceDeps {
 interface SnapshotDeps {
   db: DatabaseSync;
   vaultDataPath: string;
+}
+
+interface EmbedDeps {
+  db: DatabaseSync;
+  embedder: Embedder;
 }
 
 const parsePositiveFloat = (raw: string | undefined, fallback: number): number | null => {
@@ -242,6 +249,34 @@ export const cleanupLintHandler =
     const summary = cleanupLint(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
+  };
+
+/**
+ * POST /maintenance/embed-pending
+ *
+ * Re-embed records whose chunks are missing or whose stored content_hash
+ * has drifted from the record's body. The watcher does this automatically
+ * on file changes; this manual trigger covers the case where the watcher
+ * was off, missed an event, or the embedder was unavailable when a record
+ * first imported. Idempotent — a no-op when nothing's pending.
+ *
+ * Concurrent manual calls coalesce onto the same in-flight pass, so the
+ * UI button can be mashed safely. The watcher pass remains independent;
+ * a rare race could double-embed a record briefly, but the writes are
+ * consistent (drift detection catches any TOCTOU on body change).
+ */
+let embedInFlight: Promise<EmbedSummary> | null = null;
+
+export const embedPendingHandler =
+  (deps: EmbedDeps): Handler =>
+  async ctx => {
+    if (!embedInFlight) {
+      embedInFlight = embedPending(deps.db, deps.embedder).finally(() => {
+        embedInFlight = null;
+      });
+    }
+    const summary = await embedInFlight;
+    sendJson(ctx.res, 200, summary);
   };
 
 /**

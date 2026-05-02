@@ -319,6 +319,17 @@ function recommend(summary, lint, details) {
     why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
     level: k.infrastructure_upgrade ? 'warn' : ''
   });
+  const embeddingPending =
+    (lint.checks?.records_without_embeddings?.count ?? 0) +
+    (lint.checks?.embedding_hash_drift?.count ?? 0);
+  if (embeddingPending > 0) {
+    recs.push({
+      title: `${embeddingPending} record${embeddingPending === 1 ? '' : 's'} pending re-embedding`,
+      why: `<code>records_without_embeddings</code> / <code>embedding_hash_drift</code> — the watcher normally handles this on file change; this trigger catches up if it missed an event or the embedder was unavailable.`,
+      level: 'warn',
+      action: 'embed-pending'
+    });
+  }
   if (!lint.ok) {
     const broken = Object.entries(lint.checks ?? {})
       .filter(([, c]) => c.count > 0)
@@ -341,6 +352,13 @@ const ACTIONS = {
     busyLabel: 'cleaning…',
     doneLabel: 'cleaned ✓',
     endpoint: '/maintenance/cleanup-lint',
+    method: 'POST'
+  },
+  'embed-pending': {
+    label: 'Re-embed',
+    busyLabel: 'embedding…',
+    doneLabel: 'embedded ✓',
+    endpoint: '/maintenance/embed-pending',
     method: 'POST'
   }
 };
