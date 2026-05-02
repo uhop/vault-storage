@@ -173,6 +173,25 @@
   .recent-list .title { font-weight: 600; font-size: .95rem; }
   .recent-list .meta { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
   .recent-list .empty { padding: .8rem; color: var(--muted); text-align: center; font-size: .9rem; }
+  dialog#wiki-dlg { max-width: 36rem; width: 90vw; }
+  .wiki-search {
+    width: 100%; padding: .55rem .7rem; font: inherit;
+    border: 1px solid var(--line); border-radius: 4px;
+    background: var(--bg); color: var(--fg);
+    margin-bottom: .6rem;
+  }
+  .wiki-results { list-style: none; padding: 0; margin: 0 0 .8rem; max-height: 50vh; overflow-y: auto; }
+  .wiki-results li { padding: 0; margin: .15rem 0; }
+  .wiki-results .item {
+    display: flex; flex-direction: column; gap: .15rem;
+    padding: .55rem .7rem; border-radius: 4px;
+    cursor: pointer;
+  }
+  .wiki-results .item:hover, .wiki-results .item.active { background: rgba(127,127,127,.18); }
+  .wiki-results .title { font-weight: 600; font-size: .9rem; }
+  .wiki-results .path { font-family: var(--mono); font-size: .75rem; color: var(--muted); word-break: break-all; }
+  .wiki-results .snippet { font-size: .8rem; color: var(--muted); margin-top: .15rem; word-break: break-word; }
+  .wiki-results .empty { padding: .8rem; color: var(--muted); text-align: center; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -196,6 +215,7 @@
     <button data-mode="preview" aria-pressed="false" title="Rendered preview only">preview</button>
   </span>
   <button id="save">Save</button>
+  <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
   <button id="recent" hidden>Recent</button>
   <button id="del" class="danger" hidden>Delete</button>
 </div>
@@ -241,6 +261,15 @@
   <ul id="recent-list" class="recent-list"></ul>
   <div class="row">
     <button id="recent-close">Close</button>
+  </div>
+</dialog>
+
+<dialog id="wiki-dlg">
+  <h2>Insert wikilink</h2>
+  <input id="wiki-search" type="search" placeholder="Search the vault…" autocomplete="off" spellcheck="false" class="wiki-search">
+  <ul id="wiki-results" class="wiki-results"></ul>
+  <div class="row">
+    <button id="wiki-cancel">Cancel</button>
   </div>
 </dialog>
 
@@ -377,6 +406,86 @@ function initCapture() {
   const v = $('#editor').value;
   $('#editor').setSelectionRange(v.length, v.length);
 }
+
+// Wikilink picker --------------------------------------------------
+let wikiResults = [];
+let wikiSelected = -1;
+let wikiSearchTimer = null;
+let wikiAbort = null;
+
+const insertAtCursor = text => {
+  const ta = $('#editor');
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+  const pos = start + text.length;
+  ta.setSelectionRange(pos, pos);
+  ta.dispatchEvent(new Event('input', {bubbles: true}));
+};
+
+const insertWikilink = path => {
+  const target = path.replace(/\.md$/, '');
+  insertAtCursor(`[[${target}]]`);
+};
+
+const openWikiPicker = () => {
+  $('#wiki-search').value = '';
+  $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
+  wikiResults = [];
+  wikiSelected = -1;
+  $('#wiki-dlg').showModal();
+  $('#wiki-search').focus();
+};
+
+const renderWikiResults = items => {
+  if (items.length === 0) {
+    $('#wiki-results').innerHTML = '<li class="empty">No matches.</li>';
+    return;
+  }
+  $('#wiki-results').innerHTML = items.map((r, i) => `
+    <li>
+      <div class="item ${i === wikiSelected ? 'active' : ''}" data-idx="${i}">
+        <span class="title">${esc(r.title)}</span>
+        <span class="path">${esc(r.filename)}</span>
+        ${r.snippet ? `<span class="snippet">… ${esc(r.snippet)} …</span>` : ''}
+      </div>
+    </li>
+  `).join('');
+  if (wikiSelected >= 0) {
+    const active = $('#wiki-results .item.active');
+    if (active) active.scrollIntoView({block: 'nearest'});
+  }
+};
+
+const wikiSearchOnce = async q => {
+  if (wikiAbort) wikiAbort.abort();
+  wikiAbort = new AbortController();
+  try {
+    const params = new URLSearchParams({query: q});
+    const res = await fetch(`/search/simple/?${params}`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${getToken()}`},
+      signal: wikiAbort.signal
+    });
+    if (res.status === 401) { showAuthDialog(); return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const items = (Array.isArray(data) ? data : [])
+      .filter(r => r.filename !== state.path)
+      .slice(0, 10)
+      .map(r => ({
+        filename: r.filename,
+        title: r.filename.split('/').pop().replace(/\.md$/, ''),
+        snippet: r.matches?.[0]?.context ?? null
+      }));
+    wikiResults = items;
+    wikiSelected = items.length > 0 ? 0 : -1;
+    renderWikiResults(items);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    $('#wiki-results').innerHTML = `<li class="empty">Search failed: ${esc(e.message)}</li>`;
+  }
+};
 
 async function openRecent() {
   const list = $('#recent-list');
@@ -537,6 +646,54 @@ $('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
 $('#del-confirm').addEventListener('click', () => { $('#del-dlg').close(); del(); });
 $('#recent').addEventListener('click', openRecent);
 $('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
+
+$('#wiki-pick').addEventListener('click', openWikiPicker);
+$('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
+
+$('#wiki-search').addEventListener('input', () => {
+  const q = $('#wiki-search').value.trim();
+  if (wikiSearchTimer) clearTimeout(wikiSearchTimer);
+  if (q.length < 2) {
+    wikiResults = [];
+    wikiSelected = -1;
+    $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
+    return;
+  }
+  wikiSearchTimer = setTimeout(() => wikiSearchOnce(q), 150);
+});
+
+$('#wiki-search').addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (wikiResults.length === 0) return;
+    wikiSelected = (wikiSelected + 1) % wikiResults.length;
+    renderWikiResults(wikiResults);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (wikiResults.length === 0) return;
+    wikiSelected = (wikiSelected - 1 + wikiResults.length) % wikiResults.length;
+    renderWikiResults(wikiResults);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (wikiResults.length > 0) {
+      const idx = wikiSelected >= 0 ? wikiSelected : 0;
+      insertWikilink(wikiResults[idx].filename);
+      $('#wiki-dlg').close();
+      $('#editor').focus();
+    }
+  }
+});
+
+$('#wiki-results').addEventListener('click', e => {
+  const item = e.target.closest('.item[data-idx]');
+  if (!item) return;
+  const idx = Number(item.dataset.idx);
+  if (Number.isFinite(idx) && wikiResults[idx]) {
+    insertWikilink(wikiResults[idx].filename);
+    $('#wiki-dlg').close();
+    $('#editor').focus();
+  }
+});
 
 // View-mode toggle (Edit / Split / Preview).
 $$('.modes button').forEach(btn => {
