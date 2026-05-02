@@ -54,13 +54,74 @@
     flex: 1; min-height: 0;
     display: flex; flex-direction: column;
   }
+  .panes {
+    flex: 1; min-height: 0; display: flex;
+  }
   textarea#editor {
-    flex: 1; min-height: 0; width: 100%;
+    flex: 1; min-height: 0; min-width: 0; width: 100%;
     padding: 1rem; border: 0; outline: none;
     font-family: var(--mono); font-size: .9rem; line-height: 1.55;
     background: var(--bg); color: var(--fg);
     resize: none; tab-size: 2;
   }
+  .preview {
+    flex: 1; min-width: 0; min-height: 0;
+    padding: 1rem 1.2rem; overflow-y: auto;
+    border-left: 1px solid var(--line);
+    background: var(--card);
+  }
+  body[data-view="edit"] .preview { display: none; }
+  body[data-view="preview"] textarea#editor { display: none; }
+  body[data-view="preview"] .preview { border-left: 0; }
+  @media (max-width: 767px) {
+    body[data-view="split"] .preview { display: none; }
+  }
+  .toolbar .modes {
+    display: inline-flex;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .toolbar .modes button {
+    border: 0; border-radius: 0;
+    padding: .35rem .7rem; font-size: .8rem;
+    background: transparent; color: var(--muted);
+  }
+  .toolbar .modes button[aria-pressed="true"] {
+    background: var(--card); color: var(--fg);
+  }
+  .toolbar .modes button + button { border-left: 1px solid var(--line); }
+  @media (max-width: 767px) { .toolbar .modes button[data-mode="split"] { display: none; } }
+  .preview .frontmatter {
+    padding: .5rem .7rem; margin: 0 0 1rem;
+    background: rgba(127,127,127,.08); border: 1px solid var(--line); border-radius: 4px;
+    font-family: var(--mono); font-size: .8rem; color: var(--muted);
+    white-space: pre-wrap; overflow-x: auto;
+  }
+  .preview h1, .preview h2, .preview h3, .preview h4 { line-height: 1.3; }
+  .preview h1 { font-size: 1.6rem; margin: 1.2rem 0 .6rem; }
+  .preview h2 { font-size: 1.3rem; margin: 1.2rem 0 .6rem; padding-bottom: .2rem; border-bottom: 1px solid var(--line); }
+  .preview h3 { font-size: 1.1rem; margin: 1rem 0 .5rem; }
+  .preview h4 { font-size: 1rem; margin: .8rem 0 .4rem; }
+  .preview p, .preview ul, .preview ol, .preview pre, .preview blockquote, .preview table { margin: .6rem 0; line-height: 1.6; }
+  .preview code { font-family: var(--mono); font-size: .85em; background: rgba(127,127,127,.12); padding: .1em .35em; border-radius: 3px; }
+  .preview pre { background: rgba(127,127,127,.08); border: 1px solid var(--line); border-radius: 6px; padding: .7rem .9rem; overflow-x: auto; }
+  .preview pre code { background: transparent; padding: 0; font-size: .85rem; }
+  .preview blockquote { border-left: 3px solid var(--line); padding-left: 1rem; color: var(--muted); }
+  .preview a { color: var(--accent); text-decoration: none; }
+  .preview a:hover { text-decoration: underline; }
+  .preview a.wikilink {
+    font-family: var(--mono); font-size: .9em;
+    background: rgba(127,127,127,.08); padding: .05em .3em; border-radius: 3px;
+  }
+  .preview ul, .preview ol { padding-left: 1.5rem; }
+  .preview li { margin: .2rem 0; }
+  .preview hr { border: 0; border-top: 1px solid var(--line); margin: 1.5rem 0; }
+  .preview table { border-collapse: collapse; font-size: .9rem; }
+  .preview th, .preview td { padding: .35rem .6rem; border: 1px solid var(--line); text-align: left; }
+  .preview th { background: rgba(127,127,127,.08); }
+  .preview img { max-width: 100%; height: auto; }
   .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border-bottom: 1px solid var(--bad); flex-shrink: 0; font-size: .9rem; }
   dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
   dialog::backdrop { background: rgba(0,0,0,.5); }
@@ -85,12 +146,20 @@
 <div class="toolbar">
   <span class="path" id="path">new — unsaved</span>
   <span class="pill" id="status">idle</span>
+  <span class="modes" role="group" aria-label="View mode">
+    <button data-mode="edit" aria-pressed="false" title="Edit only">edit</button>
+    <button data-mode="split" aria-pressed="false" title="Editor + preview side-by-side">split</button>
+    <button data-mode="preview" aria-pressed="false" title="Rendered preview only">preview</button>
+  </span>
   <button id="save">Save</button>
   <button id="del" class="danger" hidden>Delete</button>
 </div>
 <div class="err" id="err" hidden></div>
 <main>
-  <textarea id="editor" spellcheck="true" placeholder="Start typing… frontmatter at the top, body below."></textarea>
+  <div class="panes">
+    <textarea id="editor" spellcheck="true" placeholder="Start typing… frontmatter at the top, body below."></textarea>
+    <div class="preview" id="preview"></div>
+  </div>
 </main>
 
 <dialog id="auth-dlg">
@@ -113,14 +182,63 @@
 </dialog>
 
 <script type="module">
+import {marked} from '/ui/vendor/marked.esm.js';
+
 const TOKEN_KEY = 'vault.token';
 const DRAFT_PREFIX = 'vault.draft.';
+const VIEW_KEY = 'vault.view-mode';
 const DEBOUNCE_MS = 1500;
+const PREVIEW_DEBOUNCE_MS = 150;
 const $ = sel => document.querySelector(sel);
+const $$ = sel => document.querySelectorAll(sel);
 
 const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
 const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
+
+// Wikilink extension for marked: [[target]] and [[target|alias]] become
+// styled <a class="wikilink" data-wikilink="<target>"> elements. Click
+// resolution lands in Phase-4 v2 step (b) once GET /resolve?wikilink ships.
+marked.use({
+  extensions: [
+    {
+      name: 'wikilink',
+      level: 'inline',
+      start(src) {
+        const i = src.indexOf('[[');
+        return i === -1 ? undefined : i;
+      },
+      tokenizer(src) {
+        const match = /^\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/.exec(src);
+        if (match) {
+          return {
+            type: 'wikilink',
+            raw: match[0],
+            target: match[1],
+            alias: match[2] ?? null
+          };
+        }
+        return undefined;
+      },
+      renderer(token) {
+        const display = token.alias ?? token.target;
+        return `<a class="wikilink" data-wikilink="${esc(token.target)}">${esc(display)}</a>`;
+      }
+    }
+  ]
+});
+marked.setOptions({gfm: true, breaks: false});
+
+const splitFrontmatter = text => {
+  const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
+  return m ? {fm: m[1], body: m[2]} : {fm: null, body: text};
+};
+
+const renderPreview = text => {
+  const {fm, body} = splitFrontmatter(text);
+  const fmHtml = fm ? `<pre class="frontmatter">${esc(fm)}</pre>` : '';
+  return fmHtml + marked.parse(body);
+};
 
 const STARTER_TEMPLATE = `---
 type: fleeting
@@ -192,6 +310,7 @@ async function init() {
     initCapture();
   }
   $('#editor').addEventListener('input', onInput);
+  schedulePreview();
   window.addEventListener('beforeunload', e => {
     if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
   });
@@ -239,10 +358,37 @@ function initCapture() {
   $('#editor').setSelectionRange(v.length, v.length);
 }
 
+// view modes ------------------------------------------------------
+let viewMode = localStorage.getItem(VIEW_KEY);
+if (viewMode !== 'edit' && viewMode !== 'split' && viewMode !== 'preview') {
+  viewMode = window.innerWidth >= 768 ? 'split' : 'edit';
+}
+document.body.dataset.view = viewMode;
+
+const setViewMode = mode => {
+  viewMode = mode;
+  localStorage.setItem(VIEW_KEY, mode);
+  document.body.dataset.view = mode;
+  $$('.modes button').forEach(btn => {
+    btn.setAttribute('aria-pressed', btn.dataset.mode === mode ? 'true' : 'false');
+  });
+  if (mode !== 'edit') schedulePreview();
+};
+
+let previewTimer = null;
+const schedulePreview = () => {
+  if (viewMode === 'edit') return;
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    $('#preview').innerHTML = renderPreview($('#editor').value);
+  }, PREVIEW_DEBOUNCE_MS);
+};
+
 // edit + autosave -------------------------------------------------
 function onInput() {
   const body = $('#editor').value;
   state.dirty = body !== state.serverContent;
+  schedulePreview();
   if (!state.dirty) {
     setStatus('saved', state.lastSavedAt ? `saved ${fmtTime(state.lastSavedAt)}` : 'no changes');
     return;
@@ -327,6 +473,12 @@ $('#save').addEventListener('click', save);
 $('#del').addEventListener('click', () => $('#del-dlg').showModal());
 $('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
 $('#del-confirm').addEventListener('click', () => { $('#del-dlg').close(); del(); });
+
+// View-mode toggle (Edit / Split / Preview).
+$$('.modes button').forEach(btn => {
+  btn.addEventListener('click', () => setViewMode(btn.dataset.mode));
+});
+setViewMode(viewMode);
 
 // Cmd/Ctrl-S manual save.
 document.addEventListener('keydown', e => {
