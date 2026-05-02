@@ -260,6 +260,72 @@ test('GET /system/lint clean DB after a healthy record + chunk: ok=true', async 
   });
 });
 
+test('POST /maintenance/cleanup-lint deletes orphan embeddings', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {record_id: 'rec-good', file_path: 'topics/good.md', content_hash: 'hash-match'});
+    insertVecChunk(db, {chunk_id: 'c-good-0', record_id: 'rec-good', content_hash: 'hash-match'});
+    insertVecChunk(db, {chunk_id: 'c-orphan1-0', record_id: 'rec-orphan1', content_hash: 'hash-x'});
+    insertVecChunk(db, {chunk_id: 'c-orphan2-0', record_id: 'rec-orphan2', content_hash: 'hash-x'});
+    insertVecChunk(db, {chunk_id: 'c-orphan2-1', record_id: 'rec-orphan2', content_hash: 'hash-x'});
+
+    const before = await fetchJson(`${url}/system/lint`);
+    t.equal(
+      (before.body as {checks: {orphan_embeddings: {count: number}}}).checks.orphan_embeddings.count,
+      2,
+      'pre: 2 orphan record_ids'
+    );
+
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    t.equal(status, 200, '200 ok');
+    const r = body as {
+      totalFixed: number;
+      fixed: {orphan_embeddings: {recordsAffected: number; chunksDeleted: number}};
+      needsReview: Record<string, number>;
+    };
+    t.equal(r.totalFixed, 2, 'totalFixed=2 record_ids');
+    t.equal(r.fixed.orphan_embeddings.recordsAffected, 2, 'recordsAffected=2');
+    t.equal(r.fixed.orphan_embeddings.chunksDeleted, 3, 'chunksDeleted=3 (1 + 2)');
+
+    const after = await fetchJson(`${url}/system/lint`);
+    t.equal((after.body as {ok: boolean}).ok, true, 'lint clean after cleanup');
+
+    const remaining = db.prepare('SELECT chunk_id FROM record_vec ORDER BY chunk_id').all() as {chunk_id: string}[];
+    t.equal(remaining.length, 1, 'one healthy chunk preserved');
+    t.equal(remaining[0]?.chunk_id, 'c-good-0', 'healthy chunk untouched');
+  });
+});
+
+test('POST /maintenance/cleanup-lint is a no-op on a clean DB', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {record_id: 'rec-good', file_path: 'topics/good.md', content_hash: 'hash-match'});
+    insertVecChunk(db, {chunk_id: 'c-good-0', record_id: 'rec-good', content_hash: 'hash-match'});
+
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    t.equal(status, 200, '200 ok');
+    const r = body as {totalFixed: number; fixed: {orphan_embeddings: {recordsAffected: number}}};
+    t.equal(r.totalFixed, 0, 'nothing to fix');
+    t.equal(r.fixed.orphan_embeddings.recordsAffected, 0, 'no orphans');
+  });
+});
+
+test('POST /maintenance/cleanup-lint reports needsReview counts for non-fixable categories', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-temporal',
+      file_path: 'topics/temporal.md',
+      created: '2026-04-29',
+      updated: '2026-04-01'
+    });
+    insertVecChunk(db, {chunk_id: 'c-temporal-0', record_id: 'rec-temporal', content_hash: 'hash-fresh'});
+
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    const r = body as {totalFixed: number; needsReview: Record<string, number>};
+    t.equal(r.totalFixed, 0, 'no orphans to fix');
+    t.equal(r.needsReview['temporal_anomalies'], 1, 'temporal anomaly surfaced for review');
+    t.equal(r.needsReview['orphan_embeddings'], undefined, 'orphan_embeddings is in fixed, not needsReview');
+  });
+});
+
 test('GET /system/lint caps samples at 10 per check', async t => {
   await withServer(async (url, db) => {
     // 15 records with no embeddings.

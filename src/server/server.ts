@@ -11,6 +11,7 @@ import {
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
 import {
+  cleanupLintHandler,
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
   findRetentionCandidatesHandler,
@@ -120,6 +121,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     findRetentionCandidatesHandler({db: opts.db})
   );
   router.post('/maintenance/find-upgrade-signals', findUpgradeSignalsHandler({db: opts.db}));
+  router.post('/maintenance/cleanup-lint', cleanupLintHandler({db: opts.db}));
   router.post(
     '/maintenance/snapshot',
     snapshotHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})

@@ -1,5 +1,6 @@
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
+import {cleanupLint} from '../../maintenance/cleanup-lint.ts';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
@@ -185,6 +186,26 @@ export const incrementalReindexHandler =
         `incremental reindex failed: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  };
+
+/**
+ * POST /maintenance/cleanup-lint
+ *
+ * Auto-fix the lint categories with deterministic cleanup paths
+ * (currently only `orphan_embeddings`: rows in record_vec whose
+ * record_id no longer exists in records). Categories that need human
+ * review or are handled by other passes are reported under
+ * `needsReview` with their current counts. Idempotent.
+ *
+ * Returns `{totalFixed, fixed: {orphan_embeddings: {recordsAffected,
+ * chunksDeleted}}, needsReview, durationMs}`.
+ */
+export const cleanupLintHandler =
+  (deps: MaintenanceDeps): Handler =>
+  ctx => {
+    const summary = cleanupLint(deps.db);
+    sendJson(ctx.res, 200, summary);
+    void ctx;
   };
 
 export const snapshotHandler =

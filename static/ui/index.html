@@ -180,12 +180,14 @@ function recommend(summary, lint, details) {
   });
   if (k.compaction_candidate) {
     const list = compactFolders
-      .map(f => `<code>${esc(f.folder_path)}</code> (${f.piece_count})`)
-      .join(', ');
+      .slice()
+      .sort((a, b) => (b.piece_count ?? 0) - (a.piece_count ?? 0))
+      .map(f => `<code>/vault-compact ${esc(f.folder_path)}</code> (${f.piece_count} pieces)`)
+      .join('<br>');
     recs.push({
       title: `${k.compaction_candidate} folders past compaction threshold`,
       why: list
-        ? `${list}. Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
+        ? `Run per candidate:<br>${list}`
         : `Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
     });
   }
@@ -205,14 +207,11 @@ function recommend(summary, lint, details) {
   if (!lint.ok) {
     const broken = Object.entries(lint.checks ?? {})
       .filter(([, c]) => c.count > 0)
-      .map(([name, c]) => {
-        const samples = (c.samples ?? []).slice(0, 2).map(s => esc(s.id ?? s)).join(', ');
-        return `<code>${name}</code>: ${c.count}${samples ? ` (e.g. ${samples})` : ''}`;
-      })
-      .join('<br>');
+      .map(([name, c]) => `${name}:${c.count}`)
+      .join(', ');
     recs.push({
       title: `${lint.total_issues} integrity-lint issues`,
-      why: broken || `Inspect via <code>GET /system/lint</code>.`,
+      why: `${broken ? broken + '. ' : ''}Run <code>vault-curl /maintenance/cleanup-lint -X POST</code> to auto-fix what can be cleaned safely (orphan embeddings); other categories surface in <code>needsReview</code> for manual review.`,
       level: 'bad'
     });
   }
