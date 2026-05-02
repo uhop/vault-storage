@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>vault-storage — projects</title>
+<style>
+  :root {
+    --bg: #fafafa; --fg: #111; --muted: #666; --line: #ddd;
+    --card: #fff; --accent: #0366d6; --warn: #b25b00; --bad: #c0392b; --ok: #1a7f37;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --fg: #e8e8e8; --muted: #9aa0a6; --line: #2c2f36;
+      --card: #1d2025; --accent: #4d9fff; --warn: #d39230; --bad: #ff6b5e; --ok: #58c47b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+  header nav { display: flex; gap: .8rem; font-size: .9rem; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  header nav a[aria-current] { color: var(--fg); }
+  header .spacer { flex: 1; }
+  main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
+  button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .proj { padding: .7rem .9rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: .5rem; background: var(--card); }
+  .proj .head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
+  .proj .name { font-family: var(--mono); font-size: .95rem; color: var(--accent); cursor: pointer; word-break: break-all; }
+  .proj .name:hover { text-decoration: underline; }
+  .proj .meta { color: var(--muted); font-size: .8rem; font-family: var(--mono); }
+  .proj .meta .open { color: var(--fg); }
+  .proj .meta .open.warn { color: var(--warn); }
+  .proj .meta .open.bad { color: var(--bad); }
+  .proj .summary { margin-top: .35rem; font-size: .9rem; color: var(--muted); }
+  .proj .body {
+    display: none; margin-top: .6rem; padding: .6rem .8rem;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
+    font-family: var(--mono); font-size: .82rem; white-space: pre-wrap; word-break: break-word;
+    max-height: 30rem; overflow-y: auto;
+  }
+  .proj.open .body { display: block; }
+  .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
+  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
+  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
+  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
+  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
+  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
+  .footer { color: var(--muted); font-size: .8rem; padding: 1rem; text-align: center; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<header>
+  <h1>vault-storage</h1>
+  <nav>
+    <a href="/ui/">dashboard</a>
+    <a href="/ui/search.html">search</a>
+    <a href="/ui/projects.html" aria-current="page">projects</a>
+  </nav>
+  <div class="spacer"></div>
+  <button id="settings" title="Settings">⚙</button>
+</header>
+<main>
+  <div id="projects"></div>
+</main>
+<div class="footer" id="footer"></div>
+
+<dialog id="auth-dlg">
+  <h2>API token</h2>
+  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
+  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <button id="auth-cancel">Cancel</button>
+    <button id="auth-ok" class="primary">Save</button>
+  </div>
+</dialog>
+
+<script type="module">
+const TOKEN_KEY = 'vault.token';
+const $ = sel => document.querySelector(sel);
+
+const getToken = () => localStorage.getItem(TOKEN_KEY) ?? '';
+const setToken = t => { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); };
+
+const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
+
+async function api(path, init = {}) {
+  const token = getToken();
+  if (!token) throw new Error('no-token');
+  const headers = { ...(init.headers ?? {}), Authorization: `Bearer ${token}` };
+  const res = await fetch(path, { ...init, headers });
+  if (res.status === 401) throw new Error('unauthorized');
+  if (res.status === 404) throw new Error('not-found');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res;
+}
+
+const parseQueue = text => {
+  const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  const fm = fmMatch ? fmMatch[1] : '';
+  const body = fmMatch ? fmMatch[2] : text;
+
+  const updatedMatch = fm.match(/^updated:\s*['"]?(\S+?)['"]?\s*$/m);
+  const updated = updatedMatch?.[1] ?? null;
+
+  const openTasks = (body.match(/^[ \t]*-\s+\[ \]/gm) ?? []).length;
+  const doneTasks = (body.match(/^[ \t]*-\s+\[x\]/gmi) ?? []).length;
+
+  const trimmed = body.trim();
+  // Prefer the first non-heading paragraph as the summary.
+  const paras = trimmed.split(/\n{2,}/);
+  const firstNonHeading = paras.find(p => !/^#+\s/.test(p.trim())) ?? paras[0] ?? '';
+  const summary = firstNonHeading.replace(/\n/g, ' ').replace(/\s+/g, ' ').slice(0, 240);
+
+  return { updated, openTasks, doneTasks, summary, full: text };
+};
+
+const openClass = n => n === 0 ? '' : n > 20 ? 'bad' : n > 8 ? 'warn' : '';
+
+const renderSkeleton = (folders) => {
+  $('#projects').innerHTML = folders.map(name => `
+    <div class="proj" data-name="${esc(name)}">
+      <div class="head">
+        <span class="name">${esc(name)}</span>
+        <span class="meta"><span class="spinner"></span></span>
+      </div>
+    </div>
+  `).join('');
+};
+
+const renderProject = (name, q) => {
+  const card = document.querySelector(`[data-name="${name.replace(/"/g, '\\"')}"]`);
+  if (!card) return;
+  if (!q) {
+    card.innerHTML = `<div class="head">
+      <span class="name">${esc(name)}</span>
+      <span class="meta">no queue.md</span>
+    </div>`;
+    return;
+  }
+  card.innerHTML = `
+    <div class="head">
+      <span class="name" data-name="${esc(name)}">${esc(name)}</span>
+      <span class="meta">${esc(q.updated ?? '—')} · <span class="open ${openClass(q.openTasks)}">${q.openTasks} open</span> / ${q.openTasks + q.doneTasks} total</span>
+    </div>
+    <div class="summary">${esc(q.summary)}</div>
+    <pre class="body"></pre>
+  `;
+  card._queueText = q.full;
+};
+
+const sortAndReorder = projects => {
+  // Sort: those with `updated` desc first, then no-queue by name.
+  projects.sort((a, b) => {
+    if (a.queue && b.queue) {
+      return (b.queue.updated ?? '').localeCompare(a.queue.updated ?? '');
+    }
+    if (a.queue) return -1;
+    if (b.queue) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  const container = $('#projects');
+  for (const p of projects) {
+    const card = document.querySelector(`[data-name="${p.name.replace(/"/g, '\\"')}"]`);
+    if (card) container.appendChild(card);
+  }
+};
+
+const expandProject = async card => {
+  if (card.classList.contains('open')) {
+    card.classList.remove('open');
+    return;
+  }
+  card.classList.add('open');
+  const body = card.querySelector('.body');
+  if (!body || body.dataset.loaded === '1') return;
+  body.textContent = card._queueText ?? '';
+  body.dataset.loaded = '1';
+};
+
+const showAuthDialog = () => {
+  const dlg = $('#auth-dlg');
+  $('#auth-input').value = getToken();
+  dlg.showModal();
+  $('#auth-input').focus();
+};
+
+const refresh = async () => {
+  if (!getToken()) { showAuthDialog(); return; }
+  $('#projects').innerHTML = '<div class="empty"><span class="spinner"></span> loading projects…</div>';
+  let list;
+  try {
+    const res = await api('/vault/projects/');
+    list = await res.json();
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
+    $('#projects').innerHTML = `<div class="err">Failed to list projects: ${esc(e.message)}</div>`;
+    return;
+  }
+  const folders = (list.files ?? []).filter(f => f.endsWith('/')).map(f => f.slice(0, -1));
+  if (folders.length === 0) {
+    $('#projects').innerHTML = '<div class="empty">No projects.</div>';
+    return;
+  }
+
+  renderSkeleton(folders);
+
+  const projects = await Promise.all(folders.map(async name => {
+    try {
+      const res = await api(`/vault/projects/${encodeURIComponent(name)}/queue.md`);
+      const text = await res.text();
+      const queue = parseQueue(text);
+      renderProject(name, queue);
+      return { name, queue };
+    } catch (e) {
+      renderProject(name, null);
+      return { name, queue: null };
+    }
+  }));
+
+  sortAndReorder(projects);
+  $('#footer').textContent = `${projects.length} projects · ${projects.filter(p => p.queue).length} with queue`;
+};
+
+$('#settings').addEventListener('click', showAuthDialog);
+$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+$('#auth-ok').addEventListener('click', () => {
+  setToken($('#auth-input').value.trim());
+  $('#auth-dlg').close();
+  refresh();
+});
+$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+
+document.addEventListener('click', e => {
+  const name = e.target.closest('.name[data-name]');
+  if (name) {
+    const card = name.closest('.proj');
+    expandProject(card);
+  }
+});
+
+refresh();
+</script>
+</body>
+</html>
