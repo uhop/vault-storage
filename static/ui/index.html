@@ -46,6 +46,11 @@
   .rec .title { font-weight: 600; }
   .rec .why { color: var(--muted); font-size: .9rem; margin-top: .15rem; }
   .rec code { font-family: var(--mono); font-size: .85em; background: rgba(127,127,127,.12); padding: .1em .4em; border-radius: 3px; }
+  .rec-action { flex-shrink: 0; padding: .35rem .7rem; font-size: .85rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; line-height: 1; }
+  .rec-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .rec-action:disabled { opacity: .7; cursor: progress; }
+  .rec-action.done { border-color: var(--ok); color: var(--ok); }
+  .rec-action.failed { border-color: var(--bad); color: var(--bad); }
   .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
   .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -212,28 +217,72 @@ function recommend(summary, lint, details) {
       .filter(([, c]) => c.count > 0)
       .map(([name, c]) => `${name}:${c.count}`)
       .join(', ');
+    const fixable = (lint.checks?.orphan_embeddings?.count ?? 0) + (lint.checks?.orphan_doc_embeddings?.count ?? 0);
     recs.push({
       title: `${lint.total_issues} integrity-lint issues`,
-      why: `${broken ? broken + '. ' : ''}Run <code>vault-curl /maintenance/cleanup-lint -X POST</code> to auto-fix what can be cleaned safely (orphan embeddings); other categories surface in <code>needsReview</code> for manual review.`,
-      level: 'bad'
+      why: `${broken ? broken + '. ' : ''}Auto-fixable categories (orphan embeddings) cleanable in one shot; other categories surface in <code>needsReview</code> for manual attention.`,
+      level: 'bad',
+      action: fixable > 0 ? 'cleanup-lint' : null
     });
   }
   return recs;
 }
+
+const ACTIONS = {
+  'cleanup-lint': {
+    label: 'Clean now',
+    busyLabel: 'cleaning…',
+    doneLabel: 'cleaned ✓',
+    endpoint: '/maintenance/cleanup-lint',
+    method: 'POST'
+  }
+};
 
 function renderRecs(recs) {
   if (recs.length === 0) {
     $('#recs').innerHTML = `<div class="empty">No actions recommended. Vault is healthy.</div>`;
     return;
   }
-  $('#recs').innerHTML = recs.map(r => `
-    <div class="rec ${r.level ?? ''}">
-      <div class="body">
-        <div class="title">${r.title}</div>
-        <div class="why">${r.why}</div>
+  $('#recs').innerHTML = recs.map(r => {
+    const action = r.action && ACTIONS[r.action];
+    const btn = action
+      ? `<button class="rec-action" data-action="${r.action}">${action.label}</button>`
+      : '';
+    return `
+      <div class="rec ${r.level ?? ''}">
+        <div class="body">
+          <div class="title">${r.title}</div>
+          <div class="why">${r.why}</div>
+        </div>
+        ${btn}
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
+}
+
+async function runAction(btn) {
+  const id = btn.dataset.action;
+  const action = ACTIONS[id];
+  if (!action) return;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> ${action.busyLabel ?? 'working…'}`;
+  try {
+    const res = await fetch(action.endpoint, {
+      method: action.method ?? 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` }
+    });
+    if (res.status === 401) { showAuthDialog(); return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    btn.classList.add('done');
+    btn.textContent = action.doneLabel ?? 'done';
+    await new Promise(r => setTimeout(r, 600));
+    refresh();
+  } catch (e) {
+    btn.classList.remove('done');
+    btn.classList.add('failed');
+    btn.textContent = `failed: ${e.message}`;
+    btn.disabled = false;
+  }
 }
 
 function showAuthDialog() {
@@ -293,6 +342,11 @@ $('#auth-ok').addEventListener('click', () => {
   refresh();
 });
 $('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+
+document.addEventListener('click', e => {
+  const btn = e.target.closest('button.rec-action');
+  if (btn) runAction(btn);
+});
 
 refresh();
 </script>
