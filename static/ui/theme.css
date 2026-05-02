@@ -32,6 +32,7 @@
 
 #theme-toggle {
   display: inline-flex;
+  align-self: center;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -40,7 +41,7 @@
 #theme-toggle button {
   border: 0;
   border-radius: 0;
-  padding: 0.35rem 0.5rem;
+  padding: 0.4rem 0.55rem;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -57,6 +58,6 @@
 }
 #theme-toggle svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
