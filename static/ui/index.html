@@ -31,11 +31,11 @@
   header nav a[aria-current] { color: var(--fg); }
   header .spacer { flex: 1; }
   main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
-  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .8rem 1rem; }
   .card .label { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; margin: 0; }
   .card .value { font-size: 1.6rem; line-height: 1.2; margin: .2rem 0 0; font-variant-numeric: tabular-nums; }
-  .card .sub { color: var(--muted); font-size: .8rem; margin-top: .25rem; font-family: var(--mono); }
+  .card .sub { color: var(--muted); font-size: .8rem; margin-top: .25rem; font-family: var(--mono); overflow-wrap: anywhere; }
   .card .value.ok { color: var(--ok); } .card .value.warn { color: var(--warn); } .card .value.bad { color: var(--bad); }
   section.recs { margin-top: 1.5rem; }
   section.recs h2 { font-size: 1rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
