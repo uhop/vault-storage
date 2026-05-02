@@ -194,8 +194,7 @@ const renderRecent = items => {
 
 const fetchRecent = async () => {
   try {
-    const res = await api('/sections?exclude=body&limit=30');
-    const data = await res.json();
+    const data = await api('/sections?exclude=body&limit=30');
     const items = (data.items ?? [])
       .filter(r => !r.file_path.includes('/archive/') && !r.file_path.includes('/sync/'))
       .filter(r => !r.file_path.split('/').pop().startsWith('_'))
