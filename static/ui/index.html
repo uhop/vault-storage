@@ -52,6 +52,24 @@
   .rec-action.done { border-color: var(--ok); color: var(--ok); }
   .rec-action.failed { border-color: var(--bad); color: var(--bad); }
   .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
+  section.recent { margin-top: 1.5rem; }
+  section.recent h2 { font-size: 1rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
+  .recent-row {
+    display: flex; gap: .8rem; align-items: baseline;
+    padding: .5rem .9rem;
+    background: var(--card);
+    border: 1px solid var(--line); border-radius: 6px;
+    margin-bottom: .35rem;
+    text-decoration: none; color: var(--fg);
+  }
+  .recent-row:hover { border-color: var(--accent); }
+  .recent-row .title { font-weight: 600; font-size: .95rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-row .path { font-family: var(--mono); font-size: .75rem; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-row .when { font-family: var(--mono); font-size: .75rem; color: var(--muted); flex-shrink: 0; }
+  @media (max-width: 600px) {
+    .recent-row { flex-wrap: wrap; gap: .25rem; }
+    .recent-row .path { width: 100%; }
+  }
   .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
@@ -83,6 +101,10 @@
   <section class="recs">
     <h2>Recommended actions</h2>
     <div id="recs"></div>
+  </section>
+  <section class="recent">
+    <h2>Recently updated</h2>
+    <div id="recent"></div>
   </section>
 </main>
 <div class="footer" id="footer"></div>
@@ -142,7 +164,48 @@ function renderSkeleton() {
     </div>
   `).join('');
   $('#recs').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
+  $('#recent').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
 }
+
+const fmtRelative = iso => {
+  if (!iso) return '—';
+  const t = Date.parse(iso); if (!Number.isFinite(t)) return iso;
+  const d = (Date.now() - t) / 1000;
+  if (d < 60) return Math.floor(d) + 's ago';
+  if (d < 3600) return Math.floor(d/60) + 'm ago';
+  if (d < 86400) return Math.floor(d/3600) + 'h ago';
+  if (d < 86400 * 14) return Math.floor(d/86400) + 'd ago';
+  return new Date(t).toISOString().slice(0, 10);
+};
+
+const renderRecent = items => {
+  if (items.length === 0) {
+    $('#recent').innerHTML = '<div class="empty">No records yet.</div>';
+    return;
+  }
+  $('#recent').innerHTML = items.map(r => `
+    <a class="recent-row" href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
+      <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
+      <span class="path">${esc(r.file_path)}</span>
+      <span class="when">${esc(fmtRelative(r.updated))}</span>
+    </a>
+  `).join('');
+};
+
+const fetchRecent = async () => {
+  try {
+    const res = await api('/sections?exclude=body&limit=30');
+    const data = await res.json();
+    const items = (data.items ?? [])
+      .filter(r => !r.file_path.includes('/archive/') && !r.file_path.includes('/sync/'))
+      .filter(r => !r.file_path.split('/').pop().startsWith('_'))
+      .slice(0, 10);
+    renderRecent(items);
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') return;
+    $('#recent').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+  }
+};
 
 function setSlot(key, value, sub, cls) {
   const card = document.querySelector(`[data-slot="${key}"]`);
@@ -325,6 +388,7 @@ async function refresh() {
       })
     ]);
     renderRecs(recommend(summary, lint, { compactFolders }));
+    fetchRecent();
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') {
       showAuthDialog();
