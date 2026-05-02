@@ -105,6 +105,50 @@ test('findUpgradeSignals: idempotent on (kind, signal) pair', t => {
   }
 });
 
+test('findUpgradeSignals: edge_fanout_high names the offending record', t => {
+  const db = setup();
+  try {
+    seedRecords(db, 5);
+    // r0 is the hub: 4 outbound edges. r1 has 2. Others have 0 or 1.
+    const insertEdge = db.prepare(
+      `INSERT INTO edges (from_id, to_id, type, created)
+       VALUES (?, ?, 'cites', '2026-04-01')`
+    );
+    insertEdge.run('r0', 'r1');
+    insertEdge.run('r0', 'r2');
+    insertEdge.run('r0', 'r3');
+    insertEdge.run('r0', 'r4');
+    insertEdge.run('r1', 'r2');
+    insertEdge.run('r1', 'r3');
+    insertEdge.run('r2', 'r3');
+
+    const summary = findUpgradeSignals(db, {thresholds: {maxOutboundEdges: 3}});
+    t.ok(summary.tripped.includes('edge_fanout_high'));
+    t.equal(summary.observed.maxOutboundEdges, 4);
+
+    const row = db
+      .prepare(
+        `SELECT subject_id, payload FROM suggestions
+          WHERE kind = 'inefficiency_detected'
+            AND json_extract(payload, '$.signal') = 'edge_fanout_high'`
+      )
+      .get() as {subject_id: string | null; payload: string};
+    t.equal(row.subject_id, 'r0', 'subject_id is the hub record');
+    const payload = JSON.parse(row.payload) as {
+      top: Array<{from_id: string; file_path: string | null; count: number}>;
+    };
+    const lead = payload.top[0]!;
+    const second = payload.top[1]!;
+    t.equal(lead.from_id, 'r0');
+    t.equal(lead.count, 4);
+    t.equal(lead.file_path, 'topics/r0.md');
+    t.equal(second.from_id, 'r1');
+    t.equal(second.count, 2);
+  } finally {
+    db.close();
+  }
+});
+
 test('findUpgradeSignals: payload captures current/threshold/recommendation', t => {
   const db = setup();
   try {

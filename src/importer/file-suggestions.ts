@@ -495,6 +495,7 @@ export interface UpgradeSignalPayload {
   current: number;
   threshold: number;
   recommendation: string;
+  [extra: string]: unknown;
 }
 
 /**
@@ -528,7 +529,7 @@ export class UpgradeSignalFiler {
     );
     this.#insert = db.prepare(
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
-       VALUES (?, ?, NULL, ?, 'pending', ?)`
+       VALUES (?, ?, ?, ?, 'pending', ?)`
     );
   }
 
@@ -539,6 +540,10 @@ export class UpgradeSignalFiler {
     threshold: number;
     recommendation: string;
     now: string;
+    /** Offending record id when the signal is record-specific (e.g. edge_fanout_high). */
+    subjectId?: string | null;
+    /** Extra payload fields merged into the suggestion JSON. */
+    extra?: Record<string, unknown>;
   }): boolean {
     const existing = this.#findExisting.get(args.kind, args.signal);
     if (existing) return false;
@@ -546,9 +551,16 @@ export class UpgradeSignalFiler {
       signal: args.signal,
       current: args.current,
       threshold: args.threshold,
-      recommendation: args.recommendation
+      recommendation: args.recommendation,
+      ...(args.extra ?? {})
     };
-    this.#insert.run(uuidv7(), args.kind, JSON.stringify(payload), args.now);
+    this.#insert.run(
+      uuidv7(),
+      args.kind,
+      args.subjectId ?? null,
+      JSON.stringify(payload),
+      args.now
+    );
     return true;
   }
 }

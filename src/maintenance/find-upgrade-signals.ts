@@ -53,10 +53,17 @@ export interface UpgradeSignalsSummary {
   };
 }
 
+interface OutboundLeader {
+  from_id: string;
+  file_path: string | null;
+  count: number;
+}
+
 interface Stats {
   recordCount: number;
   dbBytes: number;
   maxOutboundEdges: number;
+  topOutbound: OutboundLeader[];
   pendingSuggestions: number;
 }
 
@@ -65,18 +72,27 @@ const collectStats = (db: DatabaseSync): Stats => {
   const sz = db
     .prepare('SELECT page_count * page_size AS n FROM pragma_page_count, pragma_page_size')
     .get() as {n: number};
-  const fan =
-    (
-      db
-        .prepare(
-          'SELECT COALESCE(MAX(c), 0) AS n FROM (SELECT COUNT(*) AS c FROM edges GROUP BY from_id)'
-        )
-        .get() as {n: number} | undefined
-    )?.n ?? 0;
+  const top = db
+    .prepare(
+      `SELECT e.from_id AS from_id, r.file_path AS file_path, COUNT(*) AS count
+       FROM edges e
+       LEFT JOIN records r ON r.record_id = e.from_id
+       GROUP BY e.from_id
+       ORDER BY count DESC
+       LIMIT 5`
+    )
+    .all() as unknown as OutboundLeader[];
+  const fan = top[0]?.count ?? 0;
   const ps = db
     .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`)
     .get() as {n: number};
-  return {recordCount: rc.n, dbBytes: sz.n, maxOutboundEdges: fan, pendingSuggestions: ps.n};
+  return {
+    recordCount: rc.n,
+    dbBytes: sz.n,
+    maxOutboundEdges: fan,
+    topOutbound: top,
+    pendingSuggestions: ps.n
+  };
 };
 
 interface Signal {
@@ -85,6 +101,8 @@ interface Signal {
   current: number;
   threshold: number;
   recommendation: string;
+  subjectId?: string;
+  extra?: Record<string, unknown>;
 }
 
 const evaluate = (
@@ -126,13 +144,16 @@ const evaluate = (
   }
 
   if (stats.maxOutboundEdges >= thresholds.maxOutboundEdges) {
+    const leader = stats.topOutbound[0];
     tripped.push({
       name: 'edge_fanout_high',
       kind: 'inefficiency_detected',
       current: stats.maxOutboundEdges,
       threshold: thresholds.maxOutboundEdges,
       recommendation:
-        'A record has very high outbound edge fanout — recursive-CTE traversals through it will be expensive. Consider whether the hub is over-linked (compaction candidate) or whether the graph wants AGE-style native graph traversal.'
+        'A record has very high outbound edge fanout — recursive-CTE traversals through it will be expensive. Consider whether the hub is over-linked (compaction candidate) or whether the graph wants AGE-style native graph traversal.',
+      subjectId: leader?.from_id,
+      extra: {top: stats.topOutbound}
     });
   }
 
@@ -179,6 +200,8 @@ export const findUpgradeSignals = (
         current: t.current,
         threshold: t.threshold,
         recommendation: t.recommendation,
+        subjectId: t.subjectId,
+        extra: t.extra,
         now
       })
     ) {
