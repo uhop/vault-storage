@@ -13,7 +13,7 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 6, 'schema version is 6 after all migrations through stale-kind');
+  t.equal(result.current, 7, 'schema version is 7 after all migrations through records-cascade-trigger');
   t.deepEqual(
     result.applied,
     [
@@ -22,7 +22,8 @@ test('runs the init migration and creates required tables', t => {
       '0003_sync_baseline.sql',
       '0004_doc_vecs.sql',
       '0005_agent_enrichment.sql',
-      '0006_agent_enrichment_stale_kind.sql'
+      '0006_agent_enrichment_stale_kind.sql',
+      '0007_records_cascade_to_vecs.sql'
     ],
     'all migrations applied in order'
   );
@@ -54,7 +55,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 6, 'schema version stays at 6');
+  t.equal(second.current, 7, 'schema version stays at 7');
   db.close();
 });
 

@@ -81,8 +81,12 @@ export const lintHandler =
     }
 
     // record_vec chunks whose record_id no longer exists in records.
-    // Should be impossible (the records-delete path mirrors), but
-    // record_vec is a virtual table without FK enforcement.
+    // Schema 7's records_after_delete trigger guards against new
+    // orphans by cascading records-delete to record_vec; pre-trigger
+    // orphans (created by any of the four delete call sites that ran
+    // before schema 7 landed) still need /maintenance/cleanup-lint to
+    // drain. record_vec is a vec0 virtual table without FK
+    // enforcement, so the trigger is the only structural guard.
     {
       const rows = db
         .prepare(
@@ -94,6 +98,25 @@ export const lintHandler =
         )
         .all() as {record_id: string}[];
       checks['orphan_embeddings'] = {
+        count: rows.length,
+        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
+      };
+    }
+
+    // record_doc_vec rows whose record_id no longer exists in records.
+    // Same structural cause + cascade as orphan_embeddings; tracked
+    // separately so the operator sees which vec table is affected.
+    {
+      const rows = db
+        .prepare(
+          `SELECT v.record_id
+             FROM record_doc_vec v
+            WHERE NOT EXISTS (
+              SELECT 1 FROM records r WHERE r.record_id = v.record_id
+            )`
+        )
+        .all() as {record_id: string}[];
+      checks['orphan_doc_embeddings'] = {
         count: rows.length,
         samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
       };

@@ -4,20 +4,25 @@ export interface CleanupLintSummary {
   totalFixed: number;
   fixed: {
     orphan_embeddings: {recordsAffected: number; chunksDeleted: number};
+    orphan_doc_embeddings: {rowsDeleted: number};
   };
   needsReview: Record<string, number>;
   durationMs: number;
 }
 
 /**
- * Auto-fix the lint categories that have a deterministic cleanup. Currently
- * only `orphan_embeddings`: rows in `record_vec` whose `record_id` no longer
- * exists in `records`. Categories that need human review
- * (`temporal_anomalies`, `dangling_tag_aliases`) are reported under
- * `needsReview` with their current counts; embedding-related ones
- * (`embedding_hash_drift`, `records_without_embeddings`) are likewise
- * surfaced — the watcher / embedPending pass handles them on the next
- * trigger and a manual cleanup here would race.
+ * Auto-fix the lint categories that have a deterministic cleanup:
+ * `orphan_embeddings` (rows in `record_vec` whose `record_id` no longer
+ * exists in `records`) and `orphan_doc_embeddings` (same in
+ * `record_doc_vec`). Schema 7's records_after_delete trigger prevents
+ * new orphans; this endpoint drains pre-existing ones.
+ *
+ * Categories that need human review (`temporal_anomalies`,
+ * `dangling_tag_aliases`) are reported under `needsReview` with their
+ * current counts; embedding-related ones (`embedding_hash_drift`,
+ * `records_without_embeddings`) are likewise surfaced — the watcher /
+ * embedPending pass handles them on the next trigger and a manual
+ * cleanup here would race.
  */
 export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
   const start = Date.now();
@@ -41,6 +46,25 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
     chunksDeleted = Number(result.changes);
   }
 
+  const docOrphans = db
+    .prepare(
+      `SELECT v.record_id
+         FROM record_doc_vec v
+        WHERE NOT EXISTS (
+          SELECT 1 FROM records r WHERE r.record_id = v.record_id
+        )`
+    )
+    .all() as {record_id: string}[];
+
+  let docRowsDeleted = 0;
+  if (docOrphans.length > 0) {
+    const placeholders = docOrphans.map(() => '?').join(',');
+    const result = db
+      .prepare(`DELETE FROM record_doc_vec WHERE record_id IN (${placeholders})`)
+      .run(...docOrphans.map(o => o.record_id));
+    docRowsDeleted = Number(result.changes);
+  }
+
   const needsReview: Record<string, number> = {
     embedding_hash_drift: countDrift(db),
     records_without_embeddings: countMissingEmbeddings(db),
@@ -49,9 +73,10 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
   };
 
   return {
-    totalFixed: orphans.length,
+    totalFixed: orphans.length + docOrphans.length,
     fixed: {
-      orphan_embeddings: {recordsAffected: orphans.length, chunksDeleted}
+      orphan_embeddings: {recordsAffected: orphans.length, chunksDeleted},
+      orphan_doc_embeddings: {rowsDeleted: docRowsDeleted}
     },
     needsReview,
     durationMs: Date.now() - start

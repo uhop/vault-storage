@@ -178,6 +178,40 @@ test('GET /system/lint detects orphan_embeddings', async t => {
   });
 });
 
+test('GET /system/lint detects orphan_doc_embeddings', async t => {
+  await withServer(async (url, db) => {
+    db.prepare(
+      `INSERT INTO record_doc_vec (record_id, content_hash, embedding)
+       VALUES (?, ?, ?)`
+    ).run('rec-doc-ghost', 'h', new Float32Array(384));
+
+    const {body} = await fetchJson(`${url}/system/lint`);
+    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string}[]}>};
+    t.equal(r.ok, false, 'ok=false');
+    t.equal(r.checks['orphan_doc_embeddings']?.count, 1, 'count=1');
+    t.equal(r.checks['orphan_doc_embeddings']?.samples[0]?.id, 'rec-doc-ghost', 'sample id');
+  });
+});
+
+test('records_after_delete trigger cascades to record_vec and record_doc_vec', async t => {
+  await withServer(async (_url, db) => {
+    insertRecord(db, {record_id: 'rec-cascade', file_path: 'topics/cascade.md', content_hash: 'h'});
+    insertVecChunk(db, {chunk_id: 'c-cascade-0', record_id: 'rec-cascade', content_hash: 'h'});
+    insertVecChunk(db, {chunk_id: 'c-cascade-1', record_id: 'rec-cascade', content_hash: 'h'});
+    db.prepare(
+      `INSERT INTO record_doc_vec (record_id, content_hash, embedding)
+       VALUES (?, ?, ?)`
+    ).run('rec-cascade', 'h', new Float32Array(384));
+
+    db.prepare('DELETE FROM records WHERE record_id = ?').run('rec-cascade');
+
+    const chunks = db.prepare('SELECT COUNT(*) AS n FROM record_vec WHERE record_id = ?').get('rec-cascade') as {n: number};
+    t.equal(chunks.n, 0, 'record_vec rows cascaded');
+    const docs = db.prepare('SELECT COUNT(*) AS n FROM record_doc_vec WHERE record_id = ?').get('rec-cascade') as {n: number};
+    t.equal(docs.n, 0, 'record_doc_vec row cascaded');
+  });
+});
+
 test('GET /system/lint detects temporal_anomalies (updated < created)', async t => {
   await withServer(async (url, db) => {
     insertRecord(db, {
