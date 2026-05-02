@@ -47,6 +47,8 @@
   .rec .why { color: var(--muted); font-size: .9rem; margin-top: .15rem; }
   .rec code { font-family: var(--mono); font-size: .85em; background: rgba(127,127,127,.12); padding: .1em .4em; border-radius: 3px; }
   .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
+  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
   dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
   dialog::backdrop { background: rgba(0,0,0,.5); }
@@ -115,25 +117,42 @@ function fmtAge(iso) {
 }
 function shortSha(s) { return s ? s.slice(0, 7) : '—'; }
 
-function renderStats(status, summary, lint) {
-  const total = summary.total ?? 0;
-  const lintLevel = lint.ok ? 'ok' : (lint.total_issues > 5 ? 'bad' : 'warn');
-  const lintLabel = lint.ok ? 'clean' : `${lint.total_issues} issue${lint.total_issues === 1 ? '' : 's'}`;
-  const cards = [
-    { label: 'Records',  value: fmtCount(status.records),  sub: `schema ${status.schema_version}` },
-    { label: 'Edges',    value: fmtCount(status.edges),    sub: '' },
-    { label: 'Pending suggestions', value: fmtCount(total), sub: total ? Object.entries(summary.by_kind).map(([k,v]) => `${k}:${v}`).join(' ') : 'queue clear', cls: total ? (total > 50 ? 'warn' : '') : 'ok' },
-    { label: 'Integrity lint', value: lintLabel, sub: '/system/lint', cls: lintLevel },
-    { label: 'Last indexed', value: shortSha(status.last_indexed_commit), sub: status.last_indexed_commit ? '' : 'unset' },
-    { label: 'sqlite-vec',     value: status.sqlite_vec_version, sub: '' }
-  ];
-  $('#stats').innerHTML = cards.map(c => `
-    <div class="card">
-      <p class="label">${c.label}</p>
-      <p class="value ${c.cls ?? ''}">${c.value}</p>
-      ${c.sub ? `<p class="sub">${c.sub}</p>` : ''}
+const SLOTS = [
+  ['records', 'Records'],
+  ['edges', 'Edges'],
+  ['pending', 'Pending suggestions'],
+  ['lint', 'Integrity lint'],
+  ['last-indexed', 'Last indexed'],
+  ['sqlite-vec', 'sqlite-vec']
+];
+
+function renderSkeleton() {
+  $('#stats').innerHTML = SLOTS.map(([k, label]) => `
+    <div class="card" data-slot="${k}">
+      <p class="label">${label}</p>
+      <p class="value"><span class="spinner"></span></p>
     </div>
   `).join('');
+  $('#recs').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
+}
+
+function setSlot(key, value, sub, cls) {
+  const card = document.querySelector(`[data-slot="${key}"]`);
+  if (!card) return;
+  const valEl = card.querySelector('.value');
+  valEl.textContent = value;
+  valEl.className = `value ${cls ?? ''}`;
+  let subEl = card.querySelector('.sub');
+  if (sub) {
+    if (!subEl) {
+      subEl = document.createElement('p');
+      subEl.className = 'sub';
+      card.appendChild(subEl);
+    }
+    subEl.textContent = sub;
+  } else if (subEl) {
+    subEl.remove();
+  }
 }
 
 function recommend(summary, lint) {
@@ -204,22 +223,40 @@ function showAuthDialog() {
 }
 
 async function refresh() {
+  renderSkeleton();
   if (!getToken()) { showAuthDialog(); return; }
+
+  let summary = null, lint = null;
   try {
-    const [status, summary, lint] = await Promise.all([
-      api('/system/status'),
-      api('/suggestions/summary'),
-      api('/system/lint')
+    await Promise.all([
+      api('/system/status').then(d => {
+        setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
+        setSlot('edges', fmtCount(d.edges));
+        setSlot('last-indexed', shortSha(d.last_indexed_commit), d.last_indexed_commit ? null : 'unset');
+        setSlot('sqlite-vec', d.sqlite_vec_version);
+        $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
+      }),
+      api('/suggestions/summary').then(d => {
+        summary = d;
+        const total = d.total ?? 0;
+        setSlot('pending', fmtCount(total),
+          total ? Object.entries(d.by_kind).map(([k,v]) => `${k}:${v}`).join(' ') : 'queue clear',
+          total ? (total > 50 ? 'warn' : '') : 'ok');
+      }),
+      api('/system/lint').then(d => {
+        lint = d;
+        const lvl = d.ok ? 'ok' : (d.total_issues > 5 ? 'bad' : 'warn');
+        const lbl = d.ok ? 'clean' : `${d.total_issues} issue${d.total_issues === 1 ? '' : 's'}`;
+        setSlot('lint', lbl, '/system/lint', lvl);
+      })
     ]);
-    renderStats(status, summary, lint);
     renderRecs(recommend(summary, lint));
-    $('#footer').textContent = `vault: ${status.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') {
       showAuthDialog();
       return;
     }
-    $('#root').innerHTML = `<div class="err">Failed to load: ${e.message}</div>`;
+    $('#recs').innerHTML = `<div class="err">Failed to load: ${e.message}</div>`;
   }
 }
 
