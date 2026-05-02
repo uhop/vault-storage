@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
-<title>vault-storage — raw inbox</title>
+<title>vault-storage — browse</title>
 <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
 <link rel="icon" sizes="any" href="/favicon.ico">
 <link rel="stylesheet" href="/ui/theme.css">
@@ -23,9 +23,14 @@
   header nav a { color: var(--muted); text-decoration: none; }
   header nav a[aria-current] { color: var(--fg); }
   header .spacer { flex: 1; }
-  main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
+  main { padding: 1rem; max-width: 64rem; margin: 0 auto; }
   button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .crumbs { font-family: var(--mono); font-size: .9rem; margin: 0 0 1rem; color: var(--muted); }
+  .crumbs a { color: var(--accent); text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  .crumbs .sep { margin: 0 .35rem; }
+  .crumbs .here { color: var(--fg); }
   section + section { margin-top: 1.2rem; }
   section h2 {
     font-size: .85rem; text-transform: uppercase; letter-spacing: .03em;
@@ -37,32 +42,22 @@
   }
   .list { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .list a {
-    display: flex; flex-direction: column; gap: .15rem;
-    padding: .65rem .9rem; text-decoration: none; color: var(--fg);
+    display: flex; align-items: baseline; gap: .8rem;
+    padding: .55rem .9rem; text-decoration: none; color: var(--fg);
     border-bottom: 1px solid var(--line);
   }
   .list a:last-child { border-bottom: 0; }
   .list a:hover { background: rgba(127,127,127,.08); }
-  .list .row1 { display: flex; align-items: baseline; gap: .5rem; }
-  .list .title { font-weight: 600; font-size: .95rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .list .title.untitled { font-style: italic; font-weight: 400; color: var(--muted); }
+  .list .icon { font-family: var(--mono); color: var(--muted); flex-shrink: 0; width: 1.2em; text-align: center; }
+  .list .name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list .name.untitled { font-style: italic; font-weight: 400; color: var(--muted); }
+  .list .badges { font-family: var(--mono); font-size: .75rem; color: var(--muted); display: flex; gap: .4rem; flex-shrink: 0; }
+  .list .badges .type { padding: 0 .35rem; border: 1px solid var(--line); border-radius: 3px; }
   .list .updated { font-family: var(--mono); font-size: .75rem; color: var(--muted); flex-shrink: 0; }
-  .list .path { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
   .empty { color: var(--muted); padding: 1rem; text-align: center; font-size: .9rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
   .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
   .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .hint { color: var(--muted); font-size: .85rem; margin: 0 0 1rem; }
-  .hint code { font-size: .8rem; background: rgba(127,127,127,.12); padding: 0 .25rem; border-radius: 3px; }
-  .toolbar { display: flex; gap: .5rem; align-items: center; margin: 0 0 1rem; }
-  .toolbar a.btn {
-    display: inline-flex; align-items: center; gap: .35rem;
-    padding: .45rem .8rem; border: 1px solid var(--accent); border-radius: 4px;
-    background: var(--accent); color: #fff; text-decoration: none;
-    font: inherit; font-size: .9rem;
-  }
-  .toolbar a.btn:hover { filter: brightness(1.08); }
-  .toolbar a.btn .plus { font-weight: 600; font-size: 1.1em; line-height: 1; }
   dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
   dialog::backdrop { background: rgba(0,0,0,.5); }
   dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
@@ -79,8 +74,8 @@
     <a href="/ui/search.html">search</a>
     <a href="/ui/projects.html">projects</a>
     <a href="/ui/tags.html">tags</a>
-    <a href="/ui/raw.html" aria-current="page">raw</a>
-    <a href="/ui/folder.html">browse</a>
+    <a href="/ui/raw.html">raw</a>
+    <a href="/ui/folder.html" aria-current="page">browse</a>
     <a href="/ui/note.html">note</a>
   </nav>
   <div class="spacer"></div>
@@ -88,18 +83,7 @@
   <button id="settings" title="Settings">⚙</button>
 </header>
 <main>
-  <p class="hint">
-    Quick-capture inbox. Drop notes into <code>raw/</code> any time; flip
-    <code>ready: true</code> in frontmatter when one is ripe; run
-    <code>/vault ingest</code> to compile ready notes into topics, projects, and queues.
-  </p>
-
-  <div class="toolbar">
-    <a class="btn" href="/ui/note.html" title="Create a new note (saves to raw/&lt;timestamp&gt;.md)">
-      <span class="plus">+</span> New note
-    </a>
-  </div>
-
+  <p id="crumbs" class="crumbs"></p>
   <div id="content">
     <div class="empty"><span class="spinner"></span> loading…</div>
   </div>
@@ -122,48 +106,87 @@ const $ = sel => document.querySelector(sel);
 
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
-const renderList = items => items
-  .map(it => {
-    const title = it.title ? esc(it.title) : '(untitled)';
-    const titleClass = it.title ? 'title' : 'title untitled';
-    const updated = it.updated ? esc(it.updated) : '';
+const currentPath = () => {
+  const p = new URLSearchParams(location.search).get('path') ?? '';
+  return p.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
+};
+
+const folderHref = path => path === '' ? '/ui/folder.html' : `/ui/folder.html?path=${encodeURIComponent(path)}`;
+
+const renderCrumbs = path => {
+  const segs = path === '' ? [] : path.split('/');
+  const parts = [`<a href="${folderHref('')}">vault</a>`];
+  let acc = '';
+  for (let i = 0; i < segs.length; i++) {
+    acc = acc === '' ? segs[i] : `${acc}/${segs[i]}`;
+    const last = i === segs.length - 1;
+    if (last) {
+      parts.push(`<span class="here">${esc(segs[i])}</span>`);
+    } else {
+      parts.push(`<a href="${folderHref(acc)}">${esc(segs[i])}</a>`);
+    }
+  }
+  $('#crumbs').innerHTML = parts.join('<span class="sep">/</span>');
+};
+
+const renderSubfolders = (parentPath, subfolders) => {
+  if (subfolders.length === 0) return '';
+  const items = subfolders.map(name => {
+    const full = parentPath === '' ? name : `${parentPath}/${name}`;
     return `
-      <a href="/ui/note.html?path=${encodeURIComponent(it.path)}">
-        <div class="row1">
-          <span class="${titleClass}">${title}</span>
-          ${updated ? `<span class="updated">${updated}</span>` : ''}
-        </div>
-        <span class="path">${esc(it.path)}</span>
+      <a href="${folderHref(full)}">
+        <span class="icon">📁</span>
+        <span class="name">${esc(name)}/</span>
       </a>
     `;
-  })
-  .join('');
+  }).join('');
+  return `
+    <section>
+      <h2>Folders <span class="count">${subfolders.length}</span></h2>
+      <div class="list">${items}</div>
+    </section>
+  `;
+};
+
+const renderFiles = files => {
+  if (files.length === 0) return '';
+  const items = files.map(f => {
+    const filename = f.path.split('/').pop();
+    const display = f.title ? esc(f.title) : esc(filename ?? f.path);
+    const cls = f.title ? 'name' : 'name untitled';
+    const updated = f.updated ? f.updated.slice(0, 10) : '';
+    return `
+      <a href="/ui/note.html?path=${encodeURIComponent(f.path)}">
+        <span class="icon">📄</span>
+        <span class="${cls}">${display}</span>
+        <span class="badges">
+          <span class="type">${esc(f.type)}</span>
+          ${f.status && f.status !== 'active' ? `<span class="type">${esc(f.status)}</span>` : ''}
+        </span>
+        <span class="updated">${esc(updated)}</span>
+      </a>
+    `;
+  }).join('');
+  return `
+    <section>
+      <h2>Files <span class="count">${files.length}</span></h2>
+      <div class="list">${items}</div>
+    </section>
+  `;
+};
 
 const render = data => {
-  const ready = data.ready ?? [];
-  const drafts = data.drafts ?? [];
-  if (ready.length === 0 && drafts.length === 0) {
-    $('#content').innerHTML = '<div class="empty">Inbox is empty. 🎉</div>';
+  renderCrumbs(data.path);
+  const sub = renderSubfolders(data.path, data.subfolders ?? []);
+  const files = renderFiles(data.files ?? []);
+  if (!sub && !files) {
+    $('#content').innerHTML = '<div class="empty">Nothing in this folder.</div>';
     return;
   }
-  const sections = [];
-  if (ready.length > 0) {
-    sections.push(`
-      <section>
-        <h2>Ready for ingest <span class="count">${ready.length}</span></h2>
-        <div class="list">${renderList(ready)}</div>
-      </section>
-    `);
-  }
-  if (drafts.length > 0) {
-    sections.push(`
-      <section>
-        <h2>Drafts <span class="count">${drafts.length}</span></h2>
-        <div class="list">${renderList(drafts)}</div>
-      </section>
-    `);
-  }
-  $('#content').innerHTML = sections.join('');
+  $('#content').innerHTML = sub + files;
+  document.title = data.path === ''
+    ? 'vault-storage — browse'
+    : `vault-storage — ${data.path}`;
 };
 
 async function refresh() {
@@ -171,17 +194,22 @@ async function refresh() {
     $('#content').innerHTML = '<div class="err">No API token set. Open settings to paste one.</div>';
     return;
   }
+  const path = currentPath();
   $('#content').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
   try {
-    render(await apiJson('/maintenance/raw-inbox'));
+    const params = path === '' ? '' : `?path=${encodeURIComponent(path)}`;
+    const data = await apiJson(`/maintenance/folder-listing${params}`);
+    render(data);
   } catch (e) {
-    if (e.message === 'unauthorized') {
+    if (e.message === 'unauthorized' || e.message === 'no-token') {
       $('#content').innerHTML = '<div class="err">Unauthorized. Check the token in settings.</div>';
     } else {
       $('#content').innerHTML = `<div class="err">${esc(e.message)}</div>`;
     }
   }
 }
+
+window.addEventListener('popstate', refresh);
 
 const dlg = $('#auth-dlg');
 $('#settings').addEventListener('click', () => {

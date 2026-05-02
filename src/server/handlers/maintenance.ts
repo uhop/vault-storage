@@ -10,6 +10,7 @@ import {
   incrementalReindex
 } from '../../maintenance/incremental-reindex.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
+import {listFolder} from '../../maintenance/folder-listing.ts';
 import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {snapshotDb} from '../snapshot.ts';
@@ -295,6 +296,22 @@ export const rawInboxHandler =
     const summary = scanRawInbox(deps.vaultDataPath);
     sendJson(ctx.res, 200, summary);
     void ctx;
+  };
+
+/**
+ * GET /maintenance/folder-listing?path=<folder>
+ *
+ * Direct children of a vault folder: subfolders (as strings) and files
+ * (with FM-derived metadata). Empty path → vault root. Backs the browse
+ * UI at /ui/folder.html. Sees only what the indexer knows about — i.e.,
+ * the records table. Non-markdown attachments aren't visible.
+ */
+export const folderListingHandler =
+  (deps: MaintenanceDeps): Handler =>
+  ctx => {
+    const path = ctx.query['path'] ?? '';
+    const listing = listFolder(deps.db, path);
+    sendJson(ctx.res, 200, listing);
   };
 
 export const snapshotHandler =

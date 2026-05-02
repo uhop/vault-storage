@@ -16,6 +16,7 @@ import {
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
   findRetentionCandidatesHandler,
+  folderListingHandler,
   findUpgradeSignalsHandler,
   incrementalReindexHandler,
   rawInboxHandler,
@@ -150,6 +151,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     '/maintenance/raw-inbox',
     rawInboxHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
+  router.get('/maintenance/folder-listing', folderListingHandler({db: opts.db}));
   router.post(
     '/maintenance/snapshot',
     snapshotHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
