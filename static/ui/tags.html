@@ -4,19 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
 <title>vault-storage — tags</title>
+<link rel="stylesheet" href="/ui/theme.css">
 <style>
-  :root {
-    --bg: #fafafa; --fg: #111; --muted: #666; --line: #ddd;
-    --card: #fff; --accent: #0366d6; --warn: #b25b00; --bad: #c0392b; --ok: #1a7f37;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #16181c; --fg: #e8e8e8; --muted: #9aa0a6; --line: #2c2f36;
-      --card: #1d2025; --accent: #4d9fff; --warn: #d39230; --bad: #ff6b5e; --ok: #58c47b;
-    }
-  }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
@@ -101,6 +92,7 @@
     <a href="/ui/note.html">note</a>
   </nav>
   <div class="spacer"></div>
+  <div id="theme-toggle"></div>
   <button id="settings" title="Settings">⚙</button>
 </header>
 <main>
@@ -259,5 +251,6 @@ window.addEventListener('hashchange', () => {
 
 init();
 </script>
+<script type="module" src="/ui/theme.js"></script>
 </body>
 </html>
