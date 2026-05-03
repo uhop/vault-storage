@@ -121,7 +121,15 @@ test('buildEdges GCs edges that no longer have a backing wikilink', async t => {
     writeMd(
       fx.root,
       'topics/a.md',
-      ['---', 'title: A', 'related:', '  - "[[topics/b]]"', '---', 'A cites [[topics/b]].', ''].join('\n')
+      [
+        '---',
+        'title: A',
+        'related:',
+        '  - "[[topics/b]]"',
+        '---',
+        'A cites [[topics/b]].',
+        ''
+      ].join('\n')
     );
     writeMd(fx.root, 'topics/b.md', '---\ntitle: B\n---\nplain\n');
 
@@ -130,7 +138,11 @@ test('buildEdges GCs edges that no longer have a backing wikilink', async t => {
     t.equal(first.edges.edgesDeleted, 0, 'nothing to GC on a fresh build');
 
     // Edit topics/a.md to remove all references to topics/b.
-    writeMd(fx.root, 'topics/a.md', ['---', 'title: A', '---', 'A no longer mentions B.', ''].join('\n'));
+    writeMd(
+      fx.root,
+      'topics/a.md',
+      ['---', 'title: A', '---', 'A no longer mentions B.', ''].join('\n')
+    );
     const second = importVault(fx.db, fx.root);
     t.ok(second.edges.edgesDeleted >= 2, 'stale edges (cites + related-to + mirror) collected');
 
@@ -260,7 +272,13 @@ test('default-cites edges file pending edge_type suggestions (idempotent)', asyn
       .prepare(
         `SELECT id, kind, subject_id, payload, status FROM suggestions WHERE kind = 'edge_type'`
       )
-      .all() as Array<{id: string; kind: string; subject_id: string; payload: string; status: string}>;
+      .all() as Array<{
+      id: string;
+      kind: string;
+      subject_id: string;
+      payload: string;
+      status: string;
+    }>;
     t.equal(rows.length, 1, 'exactly one suggestion row');
     t.equal(rows[0]?.subject_id, a!.recordId, 'subject_id is the source record');
     t.equal(rows[0]?.status, 'pending', 'status pending');
@@ -290,6 +308,109 @@ test('default-cites edges file pending edge_type suggestions (idempotent)', asyn
   }
 });
 
+test('default-cites from a log/query source skips edge_type filing (DEFAULT_SKIP_EDGE_TYPE_FILING_FROM)', async t => {
+  // Logs and queries by convention `cites` topic/project notes. Filing a
+  // review queue entry per such wikilink just adds noise (the 2026-05-03
+  // session produced 5 noisy log→topic suggestions in a single PUT before
+  // this skip landed). Edges still get written; only the suggestion is
+  // suppressed.
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'logs/2026-05-03-some-session.md',
+      [
+        '---',
+        'title: Some session',
+        'type: log',
+        '---',
+        'Closed bug per [[topics/bge-nan]] and updated [[projects/p/learnings]].',
+        ''
+      ].join('\n')
+    );
+    writeMd(fx.root, 'topics/bge-nan.md', '---\ntitle: BGE NaN\ntype: permanent\n---\nbody\n');
+    writeMd(
+      fx.root,
+      'projects/p/learnings.md',
+      '---\ntitle: P learnings\ntype: project\n---\nbody\n'
+    );
+
+    const summary = importVault(fx.db, fx.root);
+    t.equal(summary.edges.suggestionsFiled, 0, 'no suggestions filed from a log source');
+    t.equal(
+      summary.edges.suggestionsSkippedByType,
+      2,
+      'both default-cites links from the log are counted as skipped-by-type'
+    );
+
+    // The edges themselves still landed.
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const log = records.getByPath('logs/2026-05-03-some-session.md');
+    const outbound = edges.listOutbound(log!.recordId);
+    t.equal(outbound.length, 2, 'two outbound edges written despite skip');
+    t.ok(
+      outbound.every(e => e.type === 'cites'),
+      'edges land as cites (skip suppresses filing only)'
+    );
+
+    const sugRows = fx.db
+      .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`)
+      .get() as {n: number};
+    t.equal(sugRows.n, 0, 'no edge_type rows in the suggestions table');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('source types outside the skip set still file edge_type suggestions', async t => {
+  // Sanity: the skip is type-specific. A `permanent` topic source citing
+  // another permanent topic still files (these are the genuinely
+  // interesting cases for review — could be `derived-from`, `applies-to`,
+  // etc.).
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'topics/a.md',
+      ['---', 'title: A', 'type: permanent', '---', 'A mentions [[topics/b]].', ''].join('\n')
+    );
+    writeMd(fx.root, 'topics/b.md', '---\ntitle: B\ntype: permanent\n---\nbody\n');
+
+    const summary = importVault(fx.db, fx.root);
+    t.equal(summary.edges.suggestionsFiled, 1, 'topic→topic still files');
+    t.equal(summary.edges.suggestionsSkippedByType, 0);
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('skipEdgeTypeFilingFromTypes option overrides the default set', async t => {
+  // Pass an empty set to file for all types (legacy behavior). Test by
+  // calling buildEdges directly so we can pass the option.
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'logs/x.md',
+      ['---', 'title: X', 'type: log', '---', 'See [[topics/y]].', ''].join('\n')
+    );
+    writeMd(fx.root, 'topics/y.md', '---\ntitle: Y\ntype: permanent\n---\nbody\n');
+
+    importVault(fx.db, fx.root);
+    // importVault uses default skip set → 0 filed. Re-run buildEdges with
+    // empty skip set to verify the override fires.
+    const summary = buildEdges(fx.db, {
+      vaultRoot: fx.root,
+      skipEdgeTypeFilingFromTypes: new Set()
+    });
+    t.equal(summary.suggestionsFiled, 1, 'empty skip set fires for log source');
+    t.equal(summary.suggestionsSkippedByType, 0, 'no suppressed-by-type rows');
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('keyword-cued body wikilinks are NOT filed as suggestions', async t => {
   const fx = setup();
   try {
@@ -305,9 +426,9 @@ test('keyword-cued body wikilinks are NOT filed as suggestions', async t => {
     t.equal(summary.edges.suggestionsFiled, 0, 'classified edges never trigger suggestions');
 
     const n = (
-      fx.db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`)
-        .get() as {n: number}
+      fx.db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`).get() as {
+        n: number;
+      }
     ).n;
     t.equal(n, 0, 'no suggestions in DB');
   } finally {
@@ -335,9 +456,7 @@ test('frontmatter `edges:` overrides default-cites and skips suggestion-filing',
     const a = records.getByPath('a.md');
     const b = records.getByPath('b.md');
 
-    const beforeOverride = edges
-      .listOutbound(a!.recordId)
-      .find(e => e.toId === b!.recordId);
+    const beforeOverride = edges.listOutbound(a!.recordId).find(e => e.toId === b!.recordId);
     t.equal(beforeOverride?.type, 'cites', 'edge starts as default cites');
 
     // Agent's resolution: write `edges: { b: derived-from }` into a.md frontmatter,
@@ -360,9 +479,7 @@ test('frontmatter `edges:` overrides default-cites and skips suggestion-filing',
     t.equal(second.edges.fmOverridesApplied, 1, 'FM override applied once');
     t.equal(second.edges.suggestionsFiled, 0, 'no new suggestions after override');
 
-    const afterOverride = edges
-      .listOutbound(a!.recordId)
-      .find(e => e.toId === b!.recordId);
+    const afterOverride = edges.listOutbound(a!.recordId).find(e => e.toId === b!.recordId);
     t.equal(afterOverride?.type, 'derived-from', 'edge promoted to derived-from');
 
     const stale = edges
@@ -374,9 +491,7 @@ test('frontmatter `edges:` overrides default-cites and skips suggestion-filing',
     // override is applied — clears the queue without requiring an explicit
     // POST /suggestions/{id}/accept call.
     const sugg = fx.db
-      .prepare(
-        `SELECT status, resolved_by FROM suggestions WHERE kind = 'edge_type'`
-      )
+      .prepare(`SELECT status, resolved_by FROM suggestions WHERE kind = 'edge_type'`)
       .get() as {status: string; resolved_by: string | null};
     t.equal(sugg.status, 'accepted', 'pending suggestion auto-resolved to accepted');
     t.equal(sugg.resolved_by, 'fm-override', 'resolved_by attributes the auto-promotion');
@@ -393,15 +508,9 @@ test('FM `edges:` with explicit cites prevents suggestion-filing for that pair',
     writeMd(
       fx.root,
       'a.md',
-      [
-        '---',
-        'title: A',
-        'edges:',
-        '  b: cites',
-        '---',
-        'A mentions [[b]] in passing.',
-        ''
-      ].join('\n')
+      ['---', 'title: A', 'edges:', '  b: cites', '---', 'A mentions [[b]] in passing.', ''].join(
+        '\n'
+      )
     );
     writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
 
@@ -409,9 +518,9 @@ test('FM `edges:` with explicit cites prevents suggestion-filing for that pair',
     t.equal(summary.edges.suggestionsFiled, 0, 'explicit cites entry skips filing');
 
     const n = (
-      fx.db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`)
-        .get() as {n: number}
+      fx.db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'edge_type'`).get() as {
+        n: number;
+      }
     ).n;
     t.equal(n, 0, 'no suggestion filed for reviewed-as-cites');
 
@@ -446,7 +555,9 @@ test('archived records contribute no outbound edges; inbound to them still resol
     writeMd(
       fx.root,
       'topics/alpha.md',
-      ['---', 'title: Alpha', '---', 'Alpha cites [[_index]] for historical context.', ''].join('\n')
+      ['---', 'title: Alpha', '---', 'Alpha cites [[_index]] for historical context.', ''].join(
+        '\n'
+      )
     );
     writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
 
@@ -502,7 +613,7 @@ test('buildEdges deletes stale outbound edges when a record is archived after th
     );
     const second = importVault(fx.db, fx.root);
     t.equal(second.edges.archivedSkipped, 1);
-    t.ok(second.edges.edgesDeleted >= 2, 'stale outbound GC\'d on next pass');
+    t.ok(second.edges.edgesDeleted >= 2, "stale outbound GC'd on next pass");
 
     t.equal(edges.listOutbound(hub!.recordId).length, 0, 'archived note has no outbound');
   } finally {

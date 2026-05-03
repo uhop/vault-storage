@@ -12,6 +12,18 @@ import {WikilinkResolver} from './resolver.ts';
 
 const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 
+/**
+ * Record types where a default-`cites` body wikilink is overwhelmingly
+ * the right answer, so filing an `edge_type` review suggestion just
+ * adds noise to the queue. Logs and query notes by convention cite
+ * topic / project notes; the cross-link rarely warrants reclassification
+ * to `derived-from`, `applies-to`, etc. Skipping the filing for these
+ * source types cut ~30–50% of edge_type fire rate during the
+ * 2026-05-03 session that produced 5 noisy log→topic suggestions in
+ * one PUT. Override per-call via `buildEdges({skipEdgeTypeFilingFromTypes: ...})`.
+ */
+export const DEFAULT_SKIP_EDGE_TYPE_FILING_FROM: ReadonlySet<string> = new Set(['log', 'query']);
+
 export interface EdgeBuildSummary {
   /** Edges actually written to the DB (idempotent — re-runs over the same content yield 0). */
   edgesCreated: number;
@@ -27,6 +39,10 @@ export interface EdgeBuildSummary {
   fmOverridesApplied: number;
   /** New `edge_type` suggestions filed for unreviewed default-cites edges. */
   suggestionsFiled: number;
+  /** Default-cites edges from a high-cite source type (log, query) that
+   *  bypassed `edge_type` filing per `skipEdgeTypeFilingFromTypes`. The
+   *  edges still land in the DB; only the review-queue noise is suppressed. */
+  suggestionsSkippedByType: number;
   /** Archived records skipped — outbound edges are not extracted from `status: archived` notes. */
   archivedSkipped: number;
   durationMs: number;
@@ -63,7 +79,18 @@ const dbBodySource = (): FileBodySource => ({
  */
 export const buildEdges = (
   db: DatabaseSync,
-  options: {vaultRoot?: string; now?: string} = {}
+  options: {
+    vaultRoot?: string;
+    now?: string;
+    /**
+     * Source-record types that should NOT file `edge_type` review
+     * suggestions for their default-cites body wikilinks. Defaults to
+     * `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM` (log + query). Pass an empty
+     * set to file for all types (legacy behavior); pass a custom set to
+     * tune.
+     */
+    skipEdgeTypeFilingFromTypes?: ReadonlySet<string>;
+  } = {}
 ): EdgeBuildSummary => {
   const records = new RecordsRepository(db);
   const edges = new EdgesRepository(db);
@@ -77,6 +104,8 @@ export const buildEdges = (
 
   const source = options.vaultRoot ? fsBodySource(options.vaultRoot) : dbBodySource();
   const now = options.now ?? new Date().toISOString();
+  const skipFilingFromTypes =
+    options.skipEdgeTypeFilingFromTypes ?? DEFAULT_SKIP_EDGE_TYPE_FILING_FROM;
 
   const summary: EdgeBuildSummary = {
     edgesCreated: 0,
@@ -86,6 +115,7 @@ export const buildEdges = (
     selfReferences: 0,
     fmOverridesApplied: 0,
     suggestionsFiled: 0,
+    suggestionsSkippedByType: 0,
     archivedSkipped: 0,
     durationMs: 0
   };
@@ -156,7 +186,11 @@ export const buildEdges = (
         const resolved = resolver.resolve(c.target);
         if (!resolved || resolved === record.recordId) {
           // Pass through to writeEdges so its existing summary counters fire.
-          adjusted.push(c.inverse ? {target: c.target, type: c.type, inverse: true} : {target: c.target, type: c.type});
+          adjusted.push(
+            c.inverse
+              ? {target: c.target, type: c.type, inverse: true}
+              : {target: c.target, type: c.type}
+          );
           continue;
         }
         let finalType = c.type;
@@ -193,10 +227,20 @@ export const buildEdges = (
       // File one suggestion per (fromRecord, toRecord) for unreviewed default-cites.
       // The filer is idempotent: a suggestion of any status for the same pair
       // is left in place.
+      //
+      // Source-type skip: logs and queries default-cite topic/project notes
+      // by convention; flagging them for review just adds queue noise. Edges
+      // still land in the DB at type=cites; only the review-queue filing is
+      // skipped. Per `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM`.
+      const skipFilingForRecord = skipFilingFromTypes.has(record.type);
       const filedFor = new Set<string>();
       for (const {toId, context} of citesNeedingReview) {
         if (filedFor.has(toId)) continue;
         filedFor.add(toId);
+        if (skipFilingForRecord) {
+          summary.suggestionsSkippedByType++;
+          continue;
+        }
         const toRecord = byRecordId.get(toId);
         if (!toRecord) continue;
         const filed = filer.fileEdgeTypeSuggestion({
