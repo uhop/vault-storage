@@ -110,6 +110,7 @@ All endpoints require `Authorization: Bearer <token>`.
 | GET    | `/sections/{record_id}`    | Read a record by ID. `?exclude=body` for a meta-only fetch.        |
 | GET    | `/sections/{record_id}/meta` | Frontmatter projection only (no body).                           |
 | PUT    | `/sections/{record_id}`    | Replace body (`Content-Type: text/markdown`). Frontmatter-aware: user keys merged; `created`/`updated` accepted but indexer-overridden; DB-only keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) rejected. |
+| PUT    | `/vault/{path}`            | Two modes: `Content-Type: text/markdown` accepts a `---\n<FM>\n---\n<body>` blob (server parses YAML); `Content-Type: application/json` accepts `{frontmatter: {...}, body: "..."}` and skips YAML parse entirely — recommended for programmatic callers (the JSON path dodges colon-space, leading-special-char, and shadow-keyword authoring traps). Same downstream FM merge / enum validation / auto-managed-key rejection in both modes. |
 
 More endpoints (search, edges, suggestions) are coming with the MCP layer.
 

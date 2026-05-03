@@ -11,7 +11,12 @@ import {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendNoContent} from '../responses.ts';
 import type {Handler} from '../router.ts';
-import {WriterError, writeRecordToDisk} from '../writer.ts';
+import {
+  parseWriteRequest,
+  WriterError,
+  writeRecordToDisk,
+  writeSplitRecordToDisk
+} from '../writer.ts';
 
 interface WriteDeps {
   db: DatabaseSync;
@@ -38,21 +43,32 @@ export const putRecordHandler =
       return;
     }
 
-    let requestMarkdown: string;
+    let rawBody: string;
     try {
-      requestMarkdown = await readBodyText(ctx.req);
+      rawBody = await readBodyText(ctx.req);
     } catch (err) {
       sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
       return;
     }
 
     try {
-      writeRecordToDisk({
-        filePath: existing.filePath,
-        existing,
-        requestMarkdown,
-        vaultDataPath: deps.vaultDataPath
-      });
+      const parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
+      if (parsed.kind === 'json') {
+        writeSplitRecordToDisk({
+          filePath: existing.filePath,
+          existing,
+          frontmatter: parsed.frontmatter,
+          body: parsed.body,
+          vaultDataPath: deps.vaultDataPath
+        });
+      } else {
+        writeRecordToDisk({
+          filePath: existing.filePath,
+          existing,
+          requestMarkdown: parsed.markdown,
+          vaultDataPath: deps.vaultDataPath
+        });
+      }
     } catch (err) {
       if (err instanceof WriterError) {
         sendError(ctx.res, err.status, err.code, err.message);

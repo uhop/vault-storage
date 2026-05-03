@@ -103,6 +103,65 @@ export interface WriteOptions {
   now?: string;
 }
 
+export interface WriteSplitOptions {
+  filePath: string;
+  /** Frontmatter as a parsed object — bypasses the YAML parse step entirely. */
+  frontmatter: Record<string, unknown>;
+  /** Markdown body (no leading `---` block). */
+  body: string;
+  vaultDataPath: string;
+  existing: VaultRecord | null;
+  now?: string;
+}
+
+export type ParsedWriteRequest =
+  | {kind: 'markdown'; markdown: string}
+  | {kind: 'json'; frontmatter: Record<string, unknown>; body: string};
+
+/**
+ * Decode a PUT request body based on `Content-Type`:
+ *   - `text/markdown` (or unset, the default): treat the raw body as the
+ *     classic `---\nFM\n---\nbody` blob; the writer parses YAML downstream.
+ *   - `application/json`: parse as `{frontmatter: object, body: string}`
+ *     and skip YAML parse — the recommended path for programmatic callers.
+ *
+ * Throws `WriterError` (400) when the body's shape is wrong for the chosen
+ * Content-Type.
+ */
+export const parseWriteRequest = (
+  rawBody: string,
+  contentType: string | undefined
+): ParsedWriteRequest => {
+  const ct = (contentType ?? '').split(';')[0]?.trim();
+  if (ct === 'application/json') {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawBody);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new WriterError(`request body is not valid JSON: ${msg}`, 'invalid_json', 400);
+    }
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      typeof (parsed as Record<string, unknown>)['frontmatter'] !== 'object' ||
+      (parsed as Record<string, unknown>)['frontmatter'] === null ||
+      Array.isArray((parsed as Record<string, unknown>)['frontmatter']) ||
+      typeof (parsed as Record<string, unknown>)['body'] !== 'string'
+    ) {
+      throw new WriterError(
+        'JSON body must be `{frontmatter: object, body: string}` — both fields required',
+        'invalid_json_shape',
+        400
+      );
+    }
+    const obj = parsed as {frontmatter: Record<string, unknown>; body: string};
+    return {kind: 'json', frontmatter: obj.frontmatter, body: obj.body};
+  }
+  return {kind: 'markdown', markdown: rawBody};
+};
+
 export interface WriteResult {
   /** Absolute path on disk where the file was written. */
   absolutePath: string;
@@ -140,9 +199,6 @@ export const ensureSafePath = (vaultRoot: string, filePath: string): string => {
  */
 export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
   const {filePath, existing, requestMarkdown, vaultDataPath} = opts;
-  const now = opts.now ?? new Date().toISOString();
-
-  const absolutePath = ensureSafePath(vaultDataPath, filePath);
 
   let requestFm: Record<string, unknown>;
   let requestBody: string;
@@ -154,14 +210,44 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     // containing `: ` (colon-space), which YAML reads as starting a nested
     // mapping. Surface the parser's own diagnostic (line/column) as a 400
     // instead of letting it propagate to a 500. Callers can fix by
-    // double-quoting the value or using a folded block scalar (`key: >-`).
+    // double-quoting the value, using a folded block scalar (`key: >-`),
+    // or sending frontmatter as JSON via `Content-Type: application/json`
+    // — that path bypasses YAML parse entirely.
     const msg = err instanceof Error ? err.message : String(err);
     throw new WriterError(
-      `invalid YAML in frontmatter: ${msg}. Wrap multi-line strings in double quotes or use a folded block scalar (\`key: >-\`) to avoid colon-space ambiguity.`,
+      `invalid YAML in frontmatter: ${msg}. Wrap multi-line strings in double quotes, use a folded block scalar (\`key: >-\`), or PUT with Content-Type: application/json to skip YAML parse.`,
       'invalid_yaml',
       400
     );
   }
+
+  return writeSplitRecordToDisk({
+    filePath,
+    frontmatter: requestFm,
+    body: requestBody,
+    vaultDataPath,
+    existing,
+    ...(opts.now !== undefined ? {now: opts.now} : {})
+  });
+};
+
+/**
+ * Variant of `writeRecordToDisk` that takes already-split frontmatter (as a
+ * parsed object) + body. Skips the YAML *parse* step — `yaml.stringify` on
+ * disk handles all the quoting concerns automatically (verified across
+ * colon-space, multi-line, leading-`@`/`*`/`-`/`?`, hex-shadow, bool-shadow,
+ * and date-shadow strings). Same downstream merge / validate / write path
+ * as `writeRecordToDisk`.
+ *
+ * Exposed via `PUT /vault/{path}` with `Content-Type: application/json` and
+ * body `{frontmatter: {...}, body: "..."}` — the recommended path for
+ * programmatic callers (agents, UI) that already have an FM object in hand.
+ */
+export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => {
+  const {filePath, existing, frontmatter, body, vaultDataPath} = opts;
+  const now = opts.now ?? new Date().toISOString();
+
+  const absolutePath = ensureSafePath(vaultDataPath, filePath);
 
   // Defense against malformed PUTs: when a body itself begins with a
   // frontmatter-shaped opening (`---\n…\n---\n`), the caller almost
@@ -171,13 +257,16 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
   // result on disk would be two FM blocks with no body. We saw this exact
   // failure mode wipe 15 files on 2026-05-01 (a sub-agent's PUT-helper
   // bug). Reject at the boundary instead of silently destroying content.
-  if (looksLikeAnotherFmBlock(requestBody)) {
+  if (looksLikeAnotherFmBlock(body)) {
     throw new WriterError(
       'request body begins with another frontmatter-style block (`---\\n…\\n---`) — almost certainly a malformed PUT (the caller likely appended the original file to a new FM block, which would silently destroy the body). Construct the PUT body as `---\\n<merged FM>\\n---\\n<body>` with a single FM block.',
       'malformed_double_frontmatter',
       400
     );
   }
+
+  const requestFm = frontmatter;
+  const requestBody = body;
 
   const violations = Object.keys(requestFm).filter(k => AUTO_MANAGED_KEYS.has(k));
   if (violations.length > 0) {

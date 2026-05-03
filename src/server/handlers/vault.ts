@@ -1,4 +1,12 @@
-import {existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync} from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  unlinkSync
+} from 'node:fs';
 import type {ServerResponse} from 'node:http';
 import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
@@ -14,7 +22,13 @@ import {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
-import {ensureSafePath, WriterError, writeRecordToDisk} from '../writer.ts';
+import {
+  ensureSafePath,
+  parseWriteRequest,
+  WriterError,
+  writeRecordToDisk,
+  writeSplitRecordToDisk
+} from '../writer.ts';
 
 interface VaultDeps {
   db: DatabaseSync;
@@ -169,9 +183,9 @@ export const putVaultHandler =
       return;
     }
 
-    let requestMarkdown: string;
+    let rawBody: string;
     try {
-      requestMarkdown = await readBodyText(ctx.req);
+      rawBody = await readBodyText(ctx.req);
     } catch (err) {
       sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
       return;
@@ -186,12 +200,22 @@ export const putVaultHandler =
 
     let absolutePath: string;
     try {
-      const result = writeRecordToDisk({
-        filePath: path,
-        existing,
-        requestMarkdown,
-        vaultDataPath: deps.vaultDataPath
-      });
+      const parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
+      const result =
+        parsed.kind === 'json'
+          ? writeSplitRecordToDisk({
+              filePath: path,
+              existing,
+              frontmatter: parsed.frontmatter,
+              body: parsed.body,
+              vaultDataPath: deps.vaultDataPath
+            })
+          : writeRecordToDisk({
+              filePath: path,
+              existing,
+              requestMarkdown: parsed.markdown,
+              vaultDataPath: deps.vaultDataPath
+            });
       absolutePath = result.absolutePath;
     } catch (err) {
       if (err instanceof WriterError) {

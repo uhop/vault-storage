@@ -526,6 +526,156 @@ test('PUT /vault/{path} accepts double-quoted multi-line scalar with colon-space
   }
 });
 
+test('PUT /vault/{path} JSON: writes colon-space scalars without YAML quoting headache', async t => {
+  // The motivating use case for the JSON mode — programmatic callers send
+  // an FM object directly and never hit YAML parse rules. Strings that
+  // would crash the YAML path (colon-space, leading `@`, bool/date shadow)
+  // round-trip cleanly because the server picks the right YAML quoting on
+  // the way to disk.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const tricky = 'The principle generalizes: any operator-visible convenience.';
+      const r = await fetchAuthed(`${ctx.url}/vault/raw/json-write.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {
+            title: 'JSON Write',
+            agent: {summary: tricky},
+            tags: ['design', '@user-leading-special']
+          },
+          body: 'Body content here.\n'
+        })
+      });
+      t.equal(r.status, 204, '204 no content');
+
+      const onDisk = readFileSync(join(root, 'raw/json-write.md'), 'utf8');
+      t.ok(onDisk.startsWith('---\n'), 'opens with FM block');
+      t.ok(onDisk.includes('title: JSON Write'), 'title round-tripped');
+      t.ok(onDisk.includes('Body content here.'), 'body round-tripped');
+      // Round-trip the on-disk FM via parseFrontmatter to confirm the saved
+      // YAML is readable (not just visually present).
+      const reparse = readFileSync(join(root, 'raw/json-write.md'), 'utf8');
+      const reFm = (await import('../src/markdown/frontmatter.ts')).parseFrontmatter(reparse).data;
+      const agent = reFm['agent'] as {summary?: unknown} | undefined;
+      t.equal(agent?.summary, tricky, 'colon-space scalar survives YAML round-trip');
+      const tags = reFm['tags'] as string[] | undefined;
+      t.deepEqual(
+        tags,
+        ['design', '@user-leading-special'],
+        'leading-special-char tag survives YAML round-trip'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} JSON: 400 on malformed JSON body', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/raw/bad-json.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: '{not valid json'
+      });
+      t.equal(r.status, 400);
+      t.equal((r.body as {code: string}).code, 'invalid_json');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} JSON: 400 on wrong shape (missing fields, wrong types)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      // Missing `body`.
+      const r1 = await fetchAuthed(`${ctx.url}/vault/raw/missing-body.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'x'}})
+      });
+      t.equal(r1.status, 400);
+      t.equal((r1.body as {code: string}).code, 'invalid_json_shape');
+
+      // FM not an object.
+      const r2 = await fetchAuthed(`${ctx.url}/vault/raw/wrong-fm.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: 'not an object', body: 'x'})
+      });
+      t.equal(r2.status, 400);
+      t.equal((r2.body as {code: string}).code, 'invalid_json_shape');
+
+      // FM is an array (objects are validated, arrays are rejected).
+      const r3 = await fetchAuthed(`${ctx.url}/vault/raw/array-fm.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: ['nope'], body: 'x'})
+      });
+      t.equal(r3.status, 400);
+      t.equal((r3.body as {code: string}).code, 'invalid_json_shape');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} JSON: same enum + auto-managed-key validation as markdown path', async t => {
+  // The JSON path delegates to the same downstream validation as the
+  // markdown path, so the existing closed-enum rules apply unchanged.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      // Auto-managed key still rejected.
+      const r1 = await fetchAuthed(`${ctx.url}/vault/raw/auto-managed.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'X', content_hash: 'deadbeef'},
+          body: 'x'
+        })
+      });
+      t.equal(r1.status, 400);
+      t.equal((r1.body as {code: string}).code, 'frontmatter_auto_managed');
+
+      // Unknown enum still rejected.
+      const r2 = await fetchAuthed(`${ctx.url}/vault/raw/bad-enum.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'X', status: 'totally-bogus'},
+          body: 'x'
+        })
+      });
+      t.equal(r2.status, 400);
+      t.equal((r2.body as {code: string}).code, 'invalid_enum_value');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} accepts created/updated round-trip; indexer overrides', async t => {
   const {root, cleanup} = setupVault();
   try {

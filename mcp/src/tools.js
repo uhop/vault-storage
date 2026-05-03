@@ -130,14 +130,7 @@ export const registerTools = (mcp, client) => {
         priority_max: z.number().int().optional(),
         updated_since: z.string().optional().describe('ISO date'),
         sort: z
-          .enum([
-            'priority',
-            'created',
-            'updated',
-            'last_referenced',
-            'decay_score',
-            'file_path'
-          ])
+          .enum(['priority', 'created', 'updated', 'last_referenced', 'decay_score', 'file_path'])
           .optional(),
         offset: z.number().int().min(0).optional().default(0),
         limit: z.number().int().min(1).max(100).optional().default(20),
@@ -182,23 +175,47 @@ export const registerTools = (mcp, client) => {
       description: 'Read frontmatter-only projection of a record (cheap fetch, no body).',
       inputSchema: {record_id: z.string().min(1)}
     },
-    wrap(async ({record_id}) =>
-      client.getJson(`/sections/${encodeURIComponent(record_id)}/meta`)
-    )
+    wrap(async ({record_id}) => client.getJson(`/sections/${encodeURIComponent(record_id)}/meta`))
   );
 
   mcp.registerTool(
     'vault_update_piece',
     {
       description:
-        'Replace a record body via /sections/{id} PUT. Body is full markdown (frontmatter optional; user-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected).',
+        'Replace a record body via /sections/{id} PUT. Provide EITHER `markdown` (full `---\\nFM\\n---\\nbody` blob; server parses YAML — caller is responsible for proper YAML quoting) OR `frontmatter` + `body` (server skips YAML parse, recommended for programmatic callers — sidesteps colon-space, leading-special-char, and shadow-keyword authoring traps). User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected.',
       inputSchema: {
         record_id: z.string().min(1),
-        markdown: z.string().describe('Full markdown content (frontmatter optional)')
+        markdown: z
+          .string()
+          .optional()
+          .describe('Full markdown blob. Pass this OR frontmatter+body.'),
+        frontmatter: z
+          .record(z.unknown())
+          .optional()
+          .describe('FM as a JSON object. Pass alongside `body`. Bypasses YAML parse.'),
+        body: z
+          .string()
+          .optional()
+          .describe('Markdown body (no leading FM block). Pass alongside `frontmatter`.')
       }
     },
-    wrap(async ({record_id, markdown}) => {
-      await client.putText(`/sections/${encodeURIComponent(record_id)}`, markdown);
+    wrap(async ({record_id, markdown, frontmatter, body}) => {
+      const hasMd = typeof markdown === 'string';
+      const hasSplit = frontmatter !== undefined && typeof body === 'string';
+      if (hasMd && hasSplit) {
+        throw new Error(
+          'pass either `markdown` OR `frontmatter`+`body`, not both — they are alternative wire formats for the same write'
+        );
+      }
+      if (!hasMd && !hasSplit) {
+        throw new Error('pass either `markdown` OR `frontmatter`+`body`');
+      }
+      const path = `/sections/${encodeURIComponent(record_id)}`;
+      if (hasMd) {
+        await client.putText(path, markdown);
+      } else {
+        await client.putJson(path, {frontmatter, body});
+      }
       return {ok: true, record_id};
     })
   );
@@ -218,14 +235,39 @@ export const registerTools = (mcp, client) => {
     'vault_write_file',
     {
       description:
-        'Create or replace a file at a vault-relative path. Body is full markdown. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected.',
+        'Create or replace a file at a vault-relative path. Provide EITHER `markdown` (full `---\\nFM\\n---\\nbody` blob; server parses YAML — caller is responsible for proper YAML quoting) OR `frontmatter` + `body` (server skips YAML parse, recommended for programmatic callers — sidesteps colon-space, leading-special-char, and shadow-keyword authoring traps). `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected.',
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
-        markdown: z.string()
+        markdown: z
+          .string()
+          .optional()
+          .describe('Full markdown blob (`---\\nFM\\n---\\nbody`). Pass this OR frontmatter+body.'),
+        frontmatter: z
+          .record(z.unknown())
+          .optional()
+          .describe('FM as a JSON object. Pass alongside `body`. Bypasses YAML parse.'),
+        body: z
+          .string()
+          .optional()
+          .describe('Markdown body (no leading FM block). Pass alongside `frontmatter`.')
       }
     },
-    wrap(async ({path, markdown}) => {
-      await client.putText(`/vault/${path}`, markdown);
+    wrap(async ({path, markdown, frontmatter, body}) => {
+      const hasMd = typeof markdown === 'string';
+      const hasSplit = frontmatter !== undefined && typeof body === 'string';
+      if (hasMd && hasSplit) {
+        throw new Error(
+          'pass either `markdown` OR `frontmatter`+`body`, not both — they are alternative wire formats for the same write'
+        );
+      }
+      if (!hasMd && !hasSplit) {
+        throw new Error('pass either `markdown` OR `frontmatter`+`body`');
+      }
+      if (hasMd) {
+        await client.putText(`/vault/${path}`, markdown);
+      } else {
+        await client.putJson(`/vault/${path}`, {frontmatter, body});
+      }
       return {ok: true, path};
     })
   );

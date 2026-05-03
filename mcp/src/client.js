@@ -56,6 +56,15 @@ export class VaultClient {
     if (!res.ok) await this.#throwFromResponse(res);
   }
 
+  async putJson(path, body) {
+    const res = await this.#request('PUT', this.url(path), {
+      body: JSON.stringify(body),
+      contentType: 'application/json'
+    });
+    if (res.status === 204) return;
+    if (!res.ok) await this.#throwFromResponse(res);
+  }
+
   async deletePath(path) {
     const res = await this.#request('DELETE', this.url(path));
     if (res.status === 204) return;
@@ -84,12 +93,7 @@ export class VaultClient {
         body: init.body
       });
     } catch (err) {
-      throw new VaultClientError(
-        `network error: ${err.message}`,
-        'network',
-        0,
-        {url, method}
-      );
+      throw new VaultClientError(`network error: ${err.message}`, 'network', 0, {url, method});
     }
   }
 
@@ -146,9 +150,7 @@ export const clientFromEnv = () =>
 const required = name => {
   const v = process.env[name];
   if (!v || v.length === 0) {
-    throw new Error(
-      `${name} is required (set it in your MCP server configuration's env block)`
-    );
+    throw new Error(`${name} is required (set it in your MCP server configuration's env block)`);
   }
   return v;
 };
