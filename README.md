@@ -186,6 +186,21 @@ Use `rclone`, `rsync`, or any encryption-aware wrapper instead of
 tool all live on the host — none enter the container. Bucket-level
 versioning preserves history at no application cost.
 
+```bash
+# Retention: list and prune. Server provides the mechanic; host orchestrates
+# the policy (age threshold, count cap, etc).
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8123/maintenance/snapshot-list
+# → {snapshots: [{name, bytes, mtime}, …], totalBytes}
+
+curl -fsS -X DELETE -H "Authorization: Bearer $TOKEN" \
+     "http://localhost:8123/maintenance/snapshot?name=vault-2025-12.sqlite.gz"
+# → 204
+```
+
+`GET /maintenance/snapshot-download?name=…` streams a snapshot file for
+offline inspection. Bare filenames only — no path separators, no traversal.
+
 ## Multi-writer (git-as-sync)
 
 The vault-data tree is a normal git repo. Multiple machines can each

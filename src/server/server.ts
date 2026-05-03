@@ -21,8 +21,10 @@ import {
   incrementalReindexHandler,
   rawInboxHandler,
   runAllScansHandler,
+  snapshotDeleteHandler,
   snapshotDownloadHandler,
-  snapshotHandler
+  snapshotHandler,
+  snapshotListHandler
 } from './handlers/maintenance.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
@@ -160,6 +162,14 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get(
     '/maintenance/snapshot-download',
     snapshotDownloadHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
+  router.get(
+    '/maintenance/snapshot-list',
+    snapshotListHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
+  router.delete(
+    '/maintenance/snapshot',
+    snapshotDeleteHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
   router.post(
     '/maintenance/incremental-reindex',

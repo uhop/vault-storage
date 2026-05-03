@@ -1,4 +1,4 @@
-import {createReadStream, statSync} from 'node:fs';
+import {createReadStream, readdirSync, statSync, unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {cleanupLint} from '../../maintenance/cleanup-lint.ts';
@@ -15,7 +15,7 @@ import {listFolder} from '../../maintenance/folder-listing.ts';
 import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {snapshotDb} from '../snapshot.ts';
-import {sendError, sendJson} from '../responses.ts';
+import {sendError, sendJson, sendNoContent} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
 interface MaintenanceDeps {
@@ -368,4 +368,73 @@ export const snapshotHandler =
         `snapshot failed: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  };
+
+/**
+ * GET /maintenance/snapshot-list
+ *
+ * List files directly under `<vaultDataPath>/.snapshots/`. Returns
+ * `{snapshots: [{name, bytes, mtime}], totalBytes}` sorted by mtime
+ * descending (newest first). Subdirectories are ignored. Empty
+ * `.snapshots/` (or missing directory) returns an empty list.
+ *
+ * Pairs with `DELETE /maintenance/snapshot?name=…` to give host-cron
+ * retention scripts a discoverable + deletable surface without
+ * filesystem access — see `topics/host-cron-architecture-for-stateful-services`.
+ */
+export const snapshotListHandler =
+  (deps: SnapshotDeps): Handler =>
+  ctx => {
+    const dir = join(deps.vaultDataPath, '.snapshots');
+    let entries;
+    try {
+      entries = readdirSync(dir, {withFileTypes: true});
+    } catch {
+      sendJson(ctx.res, 200, {snapshots: [], totalBytes: 0});
+      return;
+    }
+    const snapshots = entries
+      .filter(e => e.isFile())
+      .map(e => {
+        const stat = statSync(join(dir, e.name));
+        return {name: e.name, bytes: stat.size, mtime: stat.mtime.toISOString()};
+      })
+      .sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : 0));
+    const totalBytes = snapshots.reduce((sum, s) => sum + s.bytes, 0);
+    sendJson(ctx.res, 200, {snapshots, totalBytes});
+  };
+
+/**
+ * DELETE /maintenance/snapshot?name=<filename>
+ *
+ * Remove a snapshot file from `<vaultDataPath>/.snapshots/<name>`.
+ * Bare filenames only — no path separators, no traversal. 204 on
+ * success; 400 on bad name; 404 if missing.
+ *
+ * The host-cron retention pattern: cron picks names from
+ * `GET /maintenance/snapshot-list` by age + count threshold and
+ * deletes them via this endpoint. Server provides the mechanic;
+ * host orchestrates the policy.
+ */
+export const snapshotDeleteHandler =
+  (deps: SnapshotDeps): Handler =>
+  ctx => {
+    const name = ctx.query['name'];
+    if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
+      sendError(ctx.res, 400, 'bad_request', 'name must be a bare filename under .snapshots/');
+      return;
+    }
+    const abs = join(deps.vaultDataPath, '.snapshots', name);
+    try {
+      const stat = statSync(abs);
+      if (!stat.isFile()) {
+        sendError(ctx.res, 404, 'not_found', 'not a file');
+        return;
+      }
+    } catch {
+      sendError(ctx.res, 404, 'not_found', 'snapshot not found');
+      return;
+    }
+    unlinkSync(abs);
+    sendNoContent(ctx.res);
   };
