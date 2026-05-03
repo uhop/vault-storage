@@ -21,7 +21,7 @@ export interface EmbedSummary {
 const DEFAULT_BATCH_SIZE = 32;
 
 const isAllFinite = (v: Float32Array): boolean => {
-  for (let i = 0; i < v.length; i++) if (!Number.isFinite(v[i]!)) return false;
+  for (let i = 0; i < v.length; ++i) if (!Number.isFinite(v[i]!)) return false;
   return true;
 };
 
@@ -125,7 +125,7 @@ export const embedPending = async (
             `[embed] every chunk for record ${p.row.record_id} was non-finite; persisting anyway to avoid re-embed loop`
           );
           vecs.setChunks(p.row.record_id, p.row.content_hash, vecs_);
-          embedded++;
+          ++embedded;
           chunksWritten += vecs_.length;
           continue;
         }

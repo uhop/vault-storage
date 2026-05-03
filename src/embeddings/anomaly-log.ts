@@ -98,7 +98,7 @@ export const buildAnomalyEntry = (args: {
 });
 
 const isAllFinite = (v: Float32Array): boolean => {
-  for (let i = 0; i < v.length; i++) if (!Number.isFinite(v[i]!)) return false;
+  for (let i = 0; i < v.length; ++i) if (!Number.isFinite(v[i]!)) return false;
   return true;
 };
 
@@ -121,7 +121,7 @@ export const retryNonFiniteVectors = async (
   context: {modelName: string; pooling: string},
   logger: AnomalyLogger | null
 ): Promise<Float32Array[]> => {
-  for (let i = 0; i < vectors.length; i++) {
+  for (let i = 0; i < vectors.length; ++i) {
     if (isAllFinite(vectors[i]!)) continue;
     const baseArgs = {
       modelName: context.modelName,

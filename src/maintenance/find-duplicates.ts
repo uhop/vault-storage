@@ -146,7 +146,7 @@ const minPairwiseChunkDistance = (
   for (const av of a) {
     for (const bv of b) {
       let dot = 0;
-      for (let i = 0; i < dim; i++) dot += av[i]! * bv[i]!;
+      for (let i = 0; i < dim; ++i) dot += av[i]! * bv[i]!;
       if (dot > bestDot) bestDot = dot;
     }
   }
@@ -261,7 +261,7 @@ export const findDuplicates = (
       const key = `${aId}|${bId}`;
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
-      summary.candidatePairs++;
+      ++summary.candidatePairs;
 
       // Phase 2: chunk-level pairwise min cosine — precise threshold.
       const aChunks = getChunks(aId);

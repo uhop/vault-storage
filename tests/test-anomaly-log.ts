@@ -103,7 +103,7 @@ test('retryNonFiniteVectors: leaves finite vectors untouched', async t => {
     texts,
     vectors,
     async _ => {
-      calls++;
+      ++calls;
       return new Float32Array([0, 0]);
     },
     {modelName: 'm', pooling: 'cls'},

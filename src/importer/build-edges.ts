@@ -238,7 +238,7 @@ export const buildEdges = (
         if (filedFor.has(toId)) continue;
         filedFor.add(toId);
         if (skipFilingForRecord) {
-          summary.suggestionsSkippedByType++;
+          ++summary.suggestionsSkippedByType;
           continue;
         }
         const toRecord = byRecordId.get(toId);

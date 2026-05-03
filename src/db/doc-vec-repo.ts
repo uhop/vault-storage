@@ -21,7 +21,7 @@ const toBlob = (vec: Float32Array): Uint8Array =>
   new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
 
 const isAllFinite = (v: Float32Array): boolean => {
-  for (let i = 0; i < v.length; i++) if (!Number.isFinite(v[i]!)) return false;
+  for (let i = 0; i < v.length; ++i) if (!Number.isFinite(v[i]!)) return false;
   return true;
 };
 
