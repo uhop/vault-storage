@@ -8,13 +8,24 @@
 // merge the two notes, keep both as related-to, treat as contradiction
 // (file `contradiction_candidate`), or reject the suggestion.
 //
+// **Distance metric: min cosine over chunk pairs**, not whole-document
+// (mean-pooled) cosine. Mean-pool produced a centroid-of-everything for
+// long heterogeneous notes — `projects/vault-storage/queue.md` was
+// `a_record` on 39 of 144 false-positive pairings on the 2026-05-03 run
+// against unrelated topics, because its mean-pool vector landed near the
+// centroid of the topic cloud.  The chunk-level scan (`RecordVecRepository.
+// nearestToRecord`) takes the closest chunk-pair distance per target
+// record, which surfaces real concept overlap and ignores the long-doc
+// average. Swap shipped 2026-05-03; rationale tracked at
+// `[[projects/vault-storage/queue]]` § "Whole-doc embedding smear".
+//
 // Idempotency: a `duplicate` suggestion of any status for the same
 // unordered pair blocks re-filing, so re-running the scan is cheap and
 // only adds new pairs the previous scan didn't have data for (e.g.,
 // records added since).
 
 import type {DatabaseSync} from 'node:sqlite';
-import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
+import {RecordVecRepository} from '../db/vec-repo.ts';
 import {DuplicateSuggestionFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {RecordType, VaultRecord} from '../records/types.ts';
@@ -97,7 +108,7 @@ export const findDuplicates = (
   const now = options.now ?? new Date().toISOString();
 
   const records = new RecordsRepository(db);
-  const vec = new RecordDocVecRepository(db);
+  const vec = new RecordVecRepository(db);
   const filer = new DuplicateSuggestionFiler(db);
 
   const all = records.listAll();
