@@ -5,6 +5,7 @@ import {runMigrations} from '../src/db/migrate.ts';
 import {RecordVecRepository} from '../src/db/vec-repo.ts';
 import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import type {Embedder} from '../src/embeddings/types.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import type {VaultRecord} from '../src/records/types.ts';
 import {contentHash, embedInputHash} from '../src/util/hash.ts';
@@ -199,11 +200,85 @@ test('embedPending', async t => {
 
       const second = await embedPending(fx.db, fx.embedder);
       t.equal(second.embedded, 1, 'summary-only edit triggers re-embed');
-      t.equal(
-        fx.vecs.getRecordContentHash(r.recordId),
-        updated.contentHash,
-        'new hash recorded'
+      t.equal(fx.vecs.getRecordContentHash(r.recordId), updated.contentHash, 'new hash recorded');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('drops non-finite chunk vectors before persisting', async t => {
+    // BGE/transformers.js occasionally produces a NaN chunk on otherwise
+    // normal inputs. Without this filter, a single bad chunk poisons the
+    // mean-pool sum and yields an all-NaN doc-vec — which sqlite-vec then
+    // returns as null distance on every neighbour query (the 2026-05-03
+    // 144-suggestion regression). Verifies a partial-NaN record gets a
+    // clean doc-vec computed from the surviving chunks.
+    // record_vec is a vec0 virtual table with fixed dim=384; mirror that here.
+    const DIM = 384;
+    class NaNOnInputEmbedder implements Embedder {
+      readonly dim = DIM;
+      readonly modelName = 'nan-on-input';
+      readonly badPattern: string;
+      constructor(badPattern: string) {
+        this.badPattern = badPattern;
+      }
+      async embed(text: string): Promise<Float32Array> {
+        const v = new Float32Array(DIM);
+        if (text.includes(this.badPattern)) {
+          v.fill(NaN);
+        } else {
+          v[0] = 1;
+        }
+        return v;
+      }
+      async embedBatch(texts: string[]): Promise<Float32Array[]> {
+        return Promise.all(texts.map(t => this.embed(t)));
+      }
+    }
+
+    const fx = setup();
+    try {
+      // Two records: one whose body the embedder NaNs, one it doesn't.
+      const good = makeRecord('topics/good.md', 'plain body that embeds cleanly');
+      const bad = makeRecord('topics/bad.md', 'this body contains the SENTINEL marker');
+      fx.records.insert(good);
+      fx.records.insert(bad);
+
+      const embedder = new NaNOnInputEmbedder('SENTINEL');
+      const summary = await embedPending(fx.db, embedder);
+
+      // good record gets one clean chunk + doc-vec; bad record's only chunk
+      // is NaN, so it falls into the all-NaN persist-anyway branch — chunks
+      // written, doc-vec NOT written.
+      t.equal(summary.embedded, 2, 'both records counted as embedded');
+      t.equal(summary.docVecsWritten, 1, 'only the clean record got a doc-vec');
+
+      const goodChunkRow = fx.db
+        .prepare('SELECT embedding FROM record_vec WHERE record_id = ?')
+        .get(good.recordId) as {embedding: Uint8Array};
+      const goodFloats = new Float32Array(
+        goodChunkRow.embedding.buffer,
+        goodChunkRow.embedding.byteOffset,
+        goodChunkRow.embedding.byteLength / 4
       );
+      t.ok(
+        Array.from(goodFloats).every(v => Number.isFinite(v)),
+        'clean record stored finite chunk vector'
+      );
+
+      const goodDocCount = (
+        fx.db
+          .prepare('SELECT COUNT(*) AS n FROM record_doc_vec WHERE record_id = ?')
+          .get(good.recordId) as {n: number}
+      ).n;
+      t.equal(goodDocCount, 1, 'clean record has a doc-vec row');
+
+      const badDocCount = (
+        fx.db
+          .prepare('SELECT COUNT(*) AS n FROM record_doc_vec WHERE record_id = ?')
+          .get(bad.recordId) as {n: number}
+      ).n;
+      t.equal(badDocCount, 0, 'all-NaN record has no doc-vec row');
     } finally {
       fx.db.close();
     }

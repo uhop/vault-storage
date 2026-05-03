@@ -63,6 +63,11 @@ test('findDuplicates files suggestions for high-similarity pairs', async t => {
         (payload.a_path === 'topics/b.md' && payload.b_path === 'topics/a.md'),
       'payload covers the A↔B pair'
     );
+    // Numeric-finite check first: `null < 0.001` is true under JS coercion
+    // (null → 0), so a typeof-check is the only thing that catches the
+    // real-world `distance: null` regression seen 2026-05-03.
+    t.equal(typeof payload.distance, 'number', 'distance persisted as a number');
+    t.ok(Number.isFinite(payload.distance), 'distance is a finite number');
     t.ok(payload.distance < 0.001, 'distance ≈ 0 for identical bodies');
   } finally {
     teardown(fx);
@@ -86,9 +91,9 @@ test('findDuplicates is idempotent across runs', async t => {
     t.equal(second.filed, 0, 'no new suggestion filed (existing covers the pair)');
 
     const total = (
-      fx.db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'duplicate'`)
-        .get() as {n: number}
+      fx.db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'duplicate'`).get() as {
+        n: number;
+      }
     ).n;
     t.equal(total, 1, 'still exactly one suggestion');
   } finally {
@@ -218,16 +223,8 @@ test('findDuplicates skips records under skipPathPrefixes', async t => {
     const body =
       'A long enough body to clear minBodyLength threshold; ' +
       'this is a sync-pass log entry that happened to look identical to another.';
-    writeMd(
-      fx.root,
-      'logs/sync/2026-04-29.md',
-      `---\ntype: log\n---\n${body}\n${body}\n${body}\n`
-    );
-    writeMd(
-      fx.root,
-      'logs/sync/2026-04-30.md',
-      `---\ntype: log\n---\n${body}\n${body}\n${body}\n`
-    );
+    writeMd(fx.root, 'logs/sync/2026-04-29.md', `---\ntype: log\n---\n${body}\n${body}\n${body}\n`);
+    writeMd(fx.root, 'logs/sync/2026-04-30.md', `---\ntype: log\n---\n${body}\n${body}\n${body}\n`);
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 

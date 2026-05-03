@@ -20,6 +20,11 @@ export interface EmbedSummary {
 
 const DEFAULT_BATCH_SIZE = 32;
 
+const isAllFinite = (v: Float32Array): boolean => {
+  for (let i = 0; i < v.length; i++) if (!Number.isFinite(v[i]!)) return false;
+  return true;
+};
+
 interface PendingRow {
   record_id: string;
   body: string;
@@ -97,17 +102,44 @@ export const embedPending = async (
       for (const p of buf) {
         const vecs_ = flatVecs.slice(idx, idx + p.chunkTexts.length);
         idx += p.chunkTexts.length;
-        vecs.setChunks(p.row.record_id, p.row.content_hash, vecs_);
+        // BGE / transformers.js occasionally produces a NaN chunk vector on
+        // otherwise normal inputs (caught 2026-05-03 — 2 of 5701 live chunks
+        // affected; root cause unknown, suspected tokenizer/ONNX edge case).
+        // Drop the bad vectors here so neither record_vec nor record_doc_vec
+        // ever stores NaN — a single NaN chunk poisons the mean-pool sum and
+        // produces an all-NaN doc-vec, which sqlite-vec then returns as null
+        // distance on every neighbour query.
+        const cleanVecs = vecs_.filter(isAllFinite);
+        const dropped = vecs_.length - cleanVecs.length;
+        if (dropped > 0) {
+          console.warn(
+            `[embed] dropped ${dropped} non-finite chunk vector(s) of ${vecs_.length} for record ${p.row.record_id}`
+          );
+        }
+        if (cleanVecs.length === 0) {
+          // All chunks NaN — write the original anyway so we don't loop on
+          // re-embed every pass; downstream consumers will see no doc-vec
+          // (skipped below) and treat the record as not-similar to anything.
+          // Loud warning so the situation gets investigated.
+          console.warn(
+            `[embed] every chunk for record ${p.row.record_id} was non-finite; persisting anyway to avoid re-embed loop`
+          );
+          vecs.setChunks(p.row.record_id, p.row.content_hash, vecs_);
+          embedded++;
+          chunksWritten += vecs_.length;
+          continue;
+        }
+        vecs.setChunks(p.row.record_id, p.row.content_hash, cleanVecs);
         // Doc-level vector: mean-pool the chunk vectors and L2-renormalize.
         // Drives whole-record operations (find-duplicates, clustering).
         // record_vec stays the source of truth for chunk-level retrieval.
-        const doc = meanPoolNormalize(vecs_);
+        const doc = meanPoolNormalize(cleanVecs);
         if (doc !== null) {
           docVecs.setDocVec(p.row.record_id, p.row.content_hash, doc);
           docVecsWritten++;
         }
         embedded++;
-        chunksWritten += vecs_.length;
+        chunksWritten += cleanVecs.length;
       }
       db.exec('COMMIT');
     } catch (err) {

@@ -3,11 +3,7 @@ import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {openDatabase} from '../src/db/connection.ts';
-import {
-  l2Normalize,
-  meanPoolNormalize,
-  RecordDocVecRepository
-} from '../src/db/doc-vec-repo.ts';
+import {l2Normalize, meanPoolNormalize, RecordDocVecRepository} from '../src/db/doc-vec-repo.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
@@ -28,6 +24,14 @@ test('l2Normalize: zero vector passes through unchanged', t => {
   t.equal(v[1], 0);
 });
 
+test('l2Normalize: NaN input zeroes out (no NaN propagation)', t => {
+  const v = new Float32Array([NaN, NaN, 1]);
+  l2Normalize(v);
+  t.equal(v[0], 0, 'NaN replaced with 0');
+  t.equal(v[1], 0);
+  t.equal(v[2], 0, 'finite components zeroed too — caller signaled bad input');
+});
+
 test('meanPoolNormalize: empty input returns null', t => {
   t.equal(meanPoolNormalize([]), null);
 });
@@ -41,6 +45,30 @@ test('meanPoolNormalize: averages and renormalizes', t => {
   const expected = 1 / Math.sqrt(2);
   t.ok(Math.abs(pooled![0]! - expected) < 1e-6);
   t.ok(Math.abs(pooled![1]! - expected) < 1e-6);
+});
+
+test('meanPoolNormalize: NaN chunks are filtered out before pooling', t => {
+  // Single NaN chunk in a set of otherwise-clean chunks would poison the
+  // mean-pool sum and yield an all-NaN doc-vec. Caught 2026-05-03 — 144
+  // duplicate suggestions filed with `payload.distance: null` because two
+  // hub records (queue.md, learnings.md) had a single NaN chunk each.
+  const clean1 = new Float32Array([1, 0]);
+  const clean2 = new Float32Array([0, 1]);
+  const bad = new Float32Array([NaN, NaN]);
+  const pooled = meanPoolNormalize([clean1, bad, clean2]);
+  t.ok(pooled !== null, 'returns a pooled vector from clean chunks alone');
+  t.ok(Number.isFinite(pooled![0]!), 'no NaN in output');
+  t.ok(Number.isFinite(pooled![1]!), 'no NaN in output');
+  // Equivalent to pooling [clean1, clean2] only.
+  const expected = 1 / Math.sqrt(2);
+  t.ok(Math.abs(pooled![0]! - expected) < 1e-6);
+  t.ok(Math.abs(pooled![1]! - expected) < 1e-6);
+});
+
+test('meanPoolNormalize: all-NaN input returns null', t => {
+  const a = new Float32Array([NaN, NaN]);
+  const b = new Float32Array([NaN, 1]); // any non-finite component disqualifies
+  t.equal(meanPoolNormalize([a, b]), null);
 });
 
 test('embedPending writes both chunk and doc vectors', async t => {
@@ -115,7 +143,10 @@ test('RecordDocVecRepository.nearestToRecord excludes self', async t => {
       }
     ).record_id;
     const hits = docs.nearestToRecord(aId, 5);
-    t.ok(hits.every(h => h.recordId !== aId), 'self excluded from results');
+    t.ok(
+      hits.every(h => h.recordId !== aId),
+      'self excluded from results'
+    );
     t.ok(hits.length >= 1, 'finds at least the identical-body neighbor');
     t.ok(hits[0]!.distance < 0.01, 'identical-body neighbor at distance ≈ 0');
   } finally {

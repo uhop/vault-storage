@@ -119,7 +119,9 @@ export const findDuplicates = (
 
   // Returns true when the record should NOT participate in the scan as either
   // outer or inner side. Counters distinguish causes for observability.
-  const shouldSkip = (r: VaultRecord): {skip: boolean; reason: 'short' | 'type' | 'path' | null} => {
+  const shouldSkip = (
+    r: VaultRecord
+  ): {skip: boolean; reason: 'short' | 'type' | 'path' | null} => {
     if (skipTypes.has(r.type)) return {skip: true, reason: 'type'};
     if (skipPathPrefixes.some(p => r.filePath.startsWith(p))) return {skip: true, reason: 'path'};
     if (r.body.length < minBodyLength) return {skip: true, reason: 'short'};
@@ -142,6 +144,13 @@ export const findDuplicates = (
     summary.scanned++;
     const neighbors = vec.nearestToRecord(r.recordId, perRecord);
     for (const n of neighbors) {
+      // Defensive guard: a non-finite distance means at least one of the two
+      // doc vectors had non-finite components (the embedder produced a NaN
+      // chunk for one of them and the mean-pool filter did not catch it —
+      // see `meanPoolNormalize`). Don't file a suggestion the agent can't
+      // rank or auto-threshold; let the next embed pass produce a clean
+      // doc-vec and the next scan refile the pair with a real distance.
+      if (!Number.isFinite(n.distance)) continue;
       if (n.distance > maxDistance) break; // results are sorted ascending by distance
       const nRec = byId.get(n.recordId);
       if (!nRec) continue;

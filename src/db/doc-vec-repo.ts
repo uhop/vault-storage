@@ -20,16 +20,26 @@ export interface DocNearestHit {
 const toBlob = (vec: Float32Array): Uint8Array =>
   new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
 
+const isAllFinite = (v: Float32Array): boolean => {
+  for (let i = 0; i < v.length; i++) if (!Number.isFinite(v[i]!)) return false;
+  return true;
+};
+
 /**
  * L2-normalize a vector in place — divides every component by the vector's
  * L2 norm. Returns the same buffer for chaining. A zero vector is returned
- * unchanged (no NaN poisoning).
+ * unchanged (no NaN poisoning); a vector with non-finite components is
+ * zeroed out — caller is responsible for noticing that case (typically by
+ * checking `isAllFinite` on its inputs first).
  */
 export const l2Normalize = (vec: Float32Array): Float32Array => {
   let sumSq = 0;
   for (let i = 0; i < vec.length; i++) sumSq += vec[i]! * vec[i]!;
   const norm = Math.sqrt(sumSq);
-  if (norm === 0) return vec;
+  if (!Number.isFinite(norm) || norm === 0) {
+    vec.fill(0);
+    return vec;
+  }
   for (let i = 0; i < vec.length; i++) vec[i] = vec[i]! / norm;
   return vec;
 };
@@ -41,12 +51,23 @@ export const l2Normalize = (vec: Float32Array): Float32Array => {
  *
  * Empty input returns null; caller decides whether to skip or treat as a
  * zero vector. (`embedPending` skips records with no chunks.)
+ *
+ * Non-finite chunk vectors are filtered out before pooling. A single NaN
+ * chunk (BGE / transformers.js occasionally produces one on otherwise
+ * normal inputs — caught 2026-05-03 with 2 of 5701 chunks affected) would
+ * otherwise poison the sum and yield an all-NaN doc vector. sqlite-vec then
+ * returns null distances on every neighbour query — the visible symptom
+ * was 144 `duplicate` suggestions filed with `payload.distance: null`.
+ * If every chunk is non-finite, returns null so the caller can skip the
+ * record entirely.
  */
 export const meanPoolNormalize = (chunks: Float32Array[]): Float32Array | null => {
   if (chunks.length === 0) return null;
-  const dim = chunks[0]!.length;
+  const finite = chunks.filter(isAllFinite);
+  if (finite.length === 0) return null;
+  const dim = finite[0]!.length;
   const sum = new Float32Array(dim);
-  for (const c of chunks) {
+  for (const c of finite) {
     for (let i = 0; i < dim; i++) sum[i] = sum[i]! + c[i]!;
   }
   return l2Normalize(sum);
@@ -108,9 +129,7 @@ export class RecordDocVecRepository {
   }
 
   getRecordContentHash(recordId: string): string | null {
-    const row = this.#getContentHash.get(recordId) as
-      | {content_hash: string | null}
-      | undefined;
+    const row = this.#getContentHash.get(recordId) as {content_hash: string | null} | undefined;
     return row?.content_hash ?? null;
   }
 
