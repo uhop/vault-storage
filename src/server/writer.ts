@@ -16,12 +16,7 @@ import {
  * `record_id` and `content_hash` come from DB identity, not user input.
  * `last_referenced` and `decay_score` are reflection-time fields.
  */
-const AUTO_MANAGED_KEYS = new Set([
-  'record_id',
-  'content_hash',
-  'last_referenced',
-  'decay_score'
-]);
+const AUTO_MANAGED_KEYS = new Set(['record_id', 'content_hash', 'last_referenced', 'decay_score']);
 
 /**
  * Frontmatter keys the API silently drops from request input. The indexer is
@@ -149,7 +144,24 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
 
   const absolutePath = ensureSafePath(vaultDataPath, filePath);
 
-  const {data: requestFm, body: requestBody} = parseFrontmatter(requestMarkdown);
+  let requestFm: Record<string, unknown>;
+  let requestBody: string;
+  try {
+    ({data: requestFm, body: requestBody} = parseFrontmatter(requestMarkdown));
+  } catch (err) {
+    // `yaml.parse` throws `YAMLParseError` on syntactically invalid
+    // frontmatter — most commonly an unquoted multi-line plain scalar
+    // containing `: ` (colon-space), which YAML reads as starting a nested
+    // mapping. Surface the parser's own diagnostic (line/column) as a 400
+    // instead of letting it propagate to a 500. Callers can fix by
+    // double-quoting the value or using a folded block scalar (`key: >-`).
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new WriterError(
+      `invalid YAML in frontmatter: ${msg}. Wrap multi-line strings in double quotes or use a folded block scalar (\`key: >-\`) to avoid colon-space ambiguity.`,
+      'invalid_yaml',
+      400
+    );
+  }
 
   // Defense against malformed PUTs: when a body itself begins with a
   // frontmatter-shaped opening (`---\n…\n---\n`), the caller almost
@@ -179,7 +191,12 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
   // Closed-enum field validation: status, type, priority. Canonical values
   // and known aliases pass; anything else 400s so authoring typos surface
   // at the boundary rather than silently coercing to the default.
-  const statusErr = validateClosedEnum('status', requestFm['status'], STATUS_SET, STATUS_ALIAS_KEYS);
+  const statusErr = validateClosedEnum(
+    'status',
+    requestFm['status'],
+    STATUS_SET,
+    STATUS_ALIAS_KEYS
+  );
   if (statusErr) throw new WriterError(statusErr, 'invalid_enum_value', 400);
   const typeErr = validateClosedEnum('type', requestFm['type'], TYPE_SET, new Set());
   if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);

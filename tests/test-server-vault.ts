@@ -104,9 +104,15 @@ const seed = (root: string): void => {
   writeMd(
     root,
     'topics/beta.md',
-    ['---', 'title: Beta', 'created: 2026-04-10', 'updated: 2026-04-20', '---', 'Beta body.', ''].join(
-      '\n'
-    )
+    [
+      '---',
+      'title: Beta',
+      'created: 2026-04-10',
+      'updated: 2026-04-20',
+      '---',
+      'Beta body.',
+      ''
+    ].join('\n')
   );
   writeMd(
     root,
@@ -266,10 +272,7 @@ test('GET /vault/{atomized.md} composes the folder back into one file', async t 
       t.ok(md.includes('First item body.'), 'piece 1 body');
       t.ok(md.includes('## Item two'), 'piece 2 heading');
       t.ok(md.includes('Second item body.'), 'piece 2 body');
-      t.ok(
-        md.indexOf('Item one') < md.indexOf('Item two'),
-        'pieces ordered by sequence_key'
-      );
+      t.ok(md.indexOf('Item one') < md.indexOf('Item two'), 'pieces ordered by sequence_key');
     } finally {
       await teardown(ctx);
     }
@@ -350,7 +353,14 @@ test('PUT /vault/{path} syncs tags from frontmatter', async t => {
           ('design', null, '2026-04-29');
       `);
 
-      const md = ['---', 'title: Alpha v3', 'tags: [research, design]', '---', 'replaced body', ''].join('\n');
+      const md = [
+        '---',
+        'title: Alpha v3',
+        'tags: [research, design]',
+        '---',
+        'replaced body',
+        ''
+      ].join('\n');
       const put = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
         method: 'PUT',
         headers: {'Content-Type': 'text/markdown'},
@@ -366,7 +376,11 @@ test('PUT /vault/{path} syncs tags from frontmatter', async t => {
       const rows = ctx.db
         .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
         .all(id) as Array<{tag: string}>;
-      t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'tags synced from PUT body frontmatter');
+      t.deepEqual(
+        rows.map(r => r.tag),
+        ['design', 'research'],
+        'tags synced from PUT body frontmatter'
+      );
     } finally {
       await teardown(ctx);
     }
@@ -430,6 +444,80 @@ test('PUT /vault/{path} rejects DB-only frontmatter keys', async t => {
       });
       t.equal(r.status, 400, '400 bad request');
       t.equal((r.body as {code: string}).code, 'frontmatter_auto_managed', 'auto_managed code');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} returns 400 (not 500) on malformed YAML frontmatter', async t => {
+  // Plain-scalar `: ` (colon-space) inside an unquoted multi-line value
+  // makes YAML treat the second segment as a nested mapping key —
+  // `yaml.parse` throws `YAMLParseError`. The writer used to let that
+  // propagate as 500 internal; now caught and surfaced as a structured
+  // 400 with the parser's diagnostic. Surfaced 2026-05-03 while writing
+  // `topics/convenience-mount-subverts-multi-machine-design.md`.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const md = [
+        '---',
+        'title: Bad YAML',
+        'agent:',
+        '  summary: The principle generalizes: any operator-visible',
+        '    convenience that crosses a trust boundary creates a hidden coupling.',
+        '---',
+        'Body.',
+        ''
+      ].join('\n');
+      const r = await fetchAuthed(`${ctx.url}/vault/raw/bad-yaml.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(r.status, 400, '400 bad request, not 500 internal');
+      const body = r.body as {code: string; error: string};
+      t.equal(body.code, 'invalid_yaml', 'structured error code');
+      t.ok(body.error.includes('invalid YAML'), 'error message names the cause');
+      t.ok(
+        body.error.includes('double quotes') || body.error.includes('folded block scalar'),
+        'error message points at the workaround'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} accepts double-quoted multi-line scalar with colon-space', async t => {
+  // Companion to the malformed-YAML test above — the documented workaround
+  // (double-quote the value) must round-trip cleanly.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const md = [
+        '---',
+        'title: Quoted YAML',
+        'agent:',
+        '  summary: "The principle generalizes: any operator-visible convenience."',
+        '---',
+        'Body.',
+        ''
+      ].join('\n');
+      const r = await fetchAuthed(`${ctx.url}/vault/raw/quoted-yaml.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(r.status, 204, '204 no content — well-formed YAML accepted');
     } finally {
       await teardown(ctx);
     }
@@ -553,7 +641,11 @@ test('POST /vault/move renames file + preserves record_id', async t => {
 
       // File moved on disk
       t.equal(existsSync(join(root, 'topics/alpha.md')), false, 'source file gone');
-      t.equal(existsSync(join(root, 'topics/archive/2026/alpha.md')), true, 'destination file present');
+      t.equal(
+        existsSync(join(root, 'topics/archive/2026/alpha.md')),
+        true,
+        'destination file present'
+      );
 
       // Same record_id on the new path
       const afterRow = ctx.db
