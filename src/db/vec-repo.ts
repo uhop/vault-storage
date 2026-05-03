@@ -96,6 +96,25 @@ export class RecordVecRepository {
   }
 
   /**
+   * Read all chunk vectors for a record as Float32Array views over the
+   * stored blobs. L2-normalized at write time, so cosine distance against
+   * any other normalized vector is `1 - dot(a, b)`.
+   *
+   * Used by pairwise comparisons (`find-duplicates` two-phase scan) where
+   * a single per-pair chunk-min cosine is computed in JS rather than
+   * issuing a sqlite-vec NN query per chunk.
+   */
+  getChunks(recordId: string): Float32Array[] {
+    const rows = this.#chunksForRecord.all(recordId) as unknown[] as {
+      chunk_index: number;
+      embedding: Uint8Array;
+    }[];
+    return rows.map(
+      r => new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)
+    );
+  }
+
+  /**
    * Top-k records by cosine distance, where each record's score is the
    * min-distance over its chunks. Fetches a wider chunk-level top-N (default
    * 5×k) and aggregates; `chunkK` lets a caller widen further if records

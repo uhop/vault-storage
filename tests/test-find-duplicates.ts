@@ -74,6 +74,58 @@ test('findDuplicates files suggestions for high-similarity pairs', async t => {
   }
 });
 
+test('two-phase: doc prefilter excludes obviously-distant pairs without chunk work', async t => {
+  // With a tight prefilter, completely-distinct content shouldn't even
+  // reach chunk-level confirmation. Verifies `candidatePairs` shows the
+  // doc-prefilter-survivor count and matches an aggressive prefilter
+  // ceiling.
+  const fx = await setup();
+  try {
+    // FakeEmbedder produces orthogonal-ish vectors for distinct text
+    // (cosine ~1, distance ~1). With a 0.05 prefilter ceiling, no pair
+    // should survive phase 1.
+    writeMd(fx.root, 'a.md', '---\n---\nFirst note about apples and oranges.\n');
+    writeMd(fx.root, 'b.md', '---\n---\nSecond note about bicycles and trains.\n');
+    writeMd(fx.root, 'c.md', '---\n---\nThird note about clarinets and violins.\n');
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+
+    const summary = findDuplicates(fx.db, {
+      maxDistance: 0.1,
+      prefilterMaxDistance: 0.05,
+      minBodyLength: 0
+    });
+    t.equal(summary.scanned, 3, 'all scanned');
+    t.equal(summary.candidatePairs, 0, 'doc prefilter excluded all pairs');
+    t.equal(summary.pairsFound, 0, 'nothing reached chunk-level');
+    t.equal(summary.filed, 0);
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('two-phase: prefilter-passing pair gets confirmed at chunk-level', async t => {
+  // Identical bodies → both phase-1 (doc-min ≈ 0) and phase-2
+  // (chunk-min ≈ 0) succeed. `candidatePairs` should be 1, `pairsFound`
+  // should be 1 — same pair, both phases.
+  const fx = await setup();
+  try {
+    const shared =
+      'A long enough body to fall above the default min-body filter — one common sentence repeated.';
+    writeMd(fx.root, 'a.md', `---\n---\n${shared}\n`);
+    writeMd(fx.root, 'b.md', `---\n---\n${shared}\n`);
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+
+    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    t.equal(summary.candidatePairs, 1, 'one pair survived prefilter');
+    t.equal(summary.pairsFound, 1, 'and chunk-level confirmed');
+    t.equal(summary.filed, 1);
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('findDuplicates is idempotent across runs', async t => {
   const fx = await setup();
   try {

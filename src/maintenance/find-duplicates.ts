@@ -8,16 +8,31 @@
 // merge the two notes, keep both as related-to, treat as contradiction
 // (file `contradiction_candidate`), or reject the suggestion.
 //
-// **Distance metric: min cosine over chunk pairs**, not whole-document
-// (mean-pooled) cosine. Mean-pool produced a centroid-of-everything for
-// long heterogeneous notes — `projects/vault-storage/queue.md` was
-// `a_record` on 39 of 144 false-positive pairings on the 2026-05-03 run
-// against unrelated topics, because its mean-pool vector landed near the
-// centroid of the topic cloud.  The chunk-level scan (`RecordVecRepository.
-// nearestToRecord`) takes the closest chunk-pair distance per target
-// record, which surfaces real concept overlap and ignores the long-doc
-// average. Swap shipped 2026-05-03; rationale tracked at
-// `[[projects/vault-storage/queue]]` § "Whole-doc embedding smear".
+// **Two-phase scan** — doc-level mean-pool prefilter (cheap, wide-cutoff
+// exclusion only) → chunk-level pairwise min-cosine confirms each
+// candidate at the precise threshold. Restored sub-second latency after
+// the 2026-05-03 single-phase chunk-level swap pushed live-vault scans
+// to ~100s (768 records × ~7 chunks × 50-NN-each = ~270 K sqlite-vec
+// queries).
+//
+// Why two phases:
+//   - Doc-level mean-pool alone smears centroids on long heterogeneous
+//     notes (queue.md was paired with 39 unrelated topics on the
+//     2026-05-03 dashboard run). The 2026-05-03 first fix swapped
+//     entirely to chunk-level — correct metric, wrong latency.
+//   - Chunk-level alone is precise but ~270 K vec queries on the live
+//     vault. ~100 s.
+//   - Combine: doc-level as a coarse *exclusion* filter (centroid >
+//     prefilterMaxDistance ⇒ no chunk pair can be close — the centroids
+//     bound the chunk-pair distance from below by the triangle
+//     inequality with margin set to the prefilter threshold).
+//     Chunk-level confirms only the survivors at the precise
+//     `maxDistance`. Centroid smear can no longer pick false positives
+//     because chunk-level always has the final say.
+//
+// Pairwise chunk-min is computed in JS over already-loaded float arrays
+// (cosine = 1 - dot since vectors are L2-normalized at write time). For
+// typical 5–20 chunks per record the per-pair cost is ~10–500 µs.
 //
 // Idempotency: a `duplicate` suggestion of any status for the same
 // unordered pair blocks re-filing, so re-running the scan is cheap and
@@ -25,6 +40,7 @@
 // records added since).
 
 import type {DatabaseSync} from 'node:sqlite';
+import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
 import {RecordVecRepository} from '../db/vec-repo.ts';
 import {DuplicateSuggestionFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
@@ -47,13 +63,28 @@ export const DEFAULT_SKIP_PATH_PREFIXES: readonly string[] = ['logs/sync/'];
 
 export interface FindDuplicatesOptions {
   /**
-   * Cosine distance ceiling. Pairs with `distance ≤ maxDistance` are filed.
-   * Default 0.10 (≥ 0.90 cosine similarity). Tighten (lower) to reduce queue
-   * size; loosen (higher) to surface more potential merges at the cost of
-   * agent review time.
+   * Cosine distance ceiling for the **chunk-level** confirmation phase.
+   * Pairs whose min chunk-pair distance ≤ maxDistance are filed. Default
+   * 0.10 (≥ 0.90 cosine similarity).
    */
   maxDistance?: number;
-  /** Per-record neighbor breadth fed into the vector index. Default 10. */
+  /**
+   * Cosine distance ceiling for the **doc-level prefilter** phase. Pairs
+   * whose mean-pool centroid distance > prefilterMaxDistance are excluded
+   * before any chunk-level work. Default 0.30 — wide enough that any pair
+   * whose chunks have meaningful overlap will pass through, narrow enough
+   * to drop the obvious-orthogonal mass that dominates at scale. Set
+   * higher if you suspect a pair with very long heterogeneous content
+   * is being missed; set lower for faster but less-thorough scans.
+   */
+  prefilterMaxDistance?: number;
+  /**
+   * Per-record neighbor breadth fed into the doc-level prefilter. Default
+   * 20. Tighter than the prior chunk-level scan's 10 because doc-level
+   * NN sometimes ranks centroid-close-but-conceptually-distinct pairs
+   * ahead of true near-duplicates; we widen to make sure the chunk-level
+   * confirmation phase sees real candidates.
+   */
   perRecord?: number;
   /** Maximum suggestions filed in this pass; remaining pairs are deferred. */
   limit?: number;
@@ -82,7 +113,9 @@ export interface FindDuplicatesSummary {
   skippedByType: number;
   /** Records skipped because of `skipPathPrefixes` match. */
   skippedByPath: number;
-  /** Unique pairs above threshold encountered (post-canonicalization, post-filter). */
+  /** Pairs surviving the doc-level prefilter (centroid distance ≤ prefilterMaxDistance). */
+  candidatePairs: number;
+  /** Unique pairs above threshold encountered (post-canonicalization, post-filter, post-chunk-confirm). */
   pairsFound: number;
   /** New `duplicate` suggestions filed. Pre-existing pairs do not refile. */
   filed: number;
@@ -90,17 +123,51 @@ export interface FindDuplicatesSummary {
 }
 
 /**
+ * Pairwise min cosine distance between two records' chunk vectors.
+ * Both arrays must hold L2-normalized vectors of the same dimension
+ * (sqlite-vec normalizes at write time, so any chunks loaded via
+ * `RecordVecRepository.getChunks` already satisfy that invariant).
+ *
+ * Returns the smallest `1 - dot(a_i, b_j)` across the cartesian product,
+ * which is exactly the "best matching chunk wins" semantic that the
+ * old chunk-level scan computed via per-chunk sqlite-vec NN queries —
+ * but in pure JS over already-loaded arrays, so it's ~10–500 µs per
+ * pair instead of ~10–30 ms per chunk-NN-query × every chunk.
+ *
+ * Returns `Infinity` when either side has no chunks.
+ */
+const minPairwiseChunkDistance = (
+  a: readonly Float32Array[],
+  b: readonly Float32Array[]
+): number => {
+  if (a.length === 0 || b.length === 0) return Infinity;
+  const dim = a[0]!.length;
+  let bestDot = -Infinity;
+  for (const av of a) {
+    for (const bv of b) {
+      let dot = 0;
+      for (let i = 0; i < dim; i++) dot += av[i]! * bv[i]!;
+      if (dot > bestDot) bestDot = dot;
+    }
+  }
+  return 1 - bestDot;
+};
+
+/**
  * Scan all embedded records for high-similarity pairs and file
- * `duplicate` suggestions. Pairs are unordered: a record's nearest
- * neighbour gets canonicalized to `(min, max)` before lookup, so each pair
- * is considered exactly once per pass.
+ * `duplicate` suggestions. Two-phase: doc-level prefilter for cheap
+ * exclusion, chunk-level pairwise min cosine for precise inclusion.
+ * Pairs are unordered: a record's nearest neighbour gets canonicalized
+ * to `(min, max)` before lookup, so each pair is considered exactly
+ * once per pass.
  */
 export const findDuplicates = (
   db: DatabaseSync,
   options: FindDuplicatesOptions = {}
 ): FindDuplicatesSummary => {
   const maxDistance = options.maxDistance ?? 0.1;
-  const perRecord = options.perRecord ?? 10;
+  const prefilterMaxDistance = options.prefilterMaxDistance ?? 0.3;
+  const perRecord = options.perRecord ?? 20;
   const limit = options.limit;
   const minBodyLength = options.minBodyLength ?? 200;
   const skipTypes = new Set<string>(options.skipTypes ?? DEFAULT_SKIP_TYPES);
@@ -108,7 +175,8 @@ export const findDuplicates = (
   const now = options.now ?? new Date().toISOString();
 
   const records = new RecordsRepository(db);
-  const vec = new RecordVecRepository(db);
+  const docVecs = new RecordDocVecRepository(db);
+  const chunkVecs = new RecordVecRepository(db);
   const filer = new DuplicateSuggestionFiler(db);
 
   const all = records.listAll();
@@ -121,12 +189,26 @@ export const findDuplicates = (
     skippedShort: 0,
     skippedByType: 0,
     skippedByPath: 0,
+    candidatePairs: 0,
     pairsFound: 0,
     filed: 0,
     durationMs: 0
   };
   const start = performance.now();
   const seenPairs = new Set<string>();
+
+  // Cache chunks by record_id — a record can appear as candidate-B for
+  // many outer A's, and re-loading chunks per visit would multiply the
+  // sqlite read cost. Per-pass cache, lifetime is one scan.
+  const chunksCache = new Map<string, Float32Array[]>();
+  const getChunks = (recordId: string): Float32Array[] => {
+    let v = chunksCache.get(recordId);
+    if (v === undefined) {
+      v = chunkVecs.getChunks(recordId);
+      chunksCache.set(recordId, v);
+    }
+    return v;
+  };
 
   // Returns true when the record should NOT participate in the scan as either
   // outer or inner side. Counters distinguish causes for observability.
@@ -141,7 +223,7 @@ export const findDuplicates = (
 
   for (const r of all) {
     if (limit !== undefined && summary.filed >= limit) break;
-    if (!vec.hasRecord(r.recordId)) {
+    if (!docVecs.hasRecord(r.recordId)) {
       summary.skippedUnembedded++;
       continue;
     }
@@ -153,27 +235,41 @@ export const findDuplicates = (
       continue;
     }
     summary.scanned++;
-    const neighbors = vec.nearestToRecord(r.recordId, perRecord);
-    for (const n of neighbors) {
-      // Defensive guard: a non-finite distance means at least one of the two
-      // doc vectors had non-finite components (the embedder produced a NaN
-      // chunk for one of them and the mean-pool filter did not catch it —
-      // see `meanPoolNormalize`). Don't file a suggestion the agent can't
-      // rank or auto-threshold; let the next embed pass produce a clean
-      // doc-vec and the next scan refile the pair with a real distance.
-      if (!Number.isFinite(n.distance)) continue;
-      if (n.distance > maxDistance) break; // results are sorted ascending by distance
-      const nRec = byId.get(n.recordId);
+
+    // Phase 1: doc-level prefilter — fast top-K with mean-pool centroid.
+    const candidates = docVecs.nearestToRecord(r.recordId, perRecord);
+    for (const cand of candidates) {
+      // Defensive: a non-finite doc-distance means a NaN chunk poisoned
+      // one of the centroids (the embedder produced a non-finite vector
+      // and the mean-pool filter didn't catch it). Skip — phase-2
+      // chunk-level may still surface the pair on the next clean
+      // re-embed pass.
+      if (!Number.isFinite(cand.distance)) continue;
+      // Sorted ascending by doc-distance; once we cross the prefilter
+      // ceiling, no further candidate is closer.
+      if (cand.distance > prefilterMaxDistance) break;
+
+      const nRec = byId.get(cand.recordId);
       if (!nRec) continue;
-      // Inner-side filter: skip neighbours that are themselves boilerplate /
-      // skipped types / skipped paths. Don't bump counters here — outer-side
-      // already counted them when they were the outer record.
+      // Inner-side filter — skip boilerplate / skipped types / skipped
+      // paths on the candidate without bumping counters (outer-side
+      // already counted them when they were outer records).
       if (shouldSkip(nRec).skip) continue;
+
       const [aId, bId] =
-        r.recordId < n.recordId ? [r.recordId, n.recordId] : [n.recordId, r.recordId];
+        r.recordId < cand.recordId ? [r.recordId, cand.recordId] : [cand.recordId, r.recordId];
       const key = `${aId}|${bId}`;
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
+      summary.candidatePairs++;
+
+      // Phase 2: chunk-level pairwise min cosine — precise threshold.
+      const aChunks = getChunks(aId);
+      const bChunks = getChunks(bId);
+      const distance = minPairwiseChunkDistance(aChunks, bChunks);
+      if (!Number.isFinite(distance)) continue; // unembedded → infinity
+      if (distance > maxDistance) continue;
+
       summary.pairsFound++;
       if (limit !== undefined && summary.filed >= limit) break;
       const aRec = byId.get(aId);
@@ -184,7 +280,7 @@ export const findDuplicates = (
         aPath: aRec.filePath,
         bRecordId: bId,
         bPath: bRec.filePath,
-        distance: n.distance,
+        distance,
         now
       });
       if (filed) summary.filed++;
