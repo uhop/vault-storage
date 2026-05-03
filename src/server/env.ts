@@ -19,6 +19,13 @@ export interface ServerEnv {
   watchDebounceMs: number;
   /** When 'fake', skips the BGE model load. Useful for smoke tests. */
   embedder: 'bge' | 'fake';
+  /**
+   * JSONL log file path for embedding anomalies (transient NaN chunk vectors
+   * from transformers.js+BGE). Default: `${vaultDataPath}/.vault-storage/
+   * embed-nan.jsonl`. Set to empty string to disable file logging — stderr
+   * notifications still fire.
+   */
+  embedAnomalyLogPath: string;
   /** When true, periodically `git add -A && git commit` in the vault tree. */
   autoCommit: boolean;
   /** When true and autoCommit is true, also `git push` after each commit. */
@@ -84,6 +91,10 @@ export const readServerEnv = (): ServerEnv => {
 
   const uiStaticPath = process.env['VAULT_UI_STATIC_PATH'] ?? 'static/ui';
 
+  const embedAnomalyLogPath =
+    process.env['VAULT_EMBED_ANOMALY_LOG'] ??
+    join(vaultDataPath, '.vault-storage', 'embed-nan.jsonl');
+
   return {
     vaultDataPath,
     vaultIngestPath,
@@ -100,7 +111,8 @@ export const readServerEnv = (): ServerEnv => {
     commitIntervalMs,
     gitAuthorName,
     gitAuthorEmail,
-    uiStaticPath
+    uiStaticPath,
+    embedAnomalyLogPath
   };
 };
 

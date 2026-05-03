@@ -6,6 +6,7 @@
 import {resolve} from 'node:path';
 import {openDatabase} from './db/connection.ts';
 import {runMigrations} from './db/migrate.ts';
+import {JsonlAnomalyLogger} from './embeddings/anomaly-log.ts';
 import {BgeEmbedder} from './embeddings/bge.ts';
 import {embedPending} from './embeddings/embed-pass.ts';
 import {FakeEmbedder} from './embeddings/fake.ts';
@@ -26,8 +27,16 @@ const die = (msg: string, code = 1): never => {
 // VAULT_EMBEDDER=fake skips the BGE model load — useful for fast iteration on
 // the importer/edge code without paying the model-load cost on every run. Tests
 // always use FakeEmbedder by direct import; this env var is for the CLI only.
-const makeEmbedder = (): Embedder =>
-  process.env['VAULT_EMBEDDER'] === 'fake' ? new FakeEmbedder() : new BgeEmbedder();
+//
+// VAULT_EMBED_ANOMALY_LOG=<path> persists transient-NaN events as JSONL.
+// Off by default in CLI mode (stderr-only); the server bootstrap defaults
+// it to `${VAULT_DATA_PATH}/.vault-storage/embed-nan.jsonl`.
+const makeEmbedder = (): Embedder => {
+  if (process.env['VAULT_EMBEDDER'] === 'fake') return new FakeEmbedder();
+  const logPath = process.env['VAULT_EMBED_ANOMALY_LOG'];
+  const anomalyLogger = logPath ? new JsonlAnomalyLogger(logPath) : null;
+  return new BgeEmbedder({anomalyLogger});
+};
 
 if (subcommand === 'serve') {
   // The server has its own env handling and lifetime — it owns its DB handle.
@@ -55,8 +64,10 @@ if (subcommand === 'serve') {
         const positional = argv.filter((v, i) => i > 0 && v !== '--update' && v !== '--dry-run');
         const source = positional[0] ?? process.env['OBSIDIAN_VAULT_PATH'];
         const target = positional[1] ?? process.env['VAULT_DATA_PATH'];
-        if (!source) die('usage: migrate --update <obsidian-source> [target]  (or set OBSIDIAN_VAULT_PATH)');
-        if (!target) die('usage: migrate --update <obsidian-source> <target>  (or set VAULT_DATA_PATH)');
+        if (!source)
+          die('usage: migrate --update <obsidian-source> [target]  (or set OBSIDIAN_VAULT_PATH)');
+        if (!target)
+          die('usage: migrate --update <obsidian-source> <target>  (or set VAULT_DATA_PATH)');
         const summary = syncFromObsidian({
           source: resolve(source as string),
           target: resolve(target as string),

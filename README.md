@@ -82,6 +82,7 @@ Environment variables:
 | `VAULT_COMMIT_INTERVAL_MS` | no       | Poll interval for auto-commit. Default `60000`.                              |
 | `VAULT_GIT_AUTHOR_NAME`    | no       | Author name for auto-commits. Default `vault-storage`.                       |
 | `VAULT_GIT_AUTHOR_EMAIL`   | no       | Author email for auto-commits. Default `vault-storage@localhost`.            |
+| `VAULT_EMBED_ANOMALY_LOG`  | no       | JSONL path for transient-NaN embedding events. Default `${VAULT_DATA_PATH}/.vault-storage/embed-nan.jsonl`. Empty disables file logging (stderr-only). |
 
 Put these in `~/.env` (sourced by `.bashrc`) or pass on the command line.
 

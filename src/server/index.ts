@@ -2,6 +2,7 @@ import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {openDatabase} from '../db/connection.ts';
 import {runMigrations} from '../db/migrate.ts';
+import {JsonlAnomalyLogger} from '../embeddings/anomaly-log.ts';
 import {BgeEmbedder} from '../embeddings/bge.ts';
 import {embedPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
@@ -22,7 +23,11 @@ export const main = async (): Promise<void> => {
   const db = openDatabase({path: env.vaultDbPath});
   const migration = runMigrations(db);
 
-  const embedder: Embedder = env.embedder === 'fake' ? new FakeEmbedder() : new BgeEmbedder();
+  const anomalyLogger = env.embedAnomalyLogPath
+    ? new JsonlAnomalyLogger(env.embedAnomalyLogPath)
+    : null;
+  const embedder: Embedder =
+    env.embedder === 'fake' ? new FakeEmbedder() : new BgeEmbedder({anomalyLogger});
 
   if (env.autoReindex) {
     process.stdout.write(`vault-storage: initial reindex of ${env.vaultDataPath}…\n`);
