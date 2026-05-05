@@ -28,6 +28,7 @@ export class RecordVecRepository {
   readonly #getRecordHash: StatementSync;
   readonly #nearestChunks: StatementSync;
   readonly #chunksForRecord: StatementSync;
+  readonly #allChunks: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
@@ -54,6 +55,10 @@ export class RecordVecRepository {
       `SELECT chunk_index, embedding FROM record_vec
         WHERE record_id = ?
         ORDER BY chunk_index`
+    );
+    this.#allChunks = db.prepare(
+      `SELECT record_id, chunk_index, embedding FROM record_vec
+        ORDER BY record_id, chunk_index`
     );
   }
 
@@ -103,6 +108,14 @@ export class RecordVecRepository {
    * Used by pairwise comparisons (`find-duplicates` two-phase scan) where
    * a single per-pair chunk-min cosine is computed in JS rather than
    * issuing a sqlite-vec NN query per chunk.
+   *
+   * **vec0 aux-column gotcha** — `record_id` is a `+`-prefixed auxiliary
+   * column without a B-tree index. A `WHERE record_id = ?` query must
+   * scan the entire vec0 table (no index, no early exit on a multi-row
+   * match). At ~6 K chunks the per-call cost is ~20 ms regardless of
+   * how few chunks the record has. For batch use (e.g., scanning every
+   * record), prefer `getAllChunks()` — one full-table scan that
+   * builds the entire `recordId → chunks` map at once.
    */
   getChunks(recordId: string): Float32Array[] {
     const rows = this.#chunksForRecord.all(recordId) as unknown[] as {
@@ -112,6 +125,38 @@ export class RecordVecRepository {
     return rows.map(
       r => new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)
     );
+  }
+
+  /**
+   * Load every record's chunks in a single `record_vec` scan. Keyed by
+   * `record_id`; chunks within each value are ordered by `chunk_index`.
+   *
+   * Use this when a caller needs chunks for many records in one pass —
+   * `find-duplicates` is the canonical case. The alternative (one
+   * `getChunks()` call per record) does N full vec0 scans because the
+   * `record_id` aux column is unindexed; this method does exactly one.
+   */
+  getAllChunks(): Map<string, Float32Array[]> {
+    const rows = this.#allChunks.all() as unknown[] as {
+      record_id: string;
+      chunk_index: number;
+      embedding: Uint8Array;
+    }[];
+    const out = new Map<string, Float32Array[]>();
+    for (const r of rows) {
+      const vec = new Float32Array(
+        r.embedding.buffer,
+        r.embedding.byteOffset,
+        r.embedding.byteLength / 4
+      );
+      let arr = out.get(r.record_id);
+      if (arr === undefined) {
+        arr = [];
+        out.set(r.record_id, arr);
+      }
+      arr.push(vec);
+    }
+    return out;
   }
 
   /**
