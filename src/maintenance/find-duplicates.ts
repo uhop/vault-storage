@@ -208,6 +208,25 @@ export const findDuplicates = (
   const allChunks = chunkVecs.getAllChunks();
   const getChunks = (recordId: string): Float32Array[] => allChunks.get(recordId) ?? [];
 
+  // Bulk-load every record's doc vector in a single record_doc_vec scan,
+  // then drive the phase-1 prefilter as an in-memory pairwise scan
+  // instead of one sqlite-vec NN MATCH per outer record. Profiled
+  // 2026-05-04: 881 per-record MATCH calls cost ~1.5s; one bulk load
+  // (~13ms) + 881² JS L2² distances over 384-dim Float32Arrays is ~540ms
+  // (~2.8× faster) and produces an identical candidate set.
+  //
+  // Metric note: vec0 with `FLOAT[N]` columns and no explicit
+  // `distance_metric` returns **L2 distance** (not cosine — verified
+  // empirically 2026-05-04 against the live DB). We compute L2² here for
+  // speed (no sqrt in the hot loop) and compare against
+  // `prefilterMaxDistance²` to match sqlite-vec's filtering exactly. The
+  // default 0.30 threshold is L2; for L2-normalized vectors this
+  // corresponds to a cosine distance of ~0.045, tighter than the
+  // docstring's "cosine" wording suggests. The value has been tuned
+  // empirically against the live corpus and is preserved as-is.
+  const allDocVecs = docVecs.getAllDocVecs();
+  const prefilterL2Sq = prefilterMaxDistance * prefilterMaxDistance;
+
   // Returns true when the record should NOT participate in the scan as either
   // outer or inner side. Counters distinguish causes for observability.
   const shouldSkip = (
@@ -221,7 +240,8 @@ export const findDuplicates = (
 
   for (const r of all) {
     if (limit !== undefined && summary.filed >= limit) break;
-    if (!docVecs.hasRecord(r.recordId)) {
+    const ownVec = allDocVecs.get(r.recordId);
+    if (!ownVec) {
       summary.skippedUnembedded++;
       continue;
     }
@@ -234,17 +254,36 @@ export const findDuplicates = (
     }
     summary.scanned++;
 
-    // Phase 1: doc-level prefilter — fast top-K with mean-pool centroid.
-    const candidates = docVecs.nearestToRecord(r.recordId, perRecord);
+    // Phase 1: doc-level prefilter — in-memory pairwise L2² over the
+    // bulk-loaded centroid map. Inner loop is ~881 records × 384-dim
+    // (subtract + square + sum) per outer, ~300 µs per outer at the
+    // current corpus size. Filter on L2² to skip the sqrt; collect
+    // L2 distance only for survivors so downstream code sees the same
+    // distance scale sqlite-vec was returning.
+    const dim = ownVec.length;
+    const candidates: Array<{recordId: string; distance: number}> = [];
+    for (const [otherId, otherVec] of allDocVecs) {
+      if (otherId === r.recordId) continue;
+      let l2sq = 0;
+      for (let i = 0; i < dim; ++i) {
+        const d = ownVec[i]! - otherVec[i]!;
+        l2sq += d * d;
+      }
+      // NaN > anything is false, so a non-finite l2sq survives the ceiling
+      // check; explicit isFinite catches it. A non-finite centroid means
+      // the embedder produced a NaN that the mean-pool filter didn't —
+      // phase 2 may still surface the pair on the next clean re-embed.
+      if (!Number.isFinite(l2sq) || l2sq > prefilterL2Sq) continue;
+      candidates.push({recordId: otherId, distance: Math.sqrt(l2sq)});
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    if (candidates.length > perRecord) candidates.length = perRecord;
+
     for (const cand of candidates) {
-      // Defensive: a non-finite doc-distance means a NaN chunk poisoned
-      // one of the centroids (the embedder produced a non-finite vector
-      // and the mean-pool filter didn't catch it). Skip — phase-2
-      // chunk-level may still surface the pair on the next clean
-      // re-embed pass.
+      // Distance is already finite and ≤ prefilterMaxDistance — both
+      // checked inside the inner loop above. Kept for parity with the
+      // pre-bulk-load shape (cheap, defensive).
       if (!Number.isFinite(cand.distance)) continue;
-      // Sorted ascending by doc-distance; once we cross the prefilter
-      // ceiling, no further candidate is closer.
       if (cand.distance > prefilterMaxDistance) break;
 
       const nRec = byId.get(cand.recordId);

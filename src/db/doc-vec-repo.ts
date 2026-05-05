@@ -82,6 +82,7 @@ export class RecordDocVecRepository {
   readonly #getContentHash: StatementSync;
   readonly #getEmbedding: StatementSync;
   readonly #nearest: StatementSync;
+  readonly #allDocVecs: StatementSync;
 
   constructor(db: DatabaseSync) {
     // vec0 doesn't support ON CONFLICT for the PK column directly — sqlite-vec
@@ -105,6 +106,7 @@ export class RecordDocVecRepository {
           AND k = ?
         ORDER BY distance`
     );
+    this.#allDocVecs = db.prepare('SELECT record_id, embedding FROM record_doc_vec');
   }
 
   /**
@@ -147,6 +149,30 @@ export class RecordDocVecRepository {
       if (r.record_id === recordId) continue;
       out.push({recordId: r.record_id, distance: r.distance});
       if (out.length >= k) break;
+    }
+    return out;
+  }
+
+  /**
+   * Load every record's doc vector in a single record_doc_vec scan. Keyed
+   * by `record_id`; each value is the L2-normalized 384-dim Float32Array.
+   *
+   * Use this when a caller needs doc-vecs for many records in one pass —
+   * `find-duplicates` is the canonical case (whole-corpus pairwise
+   * prefilter). One scan + per-record `Map.get(...)` replaces N per-record
+   * sqlite-vec MATCH queries.
+   */
+  getAllDocVecs(): Map<string, Float32Array> {
+    const rows = this.#allDocVecs.all() as unknown[] as {
+      record_id: string;
+      embedding: Uint8Array;
+    }[];
+    const out = new Map<string, Float32Array>();
+    for (const r of rows) {
+      out.set(
+        r.record_id,
+        new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)
+      );
     }
     return out;
   }
