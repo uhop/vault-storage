@@ -261,7 +261,7 @@ function renderRawInboxTile(data) {
   $('#stats').appendChild(card);
 }
 
-function recommend(summary, lint, details) {
+function recommendFromSuggestions(summary, details) {
   const recs = [];
   const k = summary.by_kind ?? {};
   const compactFolders = details?.compactFolders ?? [];
@@ -320,6 +320,11 @@ function recommend(summary, lint, details) {
     why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
     level: k.infrastructure_upgrade ? 'warn' : ''
   });
+  return recs;
+}
+
+function recommendFromLint(lint) {
+  const recs = [];
   const embeddingPending =
     (lint.checks?.records_without_embeddings?.count ?? 0) +
     (lint.checks?.embedding_hash_drift?.count ?? 0);
@@ -364,18 +369,35 @@ const ACTIONS = {
   }
 };
 
-function renderRecs(recs) {
-  if (recs.length === 0) {
-    $('#recs').innerHTML = `<div class="empty">No actions recommended. Vault is healthy.</div>`;
+// Recs are produced by two sources with very different latencies:
+// `/suggestions/summary` (~5ms) and `/system/lint` (~8s). Holding the panel
+// hostage to lint hides ~99% of the data the user could be acting on. Each
+// source paints its tiles independently as data arrives; the all-clear
+// state only renders once both sources have resolved at zero.
+const REC_ORDER = ['suggestions', 'lint'];
+let recsState = {suggestions: null, lint: null};
+
+function renderRecs() {
+  const container = $('#recs');
+  const all = [];
+  for (const source of REC_ORDER) {
+    const recs = recsState[source];
+    if (recs === null) continue;
+    for (const r of recs) all.push({...r, source});
+  }
+  const allArrived = REC_ORDER.every(s => recsState[s] !== null);
+  if (allArrived && all.length === 0) {
+    container.innerHTML = `<div class="empty">No actions recommended. Vault is healthy.</div>`;
     return;
   }
-  $('#recs').innerHTML = recs.map(r => {
+  if (all.length === 0) return; // keep skeleton until first source produces a tile
+  container.innerHTML = all.map(r => {
     const action = r.action && ACTIONS[r.action];
     const btn = action
       ? `<button class="rec-action" data-action="${r.action}">${action.label}</button>`
       : '';
     return `
-      <div class="rec ${r.level ?? ''}">
+      <div class="rec ${r.level ?? ''}" data-source="${r.source}">
         <div class="body">
           <div class="title">${r.title}</div>
           <div class="why">${r.why}</div>
@@ -384,6 +406,11 @@ function renderRecs(recs) {
       </div>
     `;
   }).join('');
+}
+
+function setRecs(source, recs) {
+  recsState[source] = recs;
+  renderRecs();
 }
 
 async function runAction(btn) {
@@ -418,22 +445,17 @@ async function refresh() {
   renderSkeleton();
   if (!getToken()) { showAuthDialog(); return; }
 
-  let summary = null, lint = null, compactFolders = [], rawInbox = {ready: [], drafts: []};
-  try {
-    await Promise.all([
+  recsState = {suggestions: null, lint: null};
+
+  // Suggestions chain — fast (~5ms summary). Renders as soon as raw-inbox +
+  // summary land, plus the conditional compaction-candidate fetch.
+  const suggestionsP = (async () => {
+    const [rawInbox, summary] = await Promise.all([
       apiJson('/maintenance/raw-inbox').then(d => {
-        rawInbox = d;
         renderRawInboxTile(d);
+        return d;
       }),
-      apiJson('/system/status').then(d => {
-        setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
-        setSlot('edges', fmtCount(d.edges));
-        setSlot('last-indexed', shortSha(d.last_indexed_commit), d.last_indexed_commit ? null : 'unset');
-        setSlot('sqlite-vec', d.sqlite_vec_version);
-        $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
-      }),
-      apiJson('/suggestions/summary').then(async d => {
-        summary = d;
+      apiJson('/suggestions/summary').then(d => {
         const total = d.total ?? 0;
         let breakdown = 'queue clear';
         if (total) {
@@ -447,19 +469,37 @@ async function refresh() {
         }
         setSlot('pending', fmtCount(total), breakdown,
           total ? (total > 50 ? 'warn' : '') : 'ok');
-        if (d.by_kind?.compaction_candidate) {
-          const r = await apiJson('/suggestions?kind=compaction_candidate&status=pending&limit=20');
-          compactFolders = (r.items ?? []).map(s => s.payload ?? {});
-        }
-      }),
-      apiJson('/system/lint').then(d => {
-        lint = d;
-        const lvl = d.ok ? 'ok' : (d.total_issues > 5 ? 'bad' : 'warn');
-        const lbl = d.ok ? 'clean' : `${d.total_issues} issue${d.total_issues === 1 ? '' : 's'}`;
-        setSlot('lint', lbl, '/system/lint', lvl);
+        return d;
       })
     ]);
-    renderRecs(recommend(summary, lint, { compactFolders, rawInbox }));
+    let compactFolders = [];
+    if (summary.by_kind?.compaction_candidate) {
+      const r = await apiJson('/suggestions?kind=compaction_candidate&status=pending&limit=20');
+      compactFolders = (r.items ?? []).map(s => s.payload ?? {});
+    }
+    setRecs('suggestions', recommendFromSuggestions(summary, {compactFolders, rawInbox}));
+  })();
+
+  // Lint chain — slow (~8s). Updates its own stat slot and rec tiles
+  // independently so the suggestion-derived tiles paint immediately
+  // instead of waiting for lint to finish.
+  const lintP = apiJson('/system/lint').then(d => {
+    const lvl = d.ok ? 'ok' : (d.total_issues > 5 ? 'bad' : 'warn');
+    const lbl = d.ok ? 'clean' : `${d.total_issues} issue${d.total_issues === 1 ? '' : 's'}`;
+    setSlot('lint', lbl, '/system/lint', lvl);
+    setRecs('lint', recommendFromLint(d));
+  });
+
+  const statusP = apiJson('/system/status').then(d => {
+    setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
+    setSlot('edges', fmtCount(d.edges));
+    setSlot('last-indexed', shortSha(d.last_indexed_commit), d.last_indexed_commit ? null : 'unset');
+    setSlot('sqlite-vec', d.sqlite_vec_version);
+    $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
+  });
+
+  try {
+    await Promise.all([suggestionsP, lintP, statusP]);
     fetchRecent();
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') {
