@@ -61,14 +61,23 @@ export const lintHandler =
     // Records with no chunks in record_vec. Indicates the embedder was
     // disabled at import time, embedPending hasn't run, or a crash
     // between record insert and embed.
+    //
+    // record_vec is a vec0 virtual table; `+record_id` is an auxiliary
+    // column without a B-tree index, so a correlated `NOT EXISTS
+    // (... WHERE v.record_id = r.record_id)` becomes a full vec0 scan
+    // per outer row (~7s on 878 records / 6265 chunks). Pre-materialize
+    // the distinct record_ids once, then anti-join via the records
+    // index — single vec0 scan, ~25ms total. (Inverse direction
+    // `record_vec → records` queries can stay correlated; that lookup
+    // hits the records index.)
     {
       const rows = db
         .prepare(
-          `SELECT r.record_id, r.file_path
+          `WITH record_vec_ids AS (SELECT DISTINCT record_id FROM record_vec)
+           SELECT r.record_id, r.file_path
              FROM records r
-            WHERE NOT EXISTS (
-              SELECT 1 FROM record_vec v WHERE v.record_id = r.record_id
-            )`
+             LEFT JOIN record_vec_ids v ON v.record_id = r.record_id
+            WHERE v.record_id IS NULL`
         )
         .all() as {record_id: string; file_path: string}[];
       checks['records_without_embeddings'] = {
