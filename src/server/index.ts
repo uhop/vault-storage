@@ -13,6 +13,7 @@ import {getCurrentHead} from '../util/git.ts';
 import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startGitSync, type GitSyncHandle} from './git-sync.ts';
+import {startMemoryReporter, type MemoryReporterHandle} from './memory-reporter.ts';
 import {startServer} from './server.ts';
 import {startWatcher, type WatcherHandle} from './watcher.ts';
 
@@ -76,6 +77,11 @@ export const main = async (): Promise<void> => {
     );
   }
 
+  let memoryReporter: MemoryReporterHandle | null = null;
+  if (env.memoryReportIntervalMs > 0) {
+    memoryReporter = startMemoryReporter({intervalMs: env.memoryReportIntervalMs});
+  }
+
   let gitSync: GitSyncHandle | null = null;
   if (env.autoCommit) {
     gitSync = startGitSync({
@@ -103,6 +109,7 @@ export const main = async (): Promise<void> => {
       await gitSync.syncNow();
       gitSync.close();
     }
+    if (memoryReporter) memoryReporter.close();
     await handle.close();
     db.close();
     process.exit(0);

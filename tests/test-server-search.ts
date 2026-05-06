@@ -41,7 +41,8 @@ const makeEnv = (port: number, dataPath: string): ServerEnv => ({
   gitAuthorName: 'vault-storage',
   gitAuthorEmail: 'vault-storage@localhost',
   uiStaticPath: '',
-  embedAnomalyLogPath: ''
+  embedAnomalyLogPath: '',
+  memoryReportIntervalMs: 0
 });
 
 interface ServerCtx {

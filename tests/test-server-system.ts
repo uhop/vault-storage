@@ -24,7 +24,8 @@ const makeEnv = (port: number): ServerEnv => ({
   gitAuthorName: 'vault-storage',
   gitAuthorEmail: 'vault-storage@localhost',
   uiStaticPath: '',
-  embedAnomalyLogPath: ''
+  embedAnomalyLogPath: '',
+  memoryReportIntervalMs: 0
 });
 
 const fetchJson = async (
@@ -92,6 +93,12 @@ test('GET /system/status with valid token returns indexer status', async t => {
     t.equal(payload['edges'], 0, 'edges=0 on empty DB');
     t.equal(payload['pending_suggestions'], 0, 'pending_suggestions=0 on empty DB');
     t.equal(typeof payload['sqlite_vec_version'], 'string', 'sqlite_vec_version is a string');
+    const memory = payload['memory'] as Record<string, unknown>;
+    t.equal(typeof memory, 'object', 'memory is an object');
+    for (const key of ['rss', 'heap_used', 'heap_total', 'external', 'array_buffers']) {
+      t.equal(typeof memory[key], 'number', `memory.${key} is a number`);
+      t.ok((memory[key] as number) > 0, `memory.${key} > 0`);
+    }
   });
 });
 

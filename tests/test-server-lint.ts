@@ -25,7 +25,8 @@ const makeEnv = (port: number): ServerEnv => ({
   gitAuthorName: 'vault-storage',
   gitAuthorEmail: 'vault-storage@localhost',
   uiStaticPath: '',
-  embedAnomalyLogPath: ''
+  embedAnomalyLogPath: '',
+  memoryReportIntervalMs: 0
 });
 
 const fetchJson = async (

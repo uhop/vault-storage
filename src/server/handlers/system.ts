@@ -24,6 +24,8 @@ export const systemStatusHandler =
       .prepare(`SELECT value FROM meta WHERE key = 'last_indexed_commit'`)
       .get() as {value: string} | undefined;
 
+    const m = process.memoryUsage();
+
     sendJson(ctx.res, 200, {
       ok: true,
       schema_version: schemaVersion,
@@ -33,6 +35,13 @@ export const systemStatusHandler =
       edges: edgeCount,
       pending_suggestions: pendingSuggestions,
       last_indexed_commit: lastIndexedRow ? lastIndexedRow.value : null,
-      indexer_running: false
+      indexer_running: false,
+      memory: {
+        rss: m.rss,
+        heap_used: m.heapUsed,
+        heap_total: m.heapTotal,
+        external: m.external,
+        array_buffers: m.arrayBuffers
+      }
     });
   };

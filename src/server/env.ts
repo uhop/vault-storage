@@ -37,6 +37,13 @@ export interface ServerEnv {
   gitAuthorEmail: string;
   /** Directory served at /ui/. Empty string disables the UI surface. */
   uiStaticPath: string;
+  /**
+   * Periodic interval (ms) at which the server logs `memory: rss=… heapUsed=…
+   * heapTotal=… external=… arrayBuffers=…` to stdout. Lets you grep
+   * `docker logs` for an RSS time-series without external tooling. Set to 0
+   * to disable.
+   */
+  memoryReportIntervalMs: number;
 }
 
 const required = (name: string): string => {
@@ -95,6 +102,14 @@ export const readServerEnv = (): ServerEnv => {
     process.env['VAULT_EMBED_ANOMALY_LOG'] ??
     join(vaultDataPath, '.vault-storage', 'embed-nan.jsonl');
 
+  const memoryReportIntervalRaw = process.env['VAULT_MEMORY_REPORT_INTERVAL_MS'] ?? '300000';
+  const memoryReportIntervalMs = Number.parseInt(memoryReportIntervalRaw, 10);
+  if (!Number.isFinite(memoryReportIntervalMs) || memoryReportIntervalMs < 0) {
+    throw new Error(
+      `VAULT_MEMORY_REPORT_INTERVAL_MS must be ≥ 0 (got ${memoryReportIntervalRaw})`
+    );
+  }
+
   return {
     vaultDataPath,
     vaultIngestPath,
@@ -112,7 +127,8 @@ export const readServerEnv = (): ServerEnv => {
     gitAuthorName,
     gitAuthorEmail,
     uiStaticPath,
-    embedAnomalyLogPath
+    embedAnomalyLogPath,
+    memoryReportIntervalMs
   };
 };
 
