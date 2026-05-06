@@ -3,7 +3,7 @@ import {execFileSync, execSync} from 'node:child_process';
 import {mkdtempSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {startGitSync} from '../src/server/git-sync.ts';
+import {isWithinWorkHours, startGitSync} from '../src/server/git-sync.ts';
 
 const initRepo = (): string => {
   const root = mkdtempSync(join(tmpdir(), 'vault-git-sync-'));
@@ -27,10 +27,10 @@ const initBareRepo = (): string => {
   // identity in the repo's config.
   writeFileSync(join(root, 'README.md'), '# vault\n');
   execSync('git add -A', {cwd: root, env: {...process.env, HOME: root}});
-  execSync(
-    'git -c user.name=Seed -c user.email=seed@local commit -q -m initial',
-    {cwd: root, env: {...process.env, HOME: root}}
-  );
+  execSync('git -c user.name=Seed -c user.email=seed@local commit -q -m initial', {
+    cwd: root,
+    env: {...process.env, HOME: root}
+  });
   return root;
 };
 
@@ -148,6 +148,126 @@ test('git-sync respects authorName / authorEmail overrides', async t => {
       .toString()
       .trim();
     t.equal(author, 'Custom Bot|bot@example.org', 'override applied');
+  } finally {
+    handle.close();
+    cleanup(root);
+  }
+});
+
+// --- C8.1: backoff + work-hours window --------------------------------
+
+test('isWithinWorkHours: standard non-wrapping window', t => {
+  // 09:00–18:00 — the README default.
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T09:00:00'), '09:00', '18:00'),
+    true,
+    'inclusive at start'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T13:30:00'), '09:00', '18:00'),
+    true,
+    'midday inside'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T17:59:00'), '09:00', '18:00'),
+    true,
+    'one minute before close'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T18:00:00'), '09:00', '18:00'),
+    false,
+    'exclusive at end'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T08:59:00'), '09:00', '18:00'),
+    false,
+    'one minute before open'
+  );
+  t.equal(isWithinWorkHours(new Date('2026-05-06T03:00:00'), '09:00', '18:00'), false, 'pre-dawn');
+});
+
+test('isWithinWorkHours: wrap-around window (overnight)', t => {
+  // 22:00–06:00 — overnight on-call window.
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T22:00:00'), '22:00', '06:00'),
+    true,
+    'at start, after midnight wrap'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T23:30:00'), '22:00', '06:00'),
+    true,
+    'late evening'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T02:00:00'), '22:00', '06:00'),
+    true,
+    'past midnight'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T05:59:00'), '22:00', '06:00'),
+    true,
+    'one minute before close'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T06:00:00'), '22:00', '06:00'),
+    false,
+    'exclusive at end'
+  );
+  t.equal(
+    isWithinWorkHours(new Date('2026-05-06T12:00:00'), '22:00', '06:00'),
+    false,
+    'midday outside'
+  );
+});
+
+test('isWithinWorkHours: empty window (start === end) is always false', t => {
+  t.equal(isWithinWorkHours(new Date('2026-05-06T12:00:00'), '12:00', '12:00'), false);
+  t.equal(isWithinWorkHours(new Date('2026-05-06T12:00:00'), '00:00', '00:00'), false);
+});
+
+test('git-sync syncNow runs commit even outside the work-hours window', async t => {
+  const root = initRepo();
+  // Window that's guaranteed to be in the past — manual trigger must
+  // bypass it. Pick 00:00–00:01 unless the test happens to run during
+  // that minute, in which case reverse the window.
+  const localHour = new Date().getHours();
+  const window = localHour === 0 ? {start: '12:00', end: '12:01'} : {start: '00:00', end: '00:01'};
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    intervalMaxMs: 7_200_000,
+    workHours: window,
+    log: () => {},
+    onError: () => {}
+  });
+  try {
+    writeFileSync(join(root, 'forced.md'), 'hello\n');
+    await handle.syncNow();
+    const commits = log(root);
+    t.equal(commits.length, 2, 'manual syncNow committed despite being outside the window');
+    t.ok(commits[0]?.startsWith('vault-storage auto-commit'), 'commit subject');
+  } finally {
+    handle.close();
+    cleanup(root);
+  }
+});
+
+test('git-sync respects intervalMaxMs in the constructor without blowing up', async t => {
+  // Smoke test: backoff config is accepted and a commit still works on
+  // the manual path. The actual interval-doubling is internal state we
+  // don't expose, but we verify the config doesn't break basic flow.
+  const root = initRepo();
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    intervalMaxMs: 7_200_000,
+    log: () => {},
+    onError: () => {}
+  });
+  try {
+    writeFileSync(join(root, 'a.md'), 'a\n');
+    await handle.syncNow();
+    t.equal(log(root).length, 2, 'commit landed with backoff config enabled');
   } finally {
     handle.close();
     cleanup(root);

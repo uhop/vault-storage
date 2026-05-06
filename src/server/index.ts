@@ -84,17 +84,26 @@ export const main = async (): Promise<void> => {
 
   let gitSync: GitSyncHandle | null = null;
   if (env.autoCommit) {
+    const workHours =
+      env.workHoursStart !== null && env.workHoursEnd !== null
+        ? {start: env.workHoursStart, end: env.workHoursEnd}
+        : undefined;
     gitSync = startGitSync({
       vaultDataPath: env.vaultDataPath,
       intervalMs: env.commitIntervalMs,
+      intervalMaxMs: env.commitIntervalMaxMs,
+      workHours,
       autoPush: env.autoPush,
       authorName: env.gitAuthorName,
       authorEmail: env.gitAuthorEmail,
       db
     });
-    process.stdout.write(
-      `vault-storage: git-sync every ${env.commitIntervalMs}ms (push=${env.autoPush})\n`
-    );
+    const backoff =
+      env.commitIntervalMaxMs > env.commitIntervalMs
+        ? `${env.commitIntervalMs}–${env.commitIntervalMaxMs}ms backoff`
+        : `${env.commitIntervalMs}ms`;
+    const window = workHours ? ` work-hours=${workHours.start}–${workHours.end}` : '';
+    process.stdout.write(`vault-storage: git-sync ${backoff} (push=${env.autoPush})${window}\n`);
   }
 
   const shutdown = async (signal: string): Promise<void> => {

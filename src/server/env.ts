@@ -30,8 +30,21 @@ export interface ServerEnv {
   autoCommit: boolean;
   /** When true and autoCommit is true, also `git push` after each commit. */
   autoPush: boolean;
-  /** Polling interval for the git-sync loop. */
+  /** Polling interval floor for the git-sync loop (back off from here on quiet). */
   commitIntervalMs: number;
+  /**
+   * Polling interval ceiling for the git-sync loop. After consecutive
+   * quiet polls the interval doubles up to this cap (default 2hr); a
+   * commit resets to floor. 0 disables backoff (interval stays at floor).
+   */
+  commitIntervalMaxMs: number;
+  /**
+   * Work-hours window: when both start and end are set (HH:MM, local time),
+   * git-sync polls only inside `[start, end)`. Null values disable the
+   * window and the poller runs 24/7. Manual `POST /commit` always wins.
+   */
+  workHoursStart: string | null;
+  workHoursEnd: string | null;
   /** Author/committer identity passed to `git commit` via `-c`. */
   gitAuthorName: string;
   gitAuthorEmail: string;
@@ -93,6 +106,28 @@ export const readServerEnv = (): ServerEnv => {
     throw new Error(`VAULT_COMMIT_INTERVAL_MS must be ≥ 1000 (got ${intervalRaw})`);
   }
 
+  const intervalMaxRaw = process.env['VAULT_COMMIT_INTERVAL_MAX_MS'] ?? '7200000';
+  const commitIntervalMaxMs = Number.parseInt(intervalMaxRaw, 10);
+  if (!Number.isFinite(commitIntervalMaxMs) || commitIntervalMaxMs < 0) {
+    throw new Error(`VAULT_COMMIT_INTERVAL_MAX_MS must be ≥ 0 (got ${intervalMaxRaw})`);
+  }
+  if (commitIntervalMaxMs > 0 && commitIntervalMaxMs < commitIntervalMs) {
+    throw new Error(
+      `VAULT_COMMIT_INTERVAL_MAX_MS (${commitIntervalMaxMs}) must be ≥ VAULT_COMMIT_INTERVAL_MS (${commitIntervalMs}) when non-zero`
+    );
+  }
+
+  const workHoursStart = parseTimeOfDay(
+    process.env['VAULT_WORK_HOURS_START'],
+    'VAULT_WORK_HOURS_START'
+  );
+  const workHoursEnd = parseTimeOfDay(process.env['VAULT_WORK_HOURS_END'], 'VAULT_WORK_HOURS_END');
+  if ((workHoursStart === null) !== (workHoursEnd === null)) {
+    throw new Error(
+      'VAULT_WORK_HOURS_START and VAULT_WORK_HOURS_END must both be set or both unset'
+    );
+  }
+
   const gitAuthorName = process.env['VAULT_GIT_AUTHOR_NAME'] ?? 'vault-storage';
   const gitAuthorEmail = process.env['VAULT_GIT_AUTHOR_EMAIL'] ?? 'vault-storage@localhost';
 
@@ -105,9 +140,7 @@ export const readServerEnv = (): ServerEnv => {
   const memoryReportIntervalRaw = process.env['VAULT_MEMORY_REPORT_INTERVAL_MS'] ?? '300000';
   const memoryReportIntervalMs = Number.parseInt(memoryReportIntervalRaw, 10);
   if (!Number.isFinite(memoryReportIntervalMs) || memoryReportIntervalMs < 0) {
-    throw new Error(
-      `VAULT_MEMORY_REPORT_INTERVAL_MS must be ≥ 0 (got ${memoryReportIntervalRaw})`
-    );
+    throw new Error(`VAULT_MEMORY_REPORT_INTERVAL_MS must be ≥ 0 (got ${memoryReportIntervalRaw})`);
   }
 
   return {
@@ -124,6 +157,9 @@ export const readServerEnv = (): ServerEnv => {
     autoCommit,
     autoPush,
     commitIntervalMs,
+    commitIntervalMaxMs,
+    workHoursStart,
+    workHoursEnd,
     gitAuthorName,
     gitAuthorEmail,
     uiStaticPath,
@@ -138,4 +174,20 @@ const parseFlag = (raw: string | undefined, defaultValue: boolean): boolean => {
   if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
   if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
   throw new Error(`expected a boolean flag, got: ${raw}`);
+};
+
+const TIME_OF_DAY_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+/**
+ * Parse a `HH:MM` (24-hour, local time) string. Empty/undefined yields null.
+ * The string is returned as-is on success — interpretation happens against
+ * a `Date` at call time so daylight-saving / TZ rolls are handled by the
+ * platform clock rather than baked in.
+ */
+const parseTimeOfDay = (raw: string | undefined, name: string): string | null => {
+  if (raw === undefined || raw === '') return null;
+  if (!TIME_OF_DAY_RE.test(raw)) {
+    throw new Error(`${name} must match HH:MM (24-hour local time), got '${raw}'`);
+  }
+  return raw;
 };
