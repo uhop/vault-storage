@@ -11,6 +11,7 @@ import type {ServerResponse} from 'node:http';
 import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
+import type {Embedder} from '../../embeddings/types.ts';
 import {
   AgentEnrichmentStaleFiler,
   ArchiveCandidateFiler,
@@ -18,6 +19,7 @@ import {
 } from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
+import {proposeNearest} from '../../maintenance/propose.ts';
 import {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
@@ -33,6 +35,7 @@ import {
 interface VaultDeps {
   db: DatabaseSync;
   vaultDataPath: string;
+  embedder: Embedder;
 }
 
 /**
@@ -169,7 +172,32 @@ export const getVaultRootHandler =
     listFolder(deps.vaultDataPath, '', ctx.res);
   };
 
-/** PUT /vault/{path} — create or replace a file. */
+/**
+ * Extract `agent.summary` from a frontmatter object if present, returning
+ * null otherwise. Mirrors the indexer's lookup so the dedup check uses
+ * the same chunk-prefix the eventual stored record will.
+ */
+const extractAgentSummary = (frontmatter: Record<string, unknown>): string | null => {
+  const agent = frontmatter['agent'];
+  if (!agent || typeof agent !== 'object' || Array.isArray(agent)) return null;
+  const summary = (agent as Record<string, unknown>)['summary'];
+  return typeof summary === 'string' && summary.length > 0 ? summary : null;
+};
+
+/**
+ * PUT /vault/{path} — create or replace a file.
+ *
+ * `?check=true` opts into the search-before-write dedup gate: the
+ * proposed body is embedded and scored against existing records via
+ * the same metric as `find-duplicates`. Any candidate whose distance
+ * is `≤ check_threshold` (default 0.10) blocks the write with a 409
+ * carrying the offending candidates. Without the query param, behavior
+ * is unchanged — naked PUT remains the existing contract.
+ *
+ * `X-Vault-Dedup: skip` short-circuits the check when the caller has
+ * already run /vault/propose and made an explicit decision; useful so
+ * the propose-then-write idiom doesn't double-charge the embedder.
+ */
 export const putVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
@@ -198,9 +226,70 @@ export const putVaultHandler =
     const archiveCandidate = new ArchiveCandidateFiler(deps.db);
     const existing = records.getByPath(path);
 
+    let parsed: ReturnType<typeof parseWriteRequest>;
+    try {
+      parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
+    } catch (err) {
+      if (err instanceof WriterError) {
+        sendError(ctx.res, err.status, err.code, err.message);
+        return;
+      }
+      throw err;
+    }
+
+    // Dedup gate. `?check=true` arms it; `X-Vault-Dedup: skip` disarms.
+    const checkParam = ctx.query['check'];
+    const dedupHeader = (ctx.req.headers['x-vault-dedup'] ?? '').toString().toLowerCase();
+    if (checkParam === 'true' && dedupHeader !== 'skip') {
+      const thresholdRaw = ctx.query['check_threshold'];
+      let threshold = 0.1;
+      if (thresholdRaw !== undefined) {
+        const n = Number(thresholdRaw);
+        if (!Number.isFinite(n) || n < 0) {
+          sendError(ctx.res, 400, 'bad_request', 'check_threshold must be a non-negative number');
+          return;
+        }
+        threshold = n;
+      }
+
+      // Pull the body+summary from the parsed write — the same content
+      // that's about to be persisted, so the dedup result reflects what
+      // would actually land.
+      let bodyForCheck: string;
+      let summaryForCheck: string | null;
+      if (parsed.kind === 'json') {
+        bodyForCheck = parsed.body;
+        summaryForCheck = extractAgentSummary(parsed.frontmatter);
+      } else {
+        const fm = parseFrontmatter(parsed.markdown);
+        bodyForCheck = fm.body;
+        summaryForCheck = extractAgentSummary(fm.data);
+      }
+
+      const result = await proposeNearest(deps.db, deps.embedder, bodyForCheck, summaryForCheck, {
+        excludeRecordId: existing?.recordId,
+        k: 10
+      });
+      const tooClose = result.candidates.filter(c => c.distance <= threshold);
+      if (tooClose.length > 0) {
+        sendJson(ctx.res, 409, {
+          error: 'dedup_conflict',
+          code: 'dedup_conflict',
+          message: `${tooClose.length} existing record(s) within distance ${threshold} of the proposed body`,
+          threshold,
+          candidates: tooClose.map(c => ({
+            record_id: c.recordId,
+            file_path: c.filePath,
+            distance: c.distance,
+            agent_summary: c.agentSummary
+          }))
+        });
+        return;
+      }
+    }
+
     let absolutePath: string;
     try {
-      const parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
       const result =
         parsed.kind === 'json'
           ? writeSplitRecordToDisk({
@@ -352,4 +441,107 @@ export const moveVaultHandler =
     records.updateFilePath(existing.recordId, toPath);
 
     sendNoContent(ctx.res);
+  };
+
+interface ProposeBody {
+  body?: unknown;
+  path?: unknown;
+  agent_summary?: unknown;
+  k?: unknown;
+  prefilter_max_distance?: unknown;
+}
+
+/**
+ * POST /vault/propose
+ *
+ * Search-before-write surface. Body: `{body, path?, agent_summary?,
+ * k?, prefilter_max_distance?}`. Embeds `body` (chunk-level + summary-
+ * decorated, same pipeline as ingest) and returns the top-K nearest
+ * existing records sorted by min cosine distance over chunk pairs.
+ *
+ * When `path` is supplied AND there's already a record at that path,
+ * that record is excluded from results — without this, a small FM-only
+ * edit would always self-match at distance ≈ 0 and crowd out actual
+ * neighbours.
+ *
+ * Returns `{candidates: [{record_id, file_path, distance,
+ * agent_summary}], proposed_chunks, candidates_screened, durationMs}`.
+ * Read-only — no write side effects.
+ *
+ * Pairs with PUT /vault/{path}?check=true (Phase 2) for enforcement;
+ * called directly by skills that want to surface neighbours to a
+ * human-in-the-loop before committing the write.
+ */
+export const proposeVaultHandler =
+  (deps: VaultDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    if (raw.trim().length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'request body required');
+      return;
+    }
+    let parsed: ProposeBody;
+    try {
+      const obj = JSON.parse(raw) as unknown;
+      if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+        sendError(ctx.res, 400, 'bad_request', 'request body must be a JSON object');
+        return;
+      }
+      parsed = obj as ProposeBody;
+    } catch (err) {
+      sendError(ctx.res, 400, 'bad_request', `invalid JSON: ${(err as Error).message}`);
+      return;
+    }
+    if (typeof parsed.body !== 'string' || parsed.body.length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'body must be a non-empty string');
+      return;
+    }
+    if (parsed.path !== undefined && typeof parsed.path !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', 'path must be a string when provided');
+      return;
+    }
+    const agentSummary =
+      typeof parsed.agent_summary === 'string' && parsed.agent_summary.length > 0
+        ? parsed.agent_summary
+        : null;
+    const k =
+      typeof parsed.k === 'number' && Number.isInteger(parsed.k) && parsed.k > 0
+        ? parsed.k
+        : undefined;
+    const prefilterMaxDistance =
+      typeof parsed.prefilter_max_distance === 'number' &&
+      Number.isFinite(parsed.prefilter_max_distance) &&
+      parsed.prefilter_max_distance > 0
+        ? parsed.prefilter_max_distance
+        : undefined;
+
+    let excludeRecordId: string | undefined;
+    if (typeof parsed.path === 'string' && parsed.path.length > 0) {
+      const existing = new RecordsRepository(deps.db).getByPath(parsed.path);
+      if (existing) excludeRecordId = existing.recordId;
+    }
+
+    const result = await proposeNearest(deps.db, deps.embedder, parsed.body, agentSummary, {
+      k,
+      prefilterMaxDistance,
+      excludeRecordId
+    });
+
+    sendJson(ctx.res, 200, {
+      candidates: result.candidates.map(c => ({
+        record_id: c.recordId,
+        file_path: c.filePath,
+        distance: c.distance,
+        agent_summary: c.agentSummary
+      })),
+      proposed_chunks: result.proposedChunks,
+      candidates_screened: result.candidatesScreened,
+      durationMs: result.durationMs
+    });
   };

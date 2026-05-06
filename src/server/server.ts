@@ -50,6 +50,7 @@ import {
   getVaultHandler,
   getVaultRootHandler,
   moveVaultHandler,
+  proposeVaultHandler,
   putVaultHandler
 } from './handlers/vault.ts';
 import {sendError} from './responses.ts';
@@ -109,12 +110,13 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/suggestions/{id}/reject', rejectSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/reopen', reopenSuggestionHandler(suggestionsDeps));
 
-  const vaultDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath};
+  const vaultDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, embedder: opts.embedder};
   router.get('/vault/', getVaultRootHandler(vaultDeps));
   router.get('/vault/{path}', getVaultHandler(vaultDeps));
   router.put('/vault/{path}', putVaultHandler(vaultDeps));
   router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
   router.post('/vault/move', moveVaultHandler(vaultDeps));
+  router.post('/vault/propose', proposeVaultHandler(vaultDeps));
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));

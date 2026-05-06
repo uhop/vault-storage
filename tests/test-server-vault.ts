@@ -959,3 +959,382 @@ Alpha references [[topics/beta]].
     cleanup();
   }
 });
+
+// --- POST /vault/propose -------------------------------------------------
+
+const PROPOSE_LONG_BODY =
+  'A vector store backed by sqlite-vec stores normalized chunk embeddings. ' +
+  'The chunker splits markdown bodies on header boundaries with a soft ' +
+  'character cap. Doc-level mean-pool prefilters the chunk-level scan to ' +
+  'keep latency bounded on large vaults. Repeat the substance several ' +
+  'sentences to cross the 200-char minBodyLength gate that find-duplicates ' +
+  'imposes on its scan side; propose itself has no minimum, but seeding ' +
+  'the test corpus through importVault and embedPending demands real bodies ' +
+  'large enough to chunk meaningfully.';
+
+const PROPOSE_DISTANT_BODY =
+  'Completely unrelated content about gardening, the cultivation of tomatoes ' +
+  'in raised beds, mulch composition, drip irrigation tubing diameter ' +
+  'tradeoffs, and how to detect early signs of late-blight infection on ' +
+  'leaves before the spores spread to neighbouring plants. Nothing here ' +
+  'overlaps the vector-store body conceptually or lexically; deterministic ' +
+  'embedder will produce a wildly different vector.';
+
+const seedForPropose = async (ctx: ServerCtx, root: string): Promise<void> => {
+  // Seed a record via PUT, which runs through the writer + indexer +
+  // embed-pending pathway end-to-end. Avoids a second separate code path
+  // for fixturing.
+  const headers = {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/json'};
+  const written = await fetch(`${ctx.url}/vault/topics/vector-store.md`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({
+      frontmatter: {title: 'Vector store', tags: [], type: 'permanent'},
+      body: PROPOSE_LONG_BODY
+    })
+  });
+  if (written.status !== 204) {
+    throw new Error(`seed PUT failed: ${written.status} ${await written.text()}`);
+  }
+  // Run embed-pending so propose has chunks + doc-vec to scan against.
+  const embedRes = await fetch(`${ctx.url}/maintenance/embed-pending`, {
+    method: 'POST',
+    headers
+  });
+  if (embedRes.status !== 200) {
+    throw new Error(`embed-pending failed: ${embedRes.status}`);
+  }
+  void root;
+};
+
+test('POST /vault/propose returns top-K nearest with distance + summary', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_LONG_BODY})
+      });
+      t.equal(r.status, 200, '200 ok');
+      const body = r.body as {
+        candidates: {record_id: string; file_path: string; distance: number}[];
+        proposed_chunks: number;
+      };
+      t.ok(body.candidates.length >= 1, 'at least one candidate');
+      const self = body.candidates.find(c => c.file_path === 'topics/vector-store.md');
+      t.ok(self !== undefined, 'identical body matches the seeded record');
+      t.ok(self !== undefined && self.distance < 1e-6, 'distance ≈ 0 on identical body');
+      t.ok(body.proposed_chunks >= 1, 'reports chunk count');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose distant body returns no near matches', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_DISTANT_BODY})
+      });
+      t.equal(r.status, 200, '200 ok');
+      const body = r.body as {candidates: {distance: number}[]};
+      // Defaults: prefilter L2 ceiling 0.5 — for L2-normalized vectors this
+      // corresponds to a tight cosine bound. A truly orthogonal random
+      // FakeEmbedder vector will fail the prefilter; the candidate list
+      // should be empty or contain only items above any reasonable
+      // duplicate threshold.
+      const tooClose = body.candidates.filter(c => c.distance < 0.5);
+      t.equal(tooClose.length, 0, 'no candidates within near-match band');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose with path excludes the existing record at that path', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_LONG_BODY, path: 'topics/vector-store.md'})
+      });
+      t.equal(r.status, 200, '200 ok');
+      const body = r.body as {candidates: {file_path: string}[]};
+      const self = body.candidates.find(c => c.file_path === 'topics/vector-store.md');
+      t.equal(self, undefined, 'self-record excluded when path is supplied');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose 400 on missing body field', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+      });
+      t.equal(r.status, 400, '400 bad request');
+      t.equal((r.body as {code: string}).code, 'bad_request', 'bad_request code');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose 400 on invalid JSON', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: 'not json'
+      });
+      t.equal(r.status, 400, '400 bad request');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose 400 on empty body', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {method: 'POST'});
+      t.equal(r.status, 400, '400 bad request');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+// --- PUT /vault/{path}?check=true ---------------------------------------
+
+test('PUT /vault/{path}?check=true blocks naked write near a seeded record', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      // Try to write the IDENTICAL body to a NEW path with check enabled.
+      // The exclude-by-path logic doesn't fire (the new path has no record
+      // yet), so the existing seeded record is the prime candidate at
+      // distance ≈ 0.
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/vector-store-2.md?check=true`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Vector store 2', tags: [], type: 'permanent'},
+          body: PROPOSE_LONG_BODY
+        })
+      });
+      t.equal(r.status, 409, '409 conflict');
+      const body = r.body as {
+        code: string;
+        candidates: {file_path: string; distance: number}[];
+        threshold: number;
+      };
+      t.equal(body.code, 'dedup_conflict', 'dedup_conflict code');
+      t.equal(body.threshold, 0.1, 'default threshold 0.1');
+      t.ok(body.candidates.length >= 1, 'candidates present');
+      t.equal(body.candidates[0]?.file_path, 'topics/vector-store.md', 'seeded record cited');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} without ?check=true bypasses dedup gate', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      // No ?check=true — naked PUT, default contract preserved. Same body
+      // as the seeded record but writes go through.
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/vector-store-2.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Vector store 2', tags: [], type: 'permanent'},
+          body: PROPOSE_LONG_BODY
+        })
+      });
+      t.equal(r.status, 204, '204 ok — write succeeded');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path}?check=true with X-Vault-Dedup: skip header bypasses gate', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      // ?check=true would normally 409 here, but the header opts the
+      // caller out (e.g., they already ran propose explicitly).
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/vector-store-2.md?check=true`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'X-Vault-Dedup': 'skip'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Vector store 2', tags: [], type: 'permanent'},
+          body: PROPOSE_LONG_BODY
+        })
+      });
+      t.equal(r.status, 204, '204 ok — header bypassed the check');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path}?check=true distant body proceeds normally', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/gardening.md?check=true`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Gardening', tags: [], type: 'permanent'},
+          body: PROPOSE_DISTANT_BODY
+        })
+      });
+      t.equal(r.status, 204, '204 ok — distant content not blocked');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path}?check=true on update with same body is allowed (self-exclusion)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      // Re-PUT the seeded record. Without self-exclusion this would 409
+      // against itself; the exclude-by-path logic must fire here.
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/vector-store.md?check=true`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Vector store', tags: [], type: 'permanent'},
+          body: PROPOSE_LONG_BODY
+        })
+      });
+      t.equal(r.status, 204, '204 ok — self-update not blocked');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path}?check=true&check_threshold=0 allows any body', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      // Threshold 0 — only an exact-distance-0 hit blocks. Identical body
+      // should still 409 (distance is essentially 0 from itself).
+      const exact = await fetchAuthed(
+        `${ctx.url}/vault/topics/vector-store-2.md?check=true&check_threshold=0`,
+        {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            frontmatter: {title: 'Dup', tags: [], type: 'permanent'},
+            body: PROPOSE_LONG_BODY
+          })
+        }
+      );
+      t.equal(exact.status, 409, 'exact match still blocks at threshold=0');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path}?check=true 400 on invalid threshold', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(
+        `${ctx.url}/vault/topics/x.md?check=true&check_threshold=not-a-number`,
+        {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            frontmatter: {title: 'X', tags: [], type: 'permanent'},
+            body: 'tiny body'
+          })
+        }
+      );
+      t.equal(r.status, 400, '400 bad request');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
