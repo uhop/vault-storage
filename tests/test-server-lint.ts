@@ -41,9 +41,7 @@ const fetchJson = async (
   return {status: res.status, body};
 };
 
-const withServer = async (
-  fn: (url: string, db: DatabaseSync) => Promise<void>
-): Promise<void> => {
+const withServer = async (fn: (url: string, db: DatabaseSync) => Promise<void>): Promise<void> => {
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   const handle = await startServer({
@@ -141,12 +139,23 @@ test('GET /system/lint detects embedding_hash_drift', async t => {
     });
 
     const {body} = await fetchJson(`${url}/system/lint`);
-    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string; file_path: string}[]}>};
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string; file_path: string}[]}>;
+    };
     t.equal(r.ok, false, 'ok=false');
     t.equal(r.checks['embedding_hash_drift']?.count, 1, 'drift count=1');
     t.equal(r.checks['embedding_hash_drift']?.samples[0]?.id, 'rec-drift', 'sample id=rec-drift');
-    t.equal(r.checks['embedding_hash_drift']?.samples[0]?.file_path, 'topics/drift.md', 'sample file_path');
-    t.equal(r.checks['records_without_embeddings']?.count, 0, 'no records-without-embeddings (chunk exists)');
+    t.equal(
+      r.checks['embedding_hash_drift']?.samples[0]?.file_path,
+      'topics/drift.md',
+      'sample file_path'
+    );
+    t.equal(
+      r.checks['records_without_embeddings']?.count,
+      0,
+      'no records-without-embeddings (chunk exists)'
+    );
   });
 });
 
@@ -156,7 +165,10 @@ test('GET /system/lint detects records_without_embeddings', async t => {
     // No vec chunk for rec-noemb.
 
     const {body} = await fetchJson(`${url}/system/lint`);
-    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string}[]}>};
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string}[]}>;
+    };
     t.equal(r.ok, false, 'ok=false');
     t.equal(r.checks['records_without_embeddings']?.count, 1, 'count=1');
     t.equal(r.checks['records_without_embeddings']?.samples[0]?.id, 'rec-noemb', 'sample id');
@@ -173,7 +185,10 @@ test('GET /system/lint detects orphan_embeddings', async t => {
     });
 
     const {body} = await fetchJson(`${url}/system/lint`);
-    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string}[]}>};
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string}[]}>;
+    };
     t.equal(r.ok, false, 'ok=false');
     t.equal(r.checks['orphan_embeddings']?.count, 1, 'count=1');
     t.equal(r.checks['orphan_embeddings']?.samples[0]?.id, 'rec-ghost', 'sample id');
@@ -188,7 +203,10 @@ test('GET /system/lint detects orphan_doc_embeddings', async t => {
     ).run('rec-doc-ghost', 'h', new Float32Array(384));
 
     const {body} = await fetchJson(`${url}/system/lint`);
-    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string}[]}>};
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string}[]}>;
+    };
     t.equal(r.ok, false, 'ok=false');
     t.equal(r.checks['orphan_doc_embeddings']?.count, 1, 'count=1');
     t.equal(r.checks['orphan_doc_embeddings']?.samples[0]?.id, 'rec-doc-ghost', 'sample id');
@@ -207,9 +225,13 @@ test('records_after_delete trigger cascades to record_vec and record_doc_vec', a
 
     db.prepare('DELETE FROM records WHERE record_id = ?').run('rec-cascade');
 
-    const chunks = db.prepare('SELECT COUNT(*) AS n FROM record_vec WHERE record_id = ?').get('rec-cascade') as {n: number};
+    const chunks = db
+      .prepare('SELECT COUNT(*) AS n FROM record_vec WHERE record_id = ?')
+      .get('rec-cascade') as {n: number};
     t.equal(chunks.n, 0, 'record_vec rows cascaded');
-    const docs = db.prepare('SELECT COUNT(*) AS n FROM record_doc_vec WHERE record_id = ?').get('rec-cascade') as {n: number};
+    const docs = db
+      .prepare('SELECT COUNT(*) AS n FROM record_doc_vec WHERE record_id = ?')
+      .get('rec-cascade') as {n: number};
     t.equal(docs.n, 0, 'record_doc_vec row cascaded');
   });
 });
@@ -229,7 +251,10 @@ test('GET /system/lint detects temporal_anomalies (updated < created)', async t 
     });
 
     const {body} = await fetchJson(`${url}/system/lint`);
-    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string}[]}>};
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string}[]}>;
+    };
     t.equal(r.ok, false, 'ok=false');
     t.equal(r.checks['temporal_anomalies']?.count, 1, 'count=1');
     t.equal(r.checks['temporal_anomalies']?.samples[0]?.id, 'rec-temporal', 'sample id');
@@ -262,17 +287,25 @@ test('GET /system/lint detects dangling_tag_aliases', async t => {
     // Bypass the FK by disabling foreign_keys for this insert. Simulates a
     // PRAGMA-off write or schema drift.
     db.exec('PRAGMA foreign_keys = OFF');
-    db.prepare(
-      `INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)`
-    ).run('rusts-lang', 'rust-lang-not-in-taxonomy');
+    db.prepare(`INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)`).run(
+      'rusts-lang',
+      'rust-lang-not-in-taxonomy'
+    );
     db.exec('PRAGMA foreign_keys = ON');
 
     const {body} = await fetchJson(`${url}/system/lint`);
-    const r = body as {ok: boolean; checks: Record<string, {count: number; samples: {id: string; canonical: string}[]}>};
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string; canonical: string}[]}>;
+    };
     t.equal(r.ok, false, 'ok=false');
     t.equal(r.checks['dangling_tag_aliases']?.count, 1, 'count=1');
     t.equal(r.checks['dangling_tag_aliases']?.samples[0]?.id, 'rusts-lang', 'sample alias');
-    t.equal(r.checks['dangling_tag_aliases']?.samples[0]?.canonical, 'rust-lang-not-in-taxonomy', 'sample canonical');
+    t.equal(
+      r.checks['dangling_tag_aliases']?.samples[0]?.canonical,
+      'rust-lang-not-in-taxonomy',
+      'sample canonical'
+    );
   });
 });
 
@@ -298,7 +331,11 @@ test('GET /system/lint clean DB after a healthy record + chunk: ok=true', async 
 
 test('POST /maintenance/cleanup-lint deletes orphan embeddings', async t => {
   await withServer(async (url, db) => {
-    insertRecord(db, {record_id: 'rec-good', file_path: 'topics/good.md', content_hash: 'hash-match'});
+    insertRecord(db, {
+      record_id: 'rec-good',
+      file_path: 'topics/good.md',
+      content_hash: 'hash-match'
+    });
     insertVecChunk(db, {chunk_id: 'c-good-0', record_id: 'rec-good', content_hash: 'hash-match'});
     insertVecChunk(db, {chunk_id: 'c-orphan1-0', record_id: 'rec-orphan1', content_hash: 'hash-x'});
     insertVecChunk(db, {chunk_id: 'c-orphan2-0', record_id: 'rec-orphan2', content_hash: 'hash-x'});
@@ -306,7 +343,8 @@ test('POST /maintenance/cleanup-lint deletes orphan embeddings', async t => {
 
     const before = await fetchJson(`${url}/system/lint`);
     t.equal(
-      (before.body as {checks: {orphan_embeddings: {count: number}}}).checks.orphan_embeddings.count,
+      (before.body as {checks: {orphan_embeddings: {count: number}}}).checks.orphan_embeddings
+        .count,
       2,
       'pre: 2 orphan record_ids'
     );
@@ -325,7 +363,9 @@ test('POST /maintenance/cleanup-lint deletes orphan embeddings', async t => {
     const after = await fetchJson(`${url}/system/lint`);
     t.equal((after.body as {ok: boolean}).ok, true, 'lint clean after cleanup');
 
-    const remaining = db.prepare('SELECT chunk_id FROM record_vec ORDER BY chunk_id').all() as {chunk_id: string}[];
+    const remaining = db.prepare('SELECT chunk_id FROM record_vec ORDER BY chunk_id').all() as {
+      chunk_id: string;
+    }[];
     t.equal(remaining.length, 1, 'one healthy chunk preserved');
     t.equal(remaining[0]?.chunk_id, 'c-good-0', 'healthy chunk untouched');
   });
@@ -333,7 +373,11 @@ test('POST /maintenance/cleanup-lint deletes orphan embeddings', async t => {
 
 test('POST /maintenance/cleanup-lint is a no-op on a clean DB', async t => {
   await withServer(async (url, db) => {
-    insertRecord(db, {record_id: 'rec-good', file_path: 'topics/good.md', content_hash: 'hash-match'});
+    insertRecord(db, {
+      record_id: 'rec-good',
+      file_path: 'topics/good.md',
+      content_hash: 'hash-match'
+    });
     insertVecChunk(db, {chunk_id: 'c-good-0', record_id: 'rec-good', content_hash: 'hash-match'});
 
     const {status, body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
@@ -352,13 +396,258 @@ test('POST /maintenance/cleanup-lint reports needsReview counts for non-fixable 
       created: '2026-04-29',
       updated: '2026-04-01'
     });
-    insertVecChunk(db, {chunk_id: 'c-temporal-0', record_id: 'rec-temporal', content_hash: 'hash-fresh'});
+    insertVecChunk(db, {
+      chunk_id: 'c-temporal-0',
+      record_id: 'rec-temporal',
+      content_hash: 'hash-fresh'
+    });
 
     const {body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
     const r = body as {totalFixed: number; needsReview: Record<string, number>};
     t.equal(r.totalFixed, 0, 'no orphans to fix');
     t.equal(r.needsReview['temporal_anomalies'], 1, 'temporal anomaly surfaced for review');
-    t.equal(r.needsReview['orphan_embeddings'], undefined, 'orphan_embeddings is in fixed, not needsReview');
+    t.equal(
+      r.needsReview['orphan_embeddings'],
+      undefined,
+      'orphan_embeddings is in fixed, not needsReview'
+    );
+  });
+});
+
+test('POST /maintenance/cleanup-lint clamps future-dated created stamp to now', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-future-c',
+      file_path: 'topics/future-c.md',
+      created: '2099-01-01',
+      updated: '2026-04-15'
+    });
+    insertVecChunk(db, {chunk_id: 'c-future-c-0', record_id: 'rec-future-c', content_hash: 'h'});
+
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    t.equal(status, 200, '200 ok');
+    const r = body as {
+      totalFixed: number;
+      fixed: {temporal_future_clamps: {recordsAffected: number; fieldsUpdated: number}};
+    };
+    t.equal(r.fixed.temporal_future_clamps.recordsAffected, 1, '1 record clamped');
+    t.equal(r.fixed.temporal_future_clamps.fieldsUpdated, 1, '1 field updated (created only)');
+    t.equal(r.totalFixed, 1, 'totalFixed includes the clamp');
+
+    const after = db
+      .prepare('SELECT created, updated FROM records WHERE record_id = ?')
+      .get('rec-future-c') as {created: string; updated: string};
+    t.ok(after.created <= new Date().toISOString(), 'created clamped to <= now');
+    t.equal(after.updated, '2026-04-15', 'updated untouched (was already past)');
+  });
+});
+
+test('POST /maintenance/cleanup-lint clamps future-dated updated stamp to now', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-future-u',
+      file_path: 'topics/future-u.md',
+      created: '2026-04-01',
+      updated: '2099-12-31'
+    });
+    insertVecChunk(db, {chunk_id: 'c-future-u-0', record_id: 'rec-future-u', content_hash: 'h'});
+
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    const r = body as {
+      fixed: {temporal_future_clamps: {recordsAffected: number; fieldsUpdated: number}};
+    };
+    t.equal(r.fixed.temporal_future_clamps.recordsAffected, 1, '1 record clamped');
+    t.equal(r.fixed.temporal_future_clamps.fieldsUpdated, 1, '1 field updated (updated only)');
+
+    const after = db
+      .prepare('SELECT created, updated FROM records WHERE record_id = ?')
+      .get('rec-future-u') as {created: string; updated: string};
+    t.equal(after.created, '2026-04-01', 'created untouched');
+    t.ok(after.updated <= new Date().toISOString(), 'updated clamped to <= now');
+  });
+});
+
+test('POST /maintenance/cleanup-lint clamps both stamps when both are in the future', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-future-both',
+      file_path: 'topics/future-both.md',
+      created: '2099-01-01',
+      updated: '2099-06-15'
+    });
+    insertVecChunk(db, {
+      chunk_id: 'c-future-both-0',
+      record_id: 'rec-future-both',
+      content_hash: 'h'
+    });
+
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    const r = body as {
+      fixed: {temporal_future_clamps: {recordsAffected: number; fieldsUpdated: number}};
+    };
+    t.equal(r.fixed.temporal_future_clamps.recordsAffected, 1, '1 record clamped');
+    t.equal(r.fixed.temporal_future_clamps.fieldsUpdated, 2, '2 fields updated (both)');
+  });
+});
+
+test('POST /maintenance/cleanup-lint leaves updated < created in needsReview', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-backwards',
+      file_path: 'topics/backwards.md',
+      created: '2026-04-29',
+      updated: '2026-04-01'
+    });
+    insertVecChunk(db, {chunk_id: 'c-backwards-0', record_id: 'rec-backwards', content_hash: 'h'});
+
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    const r = body as {
+      fixed: {temporal_future_clamps: {recordsAffected: number}};
+      needsReview: Record<string, number>;
+    };
+    t.equal(r.fixed.temporal_future_clamps.recordsAffected, 0, 'not a future-clamp case');
+    t.equal(r.needsReview['temporal_anomalies'], 1, 'updated<created surfaces for review');
+
+    const after = db
+      .prepare('SELECT created, updated FROM records WHERE record_id = ?')
+      .get('rec-backwards') as {created: string; updated: string};
+    t.equal(after.created, '2026-04-29', 'created untouched');
+    t.equal(after.updated, '2026-04-01', 'updated untouched');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases deletes dangling aliases', async t => {
+  await withServer(async (url, db) => {
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.prepare(`INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)`).run(
+      'rusts-lang',
+      'rust-lang-not-in-taxonomy'
+    );
+    db.exec('PRAGMA foreign_keys = ON');
+
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aliases: ['rusts-lang']})
+    });
+    t.equal(status, 200, '200 ok');
+    const r = body as {
+      requested: number;
+      deleted: string[];
+      missing: string[];
+      notDangling: string[];
+    };
+    t.equal(r.requested, 1, '1 alias requested');
+    t.deepEqual(r.deleted, ['rusts-lang'], 'alias deleted');
+    t.equal(r.missing.length, 0, 'none missing');
+    t.equal(r.notDangling.length, 0, 'none notDangling');
+
+    const remaining = db.prepare('SELECT alias FROM tag_aliases WHERE alias = ?').get('rusts-lang');
+    t.equal(remaining, undefined, 'alias row removed');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases reports missing for unknown alias', async t => {
+  await withServer(async url => {
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aliases: ['no-such-alias']})
+    });
+    const r = body as {deleted: string[]; missing: string[]; notDangling: string[]};
+    t.equal(r.deleted.length, 0, 'nothing deleted');
+    t.deepEqual(r.missing, ['no-such-alias'], 'unknown alias surfaces as missing');
+    t.equal(r.notDangling.length, 0, 'none notDangling');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases preserves live aliases (notDangling)', async t => {
+  await withServer(async (url, db) => {
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)').run(
+      'javascript',
+      null,
+      now
+    );
+    db.prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)').run('js', 'javascript');
+
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aliases: ['js']})
+    });
+    const r = body as {deleted: string[]; missing: string[]; notDangling: string[]};
+    t.equal(r.deleted.length, 0, 'nothing deleted');
+    t.deepEqual(r.notDangling, ['js'], 'live alias surfaces as notDangling');
+
+    const remaining = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?').get('js') as {
+      canonical: string;
+    };
+    t.equal(remaining.canonical, 'javascript', 'live alias preserved');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases sorts mixed input into the three buckets', async t => {
+  await withServer(async (url, db) => {
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)').run(
+      'python',
+      null,
+      now
+    );
+    db.prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)').run('py', 'python');
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)').run(
+      'ghosted',
+      'tag-that-does-not-exist'
+    );
+    db.exec('PRAGMA foreign_keys = ON');
+
+    const {body} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aliases: ['ghosted', 'py', 'never-was']})
+    });
+    const r = body as {
+      requested: number;
+      deleted: string[];
+      missing: string[];
+      notDangling: string[];
+    };
+    t.equal(r.requested, 3, '3 requested');
+    t.deepEqual(r.deleted, ['ghosted'], 'dangling alias deleted');
+    t.deepEqual(r.notDangling, ['py'], 'live alias preserved');
+    t.deepEqual(r.missing, ['never-was'], 'unknown surfaces as missing');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases returns 400 on missing aliases body', async t => {
+  await withServer(async url => {
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})
+    });
+    t.equal(status, 400, '400 bad request');
+    t.equal((body as {code: string}).code, 'bad_request', 'bad_request error');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases returns 400 on non-array aliases', async t => {
+  await withServer(async url => {
+    const {status} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({aliases: 'js'})
+    });
+    t.equal(status, 400, '400 bad request');
+  });
+});
+
+test('POST /maintenance/cleanup-tag-aliases returns 400 on empty body', async t => {
+  await withServer(async url => {
+    const {status} = await fetchJson(`${url}/maintenance/cleanup-tag-aliases`, {method: 'POST'});
+    t.equal(status, 400, '400 bad request');
   });
 });
 

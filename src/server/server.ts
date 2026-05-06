@@ -4,14 +4,11 @@ import {checkBearer} from './auth.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {backlinksHandler, neighborhoodHandler} from './handlers/edges.ts';
-import {
-  getRecordHandler,
-  getRecordMetaHandler,
-  listRecordsHandler
-} from './handlers/records.ts';
+import {getRecordHandler, getRecordMetaHandler, listRecordsHandler} from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
 import {
   cleanupLintHandler,
+  cleanupTagAliasesHandler,
   embedPendingHandler,
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
@@ -42,7 +39,12 @@ import {lintHandler} from './handlers/lint.ts';
 import {resolveHandler} from './handlers/resolve.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {systemStatusHandler} from './handlers/system.ts';
-import {addAliasHandler, addTaxonomyHandler, listTagsHandler, recordsByTagHandler} from './handlers/tags.ts';
+import {
+  addAliasHandler,
+  addTaxonomyHandler,
+  listTagsHandler,
+  recordsByTagHandler
+} from './handlers/tags.ts';
 import {
   deleteVaultHandler,
   getVaultHandler,
@@ -145,6 +147,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   );
   router.post('/maintenance/find-upgrade-signals', findUpgradeSignalsHandler({db: opts.db}));
   router.post('/maintenance/cleanup-lint', cleanupLintHandler({db: opts.db}));
+  router.post('/maintenance/cleanup-tag-aliases', cleanupTagAliasesHandler({db: opts.db}));
   router.post(
     '/maintenance/embed-pending',
     embedPendingHandler({db: opts.db, embedder: opts.embedder})

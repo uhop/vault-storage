@@ -2,19 +2,18 @@ import {createReadStream, readdirSync, statSync, unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {cleanupLint} from '../../maintenance/cleanup-lint.ts';
+import {cleanupTagAliases} from '../../maintenance/cleanup-tag-aliases.ts';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
 import {findUpgradeSignals} from '../../maintenance/find-upgrade-signals.ts';
-import {
-  clearLastIndexedCommit,
-  incrementalReindex
-} from '../../maintenance/incremental-reindex.ts';
+import {clearLastIndexedCommit, incrementalReindex} from '../../maintenance/incremental-reindex.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {listFolder} from '../../maintenance/folder-listing.ts';
 import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {snapshotDb} from '../snapshot.ts';
+import {readBodyText} from '../body.ts';
 import {sendError, sendJson, sendNoContent} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -236,14 +235,16 @@ export const runAllScansHandler =
 /**
  * POST /maintenance/cleanup-lint
  *
- * Auto-fix the lint categories with deterministic cleanup paths
- * (currently only `orphan_embeddings`: rows in record_vec whose
- * record_id no longer exists in records). Categories that need human
+ * Auto-fix the lint categories with deterministic cleanup paths:
+ * `orphan_embeddings` (rows in record_vec whose record_id no longer
+ * exists in records), `orphan_doc_embeddings` (same in record_doc_vec),
+ * and `temporal_future_clamps` (records with `created` or `updated`
+ * stamps in the future, clamped to now). Categories that need human
  * review or are handled by other passes are reported under
  * `needsReview` with their current counts. Idempotent.
  *
- * Returns `{totalFixed, fixed: {orphan_embeddings: {recordsAffected,
- * chunksDeleted}}, needsReview, durationMs}`.
+ * Returns `{totalFixed, fixed: {orphan_embeddings, orphan_doc_embeddings,
+ * temporal_future_clamps}, needsReview, durationMs}`.
  */
 export const cleanupLintHandler =
   (deps: MaintenanceDeps): Handler =>
@@ -251,6 +252,69 @@ export const cleanupLintHandler =
     const summary = cleanupLint(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
+  };
+
+interface CleanupTagAliasesBody {
+  aliases?: unknown;
+}
+
+/**
+ * POST /maintenance/cleanup-tag-aliases  body: {aliases: string[]}
+ *
+ * Delete dangling `tag_aliases` rows by explicit name list. An alias is
+ * dangling when its `canonical` is missing from `tags_taxonomy`. The
+ * `aliases` argument is required — there is no "delete every dangling
+ * row" mode, because the aliases were authored by a human and the
+ * operator decides which to drop.
+ *
+ * Each input alias is sorted into one of three disjoint buckets:
+ * `deleted` (DELETE applied), `missing` (alias not in `tag_aliases`),
+ * `notDangling` (alias exists and its canonical exists too — would lose
+ * intent). Idempotent: a second call with the same list returns all
+ * aliases under `missing`.
+ *
+ * 400 on missing/invalid `aliases` body.
+ */
+export const cleanupTagAliasesHandler =
+  (deps: MaintenanceDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    if (raw.trim().length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'request body required');
+      return;
+    }
+    let parsed: CleanupTagAliasesBody;
+    try {
+      const obj = JSON.parse(raw) as unknown;
+      if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+        sendError(ctx.res, 400, 'bad_request', 'request body must be a JSON object');
+        return;
+      }
+      parsed = obj as CleanupTagAliasesBody;
+    } catch (err) {
+      sendError(ctx.res, 400, 'bad_request', `invalid JSON: ${(err as Error).message}`);
+      return;
+    }
+    if (!Array.isArray(parsed.aliases)) {
+      sendError(ctx.res, 400, 'bad_request', 'aliases must be an array of strings');
+      return;
+    }
+    const aliases: string[] = [];
+    for (const a of parsed.aliases) {
+      if (typeof a !== 'string' || a.length === 0) {
+        sendError(ctx.res, 400, 'bad_request', 'aliases must be non-empty strings');
+        return;
+      }
+      aliases.push(a);
+    }
+    const summary = cleanupTagAliases(deps.db, aliases);
+    sendJson(ctx.res, 200, summary);
   };
 
 /**

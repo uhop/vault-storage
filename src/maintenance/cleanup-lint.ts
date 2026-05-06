@@ -5,6 +5,7 @@ export interface CleanupLintSummary {
   fixed: {
     orphan_embeddings: {recordsAffected: number; chunksDeleted: number};
     orphan_doc_embeddings: {rowsDeleted: number};
+    temporal_future_clamps: {recordsAffected: number; fieldsUpdated: number};
   };
   needsReview: Record<string, number>;
   durationMs: number;
@@ -13,16 +14,27 @@ export interface CleanupLintSummary {
 /**
  * Auto-fix the lint categories that have a deterministic cleanup:
  * `orphan_embeddings` (rows in `record_vec` whose `record_id` no longer
- * exists in `records`) and `orphan_doc_embeddings` (same in
- * `record_doc_vec`). Schema 7's records_after_delete trigger prevents
- * new orphans; this endpoint drains pre-existing ones.
+ * exists in `records`), `orphan_doc_embeddings` (same in
+ * `record_doc_vec`), and `temporal_future_clamps` (records with
+ * `created` or `updated` stamps in the future — clamped to now).
+ * Schema 7's records_after_delete trigger prevents new orphans; this
+ * endpoint drains pre-existing ones.
  *
- * Categories that need human review (`temporal_anomalies`,
- * `dangling_tag_aliases`) are reported under `needsReview` with their
- * current counts; embedding-related ones (`embedding_hash_drift`,
- * `records_without_embeddings`) are likewise surfaced — the watcher /
- * embedPending pass handles them on the next trigger and a manual
- * cleanup here would race.
+ * Future-stamp clamping is mechanical: the wall clock is authoritative,
+ * so a stamp ahead of it can't be right. The `updated < created` sub-
+ * category of temporal_anomalies stays in `needsReview` — re-stamping
+ * a back-dated update could mask a write bug; surface it for human
+ * investigation. If clamping a future `created` produces an
+ * `updated < created` state as a side effect (rare; requires only
+ * `created` to be in the future), the resulting anomaly surfaces in
+ * `needsReview` on the next /system/lint call.
+ *
+ * Categories that need human review (`temporal_anomalies` non-future
+ * subset, `dangling_tag_aliases`) are reported under `needsReview` with
+ * their current counts; embedding-related ones
+ * (`embedding_hash_drift`, `records_without_embeddings`) are likewise
+ * surfaced — the watcher / embedPending pass handles them on the next
+ * trigger and a manual cleanup here would race.
  */
 export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
   const start = Date.now();
@@ -65,6 +77,8 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
     docRowsDeleted = Number(result.changes);
   }
 
+  const futureClamps = clampFutureStamps(db);
+
   const needsReview: Record<string, number> = {
     embedding_hash_drift: countDrift(db),
     records_without_embeddings: countMissingEmbeddings(db),
@@ -73,14 +87,43 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
   };
 
   return {
-    totalFixed: orphans.length + docOrphans.length,
+    totalFixed: orphans.length + docOrphans.length + futureClamps.recordsAffected,
     fixed: {
       orphan_embeddings: {recordsAffected: orphans.length, chunksDeleted},
-      orphan_doc_embeddings: {rowsDeleted: docRowsDeleted}
+      orphan_doc_embeddings: {rowsDeleted: docRowsDeleted},
+      temporal_future_clamps: futureClamps
     },
     needsReview,
     durationMs: Date.now() - start
   };
+};
+
+const clampFutureStamps = (db: DatabaseSync): {recordsAffected: number; fieldsUpdated: number} => {
+  const now = new Date().toISOString();
+  const futures = db
+    .prepare(
+      `SELECT record_id, created, updated
+         FROM records
+        WHERE created > ? OR updated > ?`
+    )
+    .all(now, now) as {record_id: string; created: string; updated: string}[];
+
+  let fieldsUpdated = 0;
+  const update = db.prepare(`UPDATE records SET created = ?, updated = ? WHERE record_id = ?`);
+  for (const r of futures) {
+    let newCreated = r.created;
+    let newUpdated = r.updated;
+    if (r.created > now) {
+      newCreated = now;
+      ++fieldsUpdated;
+    }
+    if (r.updated > now) {
+      newUpdated = now;
+      ++fieldsUpdated;
+    }
+    update.run(newCreated, newUpdated, r.record_id);
+  }
+  return {recordsAffected: futures.length, fieldsUpdated};
 };
 
 const countDrift = (db: DatabaseSync): number =>
