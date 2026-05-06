@@ -341,10 +341,16 @@ function recommendFromLint(lint) {
       .filter(([, c]) => c.count > 0)
       .map(([name, c]) => `${name}:${c.count}`)
       .join(', ');
-    const fixable = (lint.checks?.orphan_embeddings?.count ?? 0) + (lint.checks?.orphan_doc_embeddings?.count ?? 0);
+    const nowIso = new Date().toISOString();
+    const futureStamps = (lint.checks?.temporal_anomalies?.samples ?? [])
+      .filter(s => (s.created && s.created > nowIso) || (s.updated && s.updated > nowIso))
+      .length;
+    const fixable = (lint.checks?.orphan_embeddings?.count ?? 0) + (lint.checks?.orphan_doc_embeddings?.count ?? 0) + futureStamps;
+    const reviewOnly = lint.total_issues - fixable;
+    const reviewLink = reviewOnly > 0 ? ` <a href="/ui/lint-review.html">Review →</a>` : '';
     recs.push({
       title: `${lint.total_issues} integrity-lint issues`,
-      why: `${broken ? broken + '. ' : ''}Auto-fixable categories (orphan embeddings) cleanable in one shot; other categories surface in <code>needsReview</code> for manual attention.`,
+      why: `${broken ? broken + '. ' : ''}Auto-fixable: orphan embeddings, future-dated stamps. Other categories surface in <code>needsReview</code> for manual attention.${reviewLink}`,
       level: 'bad',
       action: fixable > 0 ? 'cleanup-lint' : null
     });
