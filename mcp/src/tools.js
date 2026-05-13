@@ -540,4 +540,88 @@ export const registerTools = (mcp, client) => {
     },
     wrap(async () => client.getJson('/system/lint'))
   );
+
+  // ── queue items ───────────────────────────────────────────────────────────
+  // Backed by the queue_items table — a watcher-maintained derivative of every
+  // projects/<name>/queue.md and queue-archive.md. Markdown stays source of
+  // truth per constraint C4; the table is the fleet-query surface. See
+  // [[topics/project-queue-convention]] for the markdown shape and
+  // [[projects/vault-storage/design/queue-items-table]] for schema + identity.
+  mcp.registerTool(
+    'vault_queue_top',
+    {
+      description:
+        'Top N open queue items across the entire fleet, ordered by (priority DESC, project, section, position). Excludes archive. Default limit 20, max 100. Use case: "what is next across all projects?"',
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().default(20)
+      }
+    },
+    wrap(async ({limit}) => client.getJson('/queue/top', {limit}))
+  );
+
+  mcp.registerTool(
+    'vault_queue_by_section',
+    {
+      description:
+        'All open queue items in one section across the fleet, ordered by (priority DESC, project, position). Use case: "what is in flight everywhere?" (active), "what is waiting upstream?" (watching), "what is on every project\'s backlog?"',
+      inputSchema: {
+        section: z.enum(['active', 'backlog', 'watching'])
+      }
+    },
+    wrap(async ({section}) =>
+      client.getJson(`/queue/by-section/${encodeURIComponent(section)}`)
+    )
+  );
+
+  mcp.registerTool(
+    'vault_queue_by_priority',
+    {
+      description:
+        'All Backlog items at a specific priority tier across the fleet, ordered by (project, position). Priority is a signed integer centered on 0 — `+2` / `+1` are boosted, `-1` / `-2` are demoted. Use case: "everything we said was priority +2 across all projects".',
+      inputSchema: {
+        priority: z.number().int()
+      }
+    },
+    wrap(async ({priority}) =>
+      client.getJson(`/queue/by-priority/${encodeURIComponent(String(priority))}`)
+    )
+  );
+
+  mcp.registerTool(
+    'vault_queue_by_project',
+    {
+      description:
+        'All open items (Active + Backlog + Watching) for one project, grouped by section in display order: Active first, Backlog by priority DESC, Watching last. Use case: "what is on `<project>`\'s queue right now?"',
+      inputSchema: {
+        project: z.string().min(1).describe('Project slug, e.g. "node-re2"')
+      }
+    },
+    wrap(async ({project}) =>
+      client.getJson(`/queue/projects/${encodeURIComponent(project)}`)
+    )
+  );
+
+  mcp.registerTool(
+    'vault_queue_project_archive',
+    {
+      description:
+        'Archive slice for one project, ordered by closed_at DESC with undated rows last. Each item carries a regex-inferred close_reason (shipped | rejected | parked | deferred | null). Use case: "what did `<project>` ship/reject/park, when?"',
+      inputSchema: {
+        project: z.string().min(1).describe('Project slug, e.g. "node-re2"')
+      }
+    },
+    wrap(async ({project}) =>
+      client.getJson(`/queue/projects/${encodeURIComponent(project)}/archive`)
+    )
+  );
+
+  mcp.registerTool(
+    'vault_queue_reindex',
+    {
+      description:
+        'Walk the vault, re-parse every projects/*/queue.md and queue-archive.md, apply each as a slice, and drop slices for files no longer on disk. The watcher keeps the table in sync on edits; use this for first-run population, missed-event recovery, or after a multi-machine pull where another writer changed queue files. Idempotent.',
+      inputSchema: {}
+    },
+    wrap(async () => client.postJson('/maintenance/reindex-queues'))
+  );
 };
