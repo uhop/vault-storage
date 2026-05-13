@@ -19,6 +19,8 @@ import {
 } from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
 import {TagsImporter} from '../importer/import-tags.ts';
+import {QueueItemsRepository} from '../queue/repo.ts';
+import {syncQueueFile} from '../queue/sync.ts';
 import {RecordsRepository} from '../records/repository.ts';
 
 export interface WatcherHandle {
@@ -33,6 +35,8 @@ export interface FlushSummary {
   errors: number;
   edgesCreated: number;
   embedded: number;
+  /** queue_items rows inserted/updated/refreshed/deleted across all touched queue files. */
+  queueItemsTouched: number;
 }
 
 export interface WatcherOptions {
@@ -73,13 +77,15 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
   const agentStale = new AgentEnrichmentStaleFiler(db);
   const tagSuggestion = new TagSuggestionFiler(db);
   const archiveCandidate = new ArchiveCandidateFiler(db);
+  const queueItems = new QueueItemsRepository(db);
 
   const pending = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
   let inFlight: Promise<void> = Promise.resolve();
 
   const drain = async (): Promise<FlushSummary> => {
-    if (pending.size === 0) return {imported: 0, deleted: 0, errors: 0, edgesCreated: 0, embedded: 0};
+    if (pending.size === 0)
+      return {imported: 0, deleted: 0, errors: 0, edgesCreated: 0, embedded: 0, queueItemsTouched: 0};
     const batch = [...pending];
     pending.clear();
 
@@ -87,6 +93,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     let imported = 0;
     let deleted = 0;
     let errors = 0;
+    let queueItemsTouched = 0;
 
     db.exec('BEGIN');
     try {
@@ -105,6 +112,10 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
               records.delete(existing.recordId);
               deleted++;
             }
+            // Queue files removed from disk: drop the slice too. No-op for
+            // any non-queue path.
+            const dropped = syncQueueFile(queueItems, relativePath, vaultDataPath, now);
+            if (dropped) queueItemsTouched += dropped.deleted;
             continue;
           }
           importFile(records, relativePath, abs, now, {
@@ -114,6 +125,12 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             archiveCandidate
           });
           imported++;
+          // Queue files: also reparse the queue_items slice. No-op for any
+          // path outside `projects/<name>/queue{,-archive}.md`.
+          const result = syncQueueFile(queueItems, relativePath, vaultDataPath, now);
+          if (result) {
+            queueItemsTouched += result.inserted + result.updated + result.refreshed + result.deleted;
+          }
         } catch (err) {
           errors++;
           const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
@@ -131,7 +148,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
 
     log(
       `reindex: imported=${imported} deleted=${deleted} errors=${errors} ` +
-        `edges=${edges.edgesCreated} embed=${embed.embedded}`
+        `edges=${edges.edgesCreated} embed=${embed.embedded} queue_items=${queueItemsTouched}`
     );
 
     return {
@@ -139,7 +156,8 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       deleted,
       errors,
       edgesCreated: edges.edgesCreated,
-      embedded: embed.embedded
+      embedded: embed.embedded,
+      queueItemsTouched
     };
   };
 
@@ -156,7 +174,9 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       .catch(err => {
         onError(err);
       });
-    return inFlight.then(() => result ?? {imported: 0, deleted: 0, errors: 0, edgesCreated: 0, embedded: 0});
+    return inFlight.then(
+      () => result ?? {imported: 0, deleted: 0, errors: 0, edgesCreated: 0, embedded: 0, queueItemsTouched: 0}
+    );
   };
 
   const schedule = (): void => {

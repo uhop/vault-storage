@@ -23,6 +23,14 @@ import {
   snapshotHandler,
   snapshotListHandler
 } from './handlers/maintenance.ts';
+import {
+  queueArchiveByProjectHandler,
+  queueByPriorityHandler,
+  queueByProjectHandler,
+  queueBySectionHandler,
+  queueTopHandler,
+  reindexQueuesHandler
+} from './handlers/queue.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
 import {
@@ -180,6 +188,21 @@ export const buildRouter = (opts: BuildOptions): Router => {
     '/maintenance/incremental-reindex',
     incrementalReindexHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
+  router.post(
+    '/maintenance/reindex-queues',
+    reindexQueuesHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
+
+  // /queue/top before /queue/projects/{name} and /queue/by-* — registration
+  // order is precedence in this router.
+  router.get('/queue/top', queueTopHandler({db: opts.db}));
+  router.get('/queue/by-section/{section}', queueBySectionHandler({db: opts.db}));
+  router.get('/queue/by-priority/{n}', queueByPriorityHandler({db: opts.db}));
+  router.get(
+    '/queue/projects/{name}/archive',
+    queueArchiveByProjectHandler({db: opts.db})
+  );
+  router.get('/queue/projects/{name}', queueByProjectHandler({db: opts.db}));
 
   if (opts.env.uiStaticPath) {
     const uiHandler = staticHandler({rootDir: opts.env.uiStaticPath, indexFile: 'index.html'});

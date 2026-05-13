@@ -17,8 +17,10 @@ coverage/
 .idea/
 
 # Claude Code runtime state (lock files, transcripts). Project-level config
-# like .claude/settings.json or .claude/agents/* is OK to commit if added.
+# like .claude/settings.json or .claude/agents/* is OK to commit if added;
+# .claude/settings.local.json is per-machine overrides — keep it out.
 .claude/*.lock
+.claude/settings.local.json
 
 # Project-level MCP config carries the bearer token in plaintext — keep it
 # out of git. Use .mcp.json.example as the committed template.
