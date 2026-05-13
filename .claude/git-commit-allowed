@@ -1,0 +1,4 @@
+# Marker for ~/.claude/hooks/git-commit-gate.sh — presence of this file
+# (anywhere in the cwd's ancestor chain) lets the PreToolUse hook allow
+# `git commit`. The user's global settings deny commits by default; this
+# project opts in.
