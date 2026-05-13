@@ -232,6 +232,23 @@ test('parseQueueFile — queue.md basics', async t => {
     t.equal(items[0]?.title, 'A bare item with no bold marker.');
     t.equal(items[0]?.body, '');
   });
+
+  await t.test('bold title may contain single asterisks (italics, glob patterns)', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Endpoints under `/queue/*`.** Body for the glob item.',
+        '- **Refresh *Web Applications: the modern API design*.** Body for the italic item.'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items.length, 2);
+    t.equal(items[0]?.title, 'Endpoints under `/queue/*`.');
+    t.equal(items[0]?.body, 'Body for the glob item.');
+    t.equal(items[1]?.title, 'Refresh *Web Applications: the modern API design*.');
+    t.equal(items[1]?.body, 'Body for the italic item.');
+  });
 });
 
 test('parseQueueFile — queue-archive.md', async t => {

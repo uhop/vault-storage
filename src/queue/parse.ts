@@ -51,7 +51,11 @@ const SECTION_HEADINGS: Record<string, Exclude<QueueSection, 'archive'>> = {
 const PRIORITY_HEADING_RE = /^###\s+Priority\s+([+-]?\d+)\s*$/;
 const H2_RE = /^##\s+(.+?)\s*$/;
 const TOP_BULLET_RE = /^[-*+]\s+(.*)$/;
-const BOLD_PREFIX_RE = /^\*\*([^*]+?)\*\*\s*(.*)$/;
+// Permits single `*` inside the bold prefix (italics, glob patterns like
+// `/queue/*`, `*.md`) by accepting any char that isn't `*`, OR a `*` not
+// followed by another `*`. The lazy quantifier ensures we still stop at the
+// first true `**` close.
+const BOLD_PREFIX_RE = /^\*\*((?:[^*]|\*(?!\*))+?)\*\*\s*(.*)$/;
 const ARCHIVE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const CLOSE_REASON_RULES: Array<{re: RegExp; reason: CloseReason}> = [
