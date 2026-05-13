@@ -233,6 +233,32 @@ test('parseQueueFile — queue.md basics', async t => {
     t.equal(items[0]?.body, '');
   });
 
+  await t.test('strips legacy checkbox prefix before bold detection', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- [ ] **Bolded with checkbox.** body A',
+        '- [x] **Done-marked with checkbox.** body B',
+        '- [~] **Tilde-marked with checkbox.** body C',
+        '- [ ] Bare checkbox no bold.',
+        '- [X] **Uppercase done.** body D'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items.length, 5);
+    t.deepEqual(
+      items.map(it => [it.title, it.body]),
+      [
+        ['Bolded with checkbox.', 'body A'],
+        ['Done-marked with checkbox.', 'body B'],
+        ['Tilde-marked with checkbox.', 'body C'],
+        ['Bare checkbox no bold.', ''],
+        ['Uppercase done.', 'body D']
+      ]
+    );
+  });
+
   await t.test('bold title may contain single asterisks (italics, glob patterns)', t => {
     const src =
       FM +

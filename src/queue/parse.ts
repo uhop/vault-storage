@@ -51,6 +51,10 @@ const SECTION_HEADINGS: Record<string, Exclude<QueueSection, 'archive'>> = {
 const PRIORITY_HEADING_RE = /^###\s+Priority\s+([+-]?\d+)\s*$/;
 const H2_RE = /^##\s+(.+?)\s*$/;
 const TOP_BULLET_RE = /^[-*+]\s+(.*)$/;
+// Legacy checkbox marker, dropped per the 2026-05-13 convention rewrite but
+// still present in many projects' queue files. Parser strips it so a
+// `- [ ] **Title.** body` line reads the same as `- **Title.** body`.
+const CHECKBOX_PREFIX_RE = /^\[[ xX~]\]\s+/;
 // Permits single `*` inside the bold prefix (italics, glob patterns like
 // `/queue/*`, `*.md`) by accepting any char that isn't `*`, OR a `*` not
 // followed by another `*`. The lazy quantifier ensures we still stop at the
@@ -111,10 +115,12 @@ const flushItem = (state: ParseState, project: string, sourceFile: string): void
   state.pending = null;
   if (!pending || state.section === null) return;
 
-  // Strip the bullet marker from the first line.
+  // Strip the bullet marker (and any legacy `[ ]`/`[x]`/`[~]` checkbox)
+  // from the first line.
   const firstRaw = pending.rawLines[0] ?? '';
   const bulletMatch = TOP_BULLET_RE.exec(firstRaw);
-  const firstAfterBullet = bulletMatch ? (bulletMatch[1] ?? '') : firstRaw.trimStart();
+  const afterBullet = bulletMatch ? (bulletMatch[1] ?? '') : firstRaw.trimStart();
+  const firstAfterBullet = afterBullet.replace(CHECKBOX_PREFIX_RE, '');
 
   let title: string;
   let bodyHead: string;
