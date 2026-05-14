@@ -13,7 +13,7 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 8, 'schema version is 8 after all migrations through queue_items');
+  t.equal(result.current, 9, 'schema version is 9 after all migrations through suggestions-cascade');
   t.deepEqual(
     result.applied,
     [
@@ -24,7 +24,8 @@ test('runs the init migration and creates required tables', t => {
       '0005_agent_enrichment.sql',
       '0006_agent_enrichment_stale_kind.sql',
       '0007_records_cascade_to_vecs.sql',
-      '0008_queue_items.sql'
+      '0008_queue_items.sql',
+      '0009_records_cascade_to_suggestions.sql'
     ],
     'all migrations applied in order'
   );
@@ -57,7 +58,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 8, 'schema version stays at 8');
+  t.equal(second.current, 9, 'schema version stays at 9');
   db.close();
 });
 
@@ -149,6 +150,46 @@ test('foreign-key cascade removes edges and tags when a record is deleted', t =>
 
   const remaining = db.prepare('SELECT COUNT(*) AS n FROM edges').get() as {n: number};
   t.equal(remaining.n, 0, 'cascade removed the dependent edge');
+
+  db.close();
+});
+
+test('records_after_delete cascades to pending suggestions (schema 9)', t => {
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+
+  db.prepare(
+    `INSERT INTO records
+       (record_id, file_path, type, body, content_hash, created, updated)
+     VALUES (?, ?, 'permanent', 'b', 'h', '2026-01-01', '2026-01-01')`
+  ).run('rec-a', 'a.md');
+
+  // Two pending suggestions on rec-a, one already-rejected suggestion on rec-a,
+  // and one pending suggestion on rec-b (which is NOT deleted) — verify the
+  // trigger only touches rows that match `subject_id = OLD.record_id AND
+  // status = 'pending'`.
+  const insertSugg = db.prepare(
+    `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+     VALUES (?, ?, ?, '{}', ?, '2026-01-01')`
+  );
+  insertSugg.run('s1', 'archive_candidate', 'rec-a', 'pending');
+  insertSugg.run('s2', 'edge_type', 'rec-a', 'pending');
+  insertSugg.run('s3', 'duplicate', 'rec-a', 'rejected'); // already-resolved
+  insertSugg.run('s4', 'edge_type', 'rec-b', 'pending'); // different subject
+
+  db.prepare('DELETE FROM records WHERE record_id = ?').run('rec-a');
+
+  const rows = db
+    .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
+    .all() as {id: string; status: string; resolved_by: string | null}[];
+  const byId = Object.fromEntries(rows.map(r => [r.id, r]));
+
+  t.equal(byId['s1']?.status, 'accepted', 's1 (pending) → accepted');
+  t.equal(byId['s1']?.resolved_by, 'record-deleted', 's1 carries the cascade marker');
+  t.equal(byId['s2']?.status, 'accepted', 's2 (pending) → accepted');
+  t.equal(byId['s3']?.status, 'rejected', 's3 (already-resolved) untouched');
+  t.equal(byId['s3']?.resolved_by, null, 's3 resolved_by untouched');
+  t.equal(byId['s4']?.status, 'pending', 's4 (different subject) untouched');
 
   db.close();
 });

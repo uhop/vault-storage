@@ -253,7 +253,7 @@ const deleteFile = async (suggId, recordId, path, btn) => {
     : null;
   const confirmed = await confirmDialog(
     'Delete record',
-    `${path} will be removed from disk and the DB. Cascade trigger closes the suggestion.`,
+    `${path} will be removed from disk and the DB. The suggestion is then auto-resolved.`,
     warn
   );
   if (!confirmed) return;
@@ -262,9 +262,28 @@ const deleteFile = async (suggId, recordId, path, btn) => {
   btn.textContent = 'deleting…';
   try {
     await api('/vault/' + path, {method: 'DELETE'});
-    rowStatus(suggId, 'ok', 'deleted ✓ (suggestion auto-resolved)');
-    setRowResolved(suggId);
     cache.records.delete(path);
+    // Schema 0009's records_after_delete_resolve_suggestions trigger closes
+    // pending suggestions whose subject is the deleted record. Pre-0009
+    // servers don't have that trigger, so issue an explicit accept as a
+    // safety net — tolerate 409 (already_resolved) so the post-trigger path
+    // doesn't surface a spurious error.
+    try {
+      await api(`/suggestions/${suggId}/accept`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resolved_by: 'ui-deleted'})
+      });
+    } catch (e) {
+      if (e.message !== 'already_resolved' && !/already/.test(e.message)) {
+        // Surface anything other than the expected race-with-trigger 409.
+        rowStatus(suggId, 'warn', `deleted ✓ but suggestion close failed: ${e.message}`);
+        setRowResolved(suggId);
+        return;
+      }
+    }
+    rowStatus(suggId, 'ok', 'deleted ✓ (suggestion resolved)');
+    setRowResolved(suggId);
   } catch (e) {
     if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
     rowStatus(suggId, 'err', `failed: ${e.message}`);
