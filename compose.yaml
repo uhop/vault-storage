@@ -35,6 +35,17 @@ services:
       # Container-side path for the Obsidian read-only mount (only used when
       # OBSIDIAN_VAULT_PATH_HOST is set in .env).
       OBSIDIAN_VAULT_PATH: /obsidian
+      # glibc malloc tuning. Node spawns many threads (libuv pool, ORT, sqlite,
+      # watcher); glibc gives each its own arena (default cap 8×CPU) and never
+      # returns freed chunks to the OS once an arena has grown — common cause
+      # of "RSS climbs across container lifecycles." MALLOC_ARENA_MAX=2 caps the
+      # arena count; MALLOC_TRIM_THRESHOLD_ pins the auto-trim point at 128 KB
+      # so freed allocations above that size flow back to the OS. Pairs with
+      # the BgeEmbedder Retainer (which handles the ORT session arena) — the
+      # Retainer covers direct mmap'd allocations, these knobs cover glibc
+      # arena residue.
+      MALLOC_ARENA_MAX: 2
+      MALLOC_TRIM_THRESHOLD_: 131072
     volumes:
       # Markdown source-of-truth tree. Read-write — the server's PUT /sections
       # endpoint writes here, and the watcher detects external edits.
