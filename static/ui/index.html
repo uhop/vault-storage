@@ -545,7 +545,14 @@ async function refresh() {
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
     const ss = String(now.getSeconds()).padStart(2, '0');
-    $('#footer').textContent = `vault: ${d.vault_data_path} · loaded ${hh}:${mm}:${ss}`;
+    // Append the browser's short TZ name (e.g. PDT, CET) so the stamp is
+    // unambiguous — `croc` runs in UTC, and a bare HH:MM:SS would leave the
+    // operator guessing which clock the line refers to.
+    const tz =
+      new Intl.DateTimeFormat(undefined, {timeZoneName: 'short'})
+        .formatToParts(now)
+        .find(p => p.type === 'timeZoneName')?.value ?? '';
+    $('#footer').textContent = `vault: ${d.vault_data_path} · loaded ${hh}:${mm}:${ss}${tz ? ' ' + tz : ''}`;
   });
 
   try {
