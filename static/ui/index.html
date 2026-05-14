@@ -78,6 +78,11 @@
   .status-grid .status-action { grid-column: 3; padding: .2rem .55rem; font-size: .78rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 3px; cursor: pointer; font: inherit; line-height: 1.4; }
   .status-grid .status-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   .status-grid .status-action:disabled { opacity: .6; cursor: progress; }
+  /* Lock label/value to columns 1/2 so a missing action button in column 3
+     doesn't let auto-placement pull the next row's label rightward. */
+  .status-grid .status-label { grid-column: 1; }
+  .status-grid .status-value { grid-column: 2; }
+  .status-grid .status-action.invisible { visibility: hidden; }
   .status-foot { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; color: var(--muted); font-size: .8rem; font-family: var(--mono); }
   .status-foot .live-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
@@ -140,7 +145,7 @@
       <span class="status-label">V8 heap</span><span class="status-value" id="st-heap">—</span><span></span>
       <span class="status-label">External</span><span class="status-value" id="st-external">—</span><span></span>
       <span class="status-label">ArrayBuffers</span><span class="status-value" id="st-arraybuffers">—</span><span></span>
-      <span class="status-label">Embedder</span><span class="status-value" id="st-embedder">—</span><button id="release-embedder" class="status-action" hidden>Release</button>
+      <span class="status-label">Embedder</span><span class="status-value" id="st-embedder">—</span><button id="release-embedder" class="status-action invisible">Release</button>
       <span class="status-label">Indexer</span><span class="status-value" id="st-indexer">—</span><span></span>
       <span class="status-label">Vault data</span><span class="status-value" id="st-vault">—</span><span></span>
       <span class="status-label">Last indexed</span><span class="status-value" id="st-commit">—</span><span></span>
@@ -611,7 +616,10 @@ function renderSystemPanel(d) {
   const model = d.embedder?.model ?? '—';
   $('#st-embedder').innerHTML = `${esc(model)} <span class="badge ${retained ? 'on' : 'off'}">${retained ? 'loaded' : 'idle'}</span>`;
   const releaseBtn = $('#release-embedder');
-  releaseBtn.hidden = !retained;
+  // Toggle visibility (not display) so the grid cell stays reserved — a
+  // missing button in column 3 would let auto-placement pull subsequent
+  // labels rightward by one column.
+  releaseBtn.classList.toggle('invisible', !retained);
   if (!retained) releaseBtn.disabled = false;
   $('#st-indexer').innerHTML = d.indexer_running
     ? `<span class="badge on">running</span>`
