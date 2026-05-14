@@ -17,6 +17,7 @@ import type {Embedder} from './types.ts';
 export class FakeEmbedder implements Embedder {
   readonly dim: number;
   readonly modelName: string;
+  readonly retained = false;
 
   constructor(opts: {dim?: number; modelName?: string} = {}) {
     this.dim = opts.dim ?? 384;
@@ -30,6 +31,8 @@ export class FakeEmbedder implements Embedder {
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     return texts.map(t => this.#embedSync(t));
   }
+
+  async releaseRetained(): Promise<void> {}
 
   #embedSync(text: string): Float32Array {
     const seed = createHash('sha256').update(text, 'utf8').digest();

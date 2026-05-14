@@ -28,7 +28,9 @@ export const main = async (): Promise<void> => {
     ? new JsonlAnomalyLogger(env.embedAnomalyLogPath)
     : null;
   const embedder: Embedder =
-    env.embedder === 'fake' ? new FakeEmbedder() : new BgeEmbedder({anomalyLogger});
+    env.embedder === 'fake'
+      ? new FakeEmbedder()
+      : new BgeEmbedder({anomalyLogger, retentionMs: env.embedderRetentionMs});
 
   if (env.autoReindex) {
     process.stdout.write(`vault-storage: initial reindex of ${env.vaultDataPath}…\n`);
@@ -120,6 +122,7 @@ export const main = async (): Promise<void> => {
     }
     if (memoryReporter) memoryReporter.close();
     await handle.close();
+    await embedder.releaseRetained();
     db.close();
     process.exit(0);
   };

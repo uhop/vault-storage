@@ -74,6 +74,7 @@ Environment variables:
 | `VAULT_PORT`               | no       | Listen port. Default `8123`.                                                 |
 | `VAULT_INGEST_PATH`        | no       | Default source path for `migrate` / `import` subcommands.                    |
 | `VAULT_EMBEDDER`           | no       | `bge` (default) or `fake` (skip model load — dev/test only).                 |
+| `VAULT_EMBEDDER_RETENTION_MS` | no    | Idle window before the BGE pipeline is disposed and its ~GB ONNX arena returned to the OS. Default `1800000` (30 min); minimum `1000`. Reload on next embed adds ~1-3 s. |
 | `VAULT_AUTO_REINDEX`       | no       | Run a full reindex on startup. Default `true`.                               |
 | `VAULT_AUTO_WATCH`         | no       | Watch the vault tree and reindex incrementally. Default `true`.              |
 | `VAULT_WATCH_DEBOUNCE_MS`  | no       | Watcher debounce window. Default `1500`.                                     |
@@ -104,7 +105,8 @@ All endpoints require `Authorization: Bearer <token>`.
 
 | Method | Path                       | Purpose                                                            |
 | ------ | -------------------------- | ------------------------------------------------------------------ |
-| GET    | `/system/status`           | Schema version, record / edge / suggestion counts.                 |
+| GET    | `/system/status`           | Schema version, record / edge / suggestion counts, embedder state (`{model, retained}`), `process.memoryUsage()`. |
+| POST   | `/maintenance/release-embedder` | Force-release the BGE pipeline now (bypasses the retention timer). Returns before/after RSS and freed bytes. No-op when nothing is loaded. |
 | GET    | `/system/lint`             | Integrity checks (bug-finding): embedding hash drift, missing/orphan embeddings, temporal anomalies, dangling tag aliases. Returns `{ok, total_issues, checks}`. ~50ms; safe on session-start flows. |
 | GET    | `/sections`                | List records. Filters: `type`, `status`, `file_path`, `file_prefix`, `priority_min/max`, `updated_since`, `record_ids`. Pagination: `offset`, `limit` (max 100). |
 | GET    | `/sections/{record_id}`    | Read a record by ID. `?exclude=body` for a meta-only fetch.        |

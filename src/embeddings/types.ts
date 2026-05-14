@@ -13,4 +13,19 @@ export interface Embedder {
   embed(text: string): Promise<Float32Array>;
   /** Embed many texts. Implementations may batch internally for throughput. */
   embedBatch(texts: string[]): Promise<Float32Array[]>;
+  /**
+   * True when the embedder is currently holding a loaded model (or other
+   * heavyweight native resource) in memory. False right after construction
+   * and after a release. Surfaced in `/system/status` so operators can see
+   * whether an idle release has fired.
+   */
+  readonly retained: boolean;
+  /**
+   * Force-release retained native resources now. No-op when nothing is
+   * loaded; defers when another caller is mid-inference (the destroy
+   * happens after they finish). Used by `POST /maintenance/release-embedder`
+   * to verify the idle path without waiting on the retention timer; the
+   * normal release happens automatically after `retentionMs` of no use.
+   */
+  releaseRetained(): Promise<void>;
 }

@@ -20,6 +20,14 @@ export interface ServerEnv {
   /** When 'fake', skips the BGE model load. Useful for smoke tests. */
   embedder: 'bge' | 'fake';
   /**
+   * Idle window (ms) after the last embed call before the BGE pipeline is
+   * disposed. The ONNX inference arena typically occupies several GB once it
+   * has been warmed; disposing on idle returns it to the OS. Default 30 min
+   * (1_800_000); minimum 1_000. To effectively keep the model resident
+   * indefinitely, pass a large value (e.g. 86_400_000 for 24h).
+   */
+  embedderRetentionMs: number;
+  /**
    * JSONL log file path for embedding anomalies (transient NaN chunk vectors
    * from transformers.js+BGE). Default: `${vaultDataPath}/.vault-storage/
    * embed-nan.jsonl`. Set to empty string to disable file logging — stderr
@@ -97,6 +105,12 @@ export const readServerEnv = (): ServerEnv => {
   }
   const embedder = embedderRaw;
 
+  const retentionRaw = process.env['VAULT_EMBEDDER_RETENTION_MS'] ?? '1800000';
+  const embedderRetentionMs = Number.parseInt(retentionRaw, 10);
+  if (!Number.isFinite(embedderRetentionMs) || embedderRetentionMs < 1000) {
+    throw new Error(`VAULT_EMBEDDER_RETENTION_MS must be ≥ 1000 (got ${retentionRaw})`);
+  }
+
   const autoCommit = parseFlag(process.env['VAULT_AUTO_COMMIT'], true);
   const autoPush = parseFlag(process.env['VAULT_AUTO_PUSH'], false);
 
@@ -154,6 +168,7 @@ export const readServerEnv = (): ServerEnv => {
     autoWatch,
     watchDebounceMs,
     embedder,
+    embedderRetentionMs,
     autoCommit,
     autoPush,
     commitIntervalMs,

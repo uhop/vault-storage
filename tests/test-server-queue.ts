@@ -24,6 +24,7 @@ const makeEnv = (port: number, vaultDataPath: string): ServerEnv => ({
   autoWatch: false,
   watchDebounceMs: 1500,
   embedder: 'fake',
+  embedderRetentionMs: 1_800_000,
   autoCommit: false,
   autoPush: false,
   commitIntervalMs: 60000,

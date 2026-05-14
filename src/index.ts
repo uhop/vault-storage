@@ -144,6 +144,9 @@ if (subcommand === 'serve') {
         `embed: ${embed.embedded} embedded, ${embed.upToDate} up-to-date ` +
           `(${embed.total} total, model=${embedder.modelName}, ${embed.durationMs} ms)\n`
       );
+      // Dispose the BGE pipeline so the retainer's pending retention timer
+      // doesn't keep the event loop alive after the CLI completes.
+      await embedder.releaseRetained();
       break;
     }
     default:

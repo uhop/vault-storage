@@ -35,6 +35,7 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "sqlite-vec": "^0.1.9",
+    "time-queues": "^1.4.0",
     "yaml": "^2.8.3"
   },
   "devDependencies": {

@@ -46,7 +46,7 @@ import {commitHandler} from './handlers/commit.ts';
 import {lintHandler} from './handlers/lint.ts';
 import {resolveHandler} from './handlers/resolve.ts';
 import {syncFromObsidianHandler} from './handlers/sync.ts';
-import {systemStatusHandler} from './handlers/system.ts';
+import {releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
 import {
   addAliasHandler,
   addTaxonomyHandler,
@@ -86,7 +86,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
     systemStatusHandler({
       db: opts.db,
       schemaVersion: opts.schemaVersion,
-      vaultDataPath: opts.env.vaultDataPath
+      vaultDataPath: opts.env.vaultDataPath,
+      embedder: opts.embedder
     })
   );
   router.get('/system/lint', lintHandler({db: opts.db}));
@@ -162,6 +163,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     '/maintenance/embed-pending',
     embedPendingHandler({db: opts.db, embedder: opts.embedder})
   );
+  router.post('/maintenance/release-embedder', releaseEmbedderHandler({embedder: opts.embedder}));
   router.post('/maintenance/run-all', runAllScansHandler({db: opts.db}));
   router.get(
     '/maintenance/raw-inbox',
@@ -198,10 +200,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/queue/top', queueTopHandler({db: opts.db}));
   router.get('/queue/by-section/{section}', queueBySectionHandler({db: opts.db}));
   router.get('/queue/by-priority/{n}', queueByPriorityHandler({db: opts.db}));
-  router.get(
-    '/queue/projects/{name}/archive',
-    queueArchiveByProjectHandler({db: opts.db})
-  );
+  router.get('/queue/projects/{name}/archive', queueArchiveByProjectHandler({db: opts.db}));
   router.get('/queue/projects/{name}', queueByProjectHandler({db: opts.db}));
 
   if (opts.env.uiStaticPath) {

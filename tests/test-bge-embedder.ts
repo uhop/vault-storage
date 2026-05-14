@@ -38,7 +38,10 @@ test('BgeEmbedder (real model)', async t => {
 
     const ab = dot(a, b);
     const ac = dot(a, c);
-    t.ok(ab > ac, `pet sentences closer than pets-vs-physics (ab=${ab.toFixed(3)}, ac=${ac.toFixed(3)})`);
+    t.ok(
+      ab > ac,
+      `pet sentences closer than pets-vs-physics (ab=${ab.toFixed(3)}, ac=${ac.toFixed(3)})`
+    );
   });
 
   await t.test('embedBatch returns one vector per input in order', async t => {
@@ -55,5 +58,17 @@ test('BgeEmbedder (real model)', async t => {
   await t.test('embedBatch on empty input returns empty array', async t => {
     const out = await embedder.embedBatch([]);
     t.equal(out.length, 0, 'empty in, empty out');
+  });
+
+  await t.test('releaseRetained tears down the pipeline (and lets the process exit)', async t => {
+    t.ok(embedder.retained, 'pipeline is loaded after embed calls');
+    await embedder.releaseRetained();
+    t.notOk(embedder.retained, 'retained=false after release');
+    await embedder.releaseRetained();
+    t.notOk(embedder.retained, 'second release is a no-op');
+    const v = await embedder.embed('reload after release');
+    t.ok(v instanceof Float32Array && v.length === 384, 'next embed reloads the pipeline');
+    t.ok(embedder.retained, 'retained=true again after reload');
+    await embedder.releaseRetained();
   });
 });

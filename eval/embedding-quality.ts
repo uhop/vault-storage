@@ -58,7 +58,9 @@ const parseArgs = (argv: string[]): CliArgs => {
     else if (a === '--dim') args.dim = Number.parseInt(argv[++i] ?? '0', 10);
   }
   if (!args.db) {
-    process.stderr.write('usage: embedding-quality.ts --db <path> [--vault <root>] [--output <file>] [--no-context] [--model <hf-path>] [--dim <n>]\n');
+    process.stderr.write(
+      'usage: embedding-quality.ts --db <path> [--vault <root>] [--output <file>] [--no-context] [--model <hf-path>] [--dim <n>]\n'
+    );
     process.exit(2);
   }
   return args;
@@ -76,10 +78,11 @@ const cosine = (a: Float32Array, b: Float32Array): number => {
 /** Max-sim between any chunk of `query` and any chunk of `target`. */
 const recordPairSim = (query: RecordRow, target: RecordRow): number => {
   let best = -Infinity;
-  for (const q of query.chunks) for (const t of target.chunks) {
-    const s = cosine(q, t);
-    if (s > best) best = s;
-  }
+  for (const q of query.chunks)
+    for (const t of target.chunks) {
+      const s = cosine(q, t);
+      if (s > best) best = s;
+    }
   return best;
 };
 
@@ -113,12 +116,17 @@ const topKRecord = (query: RecordRow, all: RecordRow[], k: number): string[] => 
   return scored.slice(0, k).map(s => s.id);
 };
 
-const loadRecords = (db: ReturnType<typeof openDatabase>, vaultRoot: string | null): RecordRow[] => {
-  const rows = db.prepare(
-    `SELECT r.record_id, r.file_path, r.body, v.chunk_index, v.embedding
+const loadRecords = (
+  db: ReturnType<typeof openDatabase>,
+  vaultRoot: string | null
+): RecordRow[] => {
+  const rows = db
+    .prepare(
+      `SELECT r.record_id, r.file_path, r.body, v.chunk_index, v.embedding
        FROM records r JOIN record_vec v ON v.record_id = r.record_id
        ORDER BY r.record_id, v.chunk_index`
-  ).all() as Array<{
+    )
+    .all() as Array<{
     record_id: string;
     file_path: string;
     body: string;
@@ -150,15 +158,24 @@ const loadRecords = (db: ReturnType<typeof openDatabase>, vaultRoot: string | nu
   return [...byId.values()];
 };
 
-const loadEdgesByType = (db: ReturnType<typeof openDatabase>, type: string): Array<{from: string; to: string}> =>
-  db.prepare('SELECT from_id AS "from", to_id AS "to" FROM edges WHERE type = ?').all(type) as Array<{from: string; to: string}>;
+const loadEdgesByType = (
+  db: ReturnType<typeof openDatabase>,
+  type: string
+): Array<{from: string; to: string}> =>
+  db
+    .prepare('SELECT from_id AS "from", to_id AS "to" FROM edges WHERE type = ?')
+    .all(type) as Array<{from: string; to: string}>;
 
 const indexById = (records: RecordRow[]): Map<string, RecordRow> =>
   new Map(records.map(r => [r.id, r]));
 
 // --- metrics ----------------------------------------------------------------
 
-const precisionAtK = (records: RecordRow[], related: Map<string, Set<string>>, k: number): number => {
+const precisionAtK = (
+  records: RecordRow[],
+  related: Map<string, Set<string>>,
+  k: number
+): number => {
   let sumPrecision = 0;
   let counted = 0;
   for (const r of records) {
@@ -232,19 +249,29 @@ const sweepThresholds = (
   const fbeta = (p: number, r: number, beta: number): number => {
     if (p === 0 && r === 0) return 0;
     const b2 = beta * beta;
-    return (1 + b2) * p * r / (b2 * p + r);
+    return ((1 + b2) * p * r) / (b2 * p + r);
   };
 
   const out: ThresholdRow[] = [];
   for (const threshold of thresholds) {
-    let tp = 0, fp = 0, fn = 0, tn = 0;
+    let tp = 0,
+      fp = 0,
+      fn = 0,
+      tn = 0;
     for (const {sim, positive} of pairs) {
       if (sim >= threshold) positive ? tp++ : fp++;
       else positive ? fn++ : tn++;
     }
     const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
     const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-    out.push({threshold, tp, fp, fn, tn, precision, recall,
+    out.push({
+      threshold,
+      tp,
+      fp,
+      fn,
+      tn,
+      precision,
+      recall,
       f1: fbeta(precision, recall, 1),
       f2: fbeta(precision, recall, 2),
       f4: fbeta(precision, recall, 4)
@@ -262,7 +289,10 @@ const negDiscrim = (
   // For each positive pair, draw a random non-positive partner; count how often
   // the positive pair has higher similarity. Deterministic seed for reproducibility.
   let rng = 0x9e3779b1;
-  const rand = (): number => { rng = (rng * 1103515245 + 12345) >>> 0; return rng / 0x100000000; };
+  const rand = (): number => {
+    rng = (rng * 1103515245 + 12345) >>> 0;
+    return rng / 0x100000000;
+  };
 
   const positives: Array<[string, string]> = [];
   for (const [from, tos] of related) for (const to of tos) positives.push([from, to]);
@@ -310,20 +340,22 @@ const tagPurity = (records: RecordRow[], topTagCount: number): {score: number; t
     const inSet = records.filter(r => r.tags.includes(tag));
     const outSet = records.filter(r => !r.tags.includes(tag));
     if (inSet.length < 2 || outSet.length < 1) continue;
-    let intra = 0, intraN = 0;
+    let intra = 0,
+      intraN = 0;
     for (let i = 0; i < inSet.length; i++)
       for (let j = i + 1; j < inSet.length; j++) {
         intra += recordPairSim(inSet[i]!, inSet[j]!);
         intraN++;
       }
-    let inter = 0, interN = 0;
+    let inter = 0,
+      interN = 0;
     const sample = Math.min(outSet.length, 200);
     for (let i = 0; i < inSet.length; i++)
       for (let j = 0; j < sample; j++) {
         inter += recordPairSim(inSet[i]!, outSet[j]!);
         interN++;
       }
-    totalScore += (intra / intraN) - (inter / interN);
+    totalScore += intra / intraN - inter / interN;
   }
   return {score: totalScore / top.length, tags: top};
 };
@@ -336,7 +368,11 @@ const codeFraction = (body: string): number => {
   let inFence = false;
   let codeLines = 0;
   for (const line of lines) {
-    if (/^```/.test(line)) { inFence = !inFence; codeLines++; continue; }
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      codeLines++;
+      continue;
+    }
     if (inFence || /^( {4,}|\t)/.test(line)) codeLines++;
   }
   return codeLines / lines.length;
@@ -356,7 +392,7 @@ const isNonLatinScript = (cp: number): boolean =>
   (cp >= 0x3040 && cp <= 0x309f) || // Hiragana
   (cp >= 0x30a0 && cp <= 0x30ff) || // Katakana
   (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
-  (cp >= 0xac00 && cp <= 0xd7af);   // Hangul
+  (cp >= 0xac00 && cp <= 0xd7af); // Hangul
 
 const nonLatinScriptFraction = (body: string): number => {
   if (!body) return 0;
@@ -368,7 +404,7 @@ const nonLatinScriptFraction = (body: string): number => {
 const codeHeavySpotCheck = (records: RecordRow[]): string => {
   const ranked = [...records]
     .map(r => ({r, frac: codeFraction(r.body)}))
-    .filter(x => x.frac >= 0.20)
+    .filter(x => x.frac >= 0.2)
     .sort((a, b) => b.frac - a.frac)
     .slice(0, 5);
   if (ranked.length === 0) return '_(no records with ≥20% code lines)_';
@@ -377,7 +413,7 @@ const codeHeavySpotCheck = (records: RecordRow[]): string => {
     const nearest = topKRecord(r, records, 5);
     const codeMatches = nearest.filter(id => {
       const target = records.find(x => x.id === id);
-      return target && codeFraction(target.body) >= 0.10;
+      return target && codeFraction(target.body) >= 0.1;
     }).length;
     lines.push(`| \`${r.path}\` | ${(frac * 100).toFixed(0)}% | ${codeMatches}/5 |`);
   }
@@ -390,7 +426,8 @@ const crossLanguageSpotCheck = (records: RecordRow[]): string => {
     .filter(x => x.frac >= 0.02)
     .sort((a, b) => b.frac - a.frac)
     .slice(0, 5);
-  if (ranked.length === 0) return '_(no records with ≥2% non-Latin-script content — vault is English-only by content; typographic non-ASCII like em-dashes or box-drawing is correctly excluded)_';
+  if (ranked.length === 0)
+    return '_(no records with ≥2% non-Latin-script content — vault is English-only by content; typographic non-ASCII like em-dashes or box-drawing is correctly excluded)_';
   const lines = ['| Source | Non-Latin-script % | Top-3 nearest paths |', '|---|---|---|'];
   for (const {r, frac} of ranked) {
     const nearest = topKRecord(r, records, 3);
@@ -410,17 +447,33 @@ const wikilinkContextSpotCheck = async (
   embedder: BgeEmbedder
 ): Promise<string> => {
   const vaultRecords: VaultRecord[] = records.map(r => ({
-    recordId: r.id, filePath: r.path, parentPath: null, sequenceKey: null,
-    type: 'permanent', body: r.body, contentHash: '', title: null,
-    created: '', updated: '',
-    lastReferenced: null, decayScore: 1, status: 'active', priority: 0, archivedAt: null, agentSummary: null, agentDerivedFromHash: null
+    recordId: r.id,
+    filePath: r.path,
+    parentPath: null,
+    sequenceKey: null,
+    type: 'permanent',
+    body: r.body,
+    contentHash: '',
+    title: null,
+    created: '',
+    updated: '',
+    lastReferenced: null,
+    decayScore: 1,
+    status: 'active',
+    priority: 0,
+    archivedAt: null,
+    agentSummary: null,
+    agentDerivedFromHash: null
   }));
   const resolver = new WikilinkResolver(vaultRecords);
 
   // Pull contextful samples: find a [[link]] in `from`'s body that resolves to `to`,
   // extract ~200 chars around it, embed, check rank of `to`.
   let rng = 0x12345;
-  const rand = (): number => { rng = (rng * 1103515245 + 12345) >>> 0; return rng / 0x100000000; };
+  const rand = (): number => {
+    rng = (rng * 1103515245 + 12345) >>> 0;
+    return rng / 0x100000000;
+  };
   const shuffled = [...cites].sort(() => rand() - 0.5).slice(0, 60); // oversample, take first 20 with usable context
 
   const samples: Array<{from: string; to: string; context: string}> = [];
@@ -483,7 +536,7 @@ const tp = tagPurity(records, 10);
 
 // Threshold sweep for the PR analysis. Coarse grid 0.30..0.95 in 0.05 steps.
 const thresholdGrid: number[] = [];
-for (let v = 0.30; v <= 0.95 + 1e-9; v += 0.05) thresholdGrid.push(Math.round(v * 100) / 100);
+for (let v = 0.3; v <= 0.95 + 1e-9; v += 0.05) thresholdGrid.push(Math.round(v * 100) / 100);
 const sweep = sweepThresholds(records, relatedMap, thresholdGrid);
 
 const argmax = (rows: ThresholdRow[], key: keyof ThresholdRow): ThresholdRow => {
@@ -504,7 +557,7 @@ const totalRelated = [...relatedMap.values()].reduce((n, s) => n + s.size, 0);
 const recordsWithRelated = [...relatedMap.values()].filter(s => s.size > 0).length;
 const avgPositives = recordsWithRelated ? totalRelated / recordsWithRelated : 0;
 const N = records.length;
-const randomP5 = N > 1 ? avgPositives / (N - 1) : 0;       // P@K random = avg_positives / (N-1)
+const randomP5 = N > 1 ? avgPositives / (N - 1) : 0; // P@K random = avg_positives / (N-1)
 const randomR10 = avgPositives > 0 ? Math.min(10, N - 1) / (N - 1) : 0; // upper-bound: 10/(N-1) when avg≥1
 const randomR10Expected = avgPositives > 0 ? 10 / (N - 1) : 0; // expected fraction of positives in random 10
 const liftP5 = randomP5 > 0 ? p5 / randomP5 : 0;
@@ -514,13 +567,14 @@ const codeReport = codeHeavySpotCheck(records);
 const langReport = crossLanguageSpotCheck(records);
 
 let contextReport = '_(skipped via --no-context)_';
+let evalEmbedder: BgeEmbedder | null = null;
 if (!args.noContext) {
-  const embedder = new BgeEmbedder({modelName: args.model, dim: args.dim});
-  contextReport = await wikilinkContextSpotCheck(records, cites, byId, embedder);
+  evalEmbedder = new BgeEmbedder({modelName: args.model, dim: args.dim});
+  contextReport = await wikilinkContextSpotCheck(records, cites, byId, evalEmbedder);
 }
 
-const passP5 = p5 >= 0.30;
-const passND = nd >= 0.90;
+const passP5 = p5 >= 0.3;
+const passND = nd >= 0.9;
 const overallPass = passP5 && passND;
 const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
 
@@ -608,6 +662,11 @@ For **missed connections** (the primary failure mode):
 const outPath = resolve(args.output);
 mkdirSync(dirname(outPath), {recursive: true});
 writeFileSync(outPath, report, 'utf8');
-process.stdout.write(`wrote ${outPath} (${overallPass ? 'PASS' : 'FAIL'}, P@5=${p5.toFixed(3)}, R@10=${r10.toFixed(3)}, NegDiscrim=${nd.toFixed(3)})\n`);
+process.stdout.write(
+  `wrote ${outPath} (${overallPass ? 'PASS' : 'FAIL'}, P@5=${p5.toFixed(3)}, R@10=${r10.toFixed(3)}, NegDiscrim=${nd.toFixed(3)})\n`
+);
 
 db.close();
+// Drop the BGE pipeline so the retainer's retention timer doesn't keep
+// the event loop alive after the eval completes.
+if (evalEmbedder) await evalEmbedder.releaseRetained();

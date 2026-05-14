@@ -39,6 +39,7 @@ const makeEnv = (port: number, dataPath: string): ServerEnv => ({
   autoWatch: false,
   watchDebounceMs: 1500,
   embedder: 'fake',
+  embedderRetentionMs: 1_800_000,
   autoCommit: false,
   autoPush: false,
   commitIntervalMs: 60_000,
@@ -247,11 +248,7 @@ test('POST /commit 503 on a non-git directory', async t => {
       body: JSON.stringify({})
     });
     t.equal(status, 503, '503 not a git repo');
-    t.equal(
-      (body as {code: string}).code,
-      'not_a_git_repo',
-      'code field present'
-    );
+    t.equal((body as {code: string}).code, 'not_a_git_repo', 'code field present');
   } finally {
     await teardown(ctx);
   }

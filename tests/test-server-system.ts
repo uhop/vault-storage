@@ -18,6 +18,7 @@ const makeEnv = (port: number): ServerEnv => ({
   autoWatch: false,
   watchDebounceMs: 1500,
   embedder: 'fake',
+  embedderRetentionMs: 1_800_000,
   autoCommit: false,
   autoPush: false,
   commitIntervalMs: 60000,
@@ -87,11 +88,7 @@ test('GET /system/status with valid token returns indexer status', async t => {
     t.equal(status, 200, '200 ok');
     const payload = body as Record<string, unknown>;
     t.equal(payload['ok'], true, 'ok=true');
-    t.equal(
-      payload['schema_version'],
-      8,
-      'schema_version=8 (all migrations through queue_items)'
-    );
+    t.equal(payload['schema_version'], 8, 'schema_version=8 (all migrations through queue_items)');
     t.equal(payload['records'], 0, 'records=0 on empty DB');
     t.equal(payload['edges'], 0, 'edges=0 on empty DB');
     t.equal(payload['pending_suggestions'], 0, 'pending_suggestions=0 on empty DB');

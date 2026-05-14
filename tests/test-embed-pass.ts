@@ -218,6 +218,7 @@ test('embedPending', async t => {
     class NaNOnInputEmbedder implements Embedder {
       readonly dim = DIM;
       readonly modelName = 'nan-on-input';
+      readonly retained = false;
       readonly badPattern: string;
       constructor(badPattern: string) {
         this.badPattern = badPattern;
@@ -234,6 +235,7 @@ test('embedPending', async t => {
       async embedBatch(texts: string[]): Promise<Float32Array[]> {
         return Promise.all(texts.map(t => this.embed(t)));
       }
+      async releaseRetained(): Promise<void> {}
     }
 
     const fx = setup();
