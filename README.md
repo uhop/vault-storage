@@ -75,6 +75,7 @@ Environment variables:
 | `VAULT_INGEST_PATH`        | no       | Default source path for `migrate` / `import` subcommands.                    |
 | `VAULT_EMBEDDER`           | no       | `bge` (default) or `fake` (skip model load — dev/test only).                 |
 | `VAULT_EMBEDDER_RETENTION_MS` | no    | Idle window before the BGE pipeline is disposed and its ~GB ONNX arena returned to the OS. Default `1800000` (30 min); minimum `1000`. Reload on next embed adds ~1-3 s. |
+| `VAULT_EMBEDDER_MAX_BATCH` | no    | Cap on per-ORT-inference batch size. Bounds active-peak RSS by sub-batching large inputs. Default `8` (~200-400 MB peak for BGE-small at S=512); minimum `1`. Trade-off: smaller = lower memory, more inferences per re-embed. |
 | `VAULT_AUTO_REINDEX`       | no       | Run a full reindex on startup. Default `true`.                               |
 | `VAULT_AUTO_WATCH`         | no       | Watch the vault tree and reindex incrementally. Default `true`.              |
 | `VAULT_WATCH_DEBOUNCE_MS`  | no       | Watcher debounce window. Default `1500`.                                     |

@@ -19,6 +19,7 @@ const makeEnv = (port: number): ServerEnv => ({
   watchDebounceMs: 1500,
   embedder: 'fake',
   embedderRetentionMs: 1_800_000,
+  embedderMaxBatch: 8,
   autoCommit: false,
   autoPush: false,
   commitIntervalMs: 60000,

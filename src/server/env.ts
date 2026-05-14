@@ -28,6 +28,14 @@ export interface ServerEnv {
    */
   embedderRetentionMs: number;
   /**
+   * Defensive cap on the batch size handed to a single ORT inference. Larger
+   * batches activate quadratic attention memory; capping bounds the active-
+   * peak RSS. Default 8 (~200-400 MB peak active arena for BGE-small at
+   * S=512). Increase for throughput at the cost of memory headroom; decrease
+   * if a constrained host can't tolerate even the small peak.
+   */
+  embedderMaxBatch: number;
+  /**
    * JSONL log file path for embedding anomalies (transient NaN chunk vectors
    * from transformers.js+BGE). Default: `${vaultDataPath}/.vault-storage/
    * embed-nan.jsonl`. Set to empty string to disable file logging — stderr
@@ -111,6 +119,12 @@ export const readServerEnv = (): ServerEnv => {
     throw new Error(`VAULT_EMBEDDER_RETENTION_MS must be ≥ 1000 (got ${retentionRaw})`);
   }
 
+  const maxBatchRaw = process.env['VAULT_EMBEDDER_MAX_BATCH'] ?? '8';
+  const embedderMaxBatch = Number.parseInt(maxBatchRaw, 10);
+  if (!Number.isInteger(embedderMaxBatch) || embedderMaxBatch < 1) {
+    throw new Error(`VAULT_EMBEDDER_MAX_BATCH must be a positive integer (got ${maxBatchRaw})`);
+  }
+
   const autoCommit = parseFlag(process.env['VAULT_AUTO_COMMIT'], true);
   const autoPush = parseFlag(process.env['VAULT_AUTO_PUSH'], false);
 
@@ -169,6 +183,7 @@ export const readServerEnv = (): ServerEnv => {
     watchDebounceMs,
     embedder,
     embedderRetentionMs,
+    embedderMaxBatch,
     autoCommit,
     autoPush,
     commitIntervalMs,

@@ -30,17 +30,17 @@ const DEFAULT_RETENTION_MS = 30 * 60 * 1000;
 
 // Defensive cap on the batch size handed to a single `pipe(texts)` call.
 // Activation memory inside ORT scales linearly with batch size; attention's
-// score block scales as `batch × heads × seq_len²`. For BGE-small at
-// S=512 that's ~12.6 MB × batch_size per layer. At batch_size=32, the
-// per-layer attention block sits around ~400 MB — comfortable. At
-// batch_size=228 (one re-embed of a 100 KB note like
-// `projects/vault-storage/learnings.md`), it climbs to ~2.9 GB per layer,
-// and ORT's BFCArena rounds up on extend, easily doubling that. Callers
-// that hand `embedBatch` more than `maxBatch` texts get transparent
-// sub-batching: the embedder slices into pieces of `maxBatch`, calls
-// `pipe()` per slice under the same retainer ref, and concatenates
-// outputs. Caller observes no change in vector count or order.
-const DEFAULT_MAX_BATCH = 32;
+// score block scales as `batch × heads × seq_len²`. For BGE-small at S=512
+// that's ~12.6 MB × batch_size per layer. At batch_size=8, the per-layer
+// attention block is ~100 MB and the total active arena lands around
+// 200-400 MB — about the same magnitude as the post-release idle baseline,
+// so active vs idle becomes a small step instead of a 30× one. Prefers
+// "slow working" over "fast failing"; a 228-chunk re-embed of
+// `projects/vault-storage/learnings.md` runs as 29 × `pipe(8)` instead
+// of one `pipe(228)`, roughly 5-7× slower wall-clock but bounded peak.
+// Tunable via `VAULT_EMBEDDER_MAX_BATCH` for callers that prefer
+// throughput over memory headroom.
+const DEFAULT_MAX_BATCH = 8;
 
 /**
  * Real embedder backed by transformers.js (`@huggingface/transformers`) running

@@ -30,7 +30,11 @@ export const main = async (): Promise<void> => {
   const embedder: Embedder =
     env.embedder === 'fake'
       ? new FakeEmbedder()
-      : new BgeEmbedder({anomalyLogger, retentionMs: env.embedderRetentionMs});
+      : new BgeEmbedder({
+          anomalyLogger,
+          retentionMs: env.embedderRetentionMs,
+          maxBatch: env.embedderMaxBatch
+        });
 
   if (env.autoReindex) {
     process.stdout.write(`vault-storage: initial reindex of ${env.vaultDataPath}…\n`);
