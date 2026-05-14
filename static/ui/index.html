@@ -345,7 +345,7 @@ function recommendFromLint(lint) {
     const futureStamps = (lint.checks?.temporal_anomalies?.samples ?? [])
       .filter(s => (s.created && s.created > nowIso) || (s.updated && s.updated > nowIso))
       .length;
-    const fixable = (lint.checks?.orphan_embeddings?.count ?? 0) + (lint.checks?.orphan_doc_embeddings?.count ?? 0) + futureStamps;
+    const fixable = (lint.checks?.orphan_embeddings?.count ?? 0) + (lint.checks?.orphan_doc_embeddings?.count ?? 0) + (lint.checks?.orphan_suggestions?.count ?? 0) + futureStamps;
     const reviewOnly = lint.total_issues - fixable;
     const reviewLink = reviewOnly > 0 ? ` <a href="/ui/lint-review.html">Review →</a>` : '';
     recs.push({

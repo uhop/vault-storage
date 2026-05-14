@@ -159,6 +159,35 @@ export const lintHandler =
       };
     }
 
+    // Pending suggestions whose subject_id points at a record that no
+    // longer exists. Schema 9's records_after_delete_resolve_suggestions
+    // trigger prevents new orphans by cascading records-delete to
+    // suggestions; pre-trigger orphans (suggestions whose subject was
+    // deleted before schema 9 landed) still need /maintenance/cleanup-lint
+    // to drain. NULL subject_id is allowed (system-level kinds like
+    // inefficiency_detected); only NOT NULL rows are checked.
+    {
+      const rows = db
+        .prepare(
+          `SELECT s.id, s.kind, s.subject_id
+             FROM suggestions s
+            WHERE s.status = 'pending'
+              AND s.subject_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM records r WHERE r.record_id = s.subject_id
+              )`
+        )
+        .all() as {id: string; kind: string; subject_id: string}[];
+      checks['orphan_suggestions'] = {
+        count: rows.length,
+        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
+          id: r.id,
+          kind: r.kind,
+          subject_id: r.subject_id
+        }))
+      };
+    }
+
     // tag_aliases pointing to a canonical missing from tags_taxonomy.
     // Foreign keys prevent this when PRAGMA foreign_keys = ON, but
     // check as a safety net.

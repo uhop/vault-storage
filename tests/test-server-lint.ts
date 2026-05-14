@@ -392,6 +392,55 @@ test('POST /maintenance/cleanup-lint is a no-op on a clean DB', async t => {
   });
 });
 
+test('POST /maintenance/cleanup-lint resolves orphan_suggestions (subject record missing)', async t => {
+  await withServer(async (url, db) => {
+    // Three pending suggestions: one whose subject is a live record (s-live),
+    // one whose subject is a missing record (s-orphan), and one with NULL
+    // subject (s-system, a system-level kind). Plus one already-rejected
+    // orphan (s-resolved) — verify cleanup-lint touches only s-orphan.
+    insertRecord(db, {record_id: 'rec-live', file_path: 'topics/live.md', content_hash: 'h'});
+    insertVecChunk(db, {chunk_id: 'c-live-0', record_id: 'rec-live', content_hash: 'h'});
+    const insertSugg = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+       VALUES (?, ?, ?, '{}', ?, '2026-01-01')`
+    );
+    insertSugg.run('s-live', 'archive_candidate', 'rec-live', 'pending');
+    insertSugg.run('s-orphan', 'archive_candidate', 'rec-missing', 'pending');
+    insertSugg.run('s-system', 'inefficiency_detected', null, 'pending');
+    insertSugg.run('s-resolved', 'edge_type', 'rec-missing', 'rejected');
+
+    const before = await fetchJson(`${url}/system/lint`);
+    t.equal(
+      (before.body as {checks: {orphan_suggestions: {count: number}}}).checks.orphan_suggestions
+        .count,
+      1,
+      'pre: 1 orphan_suggestion'
+    );
+
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    t.equal(status, 200, '200 ok');
+    const r = body as {
+      totalFixed: number;
+      fixed: {orphan_suggestions: {suggestionsResolved: number}};
+    };
+    t.equal(r.fixed.orphan_suggestions.suggestionsResolved, 1, 'resolved 1 orphan');
+
+    const rows = db
+      .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
+      .all() as {id: string; status: string; resolved_by: string | null}[];
+    const byId = Object.fromEntries(rows.map(row => [row.id, row]));
+    t.equal(byId['s-orphan']?.status, 'accepted', 's-orphan → accepted');
+    t.equal(
+      byId['s-orphan']?.resolved_by,
+      'record-deleted-backfill',
+      's-orphan carries the backfill marker'
+    );
+    t.equal(byId['s-live']?.status, 'pending', 's-live (live subject) untouched');
+    t.equal(byId['s-system']?.status, 'pending', 's-system (NULL subject) untouched');
+    t.equal(byId['s-resolved']?.status, 'rejected', 's-resolved (already-resolved) untouched');
+  });
+});
+
 test('POST /maintenance/cleanup-lint reports needsReview counts for non-fixable categories', async t => {
   await withServer(async (url, db) => {
     insertRecord(db, {

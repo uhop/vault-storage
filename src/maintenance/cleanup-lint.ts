@@ -5,6 +5,7 @@ export interface CleanupLintSummary {
   fixed: {
     orphan_embeddings: {recordsAffected: number; chunksDeleted: number};
     orphan_doc_embeddings: {rowsDeleted: number};
+    orphan_suggestions: {suggestionsResolved: number};
     temporal_future_clamps: {recordsAffected: number; fieldsUpdated: number};
   };
   needsReview: Record<string, number>;
@@ -15,10 +16,13 @@ export interface CleanupLintSummary {
  * Auto-fix the lint categories that have a deterministic cleanup:
  * `orphan_embeddings` (rows in `record_vec` whose `record_id` no longer
  * exists in `records`), `orphan_doc_embeddings` (same in
- * `record_doc_vec`), and `temporal_future_clamps` (records with
- * `created` or `updated` stamps in the future — clamped to now).
- * Schema 7's records_after_delete trigger prevents new orphans; this
- * endpoint drains pre-existing ones.
+ * `record_doc_vec`), `orphan_suggestions` (pending suggestions whose
+ * `subject_id` points at a now-missing record), and
+ * `temporal_future_clamps` (records with `created` or `updated` stamps
+ * in the future — clamped to now). Schemas 7 + 9 install AFTER DELETE
+ * triggers that prevent new orphans of these shapes; this endpoint
+ * drains pre-existing ones (and any future ones that slip past a
+ * trigger via raw DB access).
  *
  * Future-stamp clamping is mechanical: the wall clock is authoritative,
  * so a stamp ahead of it can't be right. The `updated < created` sub-
@@ -77,6 +81,27 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
     docRowsDeleted = Number(result.changes);
   }
 
+  // Pending suggestions whose subject_id points at a missing record.
+  // Resolve as accepted with `resolved_by='record-deleted-backfill'` —
+  // distinct from `record-deleted` (the live cascade marker installed by
+  // schema 9) so the audit trail says "drained by cleanup-lint" vs
+  // "resolved by the trigger at delete time".
+  const suggestionsResolved = Number(
+    db
+      .prepare(
+        `UPDATE suggestions
+            SET status      = 'accepted',
+                resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                resolved_by = 'record-deleted-backfill'
+          WHERE status      = 'pending'
+            AND subject_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM records r WHERE r.record_id = suggestions.subject_id
+            )`
+      )
+      .run().changes
+  );
+
   const futureClamps = clampFutureStamps(db);
 
   const needsReview: Record<string, number> = {
@@ -87,10 +112,12 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
   };
 
   return {
-    totalFixed: orphans.length + docOrphans.length + futureClamps.recordsAffected,
+    totalFixed:
+      orphans.length + docOrphans.length + suggestionsResolved + futureClamps.recordsAffected,
     fixed: {
       orphan_embeddings: {recordsAffected: orphans.length, chunksDeleted},
       orphan_doc_embeddings: {rowsDeleted: docRowsDeleted},
+      orphan_suggestions: {suggestionsResolved},
       temporal_future_clamps: futureClamps
     },
     needsReview,
