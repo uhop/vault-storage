@@ -513,6 +513,64 @@ test('importer files tag_suggestion for agent.tags_suggested entries not on FM',
   }
 });
 
+test('tag_suggestion dedup spans all statuses (re-import after rejection does not refile)', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [research]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 1, 'one pending after first import');
+
+    // Reject the suggestion (simulates the user saying "no, this tag doesn't fit").
+    db.prepare(
+      `UPDATE suggestions
+          SET status = 'rejected',
+              resolved_at = '2026-05-14T00:00:00.000Z',
+              resolved_by = 'user-rejected'
+        WHERE kind = 'tag_suggestion'
+          AND status = 'pending'`
+    ).run();
+    const allCount = (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'tag_suggestion'`)
+        .get() as {n: number}
+    ).n;
+    t.equal(allCount, 1, 'one tag_suggestion row total after reject');
+    t.equal(pendingTagSuggestionCount(db), 0, 'zero pending after reject');
+
+    // Re-import — under the old pending-only dedup this refilled the same
+    // (record_id, tag) shape and the rejection was meaningless. Under the
+    // any-status dedup the rejected row blocks re-filing.
+    importVault(db, root);
+    const finalAllCount = (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'tag_suggestion'`)
+        .get() as {n: number}
+    ).n;
+    t.equal(finalAllCount, 1, 'still one row after re-import — rejection is durable');
+    t.equal(pendingTagSuggestionCount(db), 0, 'still zero pending — no refile');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('importer skips filing tag_suggestion for tags already realized on FM', t => {
   const {root, cleanup} = setupVault();
   try {

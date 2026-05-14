@@ -184,10 +184,17 @@ export interface TagSuggestionPayload {
  * should be. Distinct from `new_tag` (which is fired when an unknown tag
  * IS on FM but isn't in the taxonomy).
  *
- * Idempotent on `(record_id, tag, status='pending')`. Auto-resolves to
- * `accepted` with `resolved_by='tag-realized'` on the next import where
- * the tag is now in the record's `tags` table — i.e., the user (or an
- * agent) added the tag to FM and the importer accepted it.
+ * Idempotent on `(record_id, tag)` across all statuses — matches the
+ * EdgeSuggestionFiler / NewTagSuggestionFiler / DuplicateSuggestionFiler
+ * pattern. A prior rejection is durable: once the user says "no, this
+ * tag doesn't fit this record," subsequent re-imports won't refile the
+ * same suggestion. Resurfacing after a rejected `(record, tag)` shape
+ * is an explicit operator action (manual re-create via
+ * `POST /suggestions`, or repository-level edit).
+ *
+ * Auto-resolves to `accepted` with `resolved_by='tag-realized'` on the
+ * next import where the tag is now in the record's `tags` table — i.e.,
+ * the user (or an agent) added the tag to FM and the importer accepted it.
  */
 export class TagSuggestionFiler {
   readonly #findExisting: StatementSync;
@@ -198,7 +205,6 @@ export class TagSuggestionFiler {
     this.#findExisting = db.prepare(
       `SELECT id FROM suggestions
        WHERE kind = 'tag_suggestion'
-         AND status = 'pending'
          AND json_extract(payload, '$.tag') = ?
          AND json_extract(payload, '$.record_id') = ?
        LIMIT 1`
@@ -220,12 +226,14 @@ export class TagSuggestionFiler {
   }
 
   /**
-   * File a pending `tag_suggestion` for `(record, tag)`. Idempotent on the
-   * pending row — accepted/rejected entries don't block re-filing, so a
-   * suggestion that was rejected can later be re-suggested (e.g., the body
-   * changed, the agent re-suggests).
+   * File a pending `tag_suggestion` for `(record, tag)`. Idempotent across
+   * all statuses — a prior accepted or rejected suggestion for the same
+   * pair blocks re-filing, matching the EdgeSuggestionFiler /
+   * NewTagSuggestionFiler / DuplicateSuggestionFiler pattern. Prevents
+   * recurring noise from agent body-content inferences (e.g., a version
+   * number stripped of dots) that the user has already triaged once.
    *
-   * Returns true if filed; false if a pending suggestion already exists.
+   * Returns true if filed; false if any prior suggestion already exists.
    */
   fileTagSuggestion(args: {
     recordId: string;
