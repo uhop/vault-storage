@@ -60,6 +60,32 @@ test('BgeEmbedder (real model)', async t => {
     t.equal(out.length, 0, 'empty in, empty out');
   });
 
+  await t.test('embedBatch sub-batches large inputs (maxBatch cap)', async t => {
+    // A tiny-maxBatch embedder forces the slice loop to fire multiple times
+    // for any input larger than 2, but should produce vectors identical to
+    // calling embed() per input. Verifies the sub-batching preserves order
+    // and per-text identity; covers the bug where a single huge re-embed
+    // would push ORT to a B=228 inference and a 6-GB peak arena.
+    const small = new BgeEmbedder({maxBatch: 2});
+    const inputs = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
+    const batched = await small.embedBatch(inputs);
+    t.equal(batched.length, 5, 'five vectors (one per input)');
+
+    const cos = (x: Float32Array, y: Float32Array): number => {
+      let s = 0;
+      for (let i = 0; i < x.length; i++) s += x[i]! * y[i]!;
+      return s;
+    };
+    for (let i = 0; i < inputs.length; i++) {
+      const single = await small.embed(inputs[i]!);
+      t.ok(
+        Math.abs(cos(batched[i]!, single) - 1) < 1e-4,
+        `sub-batched [${i}] (${inputs[i]}) matches single embed (cos≈1)`
+      );
+    }
+    await small.releaseRetained();
+  });
+
   await t.test('releaseRetained tears down the pipeline (and lets the process exit)', async t => {
     t.ok(embedder.retained, 'pipeline is loaded after embed calls');
     await embedder.releaseRetained();

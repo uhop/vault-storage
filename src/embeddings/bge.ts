@@ -28,6 +28,20 @@ const DEFAULT_MAX_CHARS = 1500;
 // reallocates the arena to that batch's shape.
 const DEFAULT_RETENTION_MS = 30 * 60 * 1000;
 
+// Defensive cap on the batch size handed to a single `pipe(texts)` call.
+// Activation memory inside ORT scales linearly with batch size; attention's
+// score block scales as `batch × heads × seq_len²`. For BGE-small at
+// S=512 that's ~12.6 MB × batch_size per layer. At batch_size=32, the
+// per-layer attention block sits around ~400 MB — comfortable. At
+// batch_size=228 (one re-embed of a 100 KB note like
+// `projects/vault-storage/learnings.md`), it climbs to ~2.9 GB per layer,
+// and ORT's BFCArena rounds up on extend, easily doubling that. Callers
+// that hand `embedBatch` more than `maxBatch` texts get transparent
+// sub-batching: the embedder slices into pieces of `maxBatch`, calls
+// `pipe()` per slice under the same retainer ref, and concatenates
+// outputs. Caller observes no change in vector count or order.
+const DEFAULT_MAX_BATCH = 32;
+
 /**
  * Real embedder backed by transformers.js (`@huggingface/transformers`) running
  * a BGE ONNX model on CPU. CLS-token pooled, L2-normalized — sqlite-vec
@@ -60,6 +74,7 @@ export class BgeEmbedder implements Embedder {
   readonly modelName: string;
   readonly pooling: 'cls' | 'mean';
   readonly maxChars: number;
+  readonly maxBatch: number;
   readonly anomalyLogger: AnomalyLogger | null;
   readonly retentionMs: number;
   #retainer: Retainer<FeatureExtractionPipeline>;
@@ -70,6 +85,7 @@ export class BgeEmbedder implements Embedder {
       dim?: number;
       pooling?: 'cls' | 'mean';
       maxChars?: number;
+      maxBatch?: number;
       anomalyLogger?: AnomalyLogger | null;
       retentionMs?: number;
     } = {}
@@ -78,6 +94,8 @@ export class BgeEmbedder implements Embedder {
     this.dim = opts.dim ?? DEFAULT_DIM;
     this.pooling = opts.pooling ?? 'cls';
     this.maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
+    this.maxBatch = opts.maxBatch ?? DEFAULT_MAX_BATCH;
+    if (this.maxBatch < 1) throw new Error(`BgeEmbedder.maxBatch must be ≥ 1 (got ${this.maxBatch})`);
     this.anomalyLogger = opts.anomalyLogger ?? null;
     this.retentionMs = opts.retentionMs ?? DEFAULT_RETENTION_MS;
     this.#retainer = new Retainer<FeatureExtractionPipeline>({
@@ -108,19 +126,22 @@ export class BgeEmbedder implements Embedder {
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
     const pipe = await this.#retainer.get();
-    let result: Float32Array[];
+    const result: Float32Array[] = [];
     try {
-      const out = await pipe(
-        texts.map(t => this.#cap(t)),
-        {
-          pooling: this.pooling,
-          normalize: true
+      // Sub-batch large inputs so a single 100+-chunk re-embed doesn't
+      // push ORT into a B=100 inference (multi-GB peak attention block per
+      // layer at BGE-small + S=512). One get()/release() pair holds the
+      // pipeline across all slices — no reload, no retention-timer race.
+      for (let offset = 0; offset < texts.length; offset += this.maxBatch) {
+        const slice = texts.slice(offset, offset + this.maxBatch);
+        const out = await pipe(
+          slice.map(t => this.#cap(t)),
+          {pooling: this.pooling, normalize: true}
+        );
+        const flat = out.data as Float32Array;
+        for (let i = 0; i < slice.length; i++) {
+          result.push(flat.slice(i * this.dim, (i + 1) * this.dim));
         }
-      );
-      const flat = out.data as Float32Array;
-      result = [];
-      for (let i = 0; i < texts.length; i++) {
-        result.push(flat.slice(i * this.dim, (i + 1) * this.dim));
       }
     } finally {
       await this.#retainer.release();
