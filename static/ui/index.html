@@ -147,7 +147,6 @@
       <span class="status-label">ArrayBuffers</span><span class="status-value" id="st-arraybuffers">—</span><span></span>
       <span class="status-label">Embedder</span><span class="status-value" id="st-embedder">—</span><button id="release-embedder" class="status-action invisible">Release</button>
       <span class="status-label">Indexer</span><span class="status-value" id="st-indexer">—</span><span></span>
-      <span class="status-label">Vault data</span><span class="status-value" id="st-vault">—</span><span></span>
       <span class="status-label">Last indexed</span><span class="status-value" id="st-commit">—</span><span></span>
       <span class="status-label">sqlite-vec</span><span class="status-value" id="st-sqlitevec">—</span><span></span>
     </div>
@@ -542,7 +541,11 @@ async function refresh() {
     setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
     setSlot('edges', fmtCount(d.edges));
     renderSystemPanel(d);
-    $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    $('#footer').textContent = `vault: ${d.vault_data_path} · loaded ${hh}:${mm}:${ss}`;
   });
 
   try {
@@ -621,7 +624,6 @@ function renderSystemPanel(d) {
   $('#st-indexer').innerHTML = d.indexer_running
     ? `<span class="badge on">running</span>`
     : `<span class="badge off">idle</span>`;
-  $('#st-vault').textContent = d.vault_data_path ?? '—';
   $('#st-commit').textContent = d.last_indexed_commit ? shortSha(d.last_indexed_commit) : '—';
   $('#st-sqlitevec').textContent = d.sqlite_vec_version ?? '—';
 }
