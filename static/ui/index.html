@@ -68,6 +68,19 @@
   section.ops { margin-top: 1.5rem; }
   section.ops h2 { font-size: 1rem; margin: 0 0 .4rem; color: var(--muted); font-weight: 600; }
   .ops-help { color: var(--muted); font-size: .85rem; margin: 0 0 .6rem; }
+  .status-grid { display: grid; grid-template-columns: max-content 1fr auto; gap: .35rem 1rem; align-items: baseline; padding: .8rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+  .status-grid .status-label { color: var(--muted); font-size: .8rem; }
+  .status-grid .status-value { font-family: var(--mono); font-size: .9rem; font-variant-numeric: tabular-nums; }
+  .status-grid .status-value .sub { color: var(--muted); font-size: .8rem; margin-left: .4rem; }
+  .status-grid .badge { font-size: .72rem; padding: .1em .45em; border-radius: 3px; border: 1px solid var(--line); background: var(--bg); }
+  .status-grid .badge.on { border-color: var(--ok); color: var(--ok); }
+  .status-grid .badge.off { color: var(--muted); }
+  .status-grid .status-action { grid-column: 3; padding: .2rem .55rem; font-size: .78rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 3px; cursor: pointer; font: inherit; line-height: 1.4; }
+  .status-grid .status-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .status-grid .status-action:disabled { opacity: .6; cursor: progress; }
+  .status-foot { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; color: var(--muted); font-size: .8rem; font-family: var(--mono); }
+  .status-foot .live-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
   .ops-btn { padding: .4rem .8rem; font-size: .9rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
   .ops-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
   .ops-btn:disabled { opacity: .7; cursor: progress; }
@@ -120,6 +133,24 @@
     <button id="run-scans" class="ops-btn">Run scans</button>
     <span id="run-scans-result" class="ops-result"></span>
   </section>
+  <section class="ops">
+    <h2>System</h2>
+    <div class="status-grid" id="status-grid">
+      <span class="status-label">RSS</span><span class="status-value" id="st-rss">—</span><span></span>
+      <span class="status-label">V8 heap</span><span class="status-value" id="st-heap">—</span><span></span>
+      <span class="status-label">External</span><span class="status-value" id="st-external">—</span><span></span>
+      <span class="status-label">ArrayBuffers</span><span class="status-value" id="st-arraybuffers">—</span><span></span>
+      <span class="status-label">Embedder</span><span class="status-value" id="st-embedder">—</span><button id="release-embedder" class="status-action" hidden>Release</button>
+      <span class="status-label">Indexer</span><span class="status-value" id="st-indexer">—</span><span></span>
+      <span class="status-label">Vault data</span><span class="status-value" id="st-vault">—</span><span></span>
+      <span class="status-label">Last indexed</span><span class="status-value" id="st-commit">—</span><span></span>
+    </div>
+    <div class="status-foot">
+      <span class="live-dot" id="status-live" hidden></span>
+      <span id="status-foot-text">refreshes every 10s when this tab is active</span>
+      <span id="release-embedder-result" class="ops-result"></span>
+    </div>
+  </section>
 </main>
 <div class="footer" id="footer"></div>
 
@@ -138,6 +169,13 @@ import {api, apiJson, getToken, setToken} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
 
 function fmtCount(n) { return n.toLocaleString(); }
+function fmtBytes(n) {
+  if (!Number.isFinite(n)) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 function fmtAge(iso) {
   if (!iso) return '—';
   const t = Date.parse(iso); if (!Number.isFinite(t)) return iso;
@@ -501,6 +539,7 @@ async function refresh() {
     setSlot('edges', fmtCount(d.edges));
     setSlot('last-indexed', shortSha(d.last_indexed_commit), d.last_indexed_commit ? null : 'unset');
     setSlot('sqlite-vec', d.sqlite_vec_version);
+    renderSystemPanel(d);
     $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
   });
 
@@ -562,7 +601,83 @@ const runScans = async () => {
 
 $('#run-scans').addEventListener('click', runScans);
 
-refresh();
+function renderSystemPanel(d) {
+  const m = d.memory ?? {};
+  $('#st-rss').textContent = fmtBytes(m.rss);
+  $('#st-heap').innerHTML = `${fmtBytes(m.heap_used)}<span class="sub">/ ${fmtBytes(m.heap_total)} committed</span>`;
+  $('#st-external').textContent = fmtBytes(m.external);
+  $('#st-arraybuffers').textContent = fmtBytes(m.array_buffers);
+  const retained = d.embedder?.retained === true;
+  const model = d.embedder?.model ?? '—';
+  $('#st-embedder').innerHTML = `${esc(model)} <span class="badge ${retained ? 'on' : 'off'}">${retained ? 'loaded' : 'idle'}</span>`;
+  const releaseBtn = $('#release-embedder');
+  releaseBtn.hidden = !retained;
+  if (!retained) releaseBtn.disabled = false;
+  $('#st-indexer').innerHTML = d.indexer_running
+    ? `<span class="badge on">running</span>`
+    : `<span class="badge off">idle</span>`;
+  $('#st-vault').textContent = d.vault_data_path ?? '—';
+  $('#st-commit').textContent = d.last_indexed_commit ? shortSha(d.last_indexed_commit) : '—';
+}
+
+const STATUS_REFRESH_MS = 10_000;
+let statusTimer = null;
+
+async function refreshStatus() {
+  try {
+    const d = await apiJson('/system/status');
+    renderSystemPanel(d);
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') {
+      stopStatusRefresh();
+      return;
+    }
+    // Transient errors: leave the panel as-is, retry on next tick.
+  }
+}
+
+function startStatusRefresh() {
+  if (statusTimer !== null) return;
+  $('#status-live').hidden = false;
+  $('#status-foot-text').textContent = `live · refreshes every ${STATUS_REFRESH_MS / 1000}s`;
+  statusTimer = setInterval(refreshStatus, STATUS_REFRESH_MS);
+}
+
+function stopStatusRefresh() {
+  if (statusTimer === null) return;
+  clearInterval(statusTimer);
+  statusTimer = null;
+  $('#status-live').hidden = true;
+  $('#status-foot-text').textContent = `paused (tab hidden)`;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopStatusRefresh();
+  else { startStatusRefresh(); refreshStatus(); }
+});
+
+$('#release-embedder').addEventListener('click', async () => {
+  const btn = $('#release-embedder');
+  const result = $('#release-embedder-result');
+  btn.disabled = true;
+  btn.textContent = 'releasing…';
+  result.textContent = '';
+  try {
+    const r = await apiJson('/maintenance/release-embedder', {method: 'POST'});
+    const freed = fmtBytes(r.rss_freed);
+    const after = fmtBytes(r.rss_after);
+    result.textContent = `freed ${freed} in ${r.duration_ms}ms · now ${after}`;
+    await refreshStatus();
+  } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
+    result.textContent = `failed: ${e.message}`;
+    btn.disabled = false;
+    btn.textContent = 'Release';
+  }
+});
+
+// Start auto-refresh once the dashboard has rendered at least once.
+refresh().then(() => { if (!document.hidden) startStatusRefresh(); });
 </script>
 <script type="module" src="/ui/theme.js"></script>
 </body>
