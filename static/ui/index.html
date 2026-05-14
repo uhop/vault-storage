@@ -149,6 +149,7 @@
       <span class="status-label">Indexer</span><span class="status-value" id="st-indexer">—</span><span></span>
       <span class="status-label">Vault data</span><span class="status-value" id="st-vault">—</span><span></span>
       <span class="status-label">Last indexed</span><span class="status-value" id="st-commit">—</span><span></span>
+      <span class="status-label">sqlite-vec</span><span class="status-value" id="st-sqlitevec">—</span><span></span>
     </div>
     <div class="status-foot">
       <span class="live-dot" id="status-live" hidden></span>
@@ -196,9 +197,7 @@ const SLOTS = [
   ['records', 'Records'],
   ['edges', 'Edges'],
   ['pending', 'Pending suggestions'],
-  ['lint', 'Integrity lint'],
-  ['last-indexed', 'Last indexed'],
-  ['sqlite-vec', 'sqlite-vec']
+  ['lint', 'Integrity lint']
 ];
 
 function renderSkeleton() {
@@ -542,8 +541,6 @@ async function refresh() {
   const statusP = apiJson('/system/status').then(d => {
     setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
     setSlot('edges', fmtCount(d.edges));
-    setSlot('last-indexed', shortSha(d.last_indexed_commit), d.last_indexed_commit ? null : 'unset');
-    setSlot('sqlite-vec', d.sqlite_vec_version);
     renderSystemPanel(d);
     $('#footer').textContent = `vault: ${d.vault_data_path} · refreshed ${fmtAge(new Date().toISOString())}`;
   });
@@ -626,6 +623,7 @@ function renderSystemPanel(d) {
     : `<span class="badge off">idle</span>`;
   $('#st-vault').textContent = d.vault_data_path ?? '—';
   $('#st-commit').textContent = d.last_indexed_commit ? shortSha(d.last_indexed_commit) : '—';
+  $('#st-sqlitevec').textContent = d.sqlite_vec_version ?? '—';
 }
 
 const STATUS_REFRESH_MS = 10_000;
