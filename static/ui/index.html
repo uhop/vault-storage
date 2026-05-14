@@ -309,7 +309,7 @@ function recommendFromSuggestions(summary, details) {
   }
   if (k.archive_candidate) recs.push({
     title: `${k.archive_candidate} retention candidates`,
-    why: `Stale records past per-type retention. Mark archived or extend lifetime.`
+    why: `Stale records past per-type retention. Per-record judgment: archive in FM, delete, or reject. <a href="/ui/archive-review.html">Review →</a>`
   });
   if (k.agent_enrichment_stale) recs.push({
     title: `${k.agent_enrichment_stale} stale enrichment blocks`,
