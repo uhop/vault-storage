@@ -21,7 +21,7 @@
     "typescript"
   ],
   "engines": {
-    "node": ">=25"
+    "node": ">=26"
   },
   "scripts": {
     "test": "tape6 --flags FO 'tests/test-*.ts'",

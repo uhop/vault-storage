@@ -1,7 +1,7 @@
 # Multi-stage build: install deps once, ship a slim runtime image.
 # Base must be Debian-flavored (not alpine) so onnxruntime-node and node:sqlite
 # link cleanly against glibc.
-FROM node:25-slim AS deps
+FROM node:26-slim AS deps
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
 # ----------------------------------------------------------------------
-FROM node:25-slim AS runtime
+FROM node:26-slim AS runtime
 
 # Tiny utilities for the healthcheck. `node:slim` is already minimal so this
 # is a small additive — wget is ~150 KB, lets us avoid shipping a healthcheck
@@ -30,7 +30,7 @@ COPY --chown=node:node src ./src
 COPY --chown=node:node static ./static
 COPY --chown=node:node tsconfig.json ./
 
-# `node:25-slim` ships with a `node` user (uid 1000, gid 1000). Reuse it instead
+# `node:26-slim` ships with a `node` user (uid 1000, gid 1000). Reuse it instead
 # of creating a custom one — covers the common host-uid case without conflict.
 # Hosts that need a different uid override via compose `user: "<uid>:<gid>"`.
 RUN mkdir -p /data /home/node/.cache/huggingface \
