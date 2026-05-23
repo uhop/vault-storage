@@ -1,9 +1,12 @@
+import {existsSync, readFileSync, statSync} from 'node:fs';
 import type {DatabaseSync} from 'node:sqlite';
+import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
 import {parsePagination, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
+import {ensureSafePath, WriterError} from '../writer.ts';
 
 interface RecordRow {
   record_id: string;
@@ -99,6 +102,57 @@ export const getRecordMetaHandler =
       return;
     }
     sendJson(ctx.res, 200, toJsonRecord(rowToRecord(row), {includeBody: false}));
+  };
+
+interface FmHandlerDeps {
+  db: DatabaseSync;
+  vaultDataPath: string;
+}
+
+/**
+ * GET /sections/{id}/fm — return the on-disk frontmatter parsed as JSON,
+ * symmetric to the JSON write path's `{frontmatter, body}` payload. Reads the
+ * file directly (not the DB), so the response reflects what's actually on
+ * disk — including FM fields that haven't been promoted to the indexer's
+ * schema (or that go through server-side transformations like tag canonical-
+ * resolution). Callers doing read-modify-write on FM should use this instead
+ * of any indexer-projected view; that view drops anything the resolver
+ * couldn't map, and a write-back round-trip would silently strip those keys.
+ */
+export const getRecordFmHandler =
+  (deps: FmHandlerDeps): Handler =>
+  ctx => {
+    const id = ctx.params['id'];
+    if (!id) {
+      sendError(ctx.res, 400, 'bad_request', 'missing record_id');
+      return;
+    }
+    const row = deps.db
+      .prepare('SELECT file_path FROM records WHERE record_id = ?')
+      .get(id) as {file_path: string} | undefined;
+    if (!row) {
+      sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
+      return;
+    }
+    let abs: string;
+    try {
+      abs = ensureSafePath(deps.vaultDataPath, row.file_path);
+    } catch (err) {
+      if (err instanceof WriterError) {
+        sendError(ctx.res, err.status, err.code, err.message);
+        return;
+      }
+      throw err;
+    }
+    if (!existsSync(abs) || !statSync(abs).isFile()) {
+      sendError(ctx.res, 404, 'file_not_found', `no file at ${row.file_path}`);
+      return;
+    }
+    const {data, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+    const includeBody = ctx.query['exclude'] !== 'body';
+    const response: {frontmatter: Record<string, unknown>; body?: string} = {frontmatter: data};
+    if (includeBody) response.body = body;
+    sendJson(ctx.res, 200, response);
   };
 
 interface ListFilters {

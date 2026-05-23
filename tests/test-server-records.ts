@@ -415,6 +415,95 @@ test('GET /sections/{id}/meta returns frontmatter projection only', async t => {
   }
 });
 
+test('GET /sections/{id}/fm returns raw on-disk frontmatter (no canonical-resolution)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    // Write a file whose FM has tags that aren't (and won't be) in the
+    // taxonomy. The indexer-projected view would drop them; the raw-FM
+    // endpoint must preserve all of them so write-back round-trips are safe.
+    writeMd(
+      root,
+      'topics/gamma.md',
+      [
+        '---',
+        'title: Gamma',
+        'tags:',
+        '  - non-canonical-one',
+        '  - non-canonical-two',
+        '  - non-canonical-three',
+        'created: 2026-05-01',
+        'updated: 2026-05-22',
+        'custom_field: kept-verbatim',
+        '---',
+        'Gamma topic body.',
+        ''
+      ].join('\n')
+    );
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/gamma.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(`${url}/sections/${id}/fm`);
+      t.equal(status, 200, '200 ok');
+      const out = body as {frontmatter: Record<string, unknown>; body: string};
+      t.deepEqual(
+        out.frontmatter['tags'],
+        ['non-canonical-one', 'non-canonical-two', 'non-canonical-three'],
+        'all on-disk tags returned even when none are in the taxonomy'
+      );
+      t.equal(out.frontmatter['title'], 'Gamma', 'title preserved');
+      t.equal(out.frontmatter['custom_field'], 'kept-verbatim', 'unknown FM keys preserved');
+      t.equal(out.body.trim(), 'Gamma topic body.', 'body returned');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /sections/{id}/fm?exclude=body omits body', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(`${url}/sections/${id}/fm?exclude=body`);
+      t.equal(status, 200, '200 ok');
+      t.equal('body' in (body as object), false, 'body field absent');
+      t.ok(
+        'frontmatter' in (body as object),
+        'frontmatter field present'
+      );
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /sections/{unknown-id}/fm returns 404', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const {status, body} = await authedFetch(
+        `${url}/sections/01HFFFFFFFFFFFFFFFFFFFFFFFFF/fm`
+      );
+      t.equal(status, 404, '404 not found');
+      t.equal((body as {code: string}).code, 'record_not_found', 'code=record_not_found');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('GET /sections/{unknown-id} returns 404', async t => {
   const {root, cleanup} = setupVault();
   try {

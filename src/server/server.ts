@@ -4,7 +4,12 @@ import {checkBearer} from './auth.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {backlinksHandler, neighborhoodHandler} from './handlers/edges.ts';
-import {getRecordHandler, getRecordMetaHandler, listRecordsHandler} from './handlers/records.ts';
+import {
+  getRecordFmHandler,
+  getRecordHandler,
+  getRecordMetaHandler,
+  listRecordsHandler
+} from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
 import {
   cleanupLintHandler,
@@ -96,6 +101,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/sections/{id}/similar', similarHandler({db: opts.db}));
   router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db}));
   router.get('/sections/{id}/meta', getRecordMetaHandler(opts.db));
+  router.get(
+    '/sections/{id}/fm',
+    getRecordFmHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
   router.get('/sections/{id}', getRecordHandler(opts.db));
   router.put(
     '/sections/{id}',
