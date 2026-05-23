@@ -504,6 +504,220 @@ test('GET /sections/{unknown-id}/fm returns 404', async t => {
   }
 });
 
+test('GET /sections/{id}/tags returns on-disk FM tags', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/has-tags.md',
+      [
+        '---',
+        'title: Has Tags',
+        'tags:',
+        '  - alpha-tag',
+        '  - beta-tag',
+        'created: 2026-05-01',
+        'updated: 2026-05-22',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/has-tags.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(`${url}/sections/${id}/tags`);
+      t.equal(status, 200, '200 ok');
+      t.deepEqual((body as {tags: string[]}).tags, ['alpha-tag', 'beta-tag'], 'both tags returned');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /sections/{id}/tags adds a new tag to FM atomically', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/post-add.md',
+      [
+        '---',
+        'title: Post Add',
+        'tags:',
+        '  - existing-one',
+        '  - existing-two',
+        'created: 2026-05-01',
+        'updated: 2026-05-22',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/post-add.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(`${url}/sections/${id}/tags`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'newcomer'})
+      });
+      t.equal(status, 200, '200 ok');
+      t.deepEqual(
+        (body as {tags: string[]}).tags,
+        ['existing-one', 'existing-two', 'newcomer'],
+        'newcomer appended, existing tags preserved'
+      );
+      // Confirm FM on disk has all three.
+      const fm = await authedFetch(`${url}/sections/${id}/fm`);
+      t.deepEqual(
+        (fm.body as {frontmatter: {tags: string[]}}).frontmatter.tags,
+        ['existing-one', 'existing-two', 'newcomer'],
+        'FM written through to disk'
+      );
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /sections/{id}/tags is idempotent on a tag already present', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/post-dup.md',
+      [
+        '---',
+        'title: Post Dup',
+        'tags:',
+        '  - already-here',
+        'created: 2026-05-01',
+        'updated: 2026-05-22',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/post-dup.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(`${url}/sections/${id}/tags`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'already-here'})
+      });
+      t.equal(status, 200, '200 ok');
+      t.deepEqual(
+        (body as {tags: string[]}).tags,
+        ['already-here'],
+        'tag list unchanged on duplicate add'
+      );
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /sections/{id}/tags rejects malformed tag', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const bad = await authedFetch(`${url}/sections/${id}/tags`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'Bad Tag With Spaces'})
+      });
+      t.equal(bad.status, 400, '400 for invalid tag shape');
+      t.equal((bad.body as {code: string}).code, 'invalid_tag', 'code=invalid_tag');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('DELETE /sections/{id}/tags/{tag} removes the tag from FM', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/del-tag.md',
+      [
+        '---',
+        'title: Del Tag',
+        'tags:',
+        '  - keep-one',
+        '  - drop-me',
+        '  - keep-two',
+        'created: 2026-05-01',
+        'updated: 2026-05-22',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/del-tag.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(`${url}/sections/${id}/tags/drop-me`, {
+        method: 'DELETE'
+      });
+      t.equal(status, 200, '200 ok');
+      t.deepEqual(
+        (body as {tags: string[]}).tags,
+        ['keep-one', 'keep-two'],
+        'drop-me removed, others preserved in order'
+      );
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('DELETE /sections/{id}/tags/{tag} is idempotent on a tag not present', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
+      const {status, body} = await authedFetch(
+        `${url}/sections/${id}/tags/not-there-anyway`,
+        {method: 'DELETE'}
+      );
+      t.equal(status, 200, '200 ok (idempotent no-op)');
+      t.deepEqual(
+        (body as {tags: string[]}).tags,
+        [],
+        'tag list unchanged when tag absent'
+      );
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('GET /sections/{unknown-id} returns 404', async t => {
   const {root, cleanup} = setupVault();
   try {

@@ -1,12 +1,22 @@
 import {existsSync, readFileSync, statSync} from 'node:fs';
+import type {ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
+import {
+  AgentEnrichmentStaleFiler,
+  ArchiveCandidateFiler,
+  TagSuggestionFiler
+} from '../../importer/file-suggestions.ts';
+import {importFile} from '../../importer/import-file.ts';
+import {TagsImporter} from '../../importer/import-tags.ts';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
+import {RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
+import {readBodyText} from '../body.ts';
 import {parsePagination, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
-import {ensureSafePath, WriterError} from '../writer.ts';
+import {ensureSafePath, WriterError, writeSplitRecordToDisk} from '../writer.ts';
 
 interface RecordRow {
   record_id: string;
@@ -108,6 +118,209 @@ interface FmHandlerDeps {
   db: DatabaseSync;
   vaultDataPath: string;
 }
+
+// Tag shape rule from src/server/handlers/tags.ts — keep in sync.
+const TAG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+interface RecordPathRow {
+  record_id: string;
+  file_path: string;
+}
+
+const resolveRecord = (
+  deps: FmHandlerDeps,
+  id: string | undefined,
+  res: ServerResponse
+): RecordPathRow | null => {
+  if (!id) {
+    sendError(res, 400, 'bad_request', 'missing record_id');
+    return null;
+  }
+  const row = deps.db
+    .prepare('SELECT record_id, file_path FROM records WHERE record_id = ?')
+    .get(id) as RecordPathRow | undefined;
+  if (!row) {
+    sendError(res, 404, 'record_not_found', `no record with id ${id}`);
+    return null;
+  }
+  return row;
+};
+
+const resolveAbsPath = (
+  deps: FmHandlerDeps,
+  filePath: string,
+  res: ServerResponse
+): string | null => {
+  let abs: string;
+  try {
+    abs = ensureSafePath(deps.vaultDataPath, filePath);
+  } catch (err) {
+    if (err instanceof WriterError) {
+      sendError(res, err.status, err.code, err.message);
+      return null;
+    }
+    throw err;
+  }
+  if (!existsSync(abs) || !statSync(abs).isFile()) {
+    sendError(res, 404, 'file_not_found', `no file at ${filePath}`);
+    return null;
+  }
+  return abs;
+};
+
+interface FmReadResult {
+  body: string;
+  tags: string[];
+}
+
+const readFmTags = (abs: string): FmReadResult => {
+  const {data, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+  const raw = data['tags'];
+  const tags = Array.isArray(raw) ? raw.filter((t): t is string => typeof t === 'string') : [];
+  return {body, tags};
+};
+
+const persistTags = (
+  deps: FmHandlerDeps,
+  row: RecordPathRow,
+  abs: string,
+  newTags: string[],
+  body: string,
+  res: ServerResponse
+): boolean => {
+  const records = new RecordsRepository(deps.db);
+  try {
+    writeSplitRecordToDisk({
+      filePath: row.file_path,
+      existing: records.getById(row.record_id),
+      frontmatter: {tags: newTags},
+      body,
+      vaultDataPath: deps.vaultDataPath
+    });
+  } catch (err) {
+    if (err instanceof WriterError) {
+      sendError(res, err.status, err.code, err.message);
+      return false;
+    }
+    throw err;
+  }
+  importFile(records, row.file_path, abs, undefined, {
+    tags: new TagsImporter(deps.db),
+    agentStale: new AgentEnrichmentStaleFiler(deps.db),
+    tagSuggestion: new TagSuggestionFiler(deps.db),
+    archiveCandidate: new ArchiveCandidateFiler(deps.db)
+  });
+  return true;
+};
+
+/**
+ * GET /sections/{id}/tags — list the record's on-disk FM tags. Reads
+ * straight from disk like `/sections/{id}/fm`, so it sees the file's actual
+ * `tags:` array — no canonical-resolution projection.
+ */
+export const getRecordTagsHandler =
+  (deps: FmHandlerDeps): Handler =>
+  ctx => {
+    const row = resolveRecord(deps, ctx.params['id'], ctx.res);
+    if (!row) return;
+    const abs = resolveAbsPath(deps, row.file_path, ctx.res);
+    if (!abs) return;
+    const {tags} = readFmTags(abs);
+    sendJson(ctx.res, 200, {tags});
+  };
+
+/**
+ * POST /sections/{id}/tags — add a tag to the record's FM tag array. Body:
+ * `{tag: string}`. The whole add-tag-to-record operation runs server-side
+ * (read FM → mutate array → write back → reimport), so callers don't ship
+ * the existing array over the wire and there's no TOCTOU window where a
+ * concurrent write can be silently clobbered by a stale read-modify-write.
+ *
+ * Set-semantics: re-POSTing an existing tag is a 200 no-op (returns the
+ * unchanged tag list). Tag must match the taxonomy shape rule (lowercase
+ * alphanumeric + hyphens, leading char [a-z0-9]) — canonical-vs-alias is
+ * not resolved here; the tag is stored verbatim in FM and the next import's
+ * `TagsImporter` handles taxonomy mapping into the `tags(record_id, tag)`
+ * table.
+ */
+export const postRecordTagHandler =
+  (deps: FmHandlerDeps): Handler =>
+  async ctx => {
+    const row = resolveRecord(deps, ctx.params['id'], ctx.res);
+    if (!row) return;
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendError(ctx.res, 400, 'bad_request', 'body must be JSON');
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      sendError(ctx.res, 400, 'bad_request', 'body must be a JSON object');
+      return;
+    }
+    const tag = (parsed as Record<string, unknown>)['tag'];
+    if (typeof tag !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', 'body must contain `tag` as a string');
+      return;
+    }
+    if (!TAG_RE.test(tag)) {
+      sendError(
+        ctx.res,
+        400,
+        'invalid_tag',
+        'tag must match [a-z0-9][a-z0-9-]* (lowercase alphanumeric + hyphens, leading [a-z0-9])'
+      );
+      return;
+    }
+    const abs = resolveAbsPath(deps, row.file_path, ctx.res);
+    if (!abs) return;
+    const {body, tags} = readFmTags(abs);
+    if (tags.includes(tag)) {
+      sendJson(ctx.res, 200, {tags});
+      return;
+    }
+    const finalTags = [...tags, tag];
+    if (!persistTags(deps, row, abs, finalTags, body, ctx.res)) return;
+    sendJson(ctx.res, 200, {tags: finalTags});
+  };
+
+/**
+ * DELETE /sections/{id}/tags/{tag} — remove a tag from the record's FM tag
+ * array. Idempotent: removing a tag that isn't present is a 200 no-op. Tag
+ * is matched literally against the FM array; if the FM has the canonical
+ * and the caller passes an alias (or vice versa), the operation is a no-op.
+ * Resolve via `GET /sections/{id}/tags` (or `/sections/{id}/fm`) first if
+ * the exact on-disk form is unclear.
+ */
+export const deleteRecordTagHandler =
+  (deps: FmHandlerDeps): Handler =>
+  ctx => {
+    const row = resolveRecord(deps, ctx.params['id'], ctx.res);
+    if (!row) return;
+    const tag = ctx.params['tag'];
+    if (!tag) {
+      sendError(ctx.res, 400, 'bad_request', 'missing tag');
+      return;
+    }
+    const abs = resolveAbsPath(deps, row.file_path, ctx.res);
+    if (!abs) return;
+    const {body, tags} = readFmTags(abs);
+    if (!tags.includes(tag)) {
+      sendJson(ctx.res, 200, {tags});
+      return;
+    }
+    const finalTags = tags.filter(t => t !== tag);
+    if (!persistTags(deps, row, abs, finalTags, body, ctx.res)) return;
+    sendJson(ctx.res, 200, {tags: finalTags});
+  };
 
 /**
  * GET /sections/{id}/fm — return the on-disk frontmatter parsed as JSON,

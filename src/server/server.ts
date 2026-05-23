@@ -5,10 +5,13 @@ import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {backlinksHandler, neighborhoodHandler} from './handlers/edges.ts';
 import {
+  deleteRecordTagHandler,
   getRecordFmHandler,
   getRecordHandler,
   getRecordMetaHandler,
-  listRecordsHandler
+  getRecordTagsHandler,
+  listRecordsHandler,
+  postRecordTagHandler
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
 import {
@@ -101,10 +104,11 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/sections/{id}/similar', similarHandler({db: opts.db}));
   router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db}));
   router.get('/sections/{id}/meta', getRecordMetaHandler(opts.db));
-  router.get(
-    '/sections/{id}/fm',
-    getRecordFmHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
-  );
+  const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath};
+  router.get('/sections/{id}/fm', getRecordFmHandler(recordFmDeps));
+  router.get('/sections/{id}/tags', getRecordTagsHandler(recordFmDeps));
+  router.post('/sections/{id}/tags', postRecordTagHandler(recordFmDeps));
+  router.delete('/sections/{id}/tags/{tag}', deleteRecordTagHandler(recordFmDeps));
   router.get('/sections/{id}', getRecordHandler(opts.db));
   router.put(
     '/sections/{id}',
