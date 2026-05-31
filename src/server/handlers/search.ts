@@ -46,33 +46,55 @@ const findMatches = (haystack: string, needle: string): MatchSpan[] => {
 const escapeLike = (s: string): string => s.replace(/[\\%_]/g, '\\$&');
 
 const lexicalSearch = (db: DatabaseSync, query: string, limit: number): SearchHit[] => {
-  const pattern = `%${escapeLike(query)}%`;
+  // Tokenize on whitespace: every term must be present (AND), each matched
+  // independently anywhere in body or title. The previous single-substring
+  // LIKE required all words to be adjacent, so a multi-word query whose terms
+  // were scattered across the note returned nothing.
+  const terms = query.split(/\s+/).filter(t => t.length > 0);
+  if (terms.length === 0) return [];
+
+  // One `(LOWER(body) LIKE ? OR LOWER(title) LIKE ?)` clause per term, AND-ed.
+  // LOWER on both sides makes the prefilter case-insensitive regardless of
+  // SQLite's LIKE collation, matching the case-folding `findMatches` does
+  // below — so a lowercase query can't miss a Titlecase-only occurrence.
+  const clause = terms
+    .map(() => `(LOWER(body) LIKE ? ESCAPE '\\' OR LOWER(title) LIKE ? ESCAPE '\\')`)
+    .join(' AND ');
+  const params: string[] = [];
+  for (const term of terms) {
+    const pattern = `%${escapeLike(term.toLowerCase())}%`;
+    params.push(pattern, pattern);
+  }
+
   const rows = db
-    .prepare(
-      `SELECT file_path, body, title FROM records
-        WHERE body LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
-        ORDER BY updated DESC`
-    )
-    .all(pattern, pattern) as unknown[] as {
+    .prepare(`SELECT file_path, body, title FROM records WHERE ${clause} ORDER BY updated DESC`)
+    .all(...params) as unknown[] as {
     file_path: string;
     body: string;
     title: string | null;
   }[];
 
+  // Score EVERY matching row, then sort by score and take the top `limit`.
+  // The old code sliced to `limit` in `updated DESC` order *before* scoring,
+  // so for a high-frequency term the strongest (title) match could be dropped
+  // when it wasn't among the most recently updated rows.
   const hits: SearchHit[] = [];
   for (const row of rows) {
-    const matches = findMatches(row.body, query);
-    const titleHits = row.title ? findMatches(row.title, query).length : 0;
-    if (matches.length === 0 && titleHits === 0) continue;
-    hits.push({
-      filename: row.file_path,
-      score: matches.length + titleHits * 3,
-      matches
-    });
-    if (hits.length >= limit) break;
+    let score = 0;
+    const matches: MatchSpan[] = [];
+    for (const term of terms) {
+      const bodyMatches = findMatches(row.body, term);
+      const titleHits = row.title ? findMatches(row.title, term).length : 0;
+      score += bodyMatches.length + titleHits * 3;
+      for (const m of bodyMatches) {
+        if (matches.length < MAX_MATCHES_PER_FILE) matches.push(m);
+      }
+    }
+    if (score === 0) continue; // defensive: SQL AND guarantees each term hit
+    hits.push({filename: row.file_path, score, matches});
   }
   hits.sort((a, b) => b.score - a.score);
-  return hits;
+  return hits.slice(0, limit);
 };
 
 const semanticSearch = async (

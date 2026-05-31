@@ -85,4 +85,23 @@ export class Router {
     }
     return pathMatched ? 'method-not-allowed' : null;
   }
+
+  /**
+   * Every HTTP method whose route pattern matches `path`, in registration
+   * order, with `OPTIONS` appended (the server answers OPTIONS for any known
+   * path as a method-discovery surface). Empty when no route matches the
+   * path at all — the caller treats that as 404, not 405. Mirrors `match()`'s
+   * path matching so the advertised verbs are exactly those the router will
+   * dispatch. Backs the `Allow` header on OPTIONS (204) and 405 responses.
+   */
+  allowedMethods(path: string): string[] {
+    const methods: string[] = [];
+    for (const route of this.#routes) {
+      if (route.regex.test(path) && !methods.includes(route.method)) {
+        methods.push(route.method);
+      }
+    }
+    if (methods.length > 0 && !methods.includes('OPTIONS')) methods.push('OPTIONS');
+    return methods;
+  }
 }

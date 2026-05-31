@@ -261,6 +261,20 @@ const handleRequest =
         return;
       }
 
+      // OPTIONS is a safe method-discovery / CORS-preflight verb: answer it
+      // ahead of the auth gate (it reveals only which methods a path accepts,
+      // never data) for any known path. 204 + `Allow`; 404 if no route matches.
+      if (req.method === 'OPTIONS') {
+        const allow = router.allowedMethods(parsed.path);
+        if (allow.length === 0) {
+          sendError(res, 404, 'not_found', `no route: OPTIONS ${parsed.path}`);
+          return;
+        }
+        res.writeHead(204, {Allow: allow.join(', ')});
+        res.end();
+        return;
+      }
+
       if (!isPublicPath(parsed.path) && !checkBearer(req, env.apiToken)) {
         sendError(res, 401, 'unauthorized', 'missing or invalid bearer token');
         return;
@@ -272,6 +286,8 @@ const handleRequest =
         return;
       }
       if (match === 'method-not-allowed') {
+        // RFC 7231 §6.5.5: a 405 must enumerate the supported methods.
+        res.setHeader('Allow', router.allowedMethods(parsed.path).join(', '));
         sendError(res, 405, 'method_not_allowed', `method not allowed for ${parsed.path}`);
         return;
       }

@@ -257,3 +257,117 @@ test('POST /search/simple/?query=ridiculous_no_match returns empty array', async
     cleanup();
   }
 });
+
+test('POST /search/simple/ is case-insensitive (uppercase query matches lowercase body + Titlecase title)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      // Body has "docker"/"Docker"; title is "Docker networking". An
+      // all-uppercase query must still match — the old LOWER-asymmetry let a
+      // differently-cased query miss the note.
+      const r = await fetchAuthed(`${ctx.url}/search/simple/?query=DOCKER`, {method: 'POST'});
+      t.equal(r.status, 200, '200 ok');
+      const hits = r.body as Array<{filename: string}>;
+      const filenames = new Set(hits.map(h => h.filename));
+      t.ok(filenames.has('topics/docker-networking.md'), 'uppercase query matched the note');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /search/simple/ multi-word query matches non-adjacent terms (AND semantics)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/scatter.md',
+      [
+        '---',
+        'title: Scatter',
+        'created: 2026-04-01',
+        'updated: 2026-04-15',
+        '---',
+        'Alpha leads the section. Several sentences intervene before gamma trails at the end.',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/partial.md',
+      [
+        '---',
+        'title: Partial',
+        'created: 2026-04-01',
+        'updated: 2026-04-16',
+        '---',
+        'Only alpha appears here, never the other term.',
+        ''
+      ].join('\n')
+    );
+    const ctx = await startTestServer(root);
+    try {
+      // Both terms present but far apart → matches (the old single-substring
+      // LIKE required adjacency and returned nothing here).
+      const both = await fetchAuthed(`${ctx.url}/search/simple/?query=alpha%20gamma`, {
+        method: 'POST'
+      });
+      t.equal(both.status, 200, '200 ok');
+      const bothNames = new Set((both.body as Array<{filename: string}>).map(h => h.filename));
+      t.ok(bothNames.has('topics/scatter.md'), 'note with both terms matched');
+      t.notOk(bothNames.has('topics/partial.md'), 'note missing a term excluded (AND, not OR)');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /search/simple/ scores all matches before applying limit (title match survives)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    // Three body-only matches with newer `updated`, one title match that is
+    // older. The old code sliced to `limit` in updated-DESC order *before*
+    // scoring, dropping the older title match; the fix scores everything
+    // first, so the higher-scoring title match wins a small limit.
+    writeMd(
+      root,
+      'topics/body-1.md',
+      ['---', 'title: Body one', 'created: 2026-05-01', 'updated: 2026-05-10', '---', 'a common mention', ''].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/body-2.md',
+      ['---', 'title: Body two', 'created: 2026-05-01', 'updated: 2026-05-11', '---', 'another common mention', ''].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/body-3.md',
+      ['---', 'title: Body three', 'created: 2026-05-01', 'updated: 2026-05-12', '---', 'common once more', ''].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/titled.md',
+      ['---', 'title: Common matters', 'created: 2026-01-01', 'updated: 2026-01-01', '---', 'nothing relevant in the body', ''].join('\n')
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/search/simple/?query=common&limit=2`, {
+        method: 'POST'
+      });
+      t.equal(r.status, 200, '200 ok');
+      const hits = r.body as Array<{filename: string; score: number}>;
+      t.equal(hits.length, 2, 'respects limit');
+      t.equal(hits[0]!.filename, 'topics/titled.md', 'title match ranks first despite being oldest');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
