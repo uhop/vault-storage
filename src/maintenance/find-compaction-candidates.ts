@@ -4,11 +4,21 @@
 // maintenance job.
 //
 // Per design constraint C7 (bounded running-file policy): some folders
-// (logs, atomized projects/<name>/decisions, learnings, queue, done)
-// accumulate pieces that no longer pull individual weight but compress
-// well as periodic summaries. This scan surfaces those folders so the
-// agent (`/vault-compact <folder>`) can decide what to summarize and
-// archive. The scan itself never writes content — only suggestions.
+// (atomized projects/<name>/decisions, learnings, queue) accumulate pieces
+// that no longer pull individual weight but compress well as periodic
+// summaries. This scan surfaces those folders so the agent
+// (`/vault-compact <folder>`) can decide what to summarize and archive. The
+// scan itself never writes content — only suggestions.
+//
+// Two filters keep fresh / archive-only material out of the qualifying set:
+//   1. Folder exclusions (DEFAULT_SKIP_FOLDERS / DEFAULT_SKIP_PATH_SEGMENTS)
+//      drop whole folders regardless of size — `logs` is archive-only and
+//      never summarized at any age, `topics` is concept notes, `archive`/
+//      `sync` are already-archived / mechanical.
+//   2. A per-type hot-window gate (DEFAULT_COMPACTION_HOT_DAYS): a piece
+//      counts toward its folder's threshold only once its `updated` age
+//      exceeds its type's window, so fresh working-set pieces never trigger
+//      a summarize-flag.
 //
 // Idempotency: a `compaction_candidate` of any status for the same
 // `folder_path` blocks re-filing. Re-running is cheap.
@@ -21,17 +31,44 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {CompactionCandidateFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
-import type {VaultRecord} from '../records/types.ts';
+import type {RecordType, VaultRecord} from '../records/types.ts';
 
 /**
- * Folders excluded from the scan regardless of piece count.
+ * Folders excluded from the scan regardless of piece count (and regardless
+ * of age — folder exclusion beats the hot-window gate).
  *
  * `topics` holds individual concept notes — high count reflects coverage,
- * not running-file growth. `logs/sync` is mechanical Obsidian-import
- * output. Any folder containing `archive/` is already-archived.
+ * not running-file growth. `logs` is archive-only: log pieces age out to
+ * `logs/archive/<YYYY>/` via the retention scan and are never summarized,
+ * so the whole folder is excluded here (this also keeps already-compacted
+ * `_summary-*` fragments from re-flagging). `logs/sync` is mechanical
+ * Obsidian-import output. Any folder containing `archive/` is already-archived.
  */
-export const DEFAULT_SKIP_FOLDERS: readonly string[] = ['topics'];
+export const DEFAULT_SKIP_FOLDERS: readonly string[] = ['topics', 'logs'];
 export const DEFAULT_SKIP_PATH_SEGMENTS: readonly string[] = ['archive', 'sync'];
+
+/**
+ * Per-type "hot window" in days. A piece counts toward its folder's
+ * compaction threshold only once its `updated` age exceeds this window;
+ * fresh working-set pieces never trigger a summarize-flag.
+ *
+ * Deliberately distinct from `DEFAULT_RETENTION_RULES` (the archive scan in
+ * find-retention-candidates.ts): the two scans answer different questions —
+ * *summarize-in-place* vs. *archive-out* — so their windows legitimately
+ * differ. A `project` decision is never auto-archived (retention `null`) yet
+ * IS summarize-eligible once cold, which is the whole point of the C7
+ * running-file policy. `log` is intentionally absent: the `logs/` folder is
+ * excluded wholesale by DEFAULT_SKIP_FOLDERS, so a log piece never reaches
+ * this gate. Types not listed here fall back to {@link DEFAULT_HOT_DAYS}.
+ */
+export const DEFAULT_COMPACTION_HOT_DAYS: Partial<Record<RecordType, number>> = {
+  query: 90,
+  project: 180,
+  permanent: 365
+};
+
+/** Hot window (days) for record types absent from {@link DEFAULT_COMPACTION_HOT_DAYS}. */
+export const DEFAULT_HOT_DAYS = 180;
 
 export interface FindCompactionCandidatesOptions {
   /**
@@ -51,7 +88,14 @@ export interface FindCompactionCandidatesOptions {
    * containing `/archive/` or `/sync/` is excluded.
    */
   skipPathSegments?: readonly string[];
-  /** Override the timestamp written to suggestion rows (test injection). */
+  /**
+   * Per-type hot window (days) overrides. Merged over
+   * `DEFAULT_COMPACTION_HOT_DAYS`; keys not provided keep the default.
+   */
+  hotDays?: Partial<Record<RecordType, number>>;
+  /** Hot window (days) for types absent from the map. Default `DEFAULT_HOT_DAYS`. */
+  defaultHotDays?: number;
+  /** Override the timestamp written to suggestion rows + the age anchor (test injection). */
   now?: string;
 }
 
@@ -73,6 +117,14 @@ interface FolderStats {
   oldestCreated: string;
   newestCreated: string;
 }
+
+const MS_PER_DAY = 86_400_000;
+
+const ageDays = (anchorIso: string, nowMs: number): number => {
+  const t = Date.parse(anchorIso);
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, (nowMs - t) / MS_PER_DAY);
+};
 
 const folderOf = (filePath: string): string | null => {
   const idx = filePath.lastIndexOf('/');
@@ -97,7 +149,10 @@ export const findCompactionCandidates = (
   const minPieceCount = options.minPieceCount ?? 30;
   const skipFolders = new Set<string>(options.skipFolders ?? DEFAULT_SKIP_FOLDERS);
   const skipPathSegments = options.skipPathSegments ?? DEFAULT_SKIP_PATH_SEGMENTS;
+  const hotDays = {...DEFAULT_COMPACTION_HOT_DAYS, ...(options.hotDays ?? {})};
+  const defaultHotDays = options.defaultHotDays ?? DEFAULT_HOT_DAYS;
   const now = options.now ?? new Date().toISOString();
+  const nowMs = Date.parse(now);
 
   const records = new RecordsRepository(db);
   const filer = new CompactionCandidateFiler(db);
@@ -117,6 +172,11 @@ export const findCompactionCandidates = (
     if (folder === null) continue;
     if (skipFolders.has(folder)) continue;
     if (containsSkippedSegment(folder, skipPathSegments)) continue;
+    // Hot-window gate: only pieces past their type's window count toward the
+    // threshold (and toward the byte/date stats), so a folder full of fresh
+    // working-set pieces never flags for summarization.
+    const window = hotDays[r.type] ?? defaultHotDays;
+    if (ageDays(r.updated, nowMs) < window) continue;
     const cur = stats.get(folder);
     if (cur) {
       cur.pieceCount++;
