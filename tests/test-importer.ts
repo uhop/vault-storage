@@ -134,7 +134,9 @@ test('importFile detects created/updated FM changes as "updated" (body unchanged
     writeMd(
       root,
       'topics/x.md',
-      ['---', 'title: X', 'created: 2026-04-20', 'updated: 2026-04-20', '---', 'body', ''].join('\n')
+      ['---', 'title: X', 'created: 2026-04-20', 'updated: 2026-04-20', '---', 'body', ''].join(
+        '\n'
+      )
     );
     const db = openDatabase({path: ':memory:'});
     runMigrations(db);
@@ -148,7 +150,9 @@ test('importFile detects created/updated FM changes as "updated" (body unchanged
     writeMd(
       root,
       'topics/x.md',
-      ['---', 'title: X', 'created: 2026-04-20', 'updated: 2026-04-30', '---', 'body', ''].join('\n')
+      ['---', 'title: X', 'created: 2026-04-20', 'updated: 2026-04-30', '---', 'body', ''].join(
+        '\n'
+      )
     );
     const second = importVault(db, root);
     t.equal(second.updated, 1, 'FM-only updated change triggers updated path');
@@ -219,7 +223,9 @@ test('importFile syncs tags on the unchanged path (backfill case)', t => {
     // Simulate the live-DB backfill scenario: the record exists but the
     // tags table is empty (mimicking pre-TagsImporter import).
     db.prepare('DELETE FROM tags WHERE record_id = ?').run(recordId);
-    const empty = db.prepare('SELECT COUNT(*) AS n FROM tags WHERE record_id = ?').get(recordId) as {n: number};
+    const empty = db
+      .prepare('SELECT COUNT(*) AS n FROM tags WHERE record_id = ?')
+      .get(recordId) as {n: number};
     t.equal(empty.n, 0, 'tags cleared to simulate pre-backfill state');
 
     // Second import: content_hash and tracked fields all match → 'unchanged'
@@ -229,7 +235,11 @@ test('importFile syncs tags on the unchanged path (backfill case)', t => {
     const rows = db
       .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
       .all(recordId) as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'tags backfilled on unchanged path');
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['design', 'research'],
+      'tags backfilled on unchanged path'
+    );
     db.close();
   } finally {
     cleanup();
@@ -239,7 +249,11 @@ test('importFile syncs tags on the unchanged path (backfill case)', t => {
 test('importFile picks up tags-only frontmatter edits via the unchanged path', t => {
   const {root, cleanup} = setupVault();
   try {
-    writeMd(root, 'topics/x.md', ['---', 'title: X', 'tags: [design]', '---', 'body', ''].join('\n'));
+    writeMd(
+      root,
+      'topics/x.md',
+      ['---', 'title: X', 'tags: [design]', '---', 'body', ''].join('\n')
+    );
     const db = openDatabase({path: ':memory:'});
     runMigrations(db);
     db.exec(`
@@ -254,13 +268,21 @@ test('importFile picks up tags-only frontmatter edits via the unchanged path', t
     // Edit only the tags array. Body, title, type, status, priority all
     // unchanged → record-row unchanged → without the fix, tags would not
     // re-sync and 'design' would persist.
-    writeMd(root, 'topics/x.md', ['---', 'title: X', 'tags: [research]', '---', 'body', ''].join('\n'));
+    writeMd(
+      root,
+      'topics/x.md',
+      ['---', 'title: X', 'tags: [research]', '---', 'body', ''].join('\n')
+    );
     const second = importVault(db, root);
     t.equal(second.unchanged, 1, 'tags-only edit still hits unchanged path');
-    const rows = db
-      .prepare('SELECT tag FROM tags WHERE record_id = ?')
-      .all(recordId) as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['research'], 'tag set tracks the new frontmatter');
+    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ?').all(recordId) as Array<{
+      tag: string;
+    }>;
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['research'],
+      'tag set tracks the new frontmatter'
+    );
     db.close();
   } finally {
     cleanup();
@@ -502,7 +524,10 @@ test('importer files tag_suggestion for agent.tags_suggested entries not on FM',
       ['research', 'storage'],
       'one per suggested tag not yet on FM'
     );
-    t.ok(rows.every(r => r.status === 'pending'), 'all pending');
+    t.ok(
+      rows.every(r => r.status === 'pending'),
+      'all pending'
+    );
 
     // Re-import — idempotent on the pending pair.
     importVault(db, root);
@@ -547,9 +572,9 @@ test('tag_suggestion dedup spans all statuses (re-import after rejection does no
           AND status = 'pending'`
     ).run();
     const allCount = (
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'tag_suggestion'`)
-        .get() as {n: number}
+      db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'tag_suggestion'`).get() as {
+        n: number;
+      }
     ).n;
     t.equal(allCount, 1, 'one tag_suggestion row total after reject');
     t.equal(pendingTagSuggestionCount(db), 0, 'zero pending after reject');
@@ -559,9 +584,9 @@ test('tag_suggestion dedup spans all statuses (re-import after rejection does no
     // any-status dedup the rejected row blocks re-filing.
     importVault(db, root);
     const finalAllCount = (
-      db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'tag_suggestion'`)
-        .get() as {n: number}
+      db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'tag_suggestion'`).get() as {
+        n: number;
+      }
     ).n;
     t.equal(finalAllCount, 1, 'still one row after re-import — rejection is durable');
     t.equal(pendingTagSuggestionCount(db), 0, 'still zero pending — no refile');
@@ -652,6 +677,80 @@ test('importer auto-accepts pending tag_suggestion when tag becomes realized', t
     t.equal(accepted.length, 1);
     t.equal(accepted[0]?.status, 'accepted');
     t.equal(accepted[0]?.resolved_by, 'tag-realized', 'resolved_by signals realization path');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('tag_suggestion auto-accept matches an alias-spelled payload (resolve before compare)', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    // Pass 1: `standard` suggested but not yet canonical or aliased, so it's
+    // filed with the literal `standard` in the payload.
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [standard]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+    t.equal(pendingTagSuggestionCount(db), 1, 'one pending after first import');
+    const filed = db
+      .prepare(
+        `SELECT json_extract(payload, '$.tag') AS tag FROM suggestions WHERE kind = 'tag_suggestion'`
+      )
+      .all() as Array<{tag: string}>;
+    t.equal(filed[0]?.tag, 'standard', 'payload holds the literal alias spelling');
+
+    // `standard` now becomes an alias of canonical `conventions`.
+    db.exec(`
+      INSERT INTO tags_taxonomy (tag, description, added) VALUES ('conventions', null, '2026-05-07');
+      INSERT INTO tag_aliases (alias, canonical) VALUES ('standard', 'conventions');
+    `);
+
+    // Pass 2: user adds the alias `standard` to FM. TagsImporter stores the
+    // canonical `conventions`; the pending suggestion (payload `standard`)
+    // must auto-accept even though its payload tag != the realized canonical.
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design, standard]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [standard]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    importVault(db, root);
+    t.equal(
+      pendingTagSuggestionCount(db),
+      0,
+      'alias-spelled pending clears once canonical is realized'
+    );
+    const accepted = db
+      .prepare(`SELECT status, resolved_by FROM suggestions WHERE kind = 'tag_suggestion'`)
+      .all() as Array<{status: string; resolved_by: string}>;
+    t.equal(accepted.length, 1, 'no duplicate filed');
+    t.equal(accepted[0]?.status, 'accepted');
+    t.equal(accepted[0]?.resolved_by, 'tag-realized');
     db.close();
   } finally {
     cleanup();

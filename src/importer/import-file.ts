@@ -219,15 +219,14 @@ export const importFile = (
   // and options.tagSuggestion — without TagsImporter we can't tell what's
   // realized, so the comparison would be unsafe.
   if (options.tagSuggestion && options.tags && agent.tagsSuggested.length > 0) {
-    const realized = options.tags.getTagsForRecord(recordId);
+    const tags = options.tags;
+    const realized = tags.getTagsForRecord(recordId);
     const seen = new Set<string>();
     for (const raw of agent.tagsSuggested) {
-      const tag = options.tags.resolveTag(raw);
+      const tag = tags.resolveTag(raw);
       if (tag === null || seen.has(tag)) continue;
       seen.add(tag);
-      if (realized.has(tag)) {
-        options.tagSuggestion.autoAcceptForRecordTag(recordId, tag, now);
-      } else {
+      if (!realized.has(tag)) {
         options.tagSuggestion.fileTagSuggestion({
           recordId,
           filePath: relativePath,
@@ -236,6 +235,16 @@ export const importFile = (
         });
       }
     }
+    // Auto-accept any pending suggestion for this record whose payload tag,
+    // resolved through the alias map, is now realized — covers an alias-spelled
+    // payload (e.g. `standard` vs realized canonical `conventions`) that the
+    // per-tag canonical lookup would otherwise miss.
+    options.tagSuggestion.acceptRealizedForRecord(
+      recordId,
+      realized,
+      raw => tags.resolveTag(raw),
+      now
+    );
   }
 
   // Archive-candidate auto-resolve. When a record's FM status reaches

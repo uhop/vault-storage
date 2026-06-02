@@ -220,13 +220,17 @@ export interface TagSuggestionPayload {
  * `POST /suggestions`, or repository-level edit).
  *
  * Auto-resolves to `accepted` with `resolved_by='tag-realized'` on the
- * next import where the tag is now in the record's `tags` table — i.e.,
- * the user (or an agent) added the tag to FM and the importer accepted it.
+ * next import where the suggested tag is now in the record's `tags` table
+ * — i.e., the user (or an agent) added the tag to FM and the importer
+ * accepted it. The match is alias-aware: the stored payload tag is resolved
+ * through the alias map before comparing to the record's canonical tag set,
+ * so an alias-spelled payload still clears once its canonical is realized.
  */
 export class TagSuggestionFiler {
   readonly #findExisting: StatementSync;
   readonly #insert: StatementSync;
-  readonly #autoAcceptForRecordTag: StatementSync;
+  readonly #selectPendingForRecord: StatementSync;
+  readonly #acceptById: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#findExisting = db.prepare(
@@ -240,15 +244,18 @@ export class TagSuggestionFiler {
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
        VALUES (?, 'tag_suggestion', ?, ?, 'pending', ?)`
     );
-    this.#autoAcceptForRecordTag = db.prepare(
+    this.#selectPendingForRecord = db.prepare(
+      `SELECT id, json_extract(payload, '$.tag') AS tag FROM suggestions
+        WHERE kind = 'tag_suggestion'
+          AND status = 'pending'
+          AND json_extract(payload, '$.record_id') = ?`
+    );
+    this.#acceptById = db.prepare(
       `UPDATE suggestions
           SET status = 'accepted',
               resolved_at = ?,
               resolved_by = 'tag-realized'
-        WHERE kind = 'tag_suggestion'
-          AND status = 'pending'
-          AND json_extract(payload, '$.record_id') = ?
-          AND json_extract(payload, '$.tag') = ?`
+        WHERE id = ?`
     );
   }
 
@@ -275,12 +282,34 @@ export class TagSuggestionFiler {
   }
 
   /**
-   * Auto-accept any pending `tag_suggestion` for `(record, tag)` when the
-   * tag now appears on the record's actual tag set (via FM edit + reimport).
-   * Returns true if a pending suggestion was promoted.
+   * Auto-accept pending `tag_suggestion`s for a record whose stored payload
+   * tag — after alias resolution via `resolve` — is now realized on the
+   * record (`realized` is the record's canonical tag set). Resolving the
+   * payload tag (rather than matching it verbatim against a canonical) fixes
+   * the case where the payload holds an alias spelling, or a literal that
+   * only became an alias of a now-realized canonical after the suggestion
+   * was filed — an exact match would miss it and the suggestion would never
+   * clear. Returns the count promoted.
    */
-  autoAcceptForRecordTag(recordId: string, tag: string, now: string): boolean {
-    return this.#autoAcceptForRecordTag.run(now, recordId, tag).changes > 0;
+  acceptRealizedForRecord(
+    recordId: string,
+    realized: ReadonlySet<string>,
+    resolve: (tag: string) => string | null,
+    now: string
+  ): number {
+    const pending = this.#selectPendingForRecord.all(recordId) as Array<{
+      id: string;
+      tag: string;
+    }>;
+    let accepted = 0;
+    for (const {id, tag} of pending) {
+      const canonical = resolve(tag);
+      if (canonical !== null && realized.has(canonical)) {
+        this.#acceptById.run(now, id);
+        ++accepted;
+      }
+    }
+    return accepted;
   }
 }
 
