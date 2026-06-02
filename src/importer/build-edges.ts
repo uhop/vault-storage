@@ -15,14 +15,24 @@ const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 /**
  * Record types where a default-`cites` body wikilink is overwhelmingly
  * the right answer, so filing an `edge_type` review suggestion just
- * adds noise to the queue. Logs and query notes by convention cite
- * topic / project notes; the cross-link rarely warrants reclassification
- * to `derived-from`, `applies-to`, etc. Skipping the filing for these
- * source types cut ~30–50% of edge_type fire rate during the
- * 2026-05-03 session that produced 5 noisy log→topic suggestions in
- * one PUT. Override per-call via `buildEdges({skipEdgeTypeFilingFromTypes: ...})`.
+ * adds noise to the queue. `log` / `query` notes by convention cite
+ * topic / project notes; `meta` is the type carried by compaction
+ * summaries (`logs/_summary-*`), the archived `_index.md` stub, and
+ * similar derived-from-other-records files whose wikilinks are by
+ * definition cites of canon. None of these cross-links warrant
+ * reclassification to `derived-from`, `applies-to`, etc. Skipping the
+ * filing for these source types cut ~30–50% of edge_type fire rate
+ * during the 2026-05-03 session that produced 5 noisy log→topic
+ * suggestions in one PUT; `meta` joined the set 2026-06-02 after a
+ * `_summary-*` import fired 19 such suggestions in one go (discovered
+ * 2026-05-09 during `/vault-compact logs`). Override per-call via
+ * `buildEdges({skipEdgeTypeFilingFromTypes: ...})`.
  */
-export const DEFAULT_SKIP_EDGE_TYPE_FILING_FROM: ReadonlySet<string> = new Set(['log', 'query']);
+export const DEFAULT_SKIP_EDGE_TYPE_FILING_FROM: ReadonlySet<string> = new Set([
+  'log',
+  'query',
+  'meta'
+]);
 
 export interface EdgeBuildSummary {
   /** Edges actually written to the DB (idempotent — re-runs over the same content yield 0). */
@@ -39,7 +49,7 @@ export interface EdgeBuildSummary {
   fmOverridesApplied: number;
   /** New `edge_type` suggestions filed for unreviewed default-cites edges. */
   suggestionsFiled: number;
-  /** Default-cites edges from a high-cite source type (log, query) that
+  /** Default-cites edges from a high-cite source type (log, query, meta) that
    *  bypassed `edge_type` filing per `skipEdgeTypeFilingFromTypes`. The
    *  edges still land in the DB; only the review-queue noise is suppressed. */
   suggestionsSkippedByType: number;
@@ -85,9 +95,9 @@ export const buildEdges = (
     /**
      * Source-record types that should NOT file `edge_type` review
      * suggestions for their default-cites body wikilinks. Defaults to
-     * `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM` (log + query). Pass an empty
-     * set to file for all types (legacy behavior); pass a custom set to
-     * tune.
+     * `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM` (log + query + meta). Pass an
+     * empty set to file for all types (legacy behavior); pass a custom set
+     * to tune.
      */
     skipEdgeTypeFilingFromTypes?: ReadonlySet<string>;
   } = {}
@@ -228,10 +238,11 @@ export const buildEdges = (
       // The filer is idempotent: a suggestion of any status for the same pair
       // is left in place.
       //
-      // Source-type skip: logs and queries default-cite topic/project notes
-      // by convention; flagging them for review just adds queue noise. Edges
-      // still land in the DB at type=cites; only the review-queue filing is
-      // skipped. Per `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM`.
+      // Source-type skip: log / query / meta sources default-cite
+      // topic/project notes by convention (meta = compaction summaries &
+      // the archived index stub); flagging them for review just adds queue
+      // noise. Edges still land in the DB at type=cites; only the
+      // review-queue filing is skipped. Per `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM`.
       const skipFilingForRecord = skipFilingFromTypes.has(record.type);
       const filedFor = new Set<string>();
       for (const {toId, context} of citesNeedingReview) {

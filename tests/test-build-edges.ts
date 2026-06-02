@@ -363,6 +363,56 @@ test('default-cites from a log/query source skips edge_type filing (DEFAULT_SKIP
   }
 });
 
+test('default-cites from a meta source (compaction summary) skips edge_type filing', async t => {
+  // Compaction summaries carry `type: meta` and are dense with wikilinks to
+  // the records they roll up — by definition cites of canon, not review-
+  // worthy. The 2026-05-09 `_summary-*` import fired 19 noisy edge_type
+  // suggestions before `meta` joined the skip set. The path resolves to
+  // `project` via typeFromPath, so the skip can only come from the FM type.
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'projects/p/decisions/_summary-2026-05-05-to-2026-05-06.md',
+      [
+        '---',
+        'title: Summary 2026-05-05 to 2026-05-06',
+        'type: meta',
+        '---',
+        'Rolls up [[topics/bge-nan]] and [[projects/p/learnings]].',
+        ''
+      ].join('\n')
+    );
+    writeMd(fx.root, 'topics/bge-nan.md', '---\ntitle: BGE NaN\ntype: permanent\n---\nbody\n');
+    writeMd(
+      fx.root,
+      'projects/p/learnings.md',
+      '---\ntitle: P learnings\ntype: project\n---\nbody\n'
+    );
+
+    const summary = importVault(fx.db, fx.root);
+    t.equal(summary.edges.suggestionsFiled, 0, 'no suggestions filed from a meta source');
+    t.equal(
+      summary.edges.suggestionsSkippedByType,
+      2,
+      'both default-cites links from the summary are skipped-by-type'
+    );
+
+    // The edges themselves still landed as cites.
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const sum = records.getByPath('projects/p/decisions/_summary-2026-05-05-to-2026-05-06.md');
+    const outbound = edges.listOutbound(sum!.recordId);
+    t.equal(outbound.length, 2, 'two outbound edges written despite skip');
+    t.ok(
+      outbound.every(e => e.type === 'cites'),
+      'edges land as cites (skip suppresses filing only)'
+    );
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('source types outside the skip set still file edge_type suggestions', async t => {
   // Sanity: the skip is type-specific. A `permanent` topic source citing
   // another permanent topic still files (these are the genuinely
