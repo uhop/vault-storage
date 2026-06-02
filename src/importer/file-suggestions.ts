@@ -21,6 +21,33 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {uuidv7} from '../util/uuid.ts';
 
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Default snooze window (days) for the *recurring-condition* kinds
+ * (`archive_candidate`, `compaction_candidate`). A reject of these means
+ * "not now," not "never" — the underlying trigger (file age, folder size)
+ * persists and legitimately worsens over time, so a rejected suggestion
+ * blocks re-filing only until its `resolved_at` falls outside this window,
+ * after which the next scan may re-surface it.
+ *
+ * The *classification* kinds (`edge_type`, `new_tag`, `tag_suggestion`,
+ * `duplicate`) deliberately do NOT snooze — their reject is a permanent
+ * wrong-classification verdict and blocks across all statuses forever.
+ */
+export const DEFAULT_SNOOZE_DAYS = 14;
+
+/**
+ * ISO instant marking the start of the snooze window: a rejected row whose
+ * `resolved_at >= snoozeCutoff(now, days)` still blocks re-filing. Falls back
+ * to `now` (so no extra blocking) when `now` is unparseable.
+ */
+const snoozeCutoff = (now: string, snoozeDays: number): string => {
+  const t = Date.parse(now);
+  if (!Number.isFinite(t)) return now;
+  return new Date(t - snoozeDays * MS_PER_DAY).toISOString();
+};
+
 export interface EdgeSuggestionPayload {
   from_record: string;
   from_path: string;
@@ -235,12 +262,7 @@ export class TagSuggestionFiler {
    *
    * Returns true if filed; false if any prior suggestion already exists.
    */
-  fileTagSuggestion(args: {
-    recordId: string;
-    filePath: string;
-    tag: string;
-    now: string;
-  }): boolean {
+  fileTagSuggestion(args: {recordId: string; filePath: string; tag: string; now: string}): boolean {
     const existing = this.#findExisting.get(args.tag, args.recordId);
     if (existing) return false;
     const payload: TagSuggestionPayload = {
@@ -343,9 +365,12 @@ export interface CompactionCandidatePayload {
  * (via `/vault-compact <folder>`) decides what to archive and writes the
  * summary; this filer just surfaces "this folder is ripe."
  *
- * Not record-scoped — `subject_id` is null. Idempotent on
- * `(folder_path, status='pending')`. Auto-resolves with
- * `resolved_by='no-longer-eligible'` on the next scan where the folder
+ * Not record-scoped — `subject_id` is null. Re-filing is blocked by a
+ * `pending` row for the folder, or by a `rejected` row whose `resolved_at`
+ * is still inside the snooze window ({@link DEFAULT_SNOOZE_DAYS}) — a reject
+ * means "not now," and the folder re-surfaces once the window lapses (a
+ * recurring-condition kind; see {@link DEFAULT_SNOOZE_DAYS}). Auto-resolves
+ * with `resolved_by='no-longer-eligible'` on the next scan where the folder
  * has dropped below the threshold (typical trigger: `/vault-compact`
  * archived the bulk of the pieces, leaving only the recent ones).
  */
@@ -358,8 +383,11 @@ export class CompactionCandidateFiler {
     this.#findExisting = db.prepare(
       `SELECT id FROM suggestions
        WHERE kind = 'compaction_candidate'
-         AND status = 'pending'
          AND json_extract(payload, '$.folder_path') = ?
+         AND (
+           status = 'pending'
+           OR (status = 'rejected' AND resolved_at >= ?)
+         )
        LIMIT 1`
     );
     this.#insert = db.prepare(
@@ -379,7 +407,8 @@ export class CompactionCandidateFiler {
 
   /**
    * File a pending suggestion for `folder_path`. Returns true if filed,
-   * false if a pending suggestion already exists for the folder.
+   * false if blocked — by a pending suggestion, or by a rejected one still
+   * inside the snooze window (`snoozeDays`, default {@link DEFAULT_SNOOZE_DAYS}).
    */
   fileCandidate(args: {
     folderPath: string;
@@ -388,8 +417,11 @@ export class CompactionCandidateFiler {
     oldestCreated: string;
     newestCreated: string;
     now: string;
+    /** Snooze window for a prior reject. Default {@link DEFAULT_SNOOZE_DAYS}. */
+    snoozeDays?: number;
   }): boolean {
-    const existing = this.#findExisting.get(args.folderPath);
+    const cutoff = snoozeCutoff(args.now, args.snoozeDays ?? DEFAULT_SNOOZE_DAYS);
+    const existing = this.#findExisting.get(args.folderPath, cutoff);
     if (existing) return false;
     const payload: CompactionCandidatePayload = {
       folder_path: args.folderPath,
@@ -429,9 +461,13 @@ export interface ArchiveCandidatePayload {
  * with status='done' for > 90d, etc.). The agent (or user) decides
  * whether to flip status to 'archived' or reject the suggestion.
  *
- * Idempotent on `(record_id, status='pending')`. Auto-resolves with
- * `resolved_by='archived'` when the record's status becomes
- * 'archived' on next import (the user/skill flipped FM in response).
+ * Re-filing is blocked by a `pending` row for the record, or by a
+ * `rejected` row whose `resolved_at` is still inside the snooze window
+ * ({@link DEFAULT_SNOOZE_DAYS}) — a reject means "not now," and the record
+ * re-surfaces once the window lapses (a recurring-condition kind: the
+ * calendar age that tripped the threshold only grows). Auto-resolves with
+ * `resolved_by='archived'` when the record's status becomes 'archived' on
+ * next import (the user/skill flipped FM in response).
  */
 export class ArchiveCandidateFiler {
   readonly #findExisting: StatementSync;
@@ -442,8 +478,11 @@ export class ArchiveCandidateFiler {
     this.#findExisting = db.prepare(
       `SELECT id FROM suggestions
        WHERE kind = 'archive_candidate'
-         AND status = 'pending'
          AND subject_id = ?
+         AND (
+           status = 'pending'
+           OR (status = 'rejected' AND resolved_at >= ?)
+         )
        LIMIT 1`
     );
     this.#insert = db.prepare(
@@ -462,8 +501,9 @@ export class ArchiveCandidateFiler {
   }
 
   /**
-   * File a pending archive_candidate. Returns true if filed; false if a
-   * pending suggestion already exists for the record.
+   * File a pending archive_candidate. Returns true if filed; false if
+   * blocked — by a pending suggestion, or by a rejected one still inside the
+   * snooze window (`snoozeDays`, default {@link DEFAULT_SNOOZE_DAYS}).
    */
   fileCandidate(args: {
     recordId: string;
@@ -473,8 +513,11 @@ export class ArchiveCandidateFiler {
     ageDays: number;
     rule: string;
     now: string;
+    /** Snooze window for a prior reject. Default {@link DEFAULT_SNOOZE_DAYS}. */
+    snoozeDays?: number;
   }): boolean {
-    const existing = this.#findExisting.get(args.recordId);
+    const cutoff = snoozeCutoff(args.now, args.snoozeDays ?? DEFAULT_SNOOZE_DAYS);
+    const existing = this.#findExisting.get(args.recordId, cutoff);
     if (existing) return false;
     const payload: ArchiveCandidatePayload = {
       record_id: args.recordId,

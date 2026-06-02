@@ -230,3 +230,48 @@ test('findCompactionCandidates payload captures piece count + bytes + date range
     teardown(fx);
   }
 });
+
+// File + reject a folder's compaction_candidate, stamping resolved_at at
+// `daysAgo` before `now`.
+const NOW = '2026-12-01';
+const seedRejectedCompactionCandidate = (
+  fx: {root: string; db: ReturnType<typeof openDatabase>},
+  daysAgo: number
+): void => {
+  seedFolder(fx.root, 'projects/p/decisions', 35, '2026-01'); // cold + over threshold
+  importVault(fx.db, fx.root);
+  findCompactionCandidates(fx.db, {minPieceCount: 30, now: NOW});
+  const resolvedAt = new Date(Date.parse(NOW) - daysAgo * 86_400_000).toISOString();
+  fx.db
+    .prepare(
+      `UPDATE suggestions SET status = 'rejected', resolved_at = ?, resolved_by = 'test'
+        WHERE kind = 'compaction_candidate'`
+    )
+    .run(resolvedAt);
+};
+
+test('compaction_candidate: reject within snooze window does not refile', t => {
+  const fx = setup();
+  try {
+    seedRejectedCompactionCandidate(fx, 5); // 5d ago, default window 14d
+
+    const summary = findCompactionCandidates(fx.db, {minPieceCount: 30, now: NOW});
+    t.equal(summary.filed, 0, 'snoozed reject blocks refile');
+    t.deepEqual(pendingFolders(fx.db), [], 'no fresh pending while snoozed');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('compaction_candidate: reject past snooze window refiles', t => {
+  const fx = setup();
+  try {
+    seedRejectedCompactionCandidate(fx, 20); // 20d ago, past the 14d window
+
+    const summary = findCompactionCandidates(fx.db, {minPieceCount: 30, now: NOW});
+    t.equal(summary.filed, 1, 'lapsed snooze allows refile');
+    t.deepEqual(pendingFolders(fx.db), ['projects/p/decisions'], 'fresh pending filed');
+  } finally {
+    teardown(fx);
+  }
+});

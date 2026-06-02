@@ -95,6 +95,12 @@ export interface FindCompactionCandidatesOptions {
   hotDays?: Partial<Record<RecordType, number>>;
   /** Hot window (days) for types absent from the map. Default `DEFAULT_HOT_DAYS`. */
   defaultHotDays?: number;
+  /**
+   * Snooze window (days) applied to a prior *reject* of a folder's
+   * `compaction_candidate` before it may re-surface. Default
+   * `DEFAULT_SNOOZE_DAYS` (in file-suggestions.ts).
+   */
+  snoozeDays?: number;
   /** Override the timestamp written to suggestion rows + the age anchor (test injection). */
   now?: string;
 }
@@ -206,7 +212,8 @@ export const findCompactionCandidates = (
       totalBytes: s.totalBytes,
       oldestCreated: s.oldestCreated,
       newestCreated: s.newestCreated,
-      now
+      now,
+      snoozeDays: options.snoozeDays
     });
     if (filed) summary.filed++;
   }

@@ -169,12 +169,74 @@ test('archive_candidate auto-resolves when status flips to archived', t => {
     importVault(fx.db, fx.root);
     t.equal(pendingPaths(fx.db).length, 0, 'pending cleared on archive flip');
     const accepted = fx.db
-      .prepare(
-        `SELECT status, resolved_by FROM suggestions WHERE kind = 'archive_candidate'`
-      )
+      .prepare(`SELECT status, resolved_by FROM suggestions WHERE kind = 'archive_candidate'`)
       .all() as Array<{status: string; resolved_by: string}>;
     t.equal(accepted[0]?.status, 'accepted');
     t.equal(accepted[0]?.resolved_by, 'archived');
+  } finally {
+    teardown(fx);
+  }
+});
+
+// Reject a qualifying record's archive_candidate, stamp resolved_at at
+// `daysAgo` before `now`, and return the rejected suggestion's id.
+const seedRejectedArchiveCandidate = (
+  fx: {root: string; db: ReturnType<typeof openDatabase>},
+  now: Date,
+  daysAgo: number
+): void => {
+  writeMd(
+    fx.root,
+    'logs/old.md',
+    `---\ntitle: Old\nupdated: ${ageDays(now, 100)}\ncreated: ${ageDays(now, 100)}\n---\nbody\n`
+  );
+  importVault(fx.db, fx.root);
+  findRetentionCandidates(fx.db, {now: now.toISOString()});
+  const resolvedAt = new Date(now.getTime() - daysAgo * 86_400_000).toISOString();
+  fx.db
+    .prepare(
+      `UPDATE suggestions SET status = 'rejected', resolved_at = ?, resolved_by = 'test'
+        WHERE kind = 'archive_candidate'`
+    )
+    .run(resolvedAt);
+};
+
+test('archive_candidate: reject within snooze window does not refile', t => {
+  const fx = setup();
+  try {
+    const now = new Date('2026-05-01T00:00:00Z');
+    seedRejectedArchiveCandidate(fx, now, 5); // rejected 5d ago, default window 14d
+
+    const summary = findRetentionCandidates(fx.db, {now: now.toISOString()});
+    t.equal(summary.filed, 0, 'snoozed reject blocks refile');
+    t.equal(pendingPaths(fx.db).length, 0, 'no fresh pending while snoozed');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('archive_candidate: reject past snooze window refiles', t => {
+  const fx = setup();
+  try {
+    const now = new Date('2026-05-01T00:00:00Z');
+    seedRejectedArchiveCandidate(fx, now, 20); // rejected 20d ago, past the 14d window
+
+    const summary = findRetentionCandidates(fx.db, {now: now.toISOString()});
+    t.equal(summary.filed, 1, 'lapsed snooze allows refile');
+    t.deepEqual(pendingPaths(fx.db), ['logs/old.md'], 'fresh pending filed');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('archive_candidate: snoozeDays option narrows the window', t => {
+  const fx = setup();
+  try {
+    const now = new Date('2026-05-01T00:00:00Z');
+    seedRejectedArchiveCandidate(fx, now, 5); // 5d ago — inside default 14d, outside a 3d window
+
+    const summary = findRetentionCandidates(fx.db, {now: now.toISOString(), snoozeDays: 3});
+    t.equal(summary.filed, 1, 'shorter window lets the 5d-old reject refile');
   } finally {
     teardown(fx);
   }

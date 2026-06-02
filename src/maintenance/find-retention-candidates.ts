@@ -54,6 +54,12 @@ export interface FindRetentionOptions {
   rules?: Partial<Record<RecordType, RetentionRule | null>>;
   /** Override the timestamp anchor (test injection). */
   now?: string;
+  /**
+   * Snooze window (days) applied to a prior *reject* of a record's
+   * `archive_candidate` before it may re-surface. Default
+   * `DEFAULT_SNOOZE_DAYS` (in file-suggestions.ts).
+   */
+  snoozeDays?: number;
 }
 
 export interface FindRetentionSummary {
@@ -104,7 +110,9 @@ export const findRetentionCandidates = (
     if (age < rule.days) continue;
     summary.qualifying++;
     const ruleStr =
-      rule.kind === 'updated' ? `${r.type} > ${rule.days}d` : `${r.type} done-since > ${rule.days}d`;
+      rule.kind === 'updated'
+        ? `${r.type} > ${rule.days}d`
+        : `${r.type} done-since > ${rule.days}d`;
     if (
       filer.fileCandidate({
         recordId: r.recordId,
@@ -113,7 +121,8 @@ export const findRetentionCandidates = (
         status: r.status,
         ageDays: Math.round(age),
         rule: ruleStr,
-        now
+        now,
+        snoozeDays: options.snoozeDays
       })
     ) {
       summary.filed++;
