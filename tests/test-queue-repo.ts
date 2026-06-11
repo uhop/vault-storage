@@ -16,7 +16,7 @@ test('migration 0008 applies and queue_items is empty', t => {
   const {db, repo} = setup();
   t.equal(repo.count(), 0, 'no rows after fresh migration');
   const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as {value: string};
-  t.equal(row.value, '9', 'schema_version bumped to 9');
+  t.equal(row.value, '11', 'schema_version bumped to 11');
   db.close();
 });
 

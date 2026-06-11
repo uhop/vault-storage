@@ -1,6 +1,5 @@
 import {computeDecayScore} from '../records/decay.ts';
 import type {Edge, VaultRecord} from '../records/types.ts';
-import {contentHash} from '../util/hash.ts';
 
 export interface JsonRecord {
   record_id: string;
@@ -25,7 +24,8 @@ export interface JsonRecord {
   /**
    * Pure body hash (`sha256(body)`). The value `/vault-enrich-all` writes
    * into `agent.derived_from_hash` so staleness detection sees a clean
-   * body-vs-body comparison even after a summary is set.
+   * body-vs-body comparison even after a summary is set. Persisted on the
+   * record since schema 0011.
    */
   body_hash: string;
   archived_at: string | null;
@@ -65,10 +65,7 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     last_referenced: r.lastReferenced,
     decay_score: computeDecayScore(r),
     content_hash: r.contentHash,
-    // content_hash IS sha256(body) when no agent summary is mixed in (see
-    // the field docs above) — reuse it instead of re-hashing every record
-    // on every response; only summary-carrying records pay for a hash.
-    body_hash: r.agentSummary === null ? r.contentHash : contentHash(r.body),
+    body_hash: r.bodyHash,
     archived_at: r.archivedAt
   };
   if (opts.includeBody !== false) out.body = r.body;

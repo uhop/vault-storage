@@ -6,6 +6,14 @@ import {fileURLToPath} from 'node:url';
 const SCHEMA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'schema');
 const MIGRATION_FILE = /^(\d{4})_.*\.sql$/;
 
+/**
+ * A migration whose first line is this marker runs WITHOUT the runner's
+ * BEGIN/COMMIT wrapper and manages its own transaction. Needed for
+ * table-rebuild migrations that must toggle `PRAGMA foreign_keys` — the
+ * pragma is a silent no-op inside an open transaction.
+ */
+const NO_TXN_MARKER = '-- migrate:no-transaction';
+
 export interface MigrationResult {
   /** Filenames of migrations applied in this call (already-applied ones are skipped). */
   applied: string[];
@@ -45,13 +53,30 @@ export const runMigrations = (db: DatabaseSync): MigrationResult => {
     if (version <= getVersion()) continue;
 
     const sql = readFileSync(join(SCHEMA_DIR, file), 'utf8');
-    db.exec('BEGIN');
-    try {
-      db.exec(sql);
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw new Error(`migration ${file} failed: ${(err as Error).message}`, {cause: err});
+    if (sql.startsWith(NO_TXN_MARKER)) {
+      try {
+        db.exec(sql);
+      } catch (err) {
+        // The file's own transaction may still be open at the failure
+        // point; roll it back so the connection isn't left mid-txn, and
+        // restore the FK pragma the file is expected to have toggled.
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          // already in autocommit — nothing to roll back
+        }
+        db.exec('PRAGMA foreign_keys = ON');
+        throw new Error(`migration ${file} failed: ${(err as Error).message}`, {cause: err});
+      }
+    } else {
+      db.exec('BEGIN');
+      try {
+        db.exec(sql);
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw new Error(`migration ${file} failed: ${(err as Error).message}`, {cause: err});
+      }
     }
     applied.push(file);
   }

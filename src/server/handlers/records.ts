@@ -5,7 +5,7 @@ import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import {RECORD_COLUMNS, RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
 import {readBodyText} from '../body.ts';
 import {parsePagination, splitCsv} from '../query.ts';
@@ -22,6 +22,7 @@ interface RecordRow {
   type: string;
   body: string;
   content_hash: string;
+  body_hash: string;
   title: string | null;
   created: string;
   updated: string;
@@ -42,6 +43,7 @@ const rowToRecord = (row: RecordRow) => ({
   type: row.type as (typeof RECORD_TYPES)[number],
   body: row.body,
   contentHash: row.content_hash,
+  bodyHash: row.body_hash,
   title: row.title,
   created: row.created,
   updated: row.updated,
@@ -451,7 +453,7 @@ const buildListSql = (
   }
 
   const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-  const sql = `SELECT * FROM records ${whereClause} ${sortClause} LIMIT ? OFFSET ?`;
+  const sql = `SELECT ${RECORD_COLUMNS} FROM records ${whereClause} ${sortClause} LIMIT ? OFFSET ?`;
   const countSql = `SELECT COUNT(*) AS n FROM records ${whereClause}`;
 
   return {sql, countSql, bindings: [...bindings, limit, offset], countBindings: bindings};

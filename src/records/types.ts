@@ -77,7 +77,17 @@ export interface VaultRecord {
   sequenceKey: number | null;
   type: RecordType;
   body: string;
+  /**
+   * Embedding-input hash: `embedInputHash(body, agentSummary)`. Drives
+   * chunk-set invalidation. Equals `bodyHash` when no summary is set.
+   */
   contentHash: string;
+  /**
+   * sha256 of body alone. The clean body-vs-body comparand for
+   * `agent.derived_from_hash` staleness checks and the `body_hash` wire
+   * field; stays meaningful after a summary is mixed into `contentHash`.
+   */
+  bodyHash: string;
   /** Title from frontmatter; null when the source had no `title:` key. */
   title: string | null;
   /** ISO 8601 string. */

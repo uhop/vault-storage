@@ -43,10 +43,10 @@ export const lintHandler =
     {
       const rows = db
         .prepare(
-          `SELECT DISTINCT v.record_id, r.file_path
-             FROM record_vec v
-             JOIN records r ON r.record_id = v.record_id
-            WHERE v.content_hash != r.content_hash`
+          `SELECT DISTINCT c.record_id, r.file_path
+             FROM chunks c
+             JOIN records r ON r.record_id = c.record_id
+            WHERE c.content_hash != r.content_hash`
         )
         .all() as {record_id: string; file_path: string}[];
       checks['embedding_hash_drift'] = {
@@ -58,26 +58,19 @@ export const lintHandler =
       };
     }
 
-    // Records with no chunks in record_vec. Indicates the embedder was
-    // disabled at import time, embedPending hasn't run, or a crash
-    // between record insert and embed.
-    //
-    // record_vec is a vec0 virtual table; `+record_id` is an auxiliary
-    // column without a B-tree index, so a correlated `NOT EXISTS
-    // (... WHERE v.record_id = r.record_id)` becomes a full vec0 scan
-    // per outer row (~7s on 878 records / 6265 chunks). Pre-materialize
-    // the distinct record_ids once, then anti-join via the records
-    // index — single vec0 scan, ~25ms total. (Inverse direction
-    // `record_vec → records` queries can stay correlated; that lookup
-    // hits the records index.)
+    // Records with no chunks. Indicates the embedder was disabled at
+    // import time, embedPending hasn't run, or a crash between record
+    // insert and embed. (Plain correlated NOT EXISTS — chunks.record_id
+    // is B-tree-indexed since schema 0010; the pre-0010 CTE workaround
+    // for the unindexed vec0 aux column is gone.)
     {
       const rows = db
         .prepare(
-          `WITH record_vec_ids AS (SELECT DISTINCT record_id FROM record_vec)
-           SELECT r.record_id, r.file_path
+          `SELECT r.record_id, r.file_path
              FROM records r
-             LEFT JOIN record_vec_ids v ON v.record_id = r.record_id
-            WHERE v.record_id IS NULL`
+            WHERE NOT EXISTS (
+              SELECT 1 FROM chunks c WHERE c.record_id = r.record_id
+            )`
         )
         .all() as {record_id: string; file_path: string}[];
       checks['records_without_embeddings'] = {
@@ -89,26 +82,45 @@ export const lintHandler =
       };
     }
 
-    // record_vec chunks whose record_id no longer exists in records.
-    // Schema 7's records_after_delete trigger guards against new
-    // orphans by cascading records-delete to record_vec; pre-trigger
-    // orphans (created by any of the four delete call sites that ran
-    // before schema 7 landed) still need /maintenance/cleanup-lint to
-    // drain. record_vec is a vec0 virtual table without FK
-    // enforcement, so the trigger is the only structural guard.
+    // Chunks whose record_id no longer exists in records. The
+    // records_after_delete trigger (0007, rebuilt in 0010) guards
+    // against new orphans by cascading records-delete to chunks +
+    // record_vec; orphans that slip past it (raw DB access) need
+    // /maintenance/cleanup-lint to drain.
     {
       const rows = db
         .prepare(
-          `SELECT DISTINCT v.record_id
-             FROM record_vec v
+          `SELECT DISTINCT c.record_id
+             FROM chunks c
             WHERE NOT EXISTS (
-              SELECT 1 FROM records r WHERE r.record_id = v.record_id
+              SELECT 1 FROM records r WHERE r.record_id = c.record_id
             )`
         )
         .all() as {record_id: string}[];
       checks['orphan_embeddings'] = {
         count: rows.length,
         samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
+      };
+    }
+
+    // record_vec rows with no chunks metadata row. The two tables are
+    // written and deleted together (setChunks, deleteRecord, the 0010
+    // trigger), so divergence indicates a bug or raw DB access. New
+    // failure class introduced by the 0010 metadata split; cleaned by
+    // /maintenance/cleanup-lint.
+    {
+      const rows = db
+        .prepare(
+          `SELECT v.chunk_id
+             FROM record_vec v
+            WHERE NOT EXISTS (
+              SELECT 1 FROM chunks c WHERE c.chunk_id = v.chunk_id
+            )`
+        )
+        .all() as {chunk_id: string}[];
+      checks['orphan_vec_rows'] = {
+        count: rows.length,
+        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.chunk_id}))
       };
     }
 

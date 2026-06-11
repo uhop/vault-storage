@@ -57,22 +57,22 @@ export const embedPending = async (
   > as {n: number};
   const total = totalRow.n;
 
-  // Records whose chunks are missing or stale. The aux content_hash is per-row
-  // so any chunk's hash is sufficient (we set them atomically together).
-  // `r.content_hash` already incorporates `agent_summary` (see
-  // `embedInputHash`), so a summary-only edit invalidates here just like a
-  // body edit.
+  // Records whose chunks are missing or stale. The chunks content_hash is
+  // per-row but consistent within a record (set atomically together), so
+  // any chunk's hash is sufficient. `r.content_hash` already incorporates
+  // `agent_summary` (see `embedInputHash`), so a summary-only edit
+  // invalidates here just like a body edit.
   const pendingStmt = db.prepare(
     `SELECT r.record_id, r.body, r.content_hash, r.agent_summary
        FROM records r
        LEFT JOIN (
          SELECT record_id, MAX(content_hash) AS content_hash
-           FROM record_vec
+           FROM chunks
           GROUP BY record_id
-       ) v ON v.record_id = r.record_id
-      WHERE v.record_id IS NULL
-         OR v.content_hash IS NULL
-         OR v.content_hash != r.content_hash
+       ) c ON c.record_id = r.record_id
+      WHERE c.record_id IS NULL
+         OR c.content_hash IS NULL
+         OR c.content_hash != r.content_hash
       ORDER BY r.record_id`
   );
   const pending = pendingStmt.all() as unknown[] as PendingRow[];

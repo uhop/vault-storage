@@ -11,9 +11,9 @@ export const contentHash = (text: string): string =>
  * When a summary is present, the hash mixes it in with a literal separator
  * so summary-only changes invalidate the chunk set on the next embed pass.
  *
- * Stored as `records.content_hash` and mirrored into `record_vec.content_hash`
+ * Stored as `records.content_hash` and mirrored into `chunks.content_hash`
  * + `record_doc_vec.content_hash`, so the existing
- * "where vec.content_hash != records.content_hash → re-embed" check still
+ * "where chunks.content_hash != records.content_hash → re-embed" check still
  * fires when the LLM updates the summary without touching the body.
  */
 export const embedInputHash = (body: string, agentSummary: string | null): string => {

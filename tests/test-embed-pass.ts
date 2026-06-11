@@ -19,6 +19,7 @@ const makeRecord = (path: string, body: string): VaultRecord => ({
   type: 'permanent',
   body,
   contentHash: contentHash(body),
+  bodyHash: contentHash(body),
   title: null,
   created: '2026-04-28',
   updated: '2026-04-28',
@@ -156,7 +157,11 @@ test('embedPending', async t => {
       const bodyOnlyVec = await fx.embedder.embed(body);
 
       const stored = fx.db
-        .prepare('SELECT embedding FROM record_vec WHERE record_id = ?')
+        .prepare(
+          `SELECT v.embedding AS embedding
+             FROM chunks c JOIN record_vec v ON v.chunk_id = c.chunk_id
+            WHERE c.record_id = ?`
+        )
         .get(r.recordId) as {embedding: Uint8Array};
       const storedFloats = new Float32Array(
         stored.embedding.buffer,
@@ -256,7 +261,11 @@ test('embedPending', async t => {
       t.equal(summary.docVecsWritten, 1, 'only the clean record got a doc-vec');
 
       const goodChunkRow = fx.db
-        .prepare('SELECT embedding FROM record_vec WHERE record_id = ?')
+        .prepare(
+          `SELECT v.embedding AS embedding
+             FROM chunks c JOIN record_vec v ON v.chunk_id = c.chunk_id
+            WHERE c.record_id = ?`
+        )
         .get(good.recordId) as {embedding: Uint8Array};
       const goodFloats = new Float32Array(
         goodChunkRow.embedding.buffer,

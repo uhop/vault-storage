@@ -32,19 +32,23 @@ export const backfillDocVecs = (db: DatabaseSync): BackfillSummary => {
   const start = performance.now();
   const docVecs = new RecordDocVecRepository(db);
 
-  // Records with at least one chunk, plus their content_hash. The aux
-  // content_hash on record_vec is per-row but consistent within a record
-  // (set atomically), so MAX is a safe single-row aggregator.
+  // Records with at least one chunk, plus their content_hash. The chunks
+  // content_hash is per-row but consistent within a record (set
+  // atomically), so MAX is a safe single-row aggregator.
   const recordRows = db
     .prepare(
       `SELECT record_id, MAX(content_hash) AS content_hash
-         FROM record_vec
+         FROM chunks
         GROUP BY record_id`
     )
     .all() as Array<{record_id: string; content_hash: string}>;
 
   const chunkStmt = db.prepare(
-    `SELECT embedding FROM record_vec WHERE record_id = ? ORDER BY chunk_index`
+    `SELECT v.embedding AS embedding
+       FROM chunks c
+       JOIN record_vec v ON v.chunk_id = c.chunk_id
+      WHERE c.record_id = ?
+      ORDER BY c.chunk_index`
   );
 
   const summary: BackfillSummary = {

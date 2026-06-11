@@ -10,18 +10,26 @@ const toBlob = (vec: Float32Array): Uint8Array =>
   new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
 
 /**
- * CRUD + nearest-record over the chunked `record_vec` virtual table. One row
- * per chunk; records may have multiple chunks. Document-level retrieval
- * aggregates by taking each record's MIN chunk distance.
+ * CRUD + nearest-record over the chunk embeddings. One row per chunk;
+ * records may have multiple chunks. Document-level retrieval aggregates by
+ * taking each record's MIN chunk distance.
  *
- * Schema: `vec0(chunk_id TEXT PK, +record_id, +chunk_index, +content_hash, embedding FLOAT[384])`.
- * Virtual tables can't carry FK constraints; the application keeps record_vec
- * in sync with records — `setChunks` replaces a record's chunks atomically;
- * `deleteRecord` mirrors record deletion.
+ * Storage is split across two tables (schema 0010):
+ * - `chunks(chunk_id PK, record_id, chunk_index, content_hash)` — regular
+ *   table with a B-tree index on `record_id`; all metadata lookups go here.
+ * - `record_vec` — `vec0(chunk_id TEXT PK, embedding FLOAT[384])`; touched
+ *   only by primary key or KNN MATCH.
+ *
+ * Virtual tables can't carry FK constraints; the application keeps both
+ * tables in sync with records — `setChunks` replaces a record's chunks
+ * atomically; `deleteRecord` mirrors record deletion; the schema-0010
+ * `records_after_delete` trigger backstops every other delete path.
  */
 export class RecordVecRepository {
-  readonly #insert: StatementSync;
-  readonly #deleteByRecord: StatementSync;
+  readonly #insertMeta: StatementSync;
+  readonly #insertVec: StatementSync;
+  readonly #deleteVecsByRecord: StatementSync;
+  readonly #deleteMetaByRecord: StatementSync;
   readonly #hasRecord: StatementSync;
   readonly #countChunks: StatementSync;
   readonly #countRecords: StatementSync;
@@ -31,34 +39,49 @@ export class RecordVecRepository {
   readonly #allChunks: StatementSync;
 
   constructor(db: DatabaseSync) {
-    this.#insert = db.prepare(
-      `INSERT INTO record_vec (chunk_id, record_id, chunk_index, content_hash, embedding)
-       VALUES (?, ?, ?, ?, ?)`
+    this.#insertMeta = db.prepare(
+      `INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash)
+       VALUES (?, ?, ?, ?)`
     );
-    this.#deleteByRecord = db.prepare('DELETE FROM record_vec WHERE record_id = ?');
-    this.#hasRecord = db.prepare('SELECT 1 AS x FROM record_vec WHERE record_id = ? LIMIT 1');
-    this.#countChunks = db.prepare('SELECT COUNT(*) AS n FROM record_vec');
-    this.#countRecords = db.prepare('SELECT COUNT(DISTINCT record_id) AS n FROM record_vec');
-    this.#getRecordHash = db.prepare(
-      'SELECT content_hash FROM record_vec WHERE record_id = ? LIMIT 1'
+    this.#insertVec = db.prepare('INSERT INTO record_vec (chunk_id, embedding) VALUES (?, ?)');
+    // Vec rows are located through chunks, so this delete must run before
+    // the metadata delete (same ordering as the records_after_delete trigger).
+    this.#deleteVecsByRecord = db.prepare(
+      `DELETE FROM record_vec WHERE chunk_id IN (
+         SELECT chunk_id FROM chunks WHERE record_id = ?
+       )`
     );
-    // Pull a wider chunk-level top-N then aggregate to records by min distance.
-    // Caller tunes the chunk-fetch breadth via `chunkK` (default 5×k upstream).
+    this.#deleteMetaByRecord = db.prepare('DELETE FROM chunks WHERE record_id = ?');
+    this.#hasRecord = db.prepare('SELECT 1 AS x FROM chunks WHERE record_id = ? LIMIT 1');
+    this.#countChunks = db.prepare('SELECT COUNT(*) AS n FROM chunks');
+    this.#countRecords = db.prepare('SELECT COUNT(DISTINCT record_id) AS n FROM chunks');
+    this.#getRecordHash = db.prepare('SELECT content_hash FROM chunks WHERE record_id = ? LIMIT 1');
+    // KNN over the vec table, then join chunks by PK to recover record_id.
+    // The KNN runs first in a subquery so the MATCH + k constraints apply
+    // cleanly; the join is a B-tree point lookup per hit.
     this.#nearestChunks = db.prepare(
-      `SELECT record_id, distance
-         FROM record_vec
-        WHERE embedding MATCH ?
-          AND k = ?
-        ORDER BY distance`
+      `SELECT c.record_id AS record_id, k.distance AS distance
+         FROM (SELECT chunk_id, distance
+                 FROM record_vec
+                WHERE embedding MATCH ?
+                  AND k = ?
+                ORDER BY distance) k
+         JOIN chunks c ON c.chunk_id = k.chunk_id
+        ORDER BY k.distance`
     );
+    // Indexed: chunks(record_id) drives the scan; record_vec is hit by PK.
     this.#chunksForRecord = db.prepare(
-      `SELECT chunk_index, embedding FROM record_vec
-        WHERE record_id = ?
-        ORDER BY chunk_index`
+      `SELECT c.chunk_index AS chunk_index, v.embedding AS embedding
+         FROM chunks c
+         JOIN record_vec v ON v.chunk_id = c.chunk_id
+        WHERE c.record_id = ?
+        ORDER BY c.chunk_index`
     );
     this.#allChunks = db.prepare(
-      `SELECT record_id, chunk_index, embedding FROM record_vec
-        ORDER BY record_id, chunk_index`
+      `SELECT c.record_id AS record_id, c.chunk_index AS chunk_index, v.embedding AS embedding
+         FROM chunks c
+         JOIN record_vec v ON v.chunk_id = c.chunk_id
+        ORDER BY c.record_id, c.chunk_index`
     );
   }
 
@@ -68,11 +91,13 @@ export class RecordVecRepository {
    * `chunk_id` is composed as `${recordId}:${index}`.
    */
   setChunks(recordId: string, contentHash: string, chunks: Float32Array[]): void {
-    this.#deleteByRecord.run(recordId);
+    this.#deleteVecsByRecord.run(recordId);
+    this.#deleteMetaByRecord.run(recordId);
     for (let i = 0; i < chunks.length; i++) {
       const v = chunks[i]!;
-      // sqlite-vec aux INTEGER columns reject JS number — pass BigInt explicitly.
-      this.#insert.run(`${recordId}:${i}`, recordId, BigInt(i), contentHash, toBlob(v));
+      const chunkId = `${recordId}:${i}`;
+      this.#insertMeta.run(chunkId, recordId, i, contentHash);
+      this.#insertVec.run(chunkId, toBlob(v));
     }
   }
 
@@ -85,7 +110,8 @@ export class RecordVecRepository {
   }
 
   deleteRecord(recordId: string): boolean {
-    return this.#deleteByRecord.run(recordId).changes > 0;
+    this.#deleteVecsByRecord.run(recordId);
+    return this.#deleteMetaByRecord.run(recordId).changes > 0;
   }
 
   hasRecord(recordId: string): boolean {
@@ -107,15 +133,8 @@ export class RecordVecRepository {
    *
    * Used by pairwise comparisons (`find-duplicates` two-phase scan) where
    * a single per-pair chunk-min cosine is computed in JS rather than
-   * issuing a sqlite-vec NN query per chunk.
-   *
-   * **vec0 aux-column gotcha** — `record_id` is a `+`-prefixed auxiliary
-   * column without a B-tree index. A `WHERE record_id = ?` query must
-   * scan the entire vec0 table (no index, no early exit on a multi-row
-   * match). At ~6 K chunks the per-call cost is ~20 ms regardless of
-   * how few chunks the record has. For batch use (e.g., scanning every
-   * record), prefer `getAllChunks()` — one full-table scan that
-   * builds the entire `recordId → chunks` map at once.
+   * issuing a sqlite-vec NN query per chunk. Indexed since schema 0010
+   * (chunks.record_id B-tree + vec PK point lookups).
    */
   getChunks(recordId: string): Float32Array[] {
     const rows = this.#chunksForRecord.all(recordId) as unknown[] as {
@@ -128,13 +147,12 @@ export class RecordVecRepository {
   }
 
   /**
-   * Load every record's chunks in a single `record_vec` scan. Keyed by
-   * `record_id`; chunks within each value are ordered by `chunk_index`.
+   * Load every record's chunks in a single pass. Keyed by `record_id`;
+   * chunks within each value are ordered by `chunk_index`.
    *
-   * Use this when a caller needs chunks for many records in one pass —
-   * `find-duplicates` is the canonical case. The alternative (one
-   * `getChunks()` call per record) does N full vec0 scans because the
-   * `record_id` aux column is unindexed; this method does exactly one.
+   * Use this when a caller needs chunks for many records at once —
+   * `find-duplicates` is the canonical case: one query instead of one
+   * `getChunks()` round-trip per record.
    */
   getAllChunks(): Map<string, Float32Array[]> {
     const rows = this.#allChunks.all() as unknown[] as {
@@ -188,21 +206,12 @@ export class RecordVecRepository {
    * Returns empty when the record has no chunks (not yet embedded).
    */
   nearestToRecord(recordId: string, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
-    const chunks = this.#chunksForRecord.all(recordId) as unknown[] as {
-      chunk_index: number;
-      embedding: Uint8Array;
-    }[];
+    const chunks = this.getChunks(recordId);
     if (chunks.length === 0) return [];
 
     const best = new Map<string, number>();
     const chunkK = opts.chunkK ?? Math.max(k * 5, 20);
-    for (const chunk of chunks) {
-      // record_vec stores embeddings as raw float32 little-endian blobs.
-      const vec = new Float32Array(
-        chunk.embedding.buffer,
-        chunk.embedding.byteOffset,
-        chunk.embedding.byteLength / 4
-      );
+    for (const vec of chunks) {
       const rows = this.#nearestChunks.all(toBlob(vec), chunkK) as unknown[] as {
         record_id: string;
         distance: number;

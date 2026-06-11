@@ -10,6 +10,7 @@ const record = (recordId: string, filePath: string): VaultRecord => ({
   type: 'permanent',
   body: '',
   contentHash: 'h',
+  bodyHash: 'h',
   title: null,
   created: '2026-04-28',
   updated: '2026-04-28',

@@ -9,6 +9,7 @@ interface RecordRow {
   type: string;
   body: string;
   content_hash: string;
+  body_hash: string;
   title: string | null;
   created: string;
   updated: string;
@@ -29,6 +30,7 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
   type: row.type as RecordType,
   body: row.body,
   contentHash: row.content_hash,
+  bodyHash: row.body_hash,
   title: row.title,
   created: row.created,
   updated: row.updated,
@@ -40,6 +42,14 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
   agentSummary: row.agent_summary,
   agentDerivedFromHash: row.agent_derived_from_hash
 });
+
+// Explicit column list for full-record reads — column-order-independent
+// (the 0011 rebuild moved big text columns last) and a visible inventory
+// of what a "full" read materializes. Exported for handlers that build
+// their own list queries over records (GET /sections).
+export const RECORD_COLUMNS = `record_id, file_path, parent_path, sequence_key, type, body, content_hash,
+   body_hash, title, created, updated, last_referenced, decay_score, status, priority,
+   archived_at, agent_summary, agent_derived_from_hash`;
 
 export class RecordsRepository {
   readonly #insert: StatementSync;
@@ -56,25 +66,26 @@ export class RecordsRepository {
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
       `INSERT INTO records (
-         record_id, file_path, parent_path, sequence_key, type, body, content_hash, title,
-         created, updated, last_referenced, decay_score, status, priority, archived_at,
+         record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
+         title, created, updated, last_referenced, decay_score, status, priority, archived_at,
          agent_summary, agent_derived_from_hash
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // Upsert keyed on file_path. ON CONFLICT preserves record_id and created.
     this.#upsert = db.prepare(
       `INSERT INTO records (
-         record_id, file_path, parent_path, sequence_key, type, body, content_hash, title,
-         created, updated, last_referenced, decay_score, status, priority, archived_at,
+         record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
+         title, created, updated, last_referenced, decay_score, status, priority, archived_at,
          agent_summary, agent_derived_from_hash
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(file_path) DO UPDATE SET
          parent_path             = excluded.parent_path,
          sequence_key            = excluded.sequence_key,
          type                    = excluded.type,
          body                    = excluded.body,
          content_hash            = excluded.content_hash,
+         body_hash               = excluded.body_hash,
          title                   = excluded.title,
          updated                 = excluded.updated,
          last_referenced         = excluded.last_referenced,
@@ -86,13 +97,13 @@ export class RecordsRepository {
          agent_derived_from_hash = excluded.agent_derived_from_hash`
     );
 
-    this.#getById = db.prepare('SELECT * FROM records WHERE record_id = ?');
-    this.#getByPath = db.prepare('SELECT * FROM records WHERE file_path = ?');
+    this.#getById = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records WHERE record_id = ?`);
+    this.#getByPath = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records WHERE file_path = ?`);
     this.#delete = db.prepare('DELETE FROM records WHERE record_id = ?');
     this.#listByParent = db.prepare(
-      'SELECT * FROM records WHERE parent_path = ? ORDER BY sequence_key, created'
+      `SELECT ${RECORD_COLUMNS} FROM records WHERE parent_path = ? ORDER BY sequence_key, created`
     );
-    this.#listAll = db.prepare('SELECT * FROM records ORDER BY file_path');
+    this.#listAll = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records ORDER BY file_path`);
     this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
     this.#bumpLastReferenced = db.prepare(
       'UPDATE records SET last_referenced = ? WHERE record_id = ?'
@@ -111,6 +122,7 @@ export class RecordsRepository {
       r.type,
       r.body,
       r.contentHash,
+      r.bodyHash,
       r.title,
       r.created,
       r.updated,
@@ -134,6 +146,7 @@ export class RecordsRepository {
       r.type,
       r.body,
       r.contentHash,
+      r.bodyHash,
       r.title,
       r.created,
       r.updated,

@@ -454,6 +454,7 @@ const wikilinkContextSpotCheck = async (
     type: 'permanent',
     body: r.body,
     contentHash: '',
+    bodyHash: '',
     title: null,
     created: '',
     updated: '',

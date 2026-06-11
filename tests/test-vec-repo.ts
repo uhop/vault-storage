@@ -16,6 +16,7 @@ const makeRecord = (id: string, path: string, body = 'b'): VaultRecord => ({
   type: 'permanent',
   body,
   contentHash: 'h',
+  bodyHash: 'h',
   title: null,
   created: '2026-04-28',
   updated: '2026-04-28',

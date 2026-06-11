@@ -12,8 +12,8 @@ const setup = (): DatabaseSync => {
 
 const seedRecords = (db: DatabaseSync, n: number): void => {
   const insert = db.prepare(
-    `INSERT INTO records (record_id, file_path, type, body, content_hash, created, updated)
-     VALUES (?, ?, 'permanent', 'b', ?, '2026-04-01', '2026-04-01')`
+    `INSERT INTO records (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+     VALUES (?, ?, 'permanent', 'b', ?, '', '2026-04-01', '2026-04-01')`
   );
   for (let i = 0; i < n; i++) {
     insert.run(`r${i}`, `topics/r${i}.md`, `h${i}`);

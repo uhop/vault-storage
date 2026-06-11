@@ -4,6 +4,7 @@ export interface CleanupLintSummary {
   totalFixed: number;
   fixed: {
     orphan_embeddings: {recordsAffected: number; chunksDeleted: number};
+    orphan_vec_rows: {rowsDeleted: number};
     orphan_doc_embeddings: {rowsDeleted: number};
     orphan_suggestions: {suggestionsResolved: number};
     temporal_future_clamps: {recordsAffected: number; fieldsUpdated: number};
@@ -14,15 +15,17 @@ export interface CleanupLintSummary {
 
 /**
  * Auto-fix the lint categories that have a deterministic cleanup:
- * `orphan_embeddings` (rows in `record_vec` whose `record_id` no longer
- * exists in `records`), `orphan_doc_embeddings` (same in
+ * `orphan_embeddings` (chunks whose `record_id` no longer exists in
+ * `records`, plus their `record_vec` rows), `orphan_vec_rows`
+ * (`record_vec` rows with no `chunks` metadata row — divergence between
+ * the 0010 split tables), `orphan_doc_embeddings` (same orphan shape in
  * `record_doc_vec`), `orphan_suggestions` (pending suggestions whose
  * `subject_id` points at a now-missing record), and
  * `temporal_future_clamps` (records with `created` or `updated` stamps
- * in the future — clamped to now). Schemas 7 + 9 install AFTER DELETE
- * triggers that prevent new orphans of these shapes; this endpoint
- * drains pre-existing ones (and any future ones that slip past a
- * trigger via raw DB access).
+ * in the future — clamped to now). Schemas 7 + 9 (trigger rebuilt in 10)
+ * install AFTER DELETE triggers that prevent new orphans of these
+ * shapes; this endpoint drains pre-existing ones (and any future ones
+ * that slip past a trigger via raw DB access).
  *
  * Future-stamp clamping is mechanical: the wall clock is authoritative,
  * so a stamp ahead of it can't be right. The `updated < created` sub-
@@ -45,10 +48,10 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
 
   const orphans = db
     .prepare(
-      `SELECT DISTINCT v.record_id
-         FROM record_vec v
+      `SELECT DISTINCT c.record_id
+         FROM chunks c
         WHERE NOT EXISTS (
-          SELECT 1 FROM records r WHERE r.record_id = v.record_id
+          SELECT 1 FROM records r WHERE r.record_id = c.record_id
         )`
     )
     .all() as {record_id: string}[];
@@ -56,11 +59,34 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
   let chunksDeleted = 0;
   if (orphans.length > 0) {
     const placeholders = orphans.map(() => '?').join(',');
+    const ids = orphans.map(o => o.record_id);
+    // Vec rows are located through chunks — delete them first, then the
+    // metadata rows (same ordering as the records_after_delete trigger).
+    db.prepare(
+      `DELETE FROM record_vec WHERE chunk_id IN (
+         SELECT chunk_id FROM chunks WHERE record_id IN (${placeholders})
+       )`
+    ).run(...ids);
     const result = db
-      .prepare(`DELETE FROM record_vec WHERE record_id IN (${placeholders})`)
-      .run(...orphans.map(o => o.record_id));
+      .prepare(`DELETE FROM chunks WHERE record_id IN (${placeholders})`)
+      .run(...ids);
     chunksDeleted = Number(result.changes);
   }
+
+  // record_vec rows with no chunks metadata row — the 0010 split's
+  // divergence class. Deleting is safe: an embedding without metadata is
+  // unreachable by every read path (they all join through chunks), and the
+  // record re-embeds on the next embed-pending pass if its chunks are gone.
+  const vecRowsDeleted = Number(
+    db
+      .prepare(
+        `DELETE FROM record_vec WHERE chunk_id IN (
+           SELECT v.chunk_id FROM record_vec v
+            WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.chunk_id = v.chunk_id)
+         )`
+      )
+      .run().changes
+  );
 
   const docOrphans = db
     .prepare(
@@ -113,9 +139,14 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
 
   return {
     totalFixed:
-      orphans.length + docOrphans.length + suggestionsResolved + futureClamps.recordsAffected,
+      orphans.length +
+      vecRowsDeleted +
+      docOrphans.length +
+      suggestionsResolved +
+      futureClamps.recordsAffected,
     fixed: {
       orphan_embeddings: {recordsAffected: orphans.length, chunksDeleted},
+      orphan_vec_rows: {rowsDeleted: vecRowsDeleted},
       orphan_doc_embeddings: {rowsDeleted: docRowsDeleted},
       orphan_suggestions: {suggestionsResolved},
       temporal_future_clamps: futureClamps
@@ -158,30 +189,25 @@ const countDrift = (db: DatabaseSync): number =>
     (
       db
         .prepare(
-          `SELECT COUNT(DISTINCT v.record_id) AS n
-             FROM record_vec v
-             JOIN records r ON r.record_id = v.record_id
-            WHERE v.content_hash != r.content_hash`
+          `SELECT COUNT(DISTINCT c.record_id) AS n
+             FROM chunks c
+             JOIN records r ON r.record_id = c.record_id
+            WHERE c.content_hash != r.content_hash`
         )
         .get() as {n: number}
     ).n
   );
 
-// Pre-materialize record_vec's distinct record_ids: vec0's `+record_id` is
-// an auxiliary unindexed column, so a correlated NOT EXISTS into it becomes
-// a full vec0 scan per outer row. Single materialization → indexed anti-join
-// is ~370× faster on a few-thousand-record vault. (Same fix applied in
-// src/server/handlers/lint.ts.)
 const countMissingEmbeddings = (db: DatabaseSync): number =>
   Number(
     (
       db
         .prepare(
-          `WITH record_vec_ids AS (SELECT DISTINCT record_id FROM record_vec)
-           SELECT COUNT(*) AS n
+          `SELECT COUNT(*) AS n
              FROM records r
-             LEFT JOIN record_vec_ids v ON v.record_id = r.record_id
-            WHERE v.record_id IS NULL`
+            WHERE NOT EXISTS (
+              SELECT 1 FROM chunks c WHERE c.record_id = r.record_id
+            )`
         )
         .get() as {n: number}
     ).n

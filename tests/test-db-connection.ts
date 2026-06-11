@@ -1,6 +1,8 @@
+import {readFileSync} from 'node:fs';
 import test from 'tape-six';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {contentHash} from '../src/util/hash.ts';
 
 test('opens an in-memory DB with sqlite-vec loaded', t => {
   const db = openDatabase({path: ':memory:'});
@@ -13,7 +15,7 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 9, 'schema version is 9 after all migrations through suggestions-cascade');
+  t.equal(result.current, 11, 'schema version is 11 after all migrations through records-body-last');
   t.deepEqual(
     result.applied,
     [
@@ -25,7 +27,9 @@ test('runs the init migration and creates required tables', t => {
       '0006_agent_enrichment_stale_kind.sql',
       '0007_records_cascade_to_vecs.sql',
       '0008_queue_items.sql',
-      '0009_records_cascade_to_suggestions.sql'
+      '0009_records_cascade_to_suggestions.sql',
+      '0010_chunks_table.sql',
+      '0011_records_body_last.sql'
     ],
     'all migrations applied in order'
   );
@@ -37,6 +41,7 @@ test('runs the init migration and creates required tables', t => {
   ).map(r => r.name);
 
   for (const required of [
+    'chunks',
     'edges',
     'meta',
     'queue_items',
@@ -58,7 +63,91 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 9, 'schema version stays at 9');
+  t.equal(second.current, 11, 'schema version stays at 11');
+  db.close();
+});
+
+test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records preserved, body_hash backfilled', t => {
+  const db = openDatabase({path: ':memory:'});
+
+  // Replay history up to schema 9 by hand, then seed old-shape data so
+  // runMigrations applies only 0010 — proving the copy path real deploys
+  // take: aux values land in chunks, embeddings survive the vec rebuild.
+  const schemaDir = new URL('../src/db/schema/', import.meta.url);
+  db.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+  db.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '0')`);
+  for (const file of [
+    '0001_init.sql',
+    '0002_add_title.sql',
+    '0003_sync_baseline.sql',
+    '0004_doc_vecs.sql',
+    '0005_agent_enrichment.sql',
+    '0006_agent_enrichment_stale_kind.sql',
+    '0007_records_cascade_to_vecs.sql',
+    '0008_queue_items.sql',
+    '0009_records_cascade_to_suggestions.sql'
+  ]) {
+    db.exec(readFileSync(new URL(file, schemaDir), 'utf8'));
+  }
+
+  db.prepare(
+    `INSERT INTO records (record_id, file_path, type, body, content_hash, created, updated)
+     VALUES ('r1', 'a.md', 'permanent', 'body', 'hash-1', '2026-01-01', '2026-01-01')`
+  ).run();
+  const vec = new Float32Array(384);
+  vec[0] = 0.75;
+  vec[383] = -0.5;
+  db.prepare(
+    `INSERT INTO record_vec (chunk_id, record_id, chunk_index, content_hash, embedding)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run('r1:0', 'r1', BigInt(0), 'hash-1', new Uint8Array(vec.buffer));
+
+  const result = runMigrations(db);
+  t.deepEqual(
+    result.applied,
+    ['0010_chunks_table.sql', '0011_records_body_last.sql'],
+    'only 0010 + 0011 applied'
+  );
+
+  const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {
+    record_id: string;
+    chunk_index: number;
+    content_hash: string;
+  }[];
+  t.equal(meta.length, 1, 'aux row copied into chunks');
+  t.equal(meta[0]?.record_id, 'r1', 'record_id preserved');
+  t.equal(meta[0]?.content_hash, 'hash-1', 'content_hash preserved');
+
+  const vecRow = db.prepare('SELECT embedding FROM record_vec WHERE chunk_id = ?').get('r1:0') as
+    | {embedding: Uint8Array}
+    | undefined;
+  t.ok(vecRow, 'vec row survived the rebuild');
+  const out = new Float32Array(
+    vecRow!.embedding.buffer,
+    vecRow!.embedding.byteOffset,
+    vecRow!.embedding.byteLength / 4
+  );
+  t.equal(out[0], 0.75, 'embedding payload preserved (first component)');
+  t.equal(out[383], -0.5, 'embedding payload preserved (last component)');
+
+  // 0011 rebuilt the records table: row data preserved, body_hash
+  // backfilled via the sha256_hex SQL function = TS contentHash.
+  const rec = db
+    .prepare('SELECT body, content_hash, body_hash, created FROM records WHERE record_id = ?')
+    .get('r1') as {body: string; content_hash: string; body_hash: string; created: string};
+  t.equal(rec.body, 'body', 'records body preserved through 0011 rebuild');
+  t.equal(rec.content_hash, 'hash-1', 'content_hash preserved');
+  t.equal(rec.created, '2026-01-01', 'created preserved');
+  t.equal(rec.body_hash, contentHash('body'), 'body_hash backfilled = sha256(body)');
+
+  // The rebuilt trigger cascades through the new shape.
+  db.prepare('DELETE FROM records WHERE record_id = ?').run('r1');
+  const counts = db
+    .prepare('SELECT (SELECT COUNT(*) FROM chunks) AS c, (SELECT COUNT(*) FROM record_vec) AS v')
+    .get() as {c: number; v: number};
+  t.equal(counts.c, 0, 'chunks cascaded on record delete');
+  t.equal(counts.v, 0, 'record_vec cascaded on record delete');
+
   db.close();
 });
 
@@ -67,8 +156,8 @@ test('records.status CHECK rejects an unknown value', t => {
   runMigrations(db);
   const insert = db.prepare(
     `INSERT INTO records
-       (record_id, file_path, type, body, content_hash, created, updated, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       (record_id, file_path, type, body, content_hash, body_hash, created, updated, status)
+     VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`
   );
   t.throws(
     () =>
@@ -84,8 +173,8 @@ test('record_vec stores and retrieves a 384-dim float32 embedding', t => {
 
   db.prepare(
     `INSERT INTO records
-       (record_id, file_path, type, body, content_hash, created, updated)
-     VALUES ('r1', 'a.md', 'permanent', 'body', 'hash', '2026-01-01', '2026-01-01')`
+       (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+     VALUES ('r1', 'a.md', 'permanent', 'body', 'hash', 'hash', '2026-01-01', '2026-01-01')`
   ).run();
 
   const vec = new Float32Array(384);
@@ -94,13 +183,22 @@ test('record_vec stores and retrieves a 384-dim float32 embedding', t => {
   vec[383] = -0.25;
 
   db.prepare(
-    'INSERT INTO record_vec (chunk_id, record_id, chunk_index, embedding) VALUES (?, ?, ?, ?)'
-  ).run('r1:0', 'r1', BigInt(0), new Uint8Array(vec.buffer));
+    'INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash) VALUES (?, ?, ?, ?)'
+  ).run('r1:0', 'r1', 0, 'hash');
+  db.prepare('INSERT INTO record_vec (chunk_id, embedding) VALUES (?, ?)').run(
+    'r1:0',
+    new Uint8Array(vec.buffer)
+  );
 
-  const row = db.prepare(`SELECT record_id FROM record_vec WHERE record_id = ?`).get('r1') as {
-    record_id: string;
-  };
-  t.equal(row.record_id, 'r1', 'embedding row roundtrips');
+  const row = db
+    .prepare(
+      `SELECT c.record_id AS record_id
+         FROM chunks c
+         JOIN record_vec v ON v.chunk_id = c.chunk_id
+        WHERE c.record_id = ?`
+    )
+    .get('r1') as {record_id: string};
+  t.equal(row.record_id, 'r1', 'embedding row roundtrips through the chunks join');
 
   db.close();
 });
@@ -111,8 +209,8 @@ test('tag taxonomy trigger rejects unknown tags', t => {
 
   db.prepare(
     `INSERT INTO records
-       (record_id, file_path, type, body, content_hash, created, updated)
-     VALUES ('r1', 'a.md', 'permanent', 'b', 'h', '2026-01-01', '2026-01-01')`
+       (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+     VALUES ('r1', 'a.md', 'permanent', 'b', 'h', 'h', '2026-01-01', '2026-01-01')`
   ).run();
 
   t.throws(
@@ -138,8 +236,8 @@ test('foreign-key cascade removes edges and tags when a record is deleted', t =>
   for (const id of ['a', 'b']) {
     db.prepare(
       `INSERT INTO records
-         (record_id, file_path, type, body, content_hash, created, updated)
-       VALUES (?, ?, 'permanent', 'b', 'h', '2026-01-01', '2026-01-01')`
+         (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+       VALUES (?, ?, 'permanent', 'b', 'h', 'h', '2026-01-01', '2026-01-01')`
     ).run(id, `${id}.md`);
   }
   db.prepare(
@@ -160,8 +258,8 @@ test('records_after_delete cascades to pending suggestions (schema 9)', t => {
 
   db.prepare(
     `INSERT INTO records
-       (record_id, file_path, type, body, content_hash, created, updated)
-     VALUES (?, ?, 'permanent', 'b', 'h', '2026-01-01', '2026-01-01')`
+       (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+     VALUES (?, ?, 'permanent', 'b', 'h', 'h', '2026-01-01', '2026-01-01')`
   ).run('rec-a', 'a.md');
 
   // Two pending suggestions on rec-a, one already-rejected suggestion on rec-a,

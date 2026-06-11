@@ -15,8 +15,8 @@ const setup = () => {
     INSERT INTO tag_aliases (alias, canonical) VALUES
       ('designs', 'design'),
       ('researches', 'research');
-    INSERT INTO records (record_id, file_path, type, body, content_hash, created, updated) VALUES
-      ('r1', 'topics/x.md', 'permanent', 'b', 'h1', '2026-04-29', '2026-04-29');
+    INSERT INTO records (record_id, file_path, type, body, content_hash, body_hash, created, updated) VALUES
+      ('r1', 'topics/x.md', 'permanent', 'b', 'h1', 'h1', '2026-04-29', '2026-04-29');
   `);
   return db;
 };

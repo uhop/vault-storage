@@ -239,15 +239,18 @@ export const runAllScansHandler =
  * POST /maintenance/cleanup-lint
  *
  * Auto-fix the lint categories with deterministic cleanup paths:
- * `orphan_embeddings` (rows in record_vec whose record_id no longer
- * exists in records), `orphan_doc_embeddings` (same in record_doc_vec),
- * and `temporal_future_clamps` (records with `created` or `updated`
- * stamps in the future, clamped to now). Categories that need human
- * review or are handled by other passes are reported under
- * `needsReview` with their current counts. Idempotent.
+ * `orphan_embeddings` (chunks whose record_id no longer exists in
+ * records, plus their record_vec rows), `orphan_vec_rows` (record_vec
+ * rows with no chunks metadata row), `orphan_doc_embeddings` (same
+ * orphan shape in record_doc_vec), and `temporal_future_clamps`
+ * (records with `created` or `updated` stamps in the future, clamped
+ * to now). Categories that need human review or are handled by other
+ * passes are reported under `needsReview` with their current counts.
+ * Idempotent.
  *
- * Returns `{totalFixed, fixed: {orphan_embeddings, orphan_doc_embeddings,
- * temporal_future_clamps}, needsReview, durationMs}`.
+ * Returns `{totalFixed, fixed: {orphan_embeddings, orphan_vec_rows,
+ * orphan_doc_embeddings, temporal_future_clamps}, needsReview,
+ * durationMs}`.
  */
 export const cleanupLintHandler =
   (deps: MaintenanceDeps): Handler =>

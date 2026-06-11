@@ -80,8 +80,8 @@ const insertRecord = (
 ): void => {
   db.prepare(
     `INSERT INTO records
-       (record_id, file_path, type, body, content_hash, created, updated)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+       (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+     VALUES (?, ?, ?, ?, ?, '', ?, ?)`
   ).run(
     fields.record_id,
     fields.file_path,
@@ -97,12 +97,16 @@ const insertVecChunk = (
   db: DatabaseSync,
   chunk: {chunk_id: string; record_id: string; content_hash: string}
 ): void => {
+  db.prepare(
+    `INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash)
+     VALUES (?, ?, 0, ?)`
+  ).run(chunk.chunk_id, chunk.record_id, chunk.content_hash);
   // Fake 384-dim embedding (all zeros) for testing.
   const embedding = new Float32Array(384);
-  db.prepare(
-    `INSERT INTO record_vec (chunk_id, record_id, chunk_index, content_hash, embedding)
-     VALUES (?, ?, 0, ?, ?)`
-  ).run(chunk.chunk_id, chunk.record_id, chunk.content_hash, embedding);
+  db.prepare('INSERT INTO record_vec (chunk_id, embedding) VALUES (?, ?)').run(
+    chunk.chunk_id,
+    embedding
+  );
 };
 
 test('GET /system/lint on empty DB: ok=true, all checks 0', async t => {
@@ -120,6 +124,7 @@ test('GET /system/lint on empty DB: ok=true, all checks 0', async t => {
       'embedding_hash_drift',
       'records_without_embeddings',
       'orphan_embeddings',
+      'orphan_vec_rows',
       'temporal_anomalies',
       'dangling_tag_aliases'
     ];
@@ -218,7 +223,26 @@ test('GET /system/lint detects orphan_doc_embeddings', async t => {
   });
 });
 
-test('records_after_delete trigger cascades to record_vec and record_doc_vec', async t => {
+test('GET /system/lint detects orphan_vec_rows (embedding without chunks metadata)', async t => {
+  await withServer(async (url, db) => {
+    // A record_vec row with no chunks row — the 0010 split's divergence class.
+    db.prepare('INSERT INTO record_vec (chunk_id, embedding) VALUES (?, ?)').run(
+      'chunk-stray-0',
+      new Float32Array(384)
+    );
+
+    const {body} = await fetchJson(`${url}/system/lint`);
+    const r = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: {id: string}[]}>;
+    };
+    t.equal(r.ok, false, 'ok=false');
+    t.equal(r.checks['orphan_vec_rows']?.count, 1, 'count=1');
+    t.equal(r.checks['orphan_vec_rows']?.samples[0]?.id, 'chunk-stray-0', 'sample id');
+  });
+});
+
+test('records_after_delete trigger cascades to chunks, record_vec, and record_doc_vec', async t => {
   await withServer(async (_url, db) => {
     insertRecord(db, {record_id: 'rec-cascade', file_path: 'topics/cascade.md', content_hash: 'h'});
     insertVecChunk(db, {chunk_id: 'c-cascade-0', record_id: 'rec-cascade', content_hash: 'h'});
@@ -230,10 +254,14 @@ test('records_after_delete trigger cascades to record_vec and record_doc_vec', a
 
     db.prepare('DELETE FROM records WHERE record_id = ?').run('rec-cascade');
 
-    const chunks = db
-      .prepare('SELECT COUNT(*) AS n FROM record_vec WHERE record_id = ?')
+    const meta = db
+      .prepare('SELECT COUNT(*) AS n FROM chunks WHERE record_id = ?')
       .get('rec-cascade') as {n: number};
-    t.equal(chunks.n, 0, 'record_vec rows cascaded');
+    t.equal(meta.n, 0, 'chunks rows cascaded');
+    const vecs = db
+      .prepare(`SELECT COUNT(*) AS n FROM record_vec WHERE chunk_id IN (?, ?)`)
+      .get('c-cascade-0', 'c-cascade-1') as {n: number};
+    t.equal(vecs.n, 0, 'record_vec rows cascaded');
     const docs = db
       .prepare('SELECT COUNT(*) AS n FROM record_doc_vec WHERE record_id = ?')
       .get('rec-cascade') as {n: number};
@@ -372,6 +400,42 @@ test('POST /maintenance/cleanup-lint deletes orphan embeddings', async t => {
       chunk_id: string;
     }[];
     t.equal(remaining.length, 1, 'one healthy chunk preserved');
+    t.equal(remaining[0]?.chunk_id, 'c-good-0', 'healthy chunk untouched');
+    const metaRemaining = db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as {n: number};
+    t.equal(metaRemaining.n, 1, 'orphan chunks metadata rows deleted too');
+  });
+});
+
+test('POST /maintenance/cleanup-lint deletes orphan_vec_rows (embedding without metadata)', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'rec-good',
+      file_path: 'topics/good.md',
+      content_hash: 'hash-match'
+    });
+    insertVecChunk(db, {chunk_id: 'c-good-0', record_id: 'rec-good', content_hash: 'hash-match'});
+    // Stray embedding with no chunks metadata row.
+    db.prepare('INSERT INTO record_vec (chunk_id, embedding) VALUES (?, ?)').run(
+      'c-stray-0',
+      new Float32Array(384)
+    );
+
+    const {status, body} = await fetchJson(`${url}/maintenance/cleanup-lint`, {method: 'POST'});
+    t.equal(status, 200, '200 ok');
+    const r = body as {
+      totalFixed: number;
+      fixed: {orphan_vec_rows: {rowsDeleted: number}};
+    };
+    t.equal(r.totalFixed, 1, 'totalFixed=1');
+    t.equal(r.fixed.orphan_vec_rows.rowsDeleted, 1, 'stray vec row deleted');
+
+    const after = await fetchJson(`${url}/system/lint`);
+    t.equal((after.body as {ok: boolean}).ok, true, 'lint clean after cleanup');
+
+    const remaining = db.prepare('SELECT chunk_id FROM record_vec ORDER BY chunk_id').all() as {
+      chunk_id: string;
+    }[];
+    t.equal(remaining.length, 1, 'healthy chunk preserved');
     t.equal(remaining[0]?.chunk_id, 'c-good-0', 'healthy chunk untouched');
   });
 });

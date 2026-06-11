@@ -152,8 +152,11 @@ export const importFile = (
   // Hashes the embedding input (body + agent.summary when present) so
   // summary-only edits drive reembedding the same way body edits do.
   // Falls back to body-only when there's no agent block — the entire
-  // current vault until enrich-all runs.
-  const hash = embedInputHash(body, agent.summary);
+  // current vault until enrich-all runs. `bodyHash` is the body-only
+  // companion (equal to `hash` when no summary), persisted on the record
+  // and reused by the agent-staleness check below.
+  const bodyHash = contentHash(body);
+  const hash = agent.summary === null ? bodyHash : embedInputHash(body, agent.summary);
 
   const isUnchanged =
     !!existing &&
@@ -182,6 +185,7 @@ export const importFile = (
       type,
       body,
       contentHash: hash,
+      bodyHash,
       title,
       created,
       updated,
@@ -250,7 +254,6 @@ export const importFile = (
   // populated — partial blocks (summary without hash, or vice versa) are
   // ambiguous and silently skipped.
   if (options.agentStale && agent.summary !== null && agent.derivedFromHash !== null) {
-    const bodyHash = contentHash(body);
     if (agent.derivedFromHash === bodyHash) {
       // Fresh again — auto-accept any pending stale suggestion for this record.
       options.agentStale.accept({subject: recordId}, 'hash-matched', now);

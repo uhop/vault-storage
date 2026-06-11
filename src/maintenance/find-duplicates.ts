@@ -197,14 +197,10 @@ export const findDuplicates = (
   const start = performance.now();
   const seenPairs = new Set<string>();
 
-  // Bulk-load every record's chunks in a single record_vec scan. Per-call
-  // `getChunks(recordId)` would issue one full vec0 scan each time —
-  // record_vec's `+record_id` aux column is unindexed, so a `WHERE
-  // record_id = ?` query has no early exit, and at ~6K chunks costs ~20ms
-  // regardless of how many chunks the record actually has. Profiled
-  // 2026-05-04: ~150 unique records × ~22ms ≈ 3.3s of pure overhead,
-  // ~80% of the find-duplicates wall time. One bulk scan is ~50–150ms
-  // and gives O(1) lookups for the rest of the pass. Lifetime: one scan.
+  // Bulk-load every record's chunks in one query. Per-call
+  // `getChunks(recordId)` is indexed since schema 0010, but the scan
+  // touches most records anyway, so one bulk load beats ~150 round-trips
+  // and gives O(1) lookups for the rest of the pass.
   const allChunks = chunkVecs.getAllChunks();
   const getChunks = (recordId: string): Float32Array[] => allChunks.get(recordId) ?? [];
 

@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
 import * as sqliteVec from 'sqlite-vec';
+import {contentHash} from '../util/hash.ts';
 
 export interface OpenOptions {
   /** ':memory:' for ephemeral, or a filesystem path. */
@@ -18,6 +19,13 @@ export const openDatabase = (opts: OpenOptions): DatabaseSync => {
   });
 
   sqliteVec.load(db);
+
+  // App-defined SQL function mirroring util/hash.ts contentHash — same
+  // sha256-hex over the same string, so values computed in SQL (the 0011
+  // body_hash backfill) are byte-identical to TS-computed ones.
+  db.function('sha256_hex', {deterministic: true}, (text: unknown): string =>
+    contentHash(String(text))
+  );
 
   db.exec('PRAGMA foreign_keys = ON');
   if (!opts.readOnly && opts.path !== ':memory:') {

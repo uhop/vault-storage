@@ -16,8 +16,8 @@ const seed = (
 ): void => {
   const insert = db.prepare(
     `INSERT INTO records
-       (record_id, file_path, title, type, body, content_hash, status, created, updated)
-     VALUES (?, ?, ?, ?, '', ?, ?, '2026-04-01', ?)`
+       (record_id, file_path, title, type, body, content_hash, body_hash, status, created, updated)
+     VALUES (?, ?, ?, ?, '', ?, '', ?, '2026-04-01', ?)`
   );
   let i = 0;
   for (const r of rows) {
