@@ -10,11 +10,7 @@ import {
 } from '../records/types.ts';
 import {contentHash, embedInputHash} from '../util/hash.ts';
 import {uuidv7} from '../util/uuid.ts';
-import type {
-  AgentEnrichmentStaleFiler,
-  ArchiveCandidateFiler,
-  TagSuggestionFiler
-} from './file-suggestions.ts';
+import {acceptRealizedTagSuggestions, type SuggestionFiler} from './file-suggestions.ts';
 import type {TagsImporter} from './import-tags.ts';
 import {isRecordType, typeFromPath} from './type-from-path.ts';
 
@@ -99,7 +95,7 @@ export interface ImportFileOptions {
    * recorded hash diverges from the body's current hash. Auto-resolves
    * pending stale suggestions for records that are no longer stale.
    */
-  agentStale?: AgentEnrichmentStaleFiler;
+  agentStale?: SuggestionFiler<'agent_enrichment_stale'>;
   /**
    * When provided, files `tag_suggestion` entries for tags listed in
    * `agent.tags_suggested` that are not yet realized on the record. Auto-
@@ -107,14 +103,14 @@ export interface ImportFileOptions {
    * the record's tag set. Requires `tags` to also be set (the tag-set
    * comparison goes through TagsImporter).
    */
-  tagSuggestion?: TagSuggestionFiler;
+  tagSuggestion?: SuggestionFiler<'tag_suggestion'>;
   /**
    * When provided, auto-resolves any pending `archive_candidate` suggestion
    * for a record whose FM status has flipped to `archived`. The retention
    * scan files the suggestions; this hook closes the loop on the import side
    * once the user (or skill) acts.
    */
-  archiveCandidate?: ArchiveCandidateFiler;
+  archiveCandidate?: SuggestionFiler<'archive_candidate'>;
 }
 
 /**
@@ -227,19 +223,15 @@ export const importFile = (
       if (tag === null || seen.has(tag)) continue;
       seen.add(tag);
       if (!realized.has(tag)) {
-        options.tagSuggestion.fileTagSuggestion({
-          recordId,
-          filePath: relativePath,
-          tag,
-          now
-        });
+        options.tagSuggestion.file({tag, record_id: recordId, file_path: relativePath}, now);
       }
     }
     // Auto-accept any pending suggestion for this record whose payload tag,
     // resolved through the alias map, is now realized — covers an alias-spelled
     // payload (e.g. `standard` vs realized canonical `conventions`) that the
     // per-tag canonical lookup would otherwise miss.
-    options.tagSuggestion.acceptRealizedForRecord(
+    acceptRealizedTagSuggestions(
+      options.tagSuggestion,
       recordId,
       realized,
       raw => tags.resolveTag(raw),
@@ -251,7 +243,7 @@ export const importFile = (
   // `archived`, any pending archive_candidate for it is moot — accept it
   // as resolved on the import side so the suggestions queue tracks reality.
   if (options.archiveCandidate && status === 'archived') {
-    options.archiveCandidate.autoAcceptForRecord(recordId, now);
+    options.archiveCandidate.accept({subject: recordId}, 'archived', now);
   }
 
   // Agent-enrichment staleness check. Only meaningful when both fields are
@@ -261,15 +253,17 @@ export const importFile = (
     const bodyHash = contentHash(body);
     if (agent.derivedFromHash === bodyHash) {
       // Fresh again — auto-accept any pending stale suggestion for this record.
-      options.agentStale.autoAcceptForRecord(recordId, now);
+      options.agentStale.accept({subject: recordId}, 'hash-matched', now);
     } else {
-      options.agentStale.fileStaleSuggestion({
-        recordId,
-        filePath: relativePath,
-        agentDerivedFromHash: agent.derivedFromHash,
-        currentBodyHash: bodyHash,
+      options.agentStale.file(
+        {
+          record_id: recordId,
+          file_path: relativePath,
+          agent_derived_from_hash: agent.derivedFromHash,
+          current_body_hash: bodyHash
+        },
         now
-      });
+      );
     }
   }
 

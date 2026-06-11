@@ -1,5 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
-import {NewTagSuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
+import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {parsePagination} from '../query.ts';
@@ -145,7 +145,7 @@ const parseJsonObject = async <T>(raw: string): Promise<T | string> => {
 
 const linkBackfillAndAutoAccept = (
   db: DatabaseSync,
-  filer: NewTagSuggestionFiler,
+  filer: SuggestionFiler<'new_tag'>,
   pendingTag: string,
   canonical: string,
   resolvedBy: 'taxonomy-add' | 'alias-add',
@@ -176,7 +176,7 @@ const linkBackfillAndAutoAccept = (
     const result = linkInsert.run(parsed.record_id, canonical);
     if (Number(result.changes) > 0) linked++;
   }
-  const accepted = filer.autoAcceptByTag(pendingTag, resolvedBy, now);
+  const accepted = filer.accept({tag: pendingTag}, resolvedBy, now);
   return {linked, accepted};
 };
 
@@ -228,7 +228,7 @@ export const addTaxonomyHandler =
     }
 
     const now = new Date().toISOString();
-    const filer = new NewTagSuggestionFiler(deps.db);
+    const filer = new SuggestionFiler(deps.db, 'new_tag');
 
     deps.db.exec('BEGIN');
     try {
@@ -313,7 +313,7 @@ export const addAliasHandler =
     }
 
     const now = new Date().toISOString();
-    const filer = new NewTagSuggestionFiler(deps.db);
+    const filer = new SuggestionFiler(deps.db, 'new_tag');
 
     deps.db.exec('BEGIN');
     try {

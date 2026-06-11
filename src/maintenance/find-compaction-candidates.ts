@@ -29,7 +29,7 @@
 // archived enough pieces that the folder no longer crosses threshold).
 
 import type {DatabaseSync} from 'node:sqlite';
-import {CompactionCandidateFiler} from '../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {RecordType, VaultRecord} from '../records/types.ts';
 
@@ -161,7 +161,7 @@ export const findCompactionCandidates = (
   const nowMs = Date.parse(now);
 
   const records = new RecordsRepository(db);
-  const filer = new CompactionCandidateFiler(db);
+  const filer = new SuggestionFiler(db, 'compaction_candidate');
 
   const start = performance.now();
   const summary: FindCompactionCandidatesSummary = {
@@ -206,15 +206,17 @@ export const findCompactionCandidates = (
     if (s.pieceCount < minPieceCount) continue;
     qualifying.add(folder);
     summary.qualifying++;
-    const filed = filer.fileCandidate({
-      folderPath: folder,
-      pieceCount: s.pieceCount,
-      totalBytes: s.totalBytes,
-      oldestCreated: s.oldestCreated,
-      newestCreated: s.newestCreated,
+    const filed = filer.file(
+      {
+        folder_path: folder,
+        piece_count: s.pieceCount,
+        total_bytes: s.totalBytes,
+        oldest_created: s.oldestCreated,
+        newest_created: s.newestCreated
+      },
       now,
-      snoozeDays: options.snoozeDays
-    });
+      {snoozeDays: options.snoozeDays}
+    );
     if (filed) summary.filed++;
   }
 
@@ -227,7 +229,9 @@ export const findCompactionCandidates = (
     .all() as Array<{folder_path: string}>;
   for (const row of pending) {
     if (qualifying.has(row.folder_path)) continue;
-    if (filer.autoAcceptForFolder(row.folder_path, now)) summary.autoResolved++;
+    if (filer.accept({folder_path: row.folder_path}, 'no-longer-eligible', now) > 0) {
+      summary.autoResolved++;
+    }
   }
 
   summary.durationMs = Math.round(performance.now() - start);

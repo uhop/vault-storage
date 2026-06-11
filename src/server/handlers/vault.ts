@@ -12,11 +12,7 @@ import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import type {Embedder} from '../../embeddings/types.ts';
-import {
-  AgentEnrichmentStaleFiler,
-  ArchiveCandidateFiler,
-  TagSuggestionFiler
-} from '../../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import {proposeNearest} from '../../maintenance/propose.ts';
@@ -225,9 +221,9 @@ export const putVaultHandler =
 
     const {records} = deps;
     const tags = new TagsImporter(deps.db);
-    const agentStale = new AgentEnrichmentStaleFiler(deps.db);
-    const tagSuggestion = new TagSuggestionFiler(deps.db);
-    const archiveCandidate = new ArchiveCandidateFiler(deps.db);
+    const agentStale = new SuggestionFiler(deps.db, 'agent_enrichment_stale');
+    const tagSuggestion = new SuggestionFiler(deps.db, 'tag_suggestion');
+    const archiveCandidate = new SuggestionFiler(deps.db, 'archive_candidate');
     const existing = records.getByPath(path);
 
     let parsed: ReturnType<typeof parseWriteRequest>;

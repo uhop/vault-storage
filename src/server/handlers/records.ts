@@ -1,11 +1,7 @@
 import {existsSync, readFileSync, statSync} from 'node:fs';
 import type {ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
-import {
-  AgentEnrichmentStaleFiler,
-  ArchiveCandidateFiler,
-  TagSuggestionFiler
-} from '../../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
@@ -201,9 +197,9 @@ const persistTags = (
   }
   importFile(deps.records, row.file_path, abs, undefined, {
     tags: new TagsImporter(deps.db),
-    agentStale: new AgentEnrichmentStaleFiler(deps.db),
-    tagSuggestion: new TagSuggestionFiler(deps.db),
-    archiveCandidate: new ArchiveCandidateFiler(deps.db)
+    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
+    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
+    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
   });
   return true;
 };

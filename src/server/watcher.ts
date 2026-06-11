@@ -12,11 +12,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {embedPending} from '../embeddings/embed-pass.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges} from '../importer/build-edges.ts';
-import {
-  AgentEnrichmentStaleFiler,
-  ArchiveCandidateFiler,
-  TagSuggestionFiler
-} from '../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
 import {TagsImporter} from '../importer/import-tags.ts';
 import {QueueItemsRepository} from '../queue/repo.ts';
@@ -80,9 +76,9 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
 
   const records = new RecordsRepository(db);
   const tags = new TagsImporter(db);
-  const agentStale = new AgentEnrichmentStaleFiler(db);
-  const tagSuggestion = new TagSuggestionFiler(db);
-  const archiveCandidate = new ArchiveCandidateFiler(db);
+  const agentStale = new SuggestionFiler(db, 'agent_enrichment_stale');
+  const tagSuggestion = new SuggestionFiler(db, 'tag_suggestion');
+  const archiveCandidate = new SuggestionFiler(db, 'archive_candidate');
   const queueItems = new QueueItemsRepository(db);
 
   const pending = new Set<string>();

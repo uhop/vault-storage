@@ -7,7 +7,7 @@ import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
 import {EDGE_TYPES} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
-import {EdgeSuggestionFiler} from './file-suggestions.ts';
+import {SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
 
 const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
@@ -287,7 +287,7 @@ export const buildEdges = (
   const edges = new EdgesRepository(db);
   const all = records.listAll();
   const resolver = new WikilinkResolver(all);
-  const filer = new EdgeSuggestionFiler(db);
+  const filer = new SuggestionFiler(db, 'edge_type');
 
   // O(1) lookup from record_id to record (used to render to_path in suggestion payloads).
   const byRecordId = new Map<string, VaultRecord>();
@@ -336,7 +336,8 @@ export const buildEdges = (
         {
           // If a pending suggestion already exists for this pair (e.g. the
           // user edited FM manually after filing), auto-resolve it.
-          onOverride: toId => filer.autoAcceptOnFmOverride(record.recordId, toId, now),
+          onOverride: toId =>
+            filer.accept({from_record: record.recordId, to_record: toId}, 'fm-override', now),
           onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context})
         }
       );
@@ -361,14 +362,17 @@ export const buildEdges = (
         }
         const toRecord = byRecordId.get(toId);
         if (!toRecord) continue;
-        const filed = filer.fileEdgeTypeSuggestion({
-          fromRecordId: record.recordId,
-          fromPath: record.filePath,
-          toRecordId: toId,
-          toPath: toRecord.filePath,
-          context,
+        const filed = filer.file(
+          {
+            from_record: record.recordId,
+            from_path: record.filePath,
+            to_record: toId,
+            to_path: toRecord.filePath,
+            classifier_type: 'cites',
+            context
+          },
           now
-        });
+        );
         if (filed) summary.suggestionsFiled++;
       }
     }

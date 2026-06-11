@@ -23,7 +23,7 @@
 //                                     pressure, not engine pressure)
 
 import type {DatabaseSync} from 'node:sqlite';
-import {UpgradeSignalFiler} from '../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../importer/file-suggestions.ts';
 
 export const DEFAULT_THRESHOLDS = {
   recordCountHigh: 50_000,
@@ -185,7 +185,10 @@ export const findUpgradeSignals = (
   const thresholds = {...DEFAULT_THRESHOLDS, ...(options.thresholds ?? {})};
   const now = options.now ?? new Date().toISOString();
 
-  const filer = new UpgradeSignalFiler(db);
+  const filers = {
+    inefficiency_detected: new SuggestionFiler(db, 'inefficiency_detected'),
+    infrastructure_upgrade: new SuggestionFiler(db, 'infrastructure_upgrade')
+  };
   const start = performance.now();
 
   const stats = collectStats(db);
@@ -194,16 +197,17 @@ export const findUpgradeSignals = (
   let filed = 0;
   for (const t of tripped) {
     if (
-      filer.fileSignal({
-        kind: t.kind,
-        signal: t.name,
-        current: t.current,
-        threshold: t.threshold,
-        recommendation: t.recommendation,
-        subjectId: t.subjectId,
-        extra: t.extra,
-        now
-      })
+      filers[t.kind].file(
+        {
+          signal: t.name,
+          current: t.current,
+          threshold: t.threshold,
+          recommendation: t.recommendation,
+          ...(t.extra ?? {})
+        },
+        now,
+        {subjectId: t.subjectId ?? null}
+      )
     ) {
       filed++;
     }

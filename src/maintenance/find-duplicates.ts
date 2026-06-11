@@ -42,7 +42,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
 import {RecordVecRepository} from '../db/vec-repo.ts';
-import {DuplicateSuggestionFiler} from '../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {RecordType, VaultRecord} from '../records/types.ts';
 
@@ -177,7 +177,7 @@ export const findDuplicates = (
   const records = new RecordsRepository(db);
   const docVecs = new RecordDocVecRepository(db);
   const chunkVecs = new RecordVecRepository(db);
-  const filer = new DuplicateSuggestionFiler(db);
+  const filer = new SuggestionFiler(db, 'duplicate');
 
   const all = records.listAll();
   const byId = new Map<string, VaultRecord>();
@@ -312,14 +312,10 @@ export const findDuplicates = (
       const aRec = byId.get(aId);
       const bRec = byId.get(bId);
       if (!aRec || !bRec) continue;
-      const filed = filer.fileDuplicateSuggestion({
-        aRecordId: aId,
-        aPath: aRec.filePath,
-        bRecordId: bId,
-        bPath: bRec.filePath,
-        distance,
+      const filed = filer.file(
+        {a_record: aId, a_path: aRec.filePath, b_record: bId, b_path: bRec.filePath, distance},
         now
-      });
+      );
       if (filed) summary.filed++;
     }
   }

@@ -16,11 +16,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {buildEdges} from '../importer/build-edges.ts';
-import {
-  AgentEnrichmentStaleFiler,
-  ArchiveCandidateFiler,
-  TagSuggestionFiler
-} from '../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
 import {importVault} from '../importer/import.ts';
 import {TagsImporter} from '../importer/import-tags.ts';
@@ -168,9 +164,9 @@ export const incrementalReindex = async (
 
   const records = new RecordsRepository(db);
   const tags = new TagsImporter(db);
-  const agentStale = new AgentEnrichmentStaleFiler(db);
-  const tagSuggestion = new TagSuggestionFiler(db);
-  const archiveCandidate = new ArchiveCandidateFiler(db);
+  const agentStale = new SuggestionFiler(db, 'agent_enrichment_stale');
+  const tagSuggestion = new SuggestionFiler(db, 'tag_suggestion');
+  const archiveCandidate = new SuggestionFiler(db, 'archive_candidate');
   const now = new Date().toISOString();
 
   // Pure-modify batches rebuild edges for just the touched records; any

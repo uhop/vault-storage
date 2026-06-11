@@ -16,21 +16,21 @@
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {normalizeTag} from '../migration/tags.ts';
-import {NewTagSuggestionFiler} from './file-suggestions.ts';
+import {SuggestionFiler} from './file-suggestions.ts';
 
 export class TagsImporter {
   readonly #deleteForRecord: StatementSync;
   readonly #insertTag: StatementSync;
   readonly #lookupAlias: StatementSync;
   readonly #selectForRecord: StatementSync;
-  readonly #filer: NewTagSuggestionFiler;
+  readonly #filer: SuggestionFiler<'new_tag'>;
 
   constructor(db: DatabaseSync) {
     this.#deleteForRecord = db.prepare('DELETE FROM tags WHERE record_id = ?');
     this.#insertTag = db.prepare('INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
     this.#lookupAlias = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?');
     this.#selectForRecord = db.prepare('SELECT tag FROM tags WHERE record_id = ?');
-    this.#filer = new NewTagSuggestionFiler(db);
+    this.#filer = new SuggestionFiler(db, 'new_tag');
   }
 
   /**
@@ -99,12 +99,7 @@ export class TagsImporter {
         // suggestion (idempotent; same record+tag won't re-file) and
         // include the rejected tag in the caller's summary.
         rejected.push(tag);
-        const filed = this.#filer.fileNewTagSuggestion({
-          recordId,
-          filePath,
-          tag,
-          now: stamp
-        });
+        const filed = this.#filer.file({tag, record_id: recordId, file_path: filePath}, stamp);
         if (filed) suggestionsFiled++;
       }
     }

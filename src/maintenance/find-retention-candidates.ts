@@ -12,7 +12,7 @@
 // loop without the agent having to touch the suggestions table.
 
 import type {DatabaseSync} from 'node:sqlite';
-import {ArchiveCandidateFiler} from '../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {RecordType, VaultRecord} from '../records/types.ts';
 
@@ -95,7 +95,7 @@ export const findRetentionCandidates = (
   const nowMs = Date.parse(now);
 
   const records = new RecordsRepository(db);
-  const filer = new ArchiveCandidateFiler(db);
+  const filer = new SuggestionFiler(db, 'archive_candidate');
 
   const start = performance.now();
   const summary: FindRetentionSummary = {scanned: 0, qualifying: 0, filed: 0, durationMs: 0};
@@ -114,16 +114,18 @@ export const findRetentionCandidates = (
         ? `${r.type} > ${rule.days}d`
         : `${r.type} done-since > ${rule.days}d`;
     if (
-      filer.fileCandidate({
-        recordId: r.recordId,
-        filePath: r.filePath,
-        type: r.type,
-        status: r.status,
-        ageDays: Math.round(age),
-        rule: ruleStr,
+      filer.file(
+        {
+          record_id: r.recordId,
+          file_path: r.filePath,
+          type: r.type,
+          status: r.status,
+          age_days: Math.round(age),
+          rule: ruleStr
+        },
         now,
-        snoozeDays: options.snoozeDays
-      })
+        {snoozeDays: options.snoozeDays}
+      )
     ) {
       summary.filed++;
     }

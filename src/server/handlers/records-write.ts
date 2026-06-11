@@ -1,10 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {join} from 'node:path';
-import {
-  AgentEnrichmentStaleFiler,
-  ArchiveCandidateFiler,
-  TagSuggestionFiler
-} from '../../importer/file-suggestions.ts';
+import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
@@ -37,9 +33,9 @@ export const putRecordHandler =
 
     const {records} = deps;
     const tags = new TagsImporter(deps.db);
-    const agentStale = new AgentEnrichmentStaleFiler(deps.db);
-    const tagSuggestion = new TagSuggestionFiler(deps.db);
-    const archiveCandidate = new ArchiveCandidateFiler(deps.db);
+    const agentStale = new SuggestionFiler(deps.db, 'agent_enrichment_stale');
+    const tagSuggestion = new SuggestionFiler(deps.db, 'tag_suggestion');
+    const archiveCandidate = new SuggestionFiler(deps.db, 'archive_candidate');
     const existing = records.getById(id);
     if (!existing) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
