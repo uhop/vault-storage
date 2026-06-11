@@ -58,34 +58,213 @@ export interface EdgeBuildSummary {
   durationMs: number;
 }
 
-interface FileBodySource {
-  /** Read fresh from disk so body wikilinks are extracted from up-to-date content. */
-  read(record: VaultRecord): string;
+interface RecordSource {
+  /**
+   * Body text + parsed frontmatter data for a record, from a single read.
+   * In fs mode one disk read + one parse serves both (the file used to be
+   * read and parsed twice — once for the body, once for the FM block).
+   */
+  read(record: VaultRecord): {body: string; fmData: Record<string, unknown>};
 }
 
-const fsBodySource = (vaultRoot: string): FileBodySource => ({
+const fsRecordSource = (vaultRoot: string): RecordSource => {
+  const root = vaultRoot.replace(/\/+$/, '');
+  return {
+    read(record) {
+      const parsed = parseFrontmatter(readFileSync(`${root}/${record.filePath}`, 'utf8'));
+      return {body: parsed.body, fmData: parsed.data};
+    }
+  };
+};
+
+const dbRecordSource = (): RecordSource => ({
   read(record) {
-    const abs = `${vaultRoot.replace(/\/+$/, '')}/${record.filePath}`;
-    const source = readFileSync(abs, 'utf8');
-    return parseFrontmatter(source).body;
+    // Imported records store the body FM-stripped, so the parse yields no FM
+    // data — DB-only mode has never produced frontmatter-derived edges. The
+    // body is passed through verbatim (not re-stripped) to keep parity with
+    // the previous behavior for callers whose stored bodies embed FM.
+    return {body: record.body, fmData: parseFrontmatter(record.body).data};
   }
 });
 
-const dbBodySource = (): FileBodySource => ({
-  read(record) {
-    return record.body;
+interface ClassifiedTarget {
+  target: string;
+  type: Edge['type'];
+  /** When true, the edge runs target→source instead of source→target. */
+  inverse?: boolean;
+}
+
+const SYMMETRIC_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
+
+/** Receives every resolved directed edge (mirrors included) a record's content backs. */
+type EdgeSink = (fromId: string, toId: string, type: EdgeType) => void;
+
+const touchKey = (fromId: string, toId: string, type: EdgeType): string =>
+  `${fromId}|${toId}|${type}`;
+
+/**
+ * Resolve a target list against the record set and feed each directed edge
+ * (including auto-mirrors for symmetric types) to `sink`, deduped within
+ * this call. Mutates `summary` diagnostics counters; writes nothing itself.
+ */
+const resolveEdges = (
+  resolver: WikilinkResolver,
+  source: VaultRecord,
+  targets: ClassifiedTarget[],
+  summary: EdgeBuildSummary,
+  origin: 'frontmatter' | 'body',
+  sink: EdgeSink
+): void => {
+  const seen = new Set<string>();
+  for (const {target, type, inverse} of targets) {
+    const resolved = resolver.resolve(target);
+    if (!resolved) {
+      if (origin === 'frontmatter') summary.unresolvedFrontmatter++;
+      else summary.unresolvedBody++;
+      continue;
+    }
+    if (resolved === source.recordId) {
+      summary.selfReferences++;
+      continue;
+    }
+    const fromId = inverse ? resolved : source.recordId;
+    const toId = inverse ? source.recordId : resolved;
+    const dedupKey = touchKey(fromId, toId, type);
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    sink(fromId, toId, type);
+
+    // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
+    if (SYMMETRIC_TYPES.has(type)) {
+      const mirrorKey = touchKey(toId, fromId, type);
+      if (!seen.has(mirrorKey)) {
+        seen.add(mirrorKey);
+        sink(toId, fromId, type);
+      }
+    }
   }
+};
+
+interface DeclarationHooks {
+  /** A default-cites body link got its type pinned by the FM `edges:` map. */
+  onOverride?: (toId: string) => void;
+  /** An unreviewed default-cites body link (candidate for an `edge_type` suggestion). */
+  onCiteNeedingReview?: (toId: string, context: string) => void;
+}
+
+/**
+ * Walk one record's content (frontmatter `related:`, FM `edges:` overrides,
+ * classified body wikilinks) and feed every directed edge it backs to `sink`.
+ * Pure with respect to the DB — the caller decides whether the sink writes
+ * (the build pass) or merely collects keys (the scoped-GC verifier).
+ */
+const forEachDeclaredEdge = (
+  record: VaultRecord,
+  src: RecordSource,
+  resolver: WikilinkResolver,
+  summary: EdgeBuildSummary,
+  sink: EdgeSink,
+  hooks: DeclarationHooks = {}
+): void => {
+  const {body, fmData} = src.read(record);
+  const related = extractRelatedFromFrontmatter(fmData);
+
+  // FM `edges:` map: target string → edge type. The user's per-record
+  // override for the body-wikilink classifier. Resolve target strings to
+  // record_ids so build-edges can match by toId regardless of which slug
+  // form ([[foo]] vs [[topics/foo]]) the body uses.
+  const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, EDGE_TYPE_SET);
+  const fmOverrides = new Map<string, EdgeType>(); // toId → type
+  for (const [target, type] of fmEdgesRaw) {
+    const resolved = resolver.resolve(target);
+    if (resolved && resolved !== record.recordId) {
+      fmOverrides.set(resolved, type as EdgeType);
+    }
+  }
+
+  resolveEdges(
+    resolver,
+    record,
+    related.map(target => ({target, type: 'related-to' as EdgeType})),
+    summary,
+    'frontmatter',
+    sink
+  );
+
+  // Body wikilinks: classify, apply FM overrides, then hand off.
+  const classified = classifyBodyLinks(body);
+  const adjusted: ClassifiedTarget[] = [];
+
+  for (const c of classified) {
+    const resolved = resolver.resolve(c.target);
+    if (!resolved || resolved === record.recordId) {
+      // Pass through to resolveEdges so its existing summary counters fire.
+      adjusted.push(
+        c.inverse
+          ? {target: c.target, type: c.type, inverse: true}
+          : {target: c.target, type: c.type}
+      );
+      continue;
+    }
+    let finalType = c.type;
+    const override = fmOverrides.get(resolved);
+    if (c.type === 'cites' && override !== undefined) {
+      finalType = override;
+      summary.fmOverridesApplied++;
+      hooks.onOverride?.(resolved);
+    }
+    adjusted.push(
+      c.inverse
+        ? {target: c.target, type: finalType, inverse: true}
+        : {target: c.target, type: finalType}
+    );
+    if (c.type === 'cites' && override === undefined && c.context !== undefined) {
+      hooks.onCiteNeedingReview?.(resolved, c.context);
+    }
+  }
+
+  resolveEdges(resolver, record, adjusted, summary, 'body', sink);
+};
+
+/** Throwaway summary for read-only declaration walks (scoped-GC verification). */
+const scratchSummary = (): EdgeBuildSummary => ({
+  edgesCreated: 0,
+  edgesDeleted: 0,
+  unresolvedFrontmatter: 0,
+  unresolvedBody: 0,
+  selfReferences: 0,
+  fmOverridesApplied: 0,
+  suggestionsFiled: 0,
+  suggestionsSkippedByType: 0,
+  archivedSkipped: 0,
+  durationMs: 0
 });
 
 /**
- * Walk every record, extract wikilinks (`related:` array → 'related-to', body
+ * Walk records, extract wikilinks (`related:` array → 'related-to', body
  * `[[link]]` → 'cites'), resolve to record_ids, and upsert edges. Idempotent.
  *
- * If `vaultRoot` is supplied, body text is re-read from disk; otherwise the
- * stored body in the DB is used. Both produce the same edges; the disk read
- * matters when records.body intentionally diverges from the file (atomization
- * later splits files into pieces — body of a piece is just one section, not
- * the whole file).
+ * If `vaultRoot` is supplied, body + frontmatter are re-read from disk (one
+ * read per record); otherwise the stored body in the DB is used. The disk
+ * read matters when records.body intentionally diverges from the file
+ * (atomization later splits files into pieces — body of a piece is just one
+ * section, not the whole file).
+ *
+ * Without `scope`, every record is processed and the GC pass sweeps the
+ * whole edges table. With `scope` (a set of record_ids), only those records
+ * are re-extracted — the incremental path for content-only changes. Scoped
+ * mode is ONLY sound when the batch didn't create, delete, or rename files:
+ * the resolver keys on file paths alone (path / basename-uniqueness /
+ * folder-fallback maps), so content edits can't change how OTHER records'
+ * links resolve, but path-set changes can. Callers fall back to a full
+ * rebuild in that case (see the watcher / incremental-reindex).
+ *
+ * Scoped GC: a stale edge candidate is any edge incident to a scoped record
+ * that this pass didn't touch. An untouched candidate may still be backed by
+ * the OTHER endpoint's content — symmetric auto-mirrors and inverse
+ * classifications ("superseded by [[X]]") create edges whose `from_id` is
+ * not the declaring record — so candidates are verified against a read-only
+ * re-extraction of the counterparty's declarations before deletion.
  */
 export const buildEdges = (
   db: DatabaseSync,
@@ -100,6 +279,8 @@ export const buildEdges = (
      * to tune.
      */
     skipEdgeTypeFilingFromTypes?: ReadonlySet<string>;
+    /** Restrict re-extraction + GC to these record_ids (content-only batches). */
+    scope?: ReadonlySet<string>;
   } = {}
 ): EdgeBuildSummary => {
   const records = new RecordsRepository(db);
@@ -112,36 +293,25 @@ export const buildEdges = (
   const byRecordId = new Map<string, VaultRecord>();
   for (const r of all) byRecordId.set(r.recordId, r);
 
-  const source = options.vaultRoot ? fsBodySource(options.vaultRoot) : dbBodySource();
+  const source = options.vaultRoot ? fsRecordSource(options.vaultRoot) : dbRecordSource();
   const now = options.now ?? new Date().toISOString();
   const skipFilingFromTypes =
     options.skipEdgeTypeFilingFromTypes ?? DEFAULT_SKIP_EDGE_TYPE_FILING_FROM;
 
-  const summary: EdgeBuildSummary = {
-    edgesCreated: 0,
-    edgesDeleted: 0,
-    unresolvedFrontmatter: 0,
-    unresolvedBody: 0,
-    selfReferences: 0,
-    fmOverridesApplied: 0,
-    suggestionsFiled: 0,
-    suggestionsSkippedByType: 0,
-    archivedSkipped: 0,
-    durationMs: 0
-  };
+  const scope = options.scope;
+  const work = scope === undefined ? all : all.filter(r => scope.has(r.recordId));
+
+  const summary: EdgeBuildSummary = scratchSummary();
   const start = performance.now();
 
-  // Track every edge that the current vault content backs. After the pass we
-  // delete edges in the DB that aren't in this set — that's edge GC, so a
-  // wikilink removal in a markdown file actually removes the corresponding
-  // edge instead of leaving a dangling row.
+  // Track every edge that the current pass backs. The GC below deletes edges
+  // not in this set — so a wikilink removal in a markdown file actually
+  // removes the corresponding edge instead of leaving a dangling row.
   const touched = new Set<string>();
-  const touchKey = (fromId: string, toId: string, type: EdgeType): string =>
-    `${fromId}|${toId}|${type}`;
 
   db.exec('BEGIN');
   try {
-    for (const record of all) {
+    for (const record of work) {
       // Archived notes are kept for inbound wikilink resolution only.
       // Skip outbound extraction so they don't bloat fanout; their stale
       // outbound edges from pre-archive content will be GC'd at the end of
@@ -151,87 +321,24 @@ export const buildEdges = (
         continue;
       }
 
-      const body = source.read(record);
-
-      // Frontmatter `related:` is on the file itself, not the record body.
-      // Re-parse from disk if we have the vaultRoot; fall back to stored body when DB-only.
-      const frontmatterText = options.vaultRoot
-        ? readFromDisk(options.vaultRoot, record.filePath)
-        : record.body;
-      const fmData = parseFrontmatter(frontmatterText).data;
-      const related = extractRelatedFromFrontmatter(fmData);
-
-      // FM `edges:` map: target string → edge type. The user's per-record
-      // override for the body-wikilink classifier. Resolve target strings to
-      // record_ids so build-edges can match by toId regardless of which slug
-      // form ([[foo]] vs [[topics/foo]]) the body uses.
-      const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, EDGE_TYPE_SET);
-      const fmOverrides = new Map<string, EdgeType>(); // toId → type
-      for (const [target, type] of fmEdgesRaw) {
-        const resolved = resolver.resolve(target);
-        if (resolved && resolved !== record.recordId) {
-          fmOverrides.set(resolved, type as EdgeType);
-        }
-      }
-
-      summary.edgesCreated += writeEdges(
-        edges,
-        resolver,
-        record,
-        related.map(target => ({target, type: 'related-to' as EdgeType})),
-        now,
-        summary,
-        'frontmatter',
-        touched,
-        touchKey
-      );
-
-      // Body wikilinks: classify, apply FM overrides, write, then file
-      // suggestions for default-cites the user hasn't yet decided on.
-      const classified = classifyBodyLinks(body);
-      const adjusted: ClassifiedTarget[] = [];
       const citesNeedingReview: Array<{toId: string; context: string}> = [];
 
-      for (const c of classified) {
-        const resolved = resolver.resolve(c.target);
-        if (!resolved || resolved === record.recordId) {
-          // Pass through to writeEdges so its existing summary counters fire.
-          adjusted.push(
-            c.inverse
-              ? {target: c.target, type: c.type, inverse: true}
-              : {target: c.target, type: c.type}
-          );
-          continue;
-        }
-        let finalType = c.type;
-        const override = fmOverrides.get(resolved);
-        if (c.type === 'cites' && override !== undefined) {
-          finalType = override;
-          summary.fmOverridesApplied++;
+      forEachDeclaredEdge(
+        record,
+        source,
+        resolver,
+        summary,
+        (fromId, toId, type) => {
+          touched.add(touchKey(fromId, toId, type));
+          edges.upsert({fromId, toId, type, weight: 1, note: null, created: now});
+          summary.edgesCreated++;
+        },
+        {
           // If a pending suggestion already exists for this pair (e.g. the
           // user edited FM manually after filing), auto-resolve it.
-          filer.autoAcceptOnFmOverride(record.recordId, resolved, now);
+          onOverride: toId => filer.autoAcceptOnFmOverride(record.recordId, toId, now),
+          onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context})
         }
-        adjusted.push(
-          c.inverse
-            ? {target: c.target, type: finalType, inverse: true}
-            : {target: c.target, type: finalType}
-        );
-        if (c.type === 'cites' && override === undefined && c.context !== undefined) {
-          citesNeedingReview.push({toId: resolved, context: c.context});
-        }
-      }
-
-      summary.edgesCreated += writeEdges(
-        edges,
-        resolver,
-        record,
-        adjusted,
-        now,
-        summary,
-        'body',
-        touched,
-        touchKey
       );
 
       // File one suggestion per (fromRecord, toRecord) for unreviewed default-cites.
@@ -266,11 +373,56 @@ export const buildEdges = (
       }
     }
 
-    // GC pass: any edge in the DB not covered by the current run is stale.
-    for (const edge of edges.listAll()) {
-      if (!touched.has(touchKey(edge.fromId, edge.toId, edge.type))) {
-        edges.delete(edge.fromId, edge.toId, edge.type);
-        summary.edgesDeleted++;
+    if (scope === undefined) {
+      // GC pass: any edge in the DB not covered by the current run is stale.
+      for (const edge of edges.listAll()) {
+        if (!touched.has(touchKey(edge.fromId, edge.toId, edge.type))) {
+          edges.delete(edge.fromId, edge.toId, edge.type);
+          summary.edgesDeleted++;
+        }
+      }
+    } else {
+      // Scoped GC: only edges incident to scoped records can have gone
+      // stale (content elsewhere didn't change). An untouched candidate is
+      // deleted unless the counterparty's content still backs it.
+      const counterpartyKeys = new Map<string, ReadonlySet<string>>();
+      const keysFor = (rec: VaultRecord): ReadonlySet<string> => {
+        const keys = new Set<string>();
+        // Archived counterparties back nothing — extraction skips them above.
+        if (rec.status !== 'archived') {
+          forEachDeclaredEdge(rec, source, resolver, scratchSummary(), (f, t, ty) =>
+            keys.add(touchKey(f, t, ty))
+          );
+        }
+        return keys;
+      };
+
+      for (const record of work) {
+        const candidates = [
+          ...edges.listOutbound(record.recordId),
+          ...edges.listInbound(record.recordId)
+        ];
+        const judged = new Set<string>();
+        for (const e of candidates) {
+          const k = touchKey(e.fromId, e.toId, e.type);
+          if (touched.has(k) || judged.has(k)) continue;
+          judged.add(k);
+          const otherId = e.fromId === record.recordId ? e.toId : e.fromId;
+          // Both endpoints scoped → both fully re-extracted; untouched means stale.
+          if (scope.has(otherId)) {
+            if (edges.delete(e.fromId, e.toId, e.type)) summary.edgesDeleted++;
+            continue;
+          }
+          let otherKeys = counterpartyKeys.get(otherId);
+          if (otherKeys === undefined) {
+            const otherRecord = byRecordId.get(otherId);
+            otherKeys = otherRecord === undefined ? new Set() : keysFor(otherRecord);
+            counterpartyKeys.set(otherId, otherKeys);
+          }
+          if (!otherKeys.has(k)) {
+            if (edges.delete(e.fromId, e.toId, e.type)) summary.edgesDeleted++;
+          }
+        }
       }
     }
 
@@ -282,80 +434,4 @@ export const buildEdges = (
 
   summary.durationMs = Math.round(performance.now() - start);
   return summary;
-};
-
-const readFromDisk = (vaultRoot: string, relativePath: string): string => {
-  const abs = `${vaultRoot.replace(/\/+$/, '')}/${relativePath}`;
-  return readFileSync(abs, 'utf8');
-};
-
-interface ClassifiedTarget {
-  target: string;
-  type: Edge['type'];
-  /** When true, the edge runs target→source instead of source→target. */
-  inverse?: boolean;
-}
-
-const SYMMETRIC_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
-
-const writeEdges = (
-  edges: EdgesRepository,
-  resolver: WikilinkResolver,
-  source: VaultRecord,
-  targets: ClassifiedTarget[],
-  now: string,
-  summary: EdgeBuildSummary,
-  origin: 'frontmatter' | 'body',
-  touched: Set<string>,
-  touchKey: (fromId: string, toId: string, type: EdgeType) => string
-): number => {
-  const seen = new Set<string>();
-  let written = 0;
-  for (const {target, type, inverse} of targets) {
-    const resolved = resolver.resolve(target);
-    if (!resolved) {
-      if (origin === 'frontmatter') summary.unresolvedFrontmatter++;
-      else summary.unresolvedBody++;
-      continue;
-    }
-    if (resolved === source.recordId) {
-      summary.selfReferences++;
-      continue;
-    }
-    const fromId = inverse ? resolved : source.recordId;
-    const toId = inverse ? source.recordId : resolved;
-    const dedupKey = touchKey(fromId, toId, type);
-    if (seen.has(dedupKey)) continue;
-    seen.add(dedupKey);
-    touched.add(dedupKey);
-
-    edges.upsert({
-      fromId,
-      toId,
-      type,
-      weight: 1,
-      note: null,
-      created: now
-    });
-    written++;
-
-    // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
-    if (SYMMETRIC_TYPES.has(type)) {
-      const mirrorKey = touchKey(toId, fromId, type);
-      if (!seen.has(mirrorKey)) {
-        seen.add(mirrorKey);
-        touched.add(mirrorKey);
-        edges.upsert({
-          fromId: toId,
-          toId: fromId,
-          type,
-          weight: 1,
-          note: null,
-          created: now
-        });
-        written++;
-      }
-    }
-  }
-  return written;
 };

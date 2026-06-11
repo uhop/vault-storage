@@ -70,8 +70,11 @@ import {
   putVaultHandler
 } from './handlers/vault.ts';
 import {sendError} from './responses.ts';
+import {ResolverCache} from './resolver-cache.ts';
 import {Router, type RequestContext} from './router.ts';
 import {staticHandler} from './handlers/static.ts';
+import {EdgesRepository} from '../records/edges.ts';
+import {RecordsRepository} from '../records/repository.ts';
 
 export interface ServerHandle {
   server: Server;
@@ -85,10 +88,25 @@ interface BuildOptions {
   env: ServerEnv;
   schemaVersion: number;
   embedder: Embedder;
+  /**
+   * Shared with the watcher (composition in index.ts) so its drains
+   * invalidate the same cache the `/resolve` handler reads. Defaults to a
+   * router-local instance — correct for tests that exercise the HTTP
+   * surface without a watcher.
+   */
+  resolverCache?: ResolverCache;
 }
 
 export const buildRouter = (opts: BuildOptions): Router => {
   const router = new Router();
+
+  // Shared repositories: each constructor prepares its statements, so build
+  // them once per server instead of once per request. Safe to share — the
+  // server is single-process and a handler's statement use runs to
+  // completion before another request touches the same statement.
+  const records = new RecordsRepository(opts.db);
+  const edges = new EdgesRepository(opts.db);
+  const resolverCache = opts.resolverCache ?? new ResolverCache(opts.db);
   router.get(
     '/system/status',
     systemStatusHandler({
@@ -99,23 +117,23 @@ export const buildRouter = (opts: BuildOptions): Router => {
     })
   );
   router.get('/system/lint', lintHandler({db: opts.db}));
-  router.get('/sections', listRecordsHandler(opts.db));
-  router.get('/sections/{id}/neighborhood', neighborhoodHandler({db: opts.db}));
-  router.get('/sections/{id}/similar', similarHandler({db: opts.db}));
-  router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db}));
-  router.get('/sections/{id}/meta', getRecordMetaHandler(opts.db));
-  const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath};
+  router.get('/sections', listRecordsHandler({db: opts.db}));
+  router.get('/sections/{id}/neighborhood', neighborhoodHandler({records, edges}));
+  router.get('/sections/{id}/similar', similarHandler({db: opts.db, records}));
+  router.get('/sections/{id}/backlinks', backlinksHandler({records, edges}));
+  router.get('/sections/{id}/meta', getRecordMetaHandler({records}));
+  const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, records};
   router.get('/sections/{id}/fm', getRecordFmHandler(recordFmDeps));
   router.get('/sections/{id}/tags', getRecordTagsHandler(recordFmDeps));
   router.post('/sections/{id}/tags', postRecordTagHandler(recordFmDeps));
   router.delete('/sections/{id}/tags/{tag}', deleteRecordTagHandler(recordFmDeps));
-  router.get('/sections/{id}', getRecordHandler(opts.db));
+  router.get('/sections/{id}', getRecordHandler({records}));
   router.put(
     '/sections/{id}',
-    putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+    putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, records})
   );
 
-  const tagsDeps = {db: opts.db};
+  const tagsDeps = {db: opts.db, records};
   router.get('/tags', listTagsHandler(tagsDeps));
   router.get('/tags/{tag}/records', recordsByTagHandler(tagsDeps));
   router.post('/tags/taxonomy', addTaxonomyHandler(tagsDeps));
@@ -132,7 +150,13 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/suggestions/{id}/reject', rejectSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/reopen', reopenSuggestionHandler(suggestionsDeps));
 
-  const vaultDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, embedder: opts.embedder};
+  const vaultDeps = {
+    db: opts.db,
+    vaultDataPath: opts.env.vaultDataPath,
+    embedder: opts.embedder,
+    records,
+    resolverCache
+  };
   router.get('/vault/', getVaultRootHandler(vaultDeps));
   router.get('/vault/{path}', getVaultHandler(vaultDeps));
   router.put('/vault/{path}', putVaultHandler(vaultDeps));
@@ -143,7 +167,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
 
-  router.get('/resolve', resolveHandler({db: opts.db}));
+  router.get('/resolve', resolveHandler({resolverCache}));
 
   router.post(
     '/commit',
@@ -157,7 +181,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
 
   router.post(
     '/sync/from-obsidian',
-    syncFromObsidianHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+    syncFromObsidianHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, resolverCache})
   );
 
   router.post('/maintenance/find-duplicates', findDuplicatesHandler({db: opts.db}));
@@ -201,7 +225,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   );
   router.post(
     '/maintenance/incremental-reindex',
-    incrementalReindexHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+    incrementalReindexHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, resolverCache})
   );
   router.post(
     '/maintenance/reindex-queues',

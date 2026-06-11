@@ -20,8 +20,9 @@ import {
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import {proposeNearest} from '../../maintenance/propose.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
+import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {
@@ -36,6 +37,9 @@ interface VaultDeps {
   db: DatabaseSync;
   vaultDataPath: string;
   embedder: Embedder;
+  records: RecordsRepository;
+  /** Invalidated on writes that can change the path set (PUT-create, DELETE, move). */
+  resolverCache: ResolverCache;
 }
 
 /**
@@ -144,7 +148,7 @@ export const getVaultHandler =
       // Phase E: bump last_referenced for the record at this path (when
       // we have one — atomized folder pieces are recorded individually,
       // raw files outside the index simply won't match).
-      const records = new RecordsRepository(deps.db);
+      const {records} = deps;
       const rec = records.getByPath(path);
       if (rec) records.bumpLastReferenced(rec.recordId);
       sendText(ctx.res, 200, 'text/markdown; charset=utf-8', readFileSync(abs, 'utf8'));
@@ -219,7 +223,7 @@ export const putVaultHandler =
       return;
     }
 
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const tags = new TagsImporter(deps.db);
     const agentStale = new AgentEnrichmentStaleFiler(deps.db);
     const tagSuggestion = new TagSuggestionFiler(deps.db);
@@ -320,6 +324,8 @@ export const putVaultHandler =
       tagSuggestion,
       archiveCandidate
     });
+    // A create adds a path the cached wikilink resolver doesn't know.
+    if (!existing) deps.resolverCache.invalidate();
     sendNoContent(ctx.res);
   };
 
@@ -337,7 +343,7 @@ export const deleteVaultHandler =
     if (abs === null) return;
 
     const onDisk = existsSync(abs) && statSync(abs).isFile();
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const existing = records.getByPath(path);
 
     if (!onDisk && !existing) {
@@ -346,7 +352,10 @@ export const deleteVaultHandler =
     }
 
     if (onDisk) unlinkSync(abs);
-    if (existing) records.delete(existing.recordId);
+    if (existing) {
+      records.delete(existing.recordId);
+      deps.resolverCache.invalidate();
+    }
 
     sendNoContent(ctx.res);
   };
@@ -412,7 +421,7 @@ export const moveVaultHandler =
     const toAbs = safePathOrError(deps.vaultDataPath, toPath, ctx.res);
     if (toAbs === null) return;
 
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const existing = records.getByPath(fromPath);
     if (!existing) {
       sendError(ctx.res, 404, 'not_found', `no record at ${fromPath}`);
@@ -439,6 +448,7 @@ export const moveVaultHandler =
     // DB update — preserves record_id, and therefore every reference to it
     // (edges, tags, suggestions, embeddings, agent block).
     records.updateFilePath(existing.recordId, toPath);
+    deps.resolverCache.invalidate();
 
     sendNoContent(ctx.res);
   };
@@ -523,7 +533,7 @@ export const proposeVaultHandler =
 
     let excludeRecordId: string | undefined;
     if (typeof parsed.path === 'string' && parsed.path.length > 0) {
-      const existing = new RecordsRepository(deps.db).getByPath(parsed.path);
+      const existing = deps.records.getByPath(parsed.path);
       if (existing) excludeRecordId = existing.recordId;
     }
 

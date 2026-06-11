@@ -1,12 +1,13 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordVecRepository} from '../../db/vec-repo.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import type {RecordsRepository} from '../../records/repository.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
 
 interface SimilarDeps {
   db: DatabaseSync;
+  records: RecordsRepository;
 }
 
 /**
@@ -23,7 +24,7 @@ export const similarHandler =
       return;
     }
 
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const root = records.getById(id);
     if (!root) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);

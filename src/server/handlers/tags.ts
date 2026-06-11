@@ -1,6 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {NewTagSuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {parsePagination} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
@@ -9,6 +9,7 @@ import {toJsonRecord} from '../serialize.ts';
 
 interface TagsDeps {
   db: DatabaseSync;
+  records: RecordsRepository;
 }
 
 // Tag taxonomy CHECK constraint (see schema 0001_init.sql):
@@ -89,7 +90,7 @@ export const recordsByTagHandler =
     }
 
     const {offset, limit} = parsePagination(ctx.query);
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
 
     const idRows = deps.db
       .prepare(

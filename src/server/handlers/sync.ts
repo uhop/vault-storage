@@ -2,12 +2,14 @@ import {existsSync} from 'node:fs';
 import type {DatabaseSync} from 'node:sqlite';
 import {syncFromObsidian} from '../../migration/sync.ts';
 import {readBodyText} from '../body.ts';
+import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
 interface SyncDeps {
   db: DatabaseSync;
   vaultDataPath: string;
+  resolverCache: ResolverCache;
 }
 
 interface SyncRequest {
@@ -70,6 +72,8 @@ export const syncFromObsidianHandler =
         dryRun: parsed.dry_run === true,
         writeLog: parsed.write_log !== false
       });
+      // Sync can add/remove files; the cached resolver's path view is stale.
+      if (parsed.dry_run !== true) deps.resolverCache.invalidate();
       sendJson(ctx.res, 200, {
         total: summary.total,
         new: summary.new,

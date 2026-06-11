@@ -23,7 +23,9 @@ export class WikilinkResolver {
   readonly #byBasename: Map<string, string[]> = new Map();
   readonly #byFolder: Map<string, string> = new Map();
 
-  constructor(records: Iterable<VaultRecord>) {
+  // Structurally only ids + paths — lets the server's ResolverCache feed a
+  // path-only projection instead of full records (bodies stay unloaded).
+  constructor(records: Iterable<Pick<VaultRecord, 'recordId' | 'filePath'>>) {
     for (const r of records) {
       this.#byPath.set(r.filePath, r.recordId);
       const noMd = r.filePath.replace(/\.md$/, '');

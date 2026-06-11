@@ -1,7 +1,6 @@
-import type {DatabaseSync} from 'node:sqlite';
-import {EdgesRepository} from '../../records/edges.ts';
+import type {EdgesRepository} from '../../records/edges.ts';
 import {EDGE_TYPES, type Edge, type EdgeType} from '../../records/types.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import type {RecordsRepository} from '../../records/repository.ts';
 import {parsePagination, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -11,7 +10,8 @@ const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 const MAX_DEPTH = 5;
 
 interface EdgesDeps {
-  db: DatabaseSync;
+  records: RecordsRepository;
+  edges: EdgesRepository;
 }
 
 const parseEdgeTypes = (raw: string | undefined): EdgeType[] | string => {
@@ -48,7 +48,7 @@ export const neighborhoodHandler =
       return;
     }
 
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const root = records.getById(id);
     if (!root) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
@@ -79,7 +79,7 @@ export const neighborhoodHandler =
     }
     if (depth > MAX_DEPTH) depth = MAX_DEPTH;
 
-    const edgeRepo = new EdgesRepository(deps.db);
+    const edgeRepo = deps.edges;
 
     const visited = new Set<string>([id]);
     const layers: Array<{depth: number; record_ids: string[]}> = [];
@@ -160,7 +160,7 @@ export const backlinksHandler =
       return;
     }
 
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const root = records.getById(id);
     if (!root) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
@@ -175,8 +175,7 @@ export const backlinksHandler =
     }
 
     const {offset, limit} = parsePagination(ctx.query);
-    const edgeRepo = new EdgesRepository(deps.db);
-    const all = filterByType(edgeRepo.listInbound(id), types);
+    const all = filterByType(deps.edges.listInbound(id), types);
     const total = all.length;
     const page = all.slice(offset, offset + limit);
 

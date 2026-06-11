@@ -173,6 +173,13 @@ export const incrementalReindex = async (
   const archiveCandidate = new ArchiveCandidateFiler(db);
   const now = new Date().toISOString();
 
+  // Pure-modify batches rebuild edges for just the touched records; any
+  // add / delete / rename changes the path set, which can flip wikilink
+  // resolution (basename uniqueness, folder fallback) for records outside
+  // the batch — those fall back to the full edge rebuild.
+  let pathSetChanged = false;
+  const changedRecordIds = new Set<string>();
+
   db.exec('BEGIN');
   try {
     for (const c of changes) {
@@ -182,6 +189,7 @@ export const incrementalReindex = async (
       if (c.kind === 'rename') {
         const newIsMd = isMd(c.new);
         const oldIsMd = isMd(c.old);
+        if (oldIsMd || newIsMd) pathSetChanged = true;
         if (oldIsMd && newIsMd) {
           // Preserve record_id by updating the path key, then re-import
           // to refresh content_hash / agent block / etc.
@@ -220,6 +228,7 @@ export const incrementalReindex = async (
       } else if (!isMd(c.path)) {
         // Skip non-md adds/modifies/deletes.
       } else if (c.kind === 'delete') {
+        pathSetChanged = true;
         const r = records.getByPath(c.path);
         if (r) {
           records.delete(r.recordId);
@@ -227,6 +236,7 @@ export const incrementalReindex = async (
         }
       } else {
         // add / modify
+        if (c.kind === 'add') pathSetChanged = true;
         const abs = join(vaultDataPath, c.path);
         if (existsSync(abs)) {
           importFile(records, c.path, abs, now, {
@@ -236,6 +246,14 @@ export const incrementalReindex = async (
             archiveCandidate
           });
           summary.imported++;
+          if (c.kind === 'modify') {
+            const rec = records.getByPath(c.path);
+            if (rec) changedRecordIds.add(rec.recordId);
+          }
+        } else if (c.kind === 'modify') {
+          // Modified in git but absent on disk (e.g. removed since the
+          // commit) — path set is effectively changing; stay conservative.
+          pathSetChanged = true;
         }
       }
     }
@@ -246,9 +264,14 @@ export const incrementalReindex = async (
     throw err;
   }
 
-  // Refresh edges after the per-file dispatch (cheap; build-edges is
-  // idempotent and limited to the current record set).
-  buildEdges(db, {vaultRoot: vaultDataPath, now});
+  // Refresh edges after the per-file dispatch. Pure-modify batches use the
+  // scoped (incremental) rebuild; anything that changed the path set runs
+  // the full idempotent pass.
+  buildEdges(db, {
+    vaultRoot: vaultDataPath,
+    now,
+    ...(pathSetChanged ? {} : {scope: changedRecordIds})
+  });
 
   summary.durationMs = Math.round(performance.now() - start);
   return summary;

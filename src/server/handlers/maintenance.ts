@@ -14,6 +14,7 @@ import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {snapshotDb} from '../snapshot.ts';
 import {readBodyText} from '../body.ts';
+import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -181,11 +182,13 @@ export const findUpgradeSignalsHandler =
  * renamed, fellBack, durationMs}`.
  */
 export const incrementalReindexHandler =
-  (deps: SnapshotDeps): Handler =>
+  (deps: SnapshotDeps & {resolverCache: ResolverCache}): Handler =>
   async ctx => {
     if (ctx.query['full'] === 'true') clearLastIndexedCommit(deps.db);
     try {
       const summary = await incrementalReindex(deps.db, deps.vaultDataPath);
+      // A reindex may have imported / deleted / renamed records.
+      if (summary.changedFiles > 0 || summary.fellBack) deps.resolverCache.invalidate();
       sendJson(ctx.res, 200, summary);
     } catch (err) {
       sendError(

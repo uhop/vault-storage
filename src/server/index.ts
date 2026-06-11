@@ -14,6 +14,7 @@ import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startGitSync, type GitSyncHandle} from './git-sync.ts';
 import {startMemoryReporter, type MemoryReporterHandle} from './memory-reporter.ts';
+import {ResolverCache} from './resolver-cache.ts';
 import {startServer} from './server.ts';
 import {startWatcher, type WatcherHandle} from './watcher.ts';
 
@@ -64,7 +65,17 @@ export const main = async (): Promise<void> => {
     );
   }
 
-  const handle = await startServer({db, env, schemaVersion: migration.current, embedder});
+  // Shared between the HTTP layer (/resolve reads it; write handlers
+  // invalidate) and the watcher (drains invalidate after disk changes).
+  const resolverCache = new ResolverCache(db);
+
+  const handle = await startServer({
+    db,
+    env,
+    schemaVersion: migration.current,
+    embedder,
+    resolverCache
+  });
   process.stdout.write(
     `vault-storage: listening on ${handle.url} ` +
       `(db=${env.vaultDbPath} schema=${migration.current} vault=${env.vaultDataPath})\n`
@@ -76,7 +87,8 @@ export const main = async (): Promise<void> => {
       db,
       vaultDataPath: env.vaultDataPath,
       embedder,
-      debounceMs: env.watchDebounceMs
+      debounceMs: env.watchDebounceMs,
+      onIndexChanged: () => resolverCache.invalidate()
     });
     process.stdout.write(
       `vault-storage: watching ${env.vaultDataPath} (debounce=${env.watchDebounceMs}ms)\n`

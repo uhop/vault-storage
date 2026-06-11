@@ -1,11 +1,9 @@
-import type {DatabaseSync} from 'node:sqlite';
-import {WikilinkResolver} from '../../importer/resolver.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
 interface ResolveDeps {
-  db: DatabaseSync;
+  resolverCache: ResolverCache;
 }
 
 /**
@@ -33,22 +31,24 @@ export const resolveHandler =
       sendError(ctx.res, 400, 'invalid_request', 'wikilink query param is required and non-empty');
       return;
     }
-    const records = new RecordsRepository(deps.db).listAll();
-    const resolver = new WikilinkResolver(records);
+    // Cached path-only view — the UI preview calls /resolve once per
+    // wikilink in a note, and a fresh full-record load per call was the
+    // hottest per-request cost on the read path. Import paths invalidate.
+    const {resolver, pathById} = deps.resolverCache.get();
     const recordId = resolver.resolve(link);
     if (!recordId) {
       sendError(ctx.res, 404, 'not_found', `wikilink not resolved: ${link}`);
       return;
     }
-    const record = records.find(r => r.recordId === recordId);
-    if (!record) {
+    const filePath = pathById.get(recordId);
+    if (filePath === undefined) {
       sendError(ctx.res, 404, 'not_found', `record not found for id ${recordId}`);
       return;
     }
     sendJson(ctx.res, 200, {
       target: link,
       record_id: recordId,
-      file_path: record.filePath,
-      ui_url: `/ui/note.html?path=${encodeURIComponent(record.filePath)}`
+      file_path: filePath,
+      ui_url: `/ui/note.html?path=${encodeURIComponent(filePath)}`
     });
   };

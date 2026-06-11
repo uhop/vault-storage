@@ -71,17 +71,15 @@ const TYPE_SET: ReadonlySet<string> = new Set(RECORD_TYPES);
 const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 
 export const getRecordHandler =
-  (db: DatabaseSync): Handler =>
+  (deps: {records: RecordsRepository}): Handler =>
   ctx => {
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
       return;
     }
-    const row = db.prepare('SELECT * FROM records WHERE record_id = ?').get(id) as
-      | RecordRow
-      | undefined;
-    if (!row) {
+    const record = deps.records.getById(id);
+    if (!record) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
     }
@@ -90,33 +88,31 @@ export const getRecordHandler =
     // Update both the DB row and the in-memory copy so this response
     // reflects the freshly-bumped clock (decay_score = 1.0).
     const refStamp = new Date().toISOString();
-    db.prepare('UPDATE records SET last_referenced = ? WHERE record_id = ?').run(refStamp, id);
-    row.last_referenced = refStamp;
+    deps.records.bumpLastReferenced(id, refStamp);
     const includeBody = ctx.query['exclude'] !== 'body';
-    sendJson(ctx.res, 200, toJsonRecord(rowToRecord(row), {includeBody}));
+    sendJson(ctx.res, 200, toJsonRecord({...record, lastReferenced: refStamp}, {includeBody}));
   };
 
 export const getRecordMetaHandler =
-  (db: DatabaseSync): Handler =>
+  (deps: {records: RecordsRepository}): Handler =>
   ctx => {
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
       return;
     }
-    const row = db.prepare('SELECT * FROM records WHERE record_id = ?').get(id) as
-      | RecordRow
-      | undefined;
-    if (!row) {
+    const record = deps.records.getById(id);
+    if (!record) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
     }
-    sendJson(ctx.res, 200, toJsonRecord(rowToRecord(row), {includeBody: false}));
+    sendJson(ctx.res, 200, toJsonRecord(record, {includeBody: false}));
   };
 
 interface FmHandlerDeps {
   db: DatabaseSync;
   vaultDataPath: string;
+  records: RecordsRepository;
 }
 
 // Tag shape rule from src/server/handlers/tags.ts — keep in sync.
@@ -188,11 +184,10 @@ const persistTags = (
   body: string,
   res: ServerResponse
 ): boolean => {
-  const records = new RecordsRepository(deps.db);
   try {
     writeSplitRecordToDisk({
       filePath: row.file_path,
-      existing: records.getById(row.record_id),
+      existing: deps.records.getById(row.record_id),
       frontmatter: {tags: newTags},
       body,
       vaultDataPath: deps.vaultDataPath
@@ -204,7 +199,7 @@ const persistTags = (
     }
     throw err;
   }
-  importFile(records, row.file_path, abs, undefined, {
+  importFile(deps.records, row.file_path, abs, undefined, {
     tags: new TagsImporter(deps.db),
     agentStale: new AgentEnrichmentStaleFiler(deps.db),
     tagSuggestion: new TagSuggestionFiler(deps.db),
@@ -476,7 +471,7 @@ const parseSort = (raw: string | undefined): {clause: string; error?: string} =>
 };
 
 export const listRecordsHandler =
-  (db: DatabaseSync): Handler =>
+  ({db}: {db: DatabaseSync}): Handler =>
   ctx => {
     const filters = parseListFilters(ctx.query);
     if (typeof filters === 'string') {

@@ -6,6 +6,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {buildEdges} from '../src/importer/build-edges.ts';
+import {importFile} from '../src/importer/import-file.ts';
 import {importVault} from '../src/importer/import.ts';
 import {EdgesRepository} from '../src/records/edges.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
@@ -666,6 +667,140 @@ test('buildEdges deletes stale outbound edges when a record is archived after th
     t.ok(second.edges.edgesDeleted >= 2, "stale outbound GC'd on next pass");
 
     t.equal(edges.listOutbound(hub!.recordId).length, 0, 'archived note has no outbound');
+  } finally {
+    teardown(fx);
+  }
+});
+
+// --- scoped (incremental) mode ---------------------------------------------
+
+test('scoped buildEdges: content-only edit rebuilds just that record and GCs its stale edges', async t => {
+  const fx = setup();
+  try {
+    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nCites [[topics/beta]] and [[topics/gamma]].\n');
+    writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nCites [[topics/alpha]].\n');
+    writeMd(fx.root, 'topics/gamma.md', '---\ntitle: Gamma\n---\nNo links.\n');
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const alpha = records.getByPath('topics/alpha.md')!;
+    const beta = records.getByPath('topics/beta.md')!;
+    const gamma = records.getByPath('topics/gamma.md')!;
+
+    // Content-only edit: alpha drops the gamma link.
+    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nCites [[topics/beta]] only now.\n');
+    importFile(records, 'topics/alpha.md', join(fx.root, 'topics/alpha.md'));
+
+    const summary = buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([alpha.recordId])});
+
+    await t.test('stale alpha→gamma edge GCd', t => {
+      t.equal(summary.edgesDeleted, 1);
+      t.notOk(edges.listOutbound(alpha.recordId).some(e => e.toId === gamma.recordId));
+    });
+    await t.test('alpha→beta retained', t => {
+      t.ok(edges.listOutbound(alpha.recordId).some(e => e.toId === beta.recordId && e.type === 'cites'));
+    });
+    await t.test("beta's own outbound edge untouched by the scoped pass", t => {
+      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'cites'));
+    });
+    await t.test('only the scoped record was re-extracted', t => {
+      t.equal(summary.edgesCreated, 1, 'one upsert: alpha→beta');
+    });
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('scoped buildEdges: counterparty-backed edges survive scoped GC (symmetric mirror)', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\nrelated:\n  - "[[topics/beta]]"\n---\nbody\n'
+    );
+    writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const alpha = records.getByPath('topics/alpha.md')!;
+    const beta = records.getByPath('topics/beta.md')!;
+
+    // Rebuild beta alone (content unchanged). Both alpha→beta and the
+    // auto-mirror beta→alpha are incident to beta and NOT touched by beta's
+    // (empty) declarations — they must survive via counterparty verification.
+    const summary = buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([beta.recordId])});
+
+    await t.test('nothing deleted', t => {
+      t.equal(summary.edgesDeleted, 0);
+    });
+    await t.test('mirror beta→alpha survives', t => {
+      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'related-to'));
+    });
+    await t.test('alpha→beta survives', t => {
+      t.ok(edges.listOutbound(alpha.recordId).some(e => e.toId === beta.recordId && e.type === 'related-to'));
+    });
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('scoped buildEdges: inverse classification backed by the other endpoint survives', async t => {
+  const fx = setup();
+  try {
+    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nThis is superseded by [[topics/beta]].\n');
+    writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const alpha = records.getByPath('topics/alpha.md')!;
+    const beta = records.getByPath('topics/beta.md')!;
+
+    await t.test('precondition: inverse edge beta→alpha exists', t => {
+      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'supersedes'));
+    });
+
+    // beta declares nothing itself; the beta→alpha edge is backed by ALPHA's
+    // body ("superseded by"). A scoped pass over beta must keep it.
+    const summary = buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([beta.recordId])});
+
+    await t.test('inverse edge survives the scoped pass over beta', t => {
+      t.equal(summary.edgesDeleted, 0);
+      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'supersedes'));
+    });
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('scoped buildEdges: dropping a symmetric declaration removes the mirror too', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\nrelated:\n  - "[[topics/beta]]"\n---\nbody\n'
+    );
+    writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const alpha = records.getByPath('topics/alpha.md')!;
+
+    // Alpha drops the related: declaration — both directions must go.
+    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nbody\n');
+    importFile(records, 'topics/alpha.md', join(fx.root, 'topics/alpha.md'));
+
+    const summary = buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([alpha.recordId])});
+
+    await t.test('declaration and mirror both GCd', t => {
+      t.equal(summary.edgesDeleted, 2);
+      t.equal(edges.listAll().length, 0);
+    });
   } finally {
     teardown(fx);
   }

@@ -48,6 +48,12 @@ export interface WatcherOptions {
   log?: (msg: string) => void;
   /** Errors during flush — exposed for tests. Default: write to stderr. */
   onError?: (err: unknown) => void;
+  /**
+   * Called after a drain that changed the index (any import / delete).
+   * Composition wires this to ResolverCache.invalidate() so /resolve
+   * never serves paths the drain just changed.
+   */
+  onIndexChanged?: () => void;
 }
 
 const SKIP_PATH_PARTS: ReadonlySet<string> = new Set([
@@ -94,6 +100,13 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     let deleted = 0;
     let errors = 0;
     let queueItemsTouched = 0;
+    // Content-only batches rebuild edges for just the touched records. Any
+    // path-set change (create / delete / rename-as-delete+create) falls back
+    // to the full rebuild: wikilink resolution keys on file paths, so a new
+    // or vanished path can flip basename-uniqueness / folder-fallback
+    // resolution for records far outside the batch.
+    let pathSetChanged = false;
+    const changedRecordIds = new Set<string>();
 
     db.exec('BEGIN');
     try {
@@ -111,6 +124,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             if (existing) {
               records.delete(existing.recordId);
               deleted++;
+              pathSetChanged = true;
             }
             // Queue files removed from disk: drop the slice too. No-op for
             // any non-queue path.
@@ -118,12 +132,21 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             if (dropped) queueItemsTouched += dropped.deleted;
             continue;
           }
-          importFile(records, relativePath, abs, now, {
+          const importResult = importFile(records, relativePath, abs, now, {
             tags,
             agentStale,
             tagSuggestion,
             archiveCandidate
           });
+          if (importResult.action === 'inserted') {
+            pathSetChanged = true;
+          } else {
+            // 'updated' AND 'unchanged' both rebuild edges: an FM-only edit
+            // (related: / edges: maps) doesn't move the body content_hash,
+            // so 'unchanged' can still carry edge-relevant changes.
+            const rec = records.getByPath(relativePath);
+            if (rec) changedRecordIds.add(rec.recordId);
+          }
           imported++;
           // Queue files: also reparse the queue_items slice. No-op for any
           // path outside `projects/<name>/queue{,-archive}.md`.
@@ -143,7 +166,17 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       throw err;
     }
 
-    const edges = buildEdges(db, {vaultRoot: vaultDataPath, now});
+    if (imported > 0 || deleted > 0) opts.onIndexChanged?.();
+
+    // Scoped (incremental) edge rebuild for content-only, error-free batches;
+    // full rebuild otherwise. An errored file's DB state is stale in an
+    // unknown way — the conservative full pass keeps the GC sound.
+    const scoped = !pathSetChanged && errors === 0;
+    const edges = buildEdges(db, {
+      vaultRoot: vaultDataPath,
+      now,
+      ...(scoped ? {scope: changedRecordIds} : {})
+    });
     const embed = await embedPending(db, embedder);
 
     log(

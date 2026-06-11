@@ -65,7 +65,10 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     last_referenced: r.lastReferenced,
     decay_score: computeDecayScore(r),
     content_hash: r.contentHash,
-    body_hash: contentHash(r.body),
+    // content_hash IS sha256(body) when no agent summary is mixed in (see
+    // the field docs above) — reuse it instead of re-hashing every record
+    // on every response; only summary-carrying records pay for a hash.
+    body_hash: r.agentSummary === null ? r.contentHash : contentHash(r.body),
     archived_at: r.archivedAt
   };
   if (opts.includeBody !== false) out.body = r.body;

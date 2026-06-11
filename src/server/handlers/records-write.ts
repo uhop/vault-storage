@@ -7,7 +7,7 @@ import {
 } from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
-import {RecordsRepository} from '../../records/repository.ts';
+import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendNoContent} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -18,9 +18,12 @@ import {
   writeSplitRecordToDisk
 } from '../writer.ts';
 
+// No ResolverCache here: PUT /sections/{id} requires an existing record and
+// writes at its current path, so the path set can't change under it.
 interface WriteDeps {
   db: DatabaseSync;
   vaultDataPath: string;
+  records: RecordsRepository;
 }
 
 export const putRecordHandler =
@@ -32,7 +35,7 @@ export const putRecordHandler =
       return;
     }
 
-    const records = new RecordsRepository(deps.db);
+    const {records} = deps;
     const tags = new TagsImporter(deps.db);
     const agentStale = new AgentEnrichmentStaleFiler(deps.db);
     const tagSuggestion = new TagSuggestionFiler(deps.db);
