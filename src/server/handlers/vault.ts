@@ -261,7 +261,22 @@ export const putVaultHandler =
         bodyForCheck = parsed.body;
         summaryForCheck = extractAgentSummary(parsed.frontmatter);
       } else {
-        const fm = parseFrontmatter(parsed.markdown);
+        // Same YAML-syntax guard the writer applies downstream — without it
+        // a malformed FM block on a `?check=true` PUT throws past the
+        // handler as a 500 instead of the writer's 400.
+        let fm: ReturnType<typeof parseFrontmatter>;
+        try {
+          fm = parseFrontmatter(parsed.markdown);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(
+            ctx.res,
+            400,
+            'invalid_yaml',
+            `invalid YAML in frontmatter: ${msg}. Wrap multi-line strings in double quotes, use a folded block scalar (\`key: >-\`), or PUT with Content-Type: application/json to skip YAML parse.`
+          );
+          return;
+        }
         bodyForCheck = fm.body;
         summaryForCheck = extractAgentSummary(fm.data);
       }

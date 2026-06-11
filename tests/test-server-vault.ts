@@ -1319,6 +1319,31 @@ test('PUT /vault/{path}?check=true&check_threshold=0 allows any body', async t =
   }
 });
 
+test('PUT /vault/{path}?check=true returns 400 (not 500) on malformed YAML frontmatter', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      // Unquoted colon-space plain scalar — invalid YAML. Before the guard
+      // this threw past the handler as a 500 when ?check=true was armed
+      // (the dedup gate parses FM before the writer's guarded parse runs).
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/bad-yaml-check.md?check=true`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: '---\ntitle: Bad\nsummary: first: second\n  trailing line\n---\nBody.\n'
+      });
+      t.equal(r.status, 400, '400 bad request');
+      const body = r.body as {code: string; error: string};
+      t.equal(body.code, 'invalid_yaml', 'code=invalid_yaml');
+      t.ok(body.error.includes('application/json'), 'error message points at the JSON path');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path}?check=true 400 on invalid threshold', async t => {
   const {root, cleanup} = setupVault();
   try {

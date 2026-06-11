@@ -76,7 +76,7 @@ test('VaultClient: network error wraps to code=network', async t => {
   }
 });
 
-test('VaultClient: putText sends text/markdown and returns void on 204', async t => {
+test('VaultClient: putJson sends application/json and returns void on 204', async t => {
   let seenContentType = null;
   let seenBody;
   const c = makeClient((_url, init) => {
@@ -84,9 +84,13 @@ test('VaultClient: putText sends text/markdown and returns void on 204', async t
     seenBody = init.body;
     return new Response(null, {status: 204});
   });
-  await c.putText('/vault/topics/x.md', '## body');
-  t.equal(seenContentType, 'text/markdown', 'Content-Type=text/markdown');
-  t.equal(seenBody, '## body', 'body forwarded');
+  await c.putJson('/vault/topics/x.md', {frontmatter: {title: 'X'}, body: '## body'});
+  t.equal(seenContentType, 'application/json', 'Content-Type=application/json');
+  t.equal(
+    seenBody,
+    JSON.stringify({frontmatter: {title: 'X'}, body: '## body'}),
+    'body serialized'
+  );
 });
 
 test('VaultClient: postJson serializes body and returns parsed response', async t => {

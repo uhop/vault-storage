@@ -98,24 +98,6 @@ const wrap = handler => async args => {
 
 const csv = arr => (arr && arr.length > 0 ? arr.join(',') : undefined);
 
-// Shared by vault_update_piece and vault_write_file: both accept the two
-// alternative wire formats (whole-markdown vs frontmatter+body) and must
-// receive exactly one of them. Returns `true` when the markdown form is in
-// use, `false` for the split form; throws on both/neither.
-const wantsMarkdownForm = (markdown, frontmatter, body) => {
-  const hasMd = typeof markdown === 'string';
-  const hasSplit = frontmatter !== undefined && typeof body === 'string';
-  if (hasMd && hasSplit) {
-    throw new Error(
-      'pass either `markdown` OR `frontmatter`+`body`, not both — they are alternative wire formats for the same write'
-    );
-  }
-  if (!hasMd && !hasSplit) {
-    throw new Error('pass either `markdown` OR `frontmatter`+`body`');
-  }
-  return hasMd;
-};
-
 export const registerTools = (mcp, client) => {
   // ── search ────────────────────────────────────────────────────────────────
   mcp.registerTool(
@@ -200,31 +182,17 @@ export const registerTools = (mcp, client) => {
     'vault_update_piece',
     {
       description:
-        'Replace a record body via /sections/{id} PUT. Provide EITHER `markdown` (full `---\\nFM\\n---\\nbody` blob; server parses YAML — caller is responsible for proper YAML quoting) OR `frontmatter` + `body` (server skips YAML parse, recommended for programmatic callers — sidesteps colon-space, leading-special-char, and shadow-keyword authoring traps). User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected.',
+        'Replace a record via /sections/{id} PUT with `frontmatter` (JSON object) + `body` (markdown text). The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected.',
       inputSchema: {
         record_id: z.string().min(1),
-        markdown: z
-          .string()
-          .optional()
-          .describe('Full markdown blob. Pass this OR frontmatter+body.'),
         frontmatter: z
           .record(z.unknown())
-          .optional()
-          .describe('FM as a JSON object. Pass alongside `body`. Bypasses YAML parse.'),
-        body: z
-          .string()
-          .optional()
-          .describe('Markdown body (no leading FM block). Pass alongside `frontmatter`.')
+          .describe('Frontmatter as a JSON object. The server handles YAML serialization.'),
+        body: z.string().describe('Markdown body (no leading FM block).')
       }
     },
-    wrap(async ({record_id, markdown, frontmatter, body}) => {
-      const hasMd = wantsMarkdownForm(markdown, frontmatter, body);
-      const path = `/sections/${encodeURIComponent(record_id)}`;
-      if (hasMd) {
-        await client.putText(path, markdown);
-      } else {
-        await client.putJson(path, {frontmatter, body});
-      }
+    wrap(async ({record_id, frontmatter, body}) => {
+      await client.putJson(`/sections/${encodeURIComponent(record_id)}`, {frontmatter, body});
       return {ok: true, record_id};
     })
   );
@@ -244,30 +212,17 @@ export const registerTools = (mcp, client) => {
     'vault_write_file',
     {
       description:
-        'Create or replace a file at a vault-relative path. Provide EITHER `markdown` (full `---\\nFM\\n---\\nbody` blob; server parses YAML — caller is responsible for proper YAML quoting) OR `frontmatter` + `body` (server skips YAML parse, recommended for programmatic callers — sidesteps colon-space, leading-special-char, and shadow-keyword authoring traps). `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected.',
+        'Create or replace a file at a vault-relative path with `frontmatter` (JSON object) + `body` (markdown text). The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected.',
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
-        markdown: z
-          .string()
-          .optional()
-          .describe('Full markdown blob (`---\\nFM\\n---\\nbody`). Pass this OR frontmatter+body.'),
         frontmatter: z
           .record(z.unknown())
-          .optional()
-          .describe('FM as a JSON object. Pass alongside `body`. Bypasses YAML parse.'),
-        body: z
-          .string()
-          .optional()
-          .describe('Markdown body (no leading FM block). Pass alongside `frontmatter`.')
+          .describe('Frontmatter as a JSON object. The server handles YAML serialization.'),
+        body: z.string().describe('Markdown body (no leading FM block).')
       }
     },
-    wrap(async ({path, markdown, frontmatter, body}) => {
-      const hasMd = wantsMarkdownForm(markdown, frontmatter, body);
-      if (hasMd) {
-        await client.putText(`/vault/${path}`, markdown);
-      } else {
-        await client.putJson(`/vault/${path}`, {frontmatter, body});
-      }
+    wrap(async ({path, frontmatter, body}) => {
+      await client.putJson(`/vault/${path}`, {frontmatter, body});
       return {ok: true, path};
     })
   );

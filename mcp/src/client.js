@@ -50,12 +50,6 @@ export class VaultClient {
     return res.text();
   }
 
-  async putText(path, body, contentType = 'text/markdown') {
-    const res = await this.#request('PUT', this.url(path), {body, contentType});
-    if (res.status === 204) return;
-    if (!res.ok) await this.#throwFromResponse(res);
-  }
-
   async putJson(path, body) {
     const res = await this.#request('PUT', this.url(path), {
       body: JSON.stringify(body),
