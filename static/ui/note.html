@@ -304,9 +304,11 @@ const $$ = sel => document.querySelectorAll(sel);
 const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 const STARTER_TEMPLATE = `---
+title: ""
 type: fleeting
 status: active
 tags: []
+ready: false
 ---
 
 `;
