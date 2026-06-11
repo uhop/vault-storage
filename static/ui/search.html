@@ -115,12 +115,10 @@
 </dialog>
 
 <script type="module">
-import {api, apiJson, getToken, setToken} from '/ui/api.js';
+import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 const RECENT_KEY = 'vault.recent-searches';
 const RECENT_MAX = 8;
 const $ = sel => document.querySelector(sel);
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 
 const getRecents = () => {
@@ -221,13 +219,6 @@ const expandResult = async (card, path) => {
   } catch (e) {
     body.textContent = `failed: ${e.message}`;
   }
-};
-
-const showAuthDialog = () => {
-  const dlg = $('#auth-dlg');
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  $('#auth-input').focus();
 };
 
 $('#settings').addEventListener('click', showAuthDialog);

@@ -93,23 +93,14 @@
 </dialog>
 
 <script type="module">
-import {api, apiJson, getToken, setToken} from '/ui/api.js';
+import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 const showStatus = (kind, msg) => {
   const el = $('#status');
   if (!kind) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="${kind}">${msg}</div>`;
-};
-
-const showAuthDialog = () => {
-  const dlg = $('#auth-dlg');
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  $('#auth-input').focus();
 };
 
 const renderEmpty = () => {

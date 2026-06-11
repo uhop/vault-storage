@@ -94,12 +94,10 @@
 </dialog>
 
 <script type="module">
-import {api, apiJson, getToken, setToken} from '/ui/api.js';
+import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 const SHOW_DONE_KEY = 'vault.show-done';
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 const parseQueue = text => {
   const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
@@ -205,13 +203,6 @@ const expandProject = card => {
 const reRenderOpenBodies = () => {
   const showDone = showDoneState();
   $$('.proj.open').forEach(card => renderBody(card, showDone));
-};
-
-const showAuthDialog = () => {
-  const dlg = $('#auth-dlg');
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  $('#auth-input').focus();
 };
 
 const refresh = async () => {

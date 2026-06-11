@@ -292,7 +292,7 @@
 
 <script type="module">
 import '/ui/components/vault-markdown.js';
-import {api, apiJson, getToken, setToken} from '/ui/api.js';
+import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 
 const DRAFT_PREFIX = 'vault.draft.';
 const VIEW_KEY = 'vault.view-mode';
@@ -300,8 +300,6 @@ const DEBOUNCE_MS = 1500;
 const PREVIEW_DEBOUNCE_MS = 150;
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 const STARTER_TEMPLATE = `---
 title: ""
@@ -809,13 +807,6 @@ async function del() {
 
 const showError = msg => { $('#err').textContent = msg; $('#err').hidden = false; };
 const hideError = () => { $('#err').hidden = true; };
-
-const showAuthDialog = () => {
-  const dlg = $('#auth-dlg');
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  $('#auth-input').focus();
-};
 
 // wiring ----------------------------------------------------------
 $('#settings').addEventListener('click', showAuthDialog);

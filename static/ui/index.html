@@ -170,7 +170,7 @@
 </dialog>
 
 <script type="module">
-import {api, apiJson, getToken, setToken} from '/ui/api.js';
+import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
 
 function fmtCount(n) { return n.toLocaleString(); }
@@ -268,8 +268,6 @@ function setSlot(key, value, sub, cls) {
     subEl.remove();
   }
 }
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 function renderRawInboxTile(data) {
   const ready = data.ready ?? [];
@@ -479,13 +477,6 @@ async function runAction(btn) {
     btn.textContent = `failed: ${e.message}`;
     btn.disabled = false;
   }
-}
-
-function showAuthDialog() {
-  const dlg = $('#auth-dlg');
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  $('#auth-input').focus();
 }
 
 async function refresh() {

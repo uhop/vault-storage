@@ -101,10 +101,8 @@
 
 <script type="module" src="/ui/theme.js"></script>
 <script type="module">
-import {apiJson, getToken, setToken} from '/ui/api.js';
+import {apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 const currentPath = () => {
   const p = new URLSearchParams(location.search).get('path') ?? '';
@@ -213,9 +211,7 @@ window.addEventListener('popstate', refresh);
 
 const dlg = $('#auth-dlg');
 $('#settings').addEventListener('click', () => {
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  setTimeout(() => $('#auth-input').focus(), 0);
+  showAuthDialog();
 });
 $('#auth-cancel').addEventListener('click', () => dlg.close());
 $('#auth-ok').addEventListener('click', () => {

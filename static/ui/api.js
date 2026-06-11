@@ -43,3 +43,18 @@ export async function api(path, init = {}) {
  * so the body is guaranteed parseable.
  */
 export const apiJson = (path, init) => api(path, init).then(res => res.json());
+
+/** HTML-escape for interpolating untrusted text into innerHTML templates. */
+export const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
+
+/**
+ * Open the shared settings/auth dialog (`#auth-dlg`), pre-filled with the
+ * stored token. Every page ships the same dialog markup; one opener keeps
+ * prefill/focus behavior from drifting per page.
+ */
+export const showAuthDialog = () => {
+  const dlg = document.querySelector('#auth-dlg');
+  document.querySelector('#auth-input').value = getToken();
+  dlg.showModal();
+  document.querySelector('#auth-input').focus();
+};

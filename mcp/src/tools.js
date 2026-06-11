@@ -98,6 +98,24 @@ const wrap = handler => async args => {
 
 const csv = arr => (arr && arr.length > 0 ? arr.join(',') : undefined);
 
+// Shared by vault_update_piece and vault_write_file: both accept the two
+// alternative wire formats (whole-markdown vs frontmatter+body) and must
+// receive exactly one of them. Returns `true` when the markdown form is in
+// use, `false` for the split form; throws on both/neither.
+const wantsMarkdownForm = (markdown, frontmatter, body) => {
+  const hasMd = typeof markdown === 'string';
+  const hasSplit = frontmatter !== undefined && typeof body === 'string';
+  if (hasMd && hasSplit) {
+    throw new Error(
+      'pass either `markdown` OR `frontmatter`+`body`, not both — they are alternative wire formats for the same write'
+    );
+  }
+  if (!hasMd && !hasSplit) {
+    throw new Error('pass either `markdown` OR `frontmatter`+`body`');
+  }
+  return hasMd;
+};
+
 export const registerTools = (mcp, client) => {
   // ── search ────────────────────────────────────────────────────────────────
   mcp.registerTool(
@@ -200,16 +218,7 @@ export const registerTools = (mcp, client) => {
       }
     },
     wrap(async ({record_id, markdown, frontmatter, body}) => {
-      const hasMd = typeof markdown === 'string';
-      const hasSplit = frontmatter !== undefined && typeof body === 'string';
-      if (hasMd && hasSplit) {
-        throw new Error(
-          'pass either `markdown` OR `frontmatter`+`body`, not both — they are alternative wire formats for the same write'
-        );
-      }
-      if (!hasMd && !hasSplit) {
-        throw new Error('pass either `markdown` OR `frontmatter`+`body`');
-      }
+      const hasMd = wantsMarkdownForm(markdown, frontmatter, body);
       const path = `/sections/${encodeURIComponent(record_id)}`;
       if (hasMd) {
         await client.putText(path, markdown);
@@ -253,16 +262,7 @@ export const registerTools = (mcp, client) => {
       }
     },
     wrap(async ({path, markdown, frontmatter, body}) => {
-      const hasMd = typeof markdown === 'string';
-      const hasSplit = frontmatter !== undefined && typeof body === 'string';
-      if (hasMd && hasSplit) {
-        throw new Error(
-          'pass either `markdown` OR `frontmatter`+`body`, not both — they are alternative wire formats for the same write'
-        );
-      }
-      if (!hasMd && !hasSplit) {
-        throw new Error('pass either `markdown` OR `frontmatter`+`body`');
-      }
+      const hasMd = wantsMarkdownForm(markdown, frontmatter, body);
       if (hasMd) {
         await client.putText(`/vault/${path}`, markdown);
       } else {

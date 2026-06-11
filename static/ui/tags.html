@@ -124,11 +124,9 @@
 </dialog>
 
 <script type="module">
-import {apiJson, getToken, setToken} from '/ui/api.js';
+import {apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
-
-const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
 
 let allTags = [];
 let activeTag = null;
@@ -198,13 +196,6 @@ const fetchRecordsForTag = async tag => {
     if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
     $('#records').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
   }
-};
-
-const showAuthDialog = () => {
-  const dlg = $('#auth-dlg');
-  $('#auth-input').value = getToken();
-  dlg.showModal();
-  $('#auth-input').focus();
 };
 
 const init = async () => {

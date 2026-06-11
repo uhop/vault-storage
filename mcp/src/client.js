@@ -126,7 +126,10 @@ export class VaultClient {
     }
     const code = body?.code ?? this.#defaultCode(res.status);
     const message = body?.error ?? `HTTP ${res.status}`;
-    throw new VaultClientError(message, code, res.status, body?.details ?? text);
+    // Normalize `details` to object-or-null: a raw non-JSON body used to
+    // leak through as a bare string, giving callers an inconsistent shape.
+    const details = body?.details ?? (text.length > 0 ? {raw: text.slice(0, 500)} : null);
+    throw new VaultClientError(message, code, res.status, details);
   }
 
   #defaultCode(status) {
