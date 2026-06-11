@@ -7,7 +7,7 @@
 // to see the metrics.
 //
 //   node eval/try-model.ts --model Xenova/bge-base-en-v1.5 --dim 768 \
-//                          --vault "/media/raid/Vault/Eugene's vault" \
+//                          --vault /path/to/vault-data \
 //                          --db /tmp/vault-bge-base.sqlite
 
 import {readFileSync, mkdirSync, rmSync, existsSync} from 'node:fs';

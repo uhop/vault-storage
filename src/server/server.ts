@@ -53,7 +53,6 @@ import {
 import {commitHandler} from './handlers/commit.ts';
 import {lintHandler} from './handlers/lint.ts';
 import {resolveHandler} from './handlers/resolve.ts';
-import {syncFromObsidianHandler} from './handlers/sync.ts';
 import {releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
 import {
   addAliasHandler,
@@ -177,11 +176,6 @@ export const buildRouter = (opts: BuildOptions): Router => {
       authorName: opts.env.gitAuthorName,
       authorEmail: opts.env.gitAuthorEmail
     })
-  );
-
-  router.post(
-    '/sync/from-obsidian',
-    syncFromObsidianHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, resolverCache})
   );
 
   router.post('/maintenance/find-duplicates', findDuplicatesHandler({db: opts.db}));

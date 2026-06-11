@@ -458,23 +458,6 @@ export const registerTools = (mcp, client) => {
     )
   );
 
-  // ── sync from Obsidian ────────────────────────────────────────────────────
-  mcp.registerTool(
-    'vault_sync_from_obsidian',
-    {
-      description:
-        'Run an incremental Obsidian → vault-data sync (cutover bridge). Local edits in vault-data are detected and skipped. Use dry_run=true to preview without writing.',
-      inputSchema: {
-        source_path: z.string().optional().describe('Obsidian source path (server-side absolute)'),
-        dry_run: z.boolean().optional().default(false),
-        write_log: z.boolean().optional().default(true)
-      }
-    },
-    wrap(async ({source_path, dry_run, write_log}) =>
-      client.postJson('/sync/from-obsidian', {source_path, dry_run, write_log})
-    )
-  );
-
   // ── system ────────────────────────────────────────────────────────────────
   mcp.registerTool(
     'vault_status',

@@ -31,8 +31,7 @@ the backup). Treat that section as a TODO; the policy lives in the vault at
 ## Caveats
 
 - **Personal paths.** `vault-propose-related/SKILL.md` references
-  `~/Open/vault-storage` and `/media/raid/Vault/Eugene's vault` in example
-  commands. Substitute your own paths.
+  `~/Open/vault-storage` in example commands. Substitute your own paths.
 - **Wording.** The `/vault` skill describes the API surface in
   "Obsidian Local REST API" terms — that's how it was first written. The
   vault-storage server's Phase A REST surface is path-shape-compatible, so

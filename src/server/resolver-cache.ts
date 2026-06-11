@@ -21,7 +21,7 @@ export interface ResolvedView {
  *
  * Invalidation is event-driven, not fingerprint-driven: every path that
  * mutates the records table (watcher drain, inline imports on the vault /
- * sections write handlers, incremental reindex, obsidian sync) calls
+ * sections write handlers, incremental reindex) calls
  * `invalidate()`. Building is cheap (one path-only scan), so spurious
  * invalidation costs little; a MISSED invalidation would serve stale
  * resolution, so new write paths must remember to call it.

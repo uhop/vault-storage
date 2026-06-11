@@ -2,7 +2,7 @@
 
 An AI-agent-first persistent knowledge base. Markdown files are the source of truth; a SQLite + `sqlite-vec` index sits next to them and provides fast lookup, semantic search, and typed-edge traversal for AI agents.
 
-**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue + Obsidian sync), MCP adapter (20 tools / 3 resources), file-watcher with auto-reindex, edge GC, auto-commit, migration tool (Obsidian → vault-storage tree), Docker packaging. Not yet: suggestions review surface, decay/maintenance jobs.
+**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue), MCP adapter (30 tools / 2 resources), file-watcher with auto-reindex, edge GC, auto-commit, Docker packaging. The Obsidian cutover machinery (`/sync/from-obsidian`, mount plumbing) was retired 2026-06-11 after the migration completed; the one-time `migrate` CLI command remains for vault-tree imports. Not yet: suggestions review surface, decay/maintenance jobs.
 
 ## Architecture
 

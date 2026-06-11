@@ -16,7 +16,7 @@ A populated vault-storage SQLite DB built from the live vault. If one doesn't ex
 
 ```bash
 cd ~/Open/vault-storage
-VAULT_DB_PATH=/tmp/vault.sqlite node src/index.ts import "/media/raid/Vault/Eugene's vault"
+VAULT_DB_PATH=/tmp/vault.sqlite node src/index.ts import /path/to/vault-data
 ```
 
 The import takes ~10–15 minutes (full re-embed). Subsequent runs are nearly instant if the body content_hashes haven't changed.
@@ -31,7 +31,7 @@ Run the candidate extractor for the next batch of source notes. Default batch si
 cd ~/Open/vault-storage
 node eval/propose-related.ts \
   --db /tmp/vault.sqlite \
-  --vault "/media/raid/Vault/Eugene's vault" \
+  --vault /path/to/vault-data \
   --output /tmp/related-candidates.tsv \
   --per-note 10 \
   --limit 30

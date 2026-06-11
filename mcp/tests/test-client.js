@@ -101,7 +101,7 @@ test('VaultClient: postJson serializes body and returns parsed response', async 
     seenContentType = init.headers['Content-Type'] ?? null;
     return ok({ok: true});
   });
-  const r = await c.postJson('/sync/from-obsidian', {dry_run: true});
+  const r = await c.postJson('/maintenance/run-all', {dry_run: true});
   t.equal(seenContentType, 'application/json', 'Content-Type=application/json');
   t.equal(seenBody, JSON.stringify({dry_run: true}), 'body JSON-encoded');
   t.equal(r.ok, true, 'response parsed');

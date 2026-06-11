@@ -13,7 +13,6 @@ import {FakeEmbedder} from './embeddings/fake.ts';
 import type {Embedder} from './embeddings/types.ts';
 import {importVault} from './importer/import.ts';
 import {migrateVault} from './migration/import.ts';
-import {syncFromObsidian} from './migration/sync.ts';
 import {main as serveMain} from './server/index.ts';
 
 const argv = process.argv.slice(2);
@@ -57,38 +56,6 @@ if (subcommand === 'serve') {
       break;
     }
     case 'migrate': {
-      const updateFlagIndex = argv.indexOf('--update');
-      const dryRun = argv.includes('--dry-run');
-
-      if (updateFlagIndex >= 0) {
-        const positional = argv.filter((v, i) => i > 0 && v !== '--update' && v !== '--dry-run');
-        const source = positional[0] ?? process.env['OBSIDIAN_VAULT_PATH'];
-        const target = positional[1] ?? process.env['VAULT_DATA_PATH'];
-        if (!source)
-          die('usage: migrate --update <obsidian-source> [target]  (or set OBSIDIAN_VAULT_PATH)');
-        if (!target)
-          die('usage: migrate --update <obsidian-source> <target>  (or set VAULT_DATA_PATH)');
-        const summary = syncFromObsidian({
-          source: resolve(source as string),
-          target: resolve(target as string),
-          db,
-          dryRun,
-          writeLog: !dryRun
-        });
-        process.stdout.write(
-          `sync from ${source}: ` +
-            `${summary.new} new, ${summary.updated} updated, ${summary.unchanged} unchanged, ` +
-            `${summary.skippedLocallyNewer} skipped (local edit), ` +
-            `${summary.skippedAtomized} skipped (atomized), ` +
-            `${summary.removedInSource} removed in source ` +
-            `(${summary.total} source files, ${summary.durationMs} ms)` +
-            (dryRun ? ' [dry-run]' : '') +
-            '\n'
-        );
-        if (summary.logPath) process.stdout.write(`log: ${summary.logPath}\n`);
-        break;
-      }
-
       const source = argv[1] ?? process.env['VAULT_INGEST_PATH'];
       const target = argv[2] ?? process.env['VAULT_DATA_PATH'];
       if (!source) die('usage: migrate <source> <target>  (or set VAULT_INGEST_PATH)');
