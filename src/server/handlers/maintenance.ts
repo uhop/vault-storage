@@ -8,6 +8,7 @@ import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
 import {findUpgradeSignals} from '../../maintenance/find-upgrade-signals.ts';
 import {clearLastIndexedCommit, incrementalReindex} from '../../maintenance/incremental-reindex.ts';
+import {runAllScans} from '../../maintenance/run-all.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {listFolder} from '../../maintenance/folder-listing.ts';
 import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
@@ -212,27 +213,15 @@ export const incrementalReindexHandler =
  * dropping to the shell for four separate POSTs.
  *
  * Returns `{duplicates, compaction, retention, upgrade, durationMs}`.
+ *
+ * This is C8.1's "manual trigger always wins": it runs regardless of the
+ * scan scheduler's window or skip rule, and the completed pass records the
+ * shared `scan_last_pass_*` marker, pushing back the next automatic pass.
  */
 export const runAllScansHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
-    const start = Date.now();
-    const duplicates = findDuplicates(deps.db, {
-      maxDistance: 0.1,
-      perRecord: 10,
-      minBodyLength: 200
-    });
-    const compaction = findCompactionCandidates(deps.db, {minPieceCount: 30});
-    const retention = findRetentionCandidates(deps.db);
-    const upgrade = findUpgradeSignals(deps.db);
-    sendJson(ctx.res, 200, {
-      duplicates,
-      compaction,
-      retention,
-      upgrade,
-      durationMs: Date.now() - start
-    });
-    void ctx;
+    sendJson(ctx.res, 200, runAllScans(deps.db));
   };
 
 /**

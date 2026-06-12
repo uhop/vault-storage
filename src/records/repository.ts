@@ -62,6 +62,7 @@ export class RecordsRepository {
   readonly #countAll: StatementSync;
   readonly #bumpLastReferenced: StatementSync;
   readonly #updateFilePath: StatementSync;
+  readonly #bumpGeneration: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insert = db.prepare(
@@ -111,6 +112,16 @@ export class RecordsRepository {
     this.#updateFilePath = db.prepare(
       'UPDATE records SET file_path = ? WHERE record_id = ?'
     );
+
+    // Content-generation bump (see src/db/meta.ts CONTENT_GENERATION_KEY):
+    // every content-shaping mutation below increments the counter so the
+    // C8.1 scan scheduler can tell "vault changed since the last pass"
+    // without fingerprinting record content. Read paths (bumpLastReferenced)
+    // deliberately don't touch it.
+    this.#bumpGeneration = db.prepare(
+      `INSERT INTO meta (key, value) VALUES ('content_generation', '1')
+       ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`
+    );
   }
 
   insert(r: VaultRecord): void {
@@ -134,6 +145,7 @@ export class RecordsRepository {
       r.agentSummary,
       r.agentDerivedFromHash
     );
+    this.#bumpGeneration.run();
   }
 
   /** Insert or update by `file_path`. Preserves record_id and created on update. */
@@ -158,6 +170,7 @@ export class RecordsRepository {
       r.agentSummary,
       r.agentDerivedFromHash
     );
+    this.#bumpGeneration.run();
   }
 
   getById(id: string): VaultRecord | null {
@@ -176,6 +189,7 @@ export class RecordsRepository {
 
   delete(id: string): boolean {
     const result = this.#delete.run(id);
+    if (result.changes > 0) this.#bumpGeneration.run();
     return result.changes > 0;
   }
 
@@ -187,6 +201,7 @@ export class RecordsRepository {
    */
   updateFilePath(recordId: string, newFilePath: string): boolean {
     const result = this.#updateFilePath.run(newFilePath, recordId);
+    if (result.changes > 0) this.#bumpGeneration.run();
     return result.changes > 0;
   }
 

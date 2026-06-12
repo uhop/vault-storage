@@ -67,6 +67,21 @@ export interface ServerEnv {
   /** Directory served at /ui/. Empty string disables the UI surface. */
   uiStaticPath: string;
   /**
+   * C8.1 scan scheduler — autonomous cadence for the bundled maintenance
+   * scans (`run-all`). Optional so test harnesses that construct ServerEnv
+   * literals don't need them; composition applies the defaults. The
+   * scheduler shares the git-sync work-hours window (`VAULT_WORK_HOURS_*`)
+   * — one definition of "work hours" per deployment.
+   */
+  scanEnabled?: boolean;
+  /** Eligibility-tick cadence (ms). Default 3,600,000 (hourly). */
+  scanIntervalMs?: number;
+  /**
+   * Force a pass when the last one is older than this even with no content
+   * changes (time-driven scans need it). Default 604,800,000 (7 days).
+   */
+  scanMaxQuietMs?: number;
+  /**
    * Periodic interval (ms) at which the server logs `memory: rss=… heapUsed=…
    * heapTotal=… external=… arrayBuffers=…` to stdout. Lets you grep
    * `docker logs` for an RSS time-series without external tooling. Set to 0
@@ -171,6 +186,18 @@ export const readServerEnv = (): ServerEnv => {
     throw new Error(`VAULT_MEMORY_REPORT_INTERVAL_MS must be ≥ 0 (got ${memoryReportIntervalRaw})`);
   }
 
+  const scanEnabled = parseFlag(process.env['VAULT_SCAN_ENABLED'], true);
+  const scanIntervalRaw = process.env['VAULT_SCAN_INTERVAL_MS'] ?? '3600000';
+  const scanIntervalMs = Number.parseInt(scanIntervalRaw, 10);
+  if (!Number.isFinite(scanIntervalMs) || scanIntervalMs < 60_000) {
+    throw new Error(`VAULT_SCAN_INTERVAL_MS must be ≥ 60000 (got ${scanIntervalRaw})`);
+  }
+  const scanMaxQuietRaw = process.env['VAULT_SCAN_MAX_QUIET_MS'] ?? '604800000';
+  const scanMaxQuietMs = Number.parseInt(scanMaxQuietRaw, 10);
+  if (!Number.isFinite(scanMaxQuietMs) || scanMaxQuietMs < 0) {
+    throw new Error(`VAULT_SCAN_MAX_QUIET_MS must be ≥ 0 (got ${scanMaxQuietRaw})`);
+  }
+
   return {
     vaultDataPath,
     vaultIngestPath,
@@ -194,7 +221,10 @@ export const readServerEnv = (): ServerEnv => {
     gitAuthorEmail,
     uiStaticPath,
     embedAnomalyLogPath,
-    memoryReportIntervalMs
+    memoryReportIntervalMs,
+    scanEnabled,
+    scanIntervalMs,
+    scanMaxQuietMs
   };
 };
 

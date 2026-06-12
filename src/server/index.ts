@@ -12,6 +12,7 @@ import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
 import {getCurrentHead} from '../util/git.ts';
 import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
+import {startScanScheduler, type ScanSchedulerHandle} from '../maintenance/scan-scheduler.ts';
 import {startGitSync, type GitSyncHandle} from './git-sync.ts';
 import {startMemoryReporter, type MemoryReporterHandle} from './memory-reporter.ts';
 import {ResolverCache} from './resolver-cache.ts';
@@ -100,12 +101,13 @@ export const main = async (): Promise<void> => {
     memoryReporter = startMemoryReporter({intervalMs: env.memoryReportIntervalMs});
   }
 
+  const workHours =
+    env.workHoursStart !== null && env.workHoursEnd !== null
+      ? {start: env.workHoursStart, end: env.workHoursEnd}
+      : undefined;
+
   let gitSync: GitSyncHandle | null = null;
   if (env.autoCommit) {
-    const workHours =
-      env.workHoursStart !== null && env.workHoursEnd !== null
-        ? {start: env.workHoursStart, end: env.workHoursEnd}
-        : undefined;
     gitSync = startGitSync({
       vaultDataPath: env.vaultDataPath,
       intervalMs: env.commitIntervalMs,
@@ -124,6 +126,17 @@ export const main = async (): Promise<void> => {
     process.stdout.write(`vault-storage: git-sync ${backoff} (push=${env.autoPush})${window}\n`);
   }
 
+  let scanScheduler: ScanSchedulerHandle | null = null;
+  if (env.scanEnabled ?? true) {
+    const intervalMs = env.scanIntervalMs ?? 3_600_000;
+    const maxQuietMs = env.scanMaxQuietMs ?? 7 * 86_400_000;
+    scanScheduler = startScanScheduler({db, intervalMs, maxQuietMs, workHours});
+    const window = workHours ? ` work-hours=${workHours.start}–${workHours.end}` : '';
+    process.stdout.write(
+      `vault-storage: scan-scheduler every ${intervalMs}ms, changed-since-last-pass skip, max-quiet ${maxQuietMs}ms${window}\n`
+    );
+  }
+
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`\nvault-storage: ${signal} received, shutting down\n`);
     if (watcher) {
@@ -132,6 +145,7 @@ export const main = async (): Promise<void> => {
       await watcher.flush();
       watcher.close();
     }
+    if (scanScheduler) scanScheduler.close();
     if (gitSync) {
       await gitSync.syncNow();
       gitSync.close();
