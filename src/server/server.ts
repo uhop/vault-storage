@@ -11,6 +11,7 @@ import {
   getRecordMetaHandler,
   getRecordTagsHandler,
   listRecordsHandler,
+  patchRecordFmHandler,
   postRecordTagHandler
 } from './handlers/records.ts';
 import {putRecordHandler} from './handlers/records-write.ts';
@@ -123,6 +124,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/sections/{id}/meta', getRecordMetaHandler({records}));
   const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, records};
   router.get('/sections/{id}/fm', getRecordFmHandler(recordFmDeps));
+  router.patch('/sections/{id}/fm', patchRecordFmHandler(recordFmDeps));
   router.get('/sections/{id}/tags', getRecordTagsHandler(recordFmDeps));
   router.post('/sections/{id}/tags', postRecordTagHandler(recordFmDeps));
   router.delete('/sections/{id}/tags/{tag}', deleteRecordTagHandler(recordFmDeps));

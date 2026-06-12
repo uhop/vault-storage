@@ -17,7 +17,12 @@ import {
  * `record_id` and `content_hash` come from DB identity, not user input.
  * `last_referenced` and `decay_score` are reflection-time fields.
  */
-const AUTO_MANAGED_KEYS = new Set(['record_id', 'content_hash', 'last_referenced', 'decay_score']);
+export const AUTO_MANAGED_KEYS: ReadonlySet<string> = new Set([
+  'record_id',
+  'content_hash',
+  'last_referenced',
+  'decay_score'
+]);
 
 /**
  * Frontmatter keys the API silently drops from request input. The indexer is
@@ -25,7 +30,7 @@ const AUTO_MANAGED_KEYS = new Set(['record_id', 'content_hash', 'last_referenced
  * is force-stamped to now. Round-trip writers (read → modify → write) can leave
  * them in the payload without 400-ing.
  */
-const INDEXER_OVERRIDE_KEYS = new Set(['created', 'updated']);
+export const INDEXER_OVERRIDE_KEYS: ReadonlySet<string> = new Set(['created', 'updated']);
 
 const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 const TYPE_SET: ReadonlySet<string> = new Set(RECORD_TYPES);

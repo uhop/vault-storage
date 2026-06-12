@@ -12,7 +12,13 @@ import {parsePagination, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
-import {ensureSafePath, WriterError, writeSplitRecordToDisk} from '../writer.ts';
+import {
+  AUTO_MANAGED_KEYS,
+  ensureSafePath,
+  INDEXER_OVERRIDE_KEYS,
+  WriterError,
+  writeSplitRecordToDisk
+} from '../writer.ts';
 
 interface RecordRow {
   record_id: string;
@@ -359,6 +365,263 @@ export const getRecordFmHandler =
     const response: {frontmatter: Record<string, unknown>; body?: string} = {frontmatter: data};
     if (includeBody) response.body = body;
     sendJson(ctx.res, 200, response);
+  };
+
+/**
+ * Parse an RFC 6901 JSON Pointer into segments. The pointer must address a
+ * named FM field (depth ≥ 1) — the root is not patchable.
+ */
+const parseFmPointer = (pointer: string): string[] => {
+  if (typeof pointer !== 'string' || pointer.length === 0 || pointer === '/') {
+    throw new WriterError('path must address an FM field, not the root', 'invalid_pointer', 400);
+  }
+  if (!pointer.startsWith('/')) {
+    throw new WriterError(`path must start with '/' (RFC 6901): ${pointer}`, 'invalid_pointer', 400);
+  }
+  // Unescape order per RFC 6901: ~1 → '/', then ~0 → '~'.
+  return pointer
+    .slice(1)
+    .split('/')
+    .map(seg => seg.replace(/~1/g, '/').replace(/~0/g, '~'));
+};
+
+/** Structural equality for FM array members (string tags in practice). */
+const deepEqual = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (Array.isArray(a)) {
+    return Array.isArray(b) && a.length === b.length && a.every((v, i) => deepEqual(v, b[i]));
+  }
+  if (typeof a === 'object') {
+    if (Array.isArray(b) || typeof b !== 'object') return false;
+    const ka = Object.keys(a as Record<string, unknown>);
+    const kb = Object.keys(b as Record<string, unknown>);
+    return (
+      ka.length === kb.length &&
+      ka.every(k =>
+        deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])
+      )
+    );
+  }
+  return false;
+};
+
+/**
+ * Top-level FM keys PATCH refuses to touch, with the reason used in the 400.
+ * `tags` is writable in principle but owned by the taxonomy-aware membership
+ * primitives — going through them keeps the shape rule + canonical-resolution
+ * behavior in one place.
+ */
+const protectedFmRoot = (key: string): string | null => {
+  if (AUTO_MANAGED_KEYS.has(key)) return 'auto-managed (DB identity / reflection fields)';
+  if (INDEXER_OVERRIDE_KEYS.has(key)) return 'indexer-managed (stamped on every write)';
+  if (key === 'tags') return 'use POST /sections/{id}/tags / DELETE /sections/{id}/tags/{tag}';
+  return null;
+};
+
+interface FmPatchOp {
+  op: 'add' | 'remove';
+  path: string;
+  value: unknown;
+}
+
+interface FmPatchResult {
+  changed: boolean;
+  /** Final content of the addressed array, or null when the path is absent. */
+  array: unknown[] | null;
+}
+
+/**
+ * Apply one membership op to the in-memory FM object (mutating it).
+ *
+ * `add` creates missing intermediate objects and a missing target array;
+ * an explicit `null` along the way counts as missing (YAML's empty value).
+ * `remove` on a missing path is an idempotent no-op. Intermediates that
+ * exist as non-objects, and targets that exist as non-arrays, are 400s —
+ * this endpoint does array membership only.
+ */
+const applyFmMembershipOp = (fm: Record<string, unknown>, op: FmPatchOp): FmPatchResult => {
+  const segments = parseFmPointer(op.path);
+  const rootKey = segments[0]!;
+  const reason = protectedFmRoot(rootKey);
+  if (reason) {
+    throw new WriterError(`'${rootKey}' is not patchable — ${reason}`, 'protected_field', 400);
+  }
+
+  let node: Record<string, unknown> = fm;
+  for (let i = 0; i < segments.length - 1; ++i) {
+    const seg = segments[i]!;
+    const next = node[seg];
+    if (next === undefined || next === null) {
+      if (op.op === 'remove') return {changed: false, array: null};
+      const fresh: Record<string, unknown> = {};
+      node[seg] = fresh;
+      node = fresh;
+    } else if (typeof next === 'object' && !Array.isArray(next)) {
+      node = next as Record<string, unknown>;
+    } else {
+      throw new WriterError(
+        `'/${segments.slice(0, i + 1).join('/')}' is not an object — cannot descend into it`,
+        'invalid_target',
+        400
+      );
+    }
+  }
+
+  const leaf = segments[segments.length - 1]!;
+  const target = node[leaf];
+  if (target === undefined || target === null) {
+    if (op.op === 'remove') return {changed: false, array: null};
+    const created = [op.value];
+    node[leaf] = created;
+    return {changed: true, array: created};
+  }
+  if (!Array.isArray(target)) {
+    throw new WriterError(`'${op.path}' is not an array`, 'invalid_target', 400);
+  }
+  if (op.op === 'add') {
+    if (target.some(v => deepEqual(v, op.value))) return {changed: false, array: target};
+    target.push(op.value);
+    return {changed: true, array: target};
+  }
+  const filtered = target.filter(v => !deepEqual(v, op.value));
+  if (filtered.length === target.length) return {changed: false, array: target};
+  node[leaf] = filtered;
+  return {changed: true, array: filtered};
+};
+
+/**
+ * PATCH /sections/{id}/fm — atomic value-based membership ops on FM arrays.
+ *
+ * Body: `{ops: [{op: "add" | "remove", path: "/agent/tags_suggested",
+ * value: <json>}, …]}`. Paths are RFC 6901 JSON Pointers addressing the
+ * **array itself**, not an element; ops are value-based set semantics —
+ * `add` appends unless a structurally-equal member exists, `remove` drops
+ * every structurally-equal member, both idempotent. The whole request is
+ * atomic: ops apply to an in-memory copy and nothing is written unless all
+ * of them validate; a no-change request (every op a no-op) skips the disk
+ * write and re-import entirely, so it never churns `updated` or refiles
+ * suggestions.
+ *
+ * This is deliberately *not* RFC 6902: its `remove` addresses elements by
+ * index, which would force callers back into read-find-index-write — the
+ * exact TOCTOU shape this primitive exists to retire (the server applies
+ * the whole read-modify-write atomically instead; see
+ * `topics/atomic-membership-primitive-vs-read-modify-write`). Generalizes
+ * the `tags:` membership endpoints to every agent-managed FM array
+ * (`agent.tags_suggested`, `agent.related_proposed`, `related`, …).
+ * Motivating case: a durable `tag_suggestion` reject must also remove the
+ * tag from `agent.tags_suggested`, which previously needed a full FM PUT.
+ *
+ * Returns 200 `{changed, results: [{op, path, changed, array}]}` where
+ * `array` is the final content at each path (null when absent).
+ */
+export const patchRecordFmHandler =
+  (deps: FmHandlerDeps): Handler =>
+  async ctx => {
+    const row = resolveRecord(deps, ctx.params['id'], ctx.res);
+    if (!row) return;
+
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendError(ctx.res, 400, 'bad_request', 'body must be JSON');
+      return;
+    }
+    const opsRaw = (parsed as Record<string, unknown> | null)?.['ops'];
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      !Array.isArray(opsRaw) ||
+      opsRaw.length === 0
+    ) {
+      sendError(ctx.res, 400, 'bad_request', 'body must be `{ops: [...]}` with at least one op');
+      return;
+    }
+    const ops: FmPatchOp[] = [];
+    for (let i = 0; i < opsRaw.length; ++i) {
+      const o = opsRaw[i] as Record<string, unknown> | null;
+      if (!o || typeof o !== 'object' || Array.isArray(o)) {
+        sendError(ctx.res, 400, 'bad_request', `ops[${i}] must be an object`);
+        return;
+      }
+      if (o['op'] !== 'add' && o['op'] !== 'remove') {
+        sendError(ctx.res, 400, 'bad_request', `ops[${i}].op must be "add" or "remove"`);
+        return;
+      }
+      if (typeof o['path'] !== 'string') {
+        sendError(ctx.res, 400, 'bad_request', `ops[${i}].path must be a string`);
+        return;
+      }
+      if (!('value' in o)) {
+        sendError(ctx.res, 400, 'bad_request', `ops[${i}].value is required (ops are value-based)`);
+        return;
+      }
+      ops.push({op: o['op'], path: o['path'], value: o['value']});
+    }
+
+    const abs = resolveAbsPath(deps, row.file_path, ctx.res);
+    if (!abs) return;
+    const {data: fm, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+
+    const results: Array<{op: string; path: string; changed: boolean; array: unknown[] | null}> =
+      [];
+    const touchedRoots = new Set<string>();
+    try {
+      for (let i = 0; i < ops.length; ++i) {
+        const op = ops[i]!;
+        const result = applyFmMembershipOp(fm, op);
+        if (result.changed) touchedRoots.add(parseFmPointer(op.path)[0]!);
+        results.push({op: op.op, path: op.path, changed: result.changed, array: result.array});
+      }
+    } catch (err) {
+      if (err instanceof WriterError) {
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
+        return;
+      }
+      throw err;
+    }
+
+    if (touchedRoots.size > 0) {
+      // Send only the mutated top-level keys — writeSplitRecordToDisk merges
+      // request FM over on-disk FM at the top level, so each touched root
+      // must go over complete (it does: ops mutated the object read from
+      // disk) while untouched roots round-trip from disk unchanged.
+      const requestFm: Record<string, unknown> = {};
+      for (const key of touchedRoots) requestFm[key] = fm[key];
+      try {
+        writeSplitRecordToDisk({
+          filePath: row.file_path,
+          existing: deps.records.getById(row.record_id),
+          frontmatter: requestFm,
+          body,
+          vaultDataPath: deps.vaultDataPath
+        });
+      } catch (err) {
+        if (err instanceof WriterError) {
+          sendError(ctx.res, err.status, err.code, err.message, err.details);
+          return;
+        }
+        throw err;
+      }
+      importFile(deps.records, row.file_path, abs, undefined, {
+        tags: new TagsImporter(deps.db),
+        agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
+        tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
+        archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
+      });
+    }
+
+    sendJson(ctx.res, 200, {changed: touchedRoots.size > 0, results});
   };
 
 interface ListFilters {
