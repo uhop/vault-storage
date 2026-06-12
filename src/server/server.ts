@@ -67,7 +67,8 @@ import {
   getVaultRootHandler,
   moveVaultHandler,
   proposeVaultHandler,
-  putVaultHandler
+  putVaultHandler,
+  supersedeVaultHandler
 } from './handlers/vault.ts';
 import {sendError} from './responses.ts';
 import {ResolverCache} from './resolver-cache.ts';
@@ -163,6 +164,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.put('/vault/{path}', putVaultHandler(vaultDeps));
   router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
   router.post('/vault/move', moveVaultHandler(vaultDeps));
+  router.post('/vault/supersede', supersedeVaultHandler(vaultDeps));
   router.post('/vault/propose', proposeVaultHandler(vaultDeps));
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));

@@ -202,6 +202,56 @@ export const parseWriteRequest = (
   return {kind: 'markdown', markdown: rawBody};
 };
 
+/**
+ * Validate a write payload's frontmatter + body without touching disk.
+ * Throws `WriterError` (400) on violations. `writeSplitRecordToDisk` runs
+ * this after the If-Match gate; multi-step handlers (e.g. supersede) call
+ * it as a pre-flight so a doomed request fails *before* any disk mutation.
+ *
+ * Checks, in order:
+ * - Body must not begin with another frontmatter-shaped block
+ *   (`---\n…\n---`): the caller almost certainly appended the original
+ *   file's full content to a new FM block — this exact failure mode wiped
+ *   15 files on 2026-05-01 (a sub-agent's PUT-helper bug).
+ * - Auto-managed keys (`record_id`, `content_hash`, …) are rejected.
+ * - Closed-enum fields (`status`, `type`, `priority`): canonical values
+ *   and known aliases pass; anything else 400s so authoring typos surface
+ *   at the boundary rather than silently coercing to a default.
+ */
+export const validateWritePayload = (
+  frontmatter: Record<string, unknown>,
+  body: string
+): void => {
+  if (looksLikeAnotherFmBlock(body)) {
+    throw new WriterError(
+      'request body begins with another frontmatter-style block (`---\\n…\\n---`) — almost certainly a malformed PUT (the caller likely appended the original file to a new FM block, which would silently destroy the body). Construct the PUT body as `---\\n<merged FM>\\n---\\n<body>` with a single FM block.',
+      'malformed_double_frontmatter',
+      400
+    );
+  }
+
+  const violations = Object.keys(frontmatter).filter(k => AUTO_MANAGED_KEYS.has(k));
+  if (violations.length > 0) {
+    throw new WriterError(
+      `frontmatter keys are auto-managed and cannot be set on write: ${violations.join(', ')}`,
+      'frontmatter_auto_managed',
+      400
+    );
+  }
+
+  const statusErr = validateClosedEnum(
+    'status',
+    frontmatter['status'],
+    STATUS_SET,
+    STATUS_ALIAS_KEYS
+  );
+  if (statusErr) throw new WriterError(statusErr, 'invalid_enum_value', 400);
+  const typeErr = validateClosedEnum('type', frontmatter['type'], TYPE_SET, new Set());
+  if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);
+  const priorityErr = validatePriority(frontmatter['priority']);
+  if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
+};
+
 export interface WriteResult {
   /** Absolute path on disk where the file was written. */
   absolutePath: string;
@@ -320,48 +370,10 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
     }
   }
 
-  // Defense against malformed PUTs: when a body itself begins with a
-  // frontmatter-shaped opening (`---\n…\n---\n`), the caller almost
-  // certainly appended the original file's full content (its own FM + body)
-  // to a new FM block. parseFrontmatter would still grab the first block
-  // as FM, the writer would replace the body with the leftover, and the
-  // result on disk would be two FM blocks with no body. We saw this exact
-  // failure mode wipe 15 files on 2026-05-01 (a sub-agent's PUT-helper
-  // bug). Reject at the boundary instead of silently destroying content.
-  if (looksLikeAnotherFmBlock(body)) {
-    throw new WriterError(
-      'request body begins with another frontmatter-style block (`---\\n…\\n---`) — almost certainly a malformed PUT (the caller likely appended the original file to a new FM block, which would silently destroy the body). Construct the PUT body as `---\\n<merged FM>\\n---\\n<body>` with a single FM block.',
-      'malformed_double_frontmatter',
-      400
-    );
-  }
+  validateWritePayload(frontmatter, body);
 
   const requestFm = frontmatter;
   const requestBody = body;
-
-  const violations = Object.keys(requestFm).filter(k => AUTO_MANAGED_KEYS.has(k));
-  if (violations.length > 0) {
-    throw new WriterError(
-      `frontmatter keys are auto-managed and cannot be set on write: ${violations.join(', ')}`,
-      'frontmatter_auto_managed',
-      400
-    );
-  }
-
-  // Closed-enum field validation: status, type, priority. Canonical values
-  // and known aliases pass; anything else 400s so authoring typos surface
-  // at the boundary rather than silently coercing to the default.
-  const statusErr = validateClosedEnum(
-    'status',
-    requestFm['status'],
-    STATUS_SET,
-    STATUS_ALIAS_KEYS
-  );
-  if (statusErr) throw new WriterError(statusErr, 'invalid_enum_value', 400);
-  const typeErr = validateClosedEnum('type', requestFm['type'], TYPE_SET, new Set());
-  if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);
-  const priorityErr = validatePriority(requestFm['priority']);
-  if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
 
   const sanitizedRequestFm: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(requestFm)) {

@@ -25,6 +25,7 @@ import {
   documentEtag,
   ensureSafePath,
   parseWriteRequest,
+  validateWritePayload,
   WriterError,
   writeRecordToDisk,
   writeSplitRecordToDisk
@@ -476,6 +477,186 @@ export const moveVaultHandler =
     deps.resolverCache.invalidate();
 
     sendNoContent(ctx.res);
+  };
+
+interface SupersedeBody {
+  old_path?: unknown;
+  new_path?: unknown;
+  frontmatter?: unknown;
+  body?: unknown;
+}
+
+/**
+ * POST /vault/supersede — replace a note with a successor, archiving the
+ * superseded one (decision 2026-06-11: archived, not tombstoned in place).
+ *
+ * Body: `{old_path, new_path?, frontmatter, body}` — the new note's content
+ * in the standard JSON write shape. `new_path` defaults to `old_path`
+ * (supersede-in-place): the old note moves out first, the successor takes
+ * over its path, and inbound wikilinks naturally resolve to the
+ * replacement while the archived copy stays reachable through the typed
+ * edge.
+ *
+ * Steps, validation-first so a doomed request mutates nothing:
+ *   1. Validate the payload (writer pre-flight), resolve all paths, check
+ *      collisions: old must exist (disk + record), a distinct `new_path`
+ *      and the archive slot must both be free.
+ *   2. Move old → `<dir>/archive/<YYYY>/<name>` via the record-preserving
+ *      rename (same mechanics as `/vault/move` — edges, embeddings, and
+ *      suggestions survive), then stamp its FM `status: superseded`.
+ *   3. Write the new note with a `supersedes` edge to the archived path
+ *      merged into its `edges:` map (caller-provided edges are preserved).
+ *
+ * Edge materialization in the DB happens on the next watcher drain /
+ * reindex, like every FM-declared edge; the FM is authoritative
+ * immediately. Returns 200 `{old: {path, record_id}, new: {path,
+ * record_id, etag}}`.
+ */
+export const supersedeVaultHandler =
+  (deps: VaultDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    let parsed: SupersedeBody;
+    try {
+      const obj = JSON.parse(raw) as unknown;
+      if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+        sendError(ctx.res, 400, 'bad_request', 'request body must be a JSON object');
+        return;
+      }
+      parsed = obj as SupersedeBody;
+    } catch {
+      sendError(ctx.res, 400, 'invalid_json', 'request body must be JSON');
+      return;
+    }
+
+    const oldPath = parsed.old_path;
+    if (typeof oldPath !== 'string' || !oldPath.endsWith('.md')) {
+      sendError(ctx.res, 400, 'invalid_path', '`old_path` must be a .md file path');
+      return;
+    }
+    if (parsed.new_path !== undefined && typeof parsed.new_path !== 'string') {
+      sendError(ctx.res, 400, 'invalid_path', '`new_path` must be a string when provided');
+      return;
+    }
+    const newPath = parsed.new_path ?? oldPath;
+    if (!newPath.endsWith('.md')) {
+      sendError(ctx.res, 400, 'invalid_path', '`new_path` must be a .md file path');
+      return;
+    }
+    if (
+      parsed.frontmatter === null ||
+      typeof parsed.frontmatter !== 'object' ||
+      Array.isArray(parsed.frontmatter) ||
+      typeof parsed.body !== 'string'
+    ) {
+      sendError(
+        ctx.res,
+        400,
+        'invalid_json_shape',
+        'new note content must be `{frontmatter: object, body: string}` — both fields required'
+      );
+      return;
+    }
+    const newFm = parsed.frontmatter as Record<string, unknown>;
+    const newBody = parsed.body;
+
+    // ── Validation phase: nothing below this comment mutates until every
+    // check has passed. The writer pre-flight covers enum/auto-managed/
+    // double-FM failures that would otherwise surface mid-mutation.
+    try {
+      validateWritePayload(newFm, newBody);
+    } catch (err) {
+      if (err instanceof WriterError) {
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
+        return;
+      }
+      throw err;
+    }
+
+    const oldAbs = safePathOrError(deps.vaultDataPath, oldPath, ctx.res);
+    if (oldAbs === null) return;
+    const newAbs = safePathOrError(deps.vaultDataPath, newPath, ctx.res);
+    if (newAbs === null) return;
+
+    const {records} = deps;
+    const oldRecord = records.getByPath(oldPath);
+    if (!oldRecord || !existsSync(oldAbs) || !statSync(oldAbs).isFile()) {
+      sendError(ctx.res, 404, 'not_found', `no note at ${oldPath}`);
+      return;
+    }
+    if (newPath !== oldPath && (existsSync(newAbs) || records.getByPath(newPath))) {
+      sendError(ctx.res, 409, 'conflict', `new_path already exists: ${newPath}`);
+      return;
+    }
+
+    const year = new Date().getFullYear();
+    const oldDir = dirname(oldPath);
+    const oldName = basename(oldPath);
+    const archivePath = `${oldDir === '.' ? '' : `${oldDir}/`}archive/${year}/${oldName}`;
+    const archiveAbs = safePathOrError(deps.vaultDataPath, archivePath, ctx.res);
+    if (archiveAbs === null) return;
+    if (existsSync(archiveAbs) || records.getByPath(archivePath)) {
+      sendError(ctx.res, 409, 'conflict', `archive slot already occupied: ${archivePath}`);
+      return;
+    }
+
+    // ── Mutation phase.
+    const tags = new TagsImporter(deps.db);
+    const filers = {
+      tags,
+      agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
+      tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
+      archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
+    };
+
+    // 1. Archive the old note, record_id preserved.
+    mkdirSync(dirname(archiveAbs), {recursive: true});
+    renameSync(oldAbs, archiveAbs);
+    records.updateFilePath(oldRecord.recordId, archivePath);
+
+    // 2. Stamp the archived note `status: superseded` (FM merge keeps the
+    //    rest) and re-import it.
+    const archivedFm = parseFrontmatter(readFileSync(archiveAbs, 'utf8'));
+    writeSplitRecordToDisk({
+      filePath: archivePath,
+      existing: records.getById(oldRecord.recordId),
+      frontmatter: {status: 'superseded'},
+      body: archivedFm.body,
+      vaultDataPath: deps.vaultDataPath
+    });
+    importFile(records, archivePath, archiveAbs, undefined, filers);
+
+    // 3. Write the successor with the `supersedes` edge merged in. The FM
+    //    edge key is the extension-less archived path (the house format for
+    //    `edges:` maps); caller-supplied edges survive the merge.
+    const callerEdges =
+      newFm['edges'] && typeof newFm['edges'] === 'object' && !Array.isArray(newFm['edges'])
+        ? (newFm['edges'] as Record<string, unknown>)
+        : {};
+    const archiveEdgeKey = archivePath.slice(0, -'.md'.length);
+    const result = writeSplitRecordToDisk({
+      filePath: newPath,
+      existing: null,
+      frontmatter: {...newFm, edges: {...callerEdges, [archiveEdgeKey]: 'supersedes'}},
+      body: newBody,
+      vaultDataPath: deps.vaultDataPath
+    });
+    importFile(records, newPath, result.absolutePath, undefined, filers);
+
+    // Two path-set changes (old moved, new created).
+    deps.resolverCache.invalidate();
+
+    const newRecord = records.getByPath(newPath);
+    sendJson(ctx.res, 200, {
+      old: {path: archivePath, record_id: oldRecord.recordId},
+      new: {path: newPath, record_id: newRecord?.recordId ?? null, etag: result.etag}
+    });
   };
 
 interface ProposeBody {
