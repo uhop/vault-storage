@@ -9,6 +9,7 @@ import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {importVault} from '../src/importer/import.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer, type ServerHandle} from '../src/server/server.ts';
+import {contentHash} from '../src/util/hash.ts';
 
 const TEST_TOKEN = 'test-token-vault';
 
@@ -78,7 +79,13 @@ const teardown = async ({db, handle}: ServerCtx): Promise<void> => {
 const fetchAuthed = async (
   url: string,
   init: RequestInit = {}
-): Promise<{status: number; body: unknown; raw: string; contentType: string | null}> => {
+): Promise<{
+  status: number;
+  body: unknown;
+  raw: string;
+  contentType: string | null;
+  etag: string | null;
+}> => {
   const headers = new Headers(init.headers ?? {});
   headers.set('Authorization', `Bearer ${TEST_TOKEN}`);
   const res = await fetch(url, {...init, headers});
@@ -89,7 +96,7 @@ const fetchAuthed = async (
     if (ct?.includes('application/json')) body = JSON.parse(raw);
     else body = raw;
   }
-  return {status: res.status, body, raw, contentType: ct};
+  return {status: res.status, body, raw, contentType: ct, etag: res.headers.get('etag')};
 };
 
 const seed = (root: string): void => {
@@ -1361,6 +1368,127 @@ test('PUT /vault/{path}?check=true 400 on invalid threshold', async t => {
         }
       );
       t.equal(r.status, 400, '400 bad request');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+// --- ETag / If-Match (optimistic concurrency) ------------------------------
+
+test('GET /vault/{path} returns an ETag of the served document bytes', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      t.equal(r.status, 200, '200 ok');
+      t.equal(r.etag, `"${contentHash(r.raw)}"`, 'ETag = quoted sha256 of the served bytes');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} If-Match round-trip: fresh tag writes, stale tag 412s with current_etag', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const got = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      const firstEtag = got.etag!;
+      t.ok(firstEtag, 'GET produced an ETag');
+
+      // Conditional write with the fresh tag succeeds and returns the new tag.
+      const put1 = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': firstEtag},
+        body: JSON.stringify({frontmatter: {title: 'Alpha v2'}, body: 'Edited by A.\n'})
+      });
+      t.equal(put1.status, 204, 'fresh If-Match → 204');
+      t.ok(put1.etag, 'PUT response carries the new ETag');
+      t.notEqual(put1.etag, firstEtag, 'new ETag differs');
+
+      // The PUT-returned ETag matches what a fresh GET serves.
+      const reGet = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      t.equal(reGet.etag, put1.etag, 'PUT ETag = subsequent GET ETag');
+
+      // A second writer holding the original (now stale) tag is rejected.
+      const put2 = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': firstEtag},
+        body: JSON.stringify({frontmatter: {title: 'Alpha stale'}, body: 'Clobber attempt.\n'})
+      });
+      t.equal(put2.status, 412, 'stale If-Match → 412');
+      const err = put2.body as {code: string; details: {current_etag: string}};
+      t.equal(err.code, 'precondition_failed', 'code=precondition_failed');
+      t.equal(`"${err.details.current_etag}"`, put1.etag, '412 carries the current ETag for retry');
+
+      // The stale write did not land.
+      const after = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      t.ok((after.body as string).includes('Edited by A.'), 'winning write preserved');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} If-Match variants: bare tag, wildcard, markdown form, create', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const got = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      const bare = got.etag!.slice(1, -1); // strip quotes — callers may send the raw hash
+
+      const putBare = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': bare},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Bare-tag edit.\n'})
+      });
+      t.equal(putBare.status, 204, 'unquoted If-Match value accepted');
+
+      // Wildcard matches any existing document...
+      const putStar = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown', 'If-Match': '*'},
+        body: '---\ntitle: Alpha\n---\nWildcard edit via markdown form.\n'
+      });
+      t.equal(putStar.status, 204, 'If-Match: * on existing file → 204 (markdown form too)');
+
+      // ...but never a missing one: conditional writes cannot create.
+      const putCreate = await fetchAuthed(`${ctx.url}/vault/topics/brand-new.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': '*'},
+        body: JSON.stringify({frontmatter: {title: 'New'}, body: 'x\n'})
+      });
+      t.equal(putCreate.status, 412, 'If-Match on nonexistent path → 412');
+
+      // Stale tag through the markdown form 412s the same way.
+      const putStaleMd = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown', 'If-Match': got.etag!},
+        body: '---\ntitle: Alpha\n---\nStale markdown write.\n'
+      });
+      t.equal(putStaleMd.status, 412, 'stale If-Match on markdown form → 412');
+
+      // No header → unconditional, the pre-existing contract; 204 + ETag.
+      const putPlain = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Unconditional.\n'})
+      });
+      t.equal(putPlain.status, 204, 'no If-Match → last-writer-wins preserved');
+      t.ok(putPlain.etag, 'unconditional PUT still returns the new ETag');
     } finally {
       await teardown(ctx);
     }

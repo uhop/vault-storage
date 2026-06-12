@@ -50,27 +50,31 @@ export const putRecordHandler =
       return;
     }
 
+    const ifMatch = ctx.req.headers['if-match'];
+    let etag: string;
     try {
       const parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
-      if (parsed.kind === 'json') {
-        writeSplitRecordToDisk({
-          filePath: existing.filePath,
-          existing,
-          frontmatter: parsed.frontmatter,
-          body: parsed.body,
-          vaultDataPath: deps.vaultDataPath
-        });
-      } else {
-        writeRecordToDisk({
-          filePath: existing.filePath,
-          existing,
-          requestMarkdown: parsed.markdown,
-          vaultDataPath: deps.vaultDataPath
-        });
-      }
+      const result =
+        parsed.kind === 'json'
+          ? writeSplitRecordToDisk({
+              filePath: existing.filePath,
+              existing,
+              frontmatter: parsed.frontmatter,
+              body: parsed.body,
+              vaultDataPath: deps.vaultDataPath,
+              ...(typeof ifMatch === 'string' ? {ifMatch} : {})
+            })
+          : writeRecordToDisk({
+              filePath: existing.filePath,
+              existing,
+              requestMarkdown: parsed.markdown,
+              vaultDataPath: deps.vaultDataPath,
+              ...(typeof ifMatch === 'string' ? {ifMatch} : {})
+            });
+      etag = result.etag;
     } catch (err) {
       if (err instanceof WriterError) {
-        sendError(ctx.res, err.status, err.code, err.message);
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
         return;
       }
       throw err;
@@ -86,5 +90,5 @@ export const putRecordHandler =
       archiveCandidate
     });
 
-    sendNoContent(ctx.res);
+    sendNoContent(ctx.res, {ETag: `"${etag}"`});
   };

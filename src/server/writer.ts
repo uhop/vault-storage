@@ -1,6 +1,7 @@
 import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
+import {contentHash} from '../util/hash.ts';
 import {
   PRIORITY_ALIASES,
   RECORD_STATUSES,
@@ -84,13 +85,37 @@ const looksLikeAnotherFmBlock = (body: string): boolean => {
 export class WriterError extends Error {
   readonly code: string;
   readonly status: number;
-  constructor(message: string, code: string, status: number) {
+  /** Structured payload merged into the error envelope (e.g. current_etag on 412). */
+  readonly details: Record<string, unknown> | undefined;
+  constructor(message: string, code: string, status: number, details?: Record<string, unknown>) {
     super(message);
     this.name = 'WriterError';
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
+
+/**
+ * Document ETag: sha256 hex over the exact file bytes (frontmatter + body as
+ * served by `GET /vault/{path}`). Covers FM-only edits, which the indexed
+ * `content_hash` (body + agent summary) does not.
+ */
+export const documentEtag = (documentBytes: string): string => contentHash(documentBytes);
+
+/**
+ * Parse an `If-Match` header into its entity-tag values: handles the
+ * comma-separated list form, optional `W/` weak prefixes (treated as their
+ * opaque value — we never emit weak tags), surrounding quotes, and the `*`
+ * wildcard. Bare unquoted hashes are accepted for caller convenience.
+ */
+export const parseIfMatch = (header: string): string[] =>
+  header
+    .split(',')
+    .map(v => v.trim())
+    .filter(v => v.length > 0)
+    .map(v => (v.startsWith('W/') ? v.slice(2) : v))
+    .map(v => (v.startsWith('"') && v.endsWith('"') && v.length >= 2 ? v.slice(1, -1) : v));
 
 export interface WriteOptions {
   /** Vault-relative path. Source of truth for where to write. */
@@ -100,6 +125,14 @@ export interface WriteOptions {
   /** Existing record, when replacing. Provides `created` fallback if file is
    *  off-disk. Null when creating a new file. */
   existing: VaultRecord | null;
+  /**
+   * Raw `If-Match` header value (optimistic concurrency, opt-in). When set,
+   * the write proceeds only if the current on-disk document's ETag matches
+   * one of the listed tags (`*` matches any existing document); otherwise
+   * 412 with `details.current_etag` for the re-read-merge-retry loop.
+   * Absent header → last-writer-wins, the pre-existing contract.
+   */
+  ifMatch?: string;
   now?: string;
 }
 
@@ -111,6 +144,8 @@ export interface WriteSplitOptions {
   body: string;
   vaultDataPath: string;
   existing: VaultRecord | null;
+  /** Raw `If-Match` header value — see {@link WriteOptions.ifMatch}. */
+  ifMatch?: string;
   now?: string;
 }
 
@@ -169,6 +204,8 @@ export interface WriteResult {
   frontmatter: Record<string, unknown>;
   /** Final body (post-frontmatter). */
   body: string;
+  /** ETag of the bytes just written — returned to callers for chained conditional writes. */
+  etag: string;
 }
 
 /**
@@ -227,6 +264,7 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     body: requestBody,
     vaultDataPath,
     existing,
+    ...(opts.ifMatch !== undefined ? {ifMatch: opts.ifMatch} : {}),
     ...(opts.now !== undefined ? {now: opts.now} : {})
   });
 };
@@ -248,6 +286,34 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   const now = opts.now ?? new Date().toISOString();
 
   const absolutePath = ensureSafePath(vaultDataPath, filePath);
+
+  // Read the current document once — the If-Match precondition hashes it,
+  // and the frontmatter merge below reuses the same bytes.
+  const onDisk = existsSync(absolutePath) ? readFileSync(absolutePath, 'utf8') : null;
+
+  // Optimistic-concurrency gate (opt-in via the If-Match header). The ETag
+  // is sha256 over the whole document bytes, so FM-only edits invalidate it
+  // too. A 412 carries the current ETag so the caller can re-read, re-merge,
+  // and retry; no header preserves the last-writer-wins contract.
+  if (opts.ifMatch !== undefined) {
+    const expected = parseIfMatch(opts.ifMatch);
+    if (onDisk === null) {
+      throw new WriterError(
+        'If-Match given but no document exists at this path — conditional writes cannot create files',
+        'precondition_failed',
+        412
+      );
+    }
+    const current = documentEtag(onDisk);
+    if (!expected.includes('*') && !expected.includes(current)) {
+      throw new WriterError(
+        `If-Match precondition failed: the document changed since it was read (current ETag "${current}"). Re-read, re-merge, and retry.`,
+        'precondition_failed',
+        412,
+        {current_etag: current}
+      );
+    }
+  }
 
   // Defense against malformed PUTs: when a body itself begins with a
   // frontmatter-shaped opening (`---\n…\n---\n`), the caller almost
@@ -298,8 +364,7 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   }
 
   let existingFm: Record<string, unknown> = {};
-  if (existsSync(absolutePath)) {
-    const onDisk = readFileSync(absolutePath, 'utf8');
+  if (onDisk !== null) {
     existingFm = parseFrontmatter(onDisk).data;
   } else if (existing) {
     existingFm = {
@@ -321,7 +386,7 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   const out = serializeFrontmatter({data: merged, body: requestBody});
   writeFileSync(absolutePath, out, 'utf8');
 
-  return {absolutePath, frontmatter: merged, body: requestBody};
+  return {absolutePath, frontmatter: merged, body: requestBody, etag: documentEtag(out)};
 };
 
 export const composeRelativePath = (vaultRoot: string, abs: string): string =>

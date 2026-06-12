@@ -150,7 +150,7 @@ const resolveAbsPath = (
     abs = ensureSafePath(deps.vaultDataPath, filePath);
   } catch (err) {
     if (err instanceof WriterError) {
-      sendError(res, err.status, err.code, err.message);
+      sendError(res, err.status, err.code, err.message, err.details);
       return null;
     }
     throw err;
@@ -192,7 +192,7 @@ const persistTags = (
     });
   } catch (err) {
     if (err instanceof WriterError) {
-      sendError(res, err.status, err.code, err.message);
+      sendError(res, err.status, err.code, err.message, err.details);
       return false;
     }
     throw err;
@@ -345,7 +345,7 @@ export const getRecordFmHandler =
       abs = ensureSafePath(deps.vaultDataPath, row.file_path);
     } catch (err) {
       if (err instanceof WriterError) {
-        sendError(ctx.res, err.status, err.code, err.message);
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
         return;
       }
       throw err;

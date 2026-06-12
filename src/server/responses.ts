@@ -26,8 +26,8 @@ export const sendError = (
   sendJson(res, status, body);
 };
 
-export const sendNoContent = (res: ServerResponse): void => {
-  res.writeHead(204);
+export const sendNoContent = (res: ServerResponse, headers?: Record<string, string>): void => {
+  res.writeHead(204, headers);
   res.end();
 };
 
@@ -35,11 +35,13 @@ export const sendText = (
   res: ServerResponse,
   status: number,
   contentType: string,
-  body: string
+  body: string,
+  headers?: Record<string, string>
 ): void => {
   res.writeHead(status, {
     'Content-Type': contentType,
-    'Content-Length': Buffer.byteLength(body).toString()
+    'Content-Length': Buffer.byteLength(body).toString(),
+    ...headers
   });
   res.end(body);
 };

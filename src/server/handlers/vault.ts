@@ -22,6 +22,7 @@ import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {
+  documentEtag,
   ensureSafePath,
   parseWriteRequest,
   WriterError,
@@ -97,7 +98,7 @@ const safePathOrError = (
     return ensureSafePath(vaultRoot, filePath);
   } catch (err) {
     if (err instanceof WriterError) {
-      sendError(res, err.status, err.code, err.message);
+      sendError(res, err.status, err.code, err.message, err.details);
       return null;
     }
     throw err;
@@ -147,7 +148,10 @@ export const getVaultHandler =
       const {records} = deps;
       const rec = records.getByPath(path);
       if (rec) records.bumpLastReferenced(rec.recordId);
-      sendText(ctx.res, 200, 'text/markdown; charset=utf-8', readFileSync(abs, 'utf8'));
+      const document = readFileSync(abs, 'utf8');
+      sendText(ctx.res, 200, 'text/markdown; charset=utf-8', document, {
+        ETag: `"${documentEtag(document)}"`
+      });
       return;
     }
 
@@ -156,7 +160,12 @@ export const getVaultHandler =
       if (existsSync(folderAbs) && statSync(folderAbs).isDirectory()) {
         const composed = composeFolder(folderAbs);
         if (composed !== null) {
-          sendText(ctx.res, 200, 'text/markdown; charset=utf-8', composed);
+          // Composed documents are virtual (no single on-disk file), so this
+          // ETag is informational — a conditional PUT against the composed
+          // path 412s by design.
+          sendText(ctx.res, 200, 'text/markdown; charset=utf-8', composed, {
+            ETag: `"${documentEtag(composed)}"`
+          });
           return;
         }
       }
@@ -231,7 +240,7 @@ export const putVaultHandler =
       parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
     } catch (err) {
       if (err instanceof WriterError) {
-        sendError(ctx.res, err.status, err.code, err.message);
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
         return;
       }
       throw err;
@@ -304,6 +313,8 @@ export const putVaultHandler =
     }
 
     let absolutePath: string;
+    const ifMatch = ctx.req.headers['if-match'];
+    let etag: string;
     try {
       const result =
         parsed.kind === 'json'
@@ -312,18 +323,21 @@ export const putVaultHandler =
               existing,
               frontmatter: parsed.frontmatter,
               body: parsed.body,
-              vaultDataPath: deps.vaultDataPath
+              vaultDataPath: deps.vaultDataPath,
+              ...(typeof ifMatch === 'string' ? {ifMatch} : {})
             })
           : writeRecordToDisk({
               filePath: path,
               existing,
               requestMarkdown: parsed.markdown,
-              vaultDataPath: deps.vaultDataPath
+              vaultDataPath: deps.vaultDataPath,
+              ...(typeof ifMatch === 'string' ? {ifMatch} : {})
             });
       absolutePath = result.absolutePath;
+      etag = result.etag;
     } catch (err) {
       if (err instanceof WriterError) {
-        sendError(ctx.res, err.status, err.code, err.message);
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
         return;
       }
       throw err;
@@ -337,7 +351,7 @@ export const putVaultHandler =
     });
     // A create adds a path the cached wikilink resolver doesn't know.
     if (!existing) deps.resolverCache.invalidate();
-    sendNoContent(ctx.res);
+    sendNoContent(ctx.res, {ETag: `"${etag}"`});
   };
 
 /** DELETE /vault/{path} — remove a file from disk and DB. */

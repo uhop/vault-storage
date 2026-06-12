@@ -78,13 +78,13 @@ const teardown = async ({db, handle}: ServerCtx): Promise<void> => {
 const fetchAuthed = async (
   url: string,
   init: RequestInit = {}
-): Promise<{status: number; body: unknown; raw: string}> => {
+): Promise<{status: number; body: unknown; raw: string; etag: string | null}> => {
   const headers = new Headers(init.headers ?? {});
   headers.set('Authorization', `Bearer ${TEST_TOKEN}`);
   const res = await fetch(url, {...init, headers});
   const raw = await res.text();
   const body = raw.length === 0 ? null : JSON.parse(raw);
-  return {status: res.status, body, raw};
+  return {status: res.status, body, raw, etag: res.headers.get('etag')};
 };
 
 const seed = (root: string): void => {
@@ -480,6 +480,52 @@ test('PUT /sections/{unknown-id} returns 404', async t => {
         body: 'whatever'
       });
       t.equal(put.status, 404, '404 not found');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} honors If-Match (fresh 204, stale 412)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+
+      // Unconditional write to learn the current ETag from the response.
+      const put1 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'First edit.\n'})
+      });
+      t.equal(put1.status, 204, 'unconditional PUT 204');
+      t.ok(put1.etag, 'PUT response carries ETag');
+
+      // Conditional write with that tag succeeds.
+      const put2 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': put1.etag!},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Second edit.\n'})
+      });
+      t.equal(put2.status, 204, 'fresh If-Match → 204');
+
+      // Reusing the now-stale first tag is rejected with the current tag.
+      const put3 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': put1.etag!},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Stale clobber.\n'})
+      });
+      t.equal(put3.status, 412, 'stale If-Match → 412');
+      const err = put3.body as {code: string; details: {current_etag: string}};
+      t.equal(err.code, 'precondition_failed', 'code=precondition_failed');
+      t.equal(`"${err.details.current_etag}"`, put2.etag, '412 carries the current ETag');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('Second edit.'), 'winning write preserved');
     } finally {
       await teardown(ctx);
     }
