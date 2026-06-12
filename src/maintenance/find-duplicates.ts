@@ -38,6 +38,31 @@
 // unordered pair blocks re-filing, so re-running the scan is cheap and
 // only adds new pairs the previous scan didn't have data for (e.g.,
 // records added since).
+//
+// **Pair-level damping (2026-06-11).** Embedding distance alone
+// over-files on date-clustered structural templates: the 2026-05-13
+// fleet-wide queue migration produced 23 pending duplicates, all false
+// positives — shared release-event vocabulary (`shipped`, `dependabot`,
+// `npm publish`) pushed structurally-similar files under the threshold
+// without the pairs being duplicate *concepts*. A second data point
+// (2026-05-14, chezmoi `decisions.md` vs `learnings.md` at 0.099)
+// confirmed reproducibility. Three pair rules run between the prefilter
+// and the chunk-level confirmation (see `pairExclusionReason`):
+//   - `type_mismatch` — structural lifecycle types (`project`, `log`,
+//     `queue-item`, `state`, `meta`, `index`) only pair with themselves;
+//     knowledge types (`permanent`, `fleeting`, `query`, `idea`, …)
+//     stay mutually compatible, so a raw fleeting note can still match
+//     the permanent topic it was compiled into.
+//   - `project_structure` — two project-convention role files
+//     (`queue.md`, `learnings.md`, `decisions.md`, …, or old-style
+//     `projects/<name>/queue{,-archive}/<item>.md`) are never duplicate
+//     concepts: same role across projects is the convention working as
+//     designed, different roles in one project are deliberate structure.
+//     Genuine duplicate *projects* (tape6/ vs tape-six/, 2026-04-27) are
+//     the folder-name lint's job, not the embedding scan's.
+//   - `summary_template` — two `_summary-*.md` compaction slices share
+//     the template and adjacent date ranges; the compactor owns them and
+//     merging is never the review outcome.
 
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
@@ -60,6 +85,73 @@ export const DEFAULT_SKIP_TYPES: readonly RecordType[] = ['state', 'meta'];
  * not duplicates of substance.
  */
 export const DEFAULT_SKIP_PATH_PREFIXES: readonly string[] = ['logs/sync/'];
+
+/**
+ * Record types whose pairing is restricted to the same type. Everything
+ * outside this set is a knowledge-content type and pairs freely with the
+ * other knowledge types.
+ */
+const STRUCTURAL_TYPES: ReadonlySet<string> = new Set([
+  'project',
+  'log',
+  'queue-item',
+  'state',
+  'meta',
+  'index'
+]);
+
+const typeGroup = (t: RecordType): string => (STRUCTURAL_TYPES.has(t) ? t : 'knowledge');
+
+/**
+ * Basenames of the per-project convention files (the
+ * `topics/project-queue-convention` family). Role files carry structure,
+ * not concepts — two of them are never a merge candidate.
+ */
+export const PROJECT_ROLE_BASENAMES: ReadonlySet<string> = new Set([
+  'queue.md',
+  'queue-archive.md',
+  'learnings.md',
+  'decisions.md',
+  'stack.md',
+  'state.md',
+  'feedback.md',
+  'schedule.md',
+  'clarify-queue.md',
+  'clarify-queue-archive.md'
+]);
+
+const basenameOf = (filePath: string): string => {
+  const idx = filePath.lastIndexOf('/');
+  return idx === -1 ? filePath : filePath.slice(idx + 1);
+};
+
+const isProjectStructureFile = (filePath: string): boolean => {
+  if (!filePath.startsWith('projects/')) return false;
+  if (PROJECT_ROLE_BASENAMES.has(basenameOf(filePath))) return true;
+  // Old-style atomized queue folders: projects/<name>/queue/<item>.md
+  // (and their archives) — same queue role, pre-consolidation format.
+  const segments = filePath.split('/');
+  return segments.length >= 4 && (segments[2] === 'queue' || segments[2] === 'queue-archive');
+};
+
+export type PairExclusionReason = 'type_mismatch' | 'project_structure' | 'summary_template';
+
+/**
+ * Pair-level damping: returns why a candidate pair is ineligible for a
+ * `duplicate` suggestion, or null when the pair should proceed to the
+ * chunk-level confirmation. See the header § Pair-level damping for the
+ * incident history behind each rule.
+ */
+export const pairExclusionReason = (a: VaultRecord, b: VaultRecord): PairExclusionReason | null => {
+  if (typeGroup(a.type) !== typeGroup(b.type)) return 'type_mismatch';
+  if (isProjectStructureFile(a.filePath) && isProjectStructureFile(b.filePath)) {
+    return 'project_structure';
+  }
+  if (basenameOf(a.filePath).startsWith('_summary-') && basenameOf(b.filePath).startsWith('_summary-')) {
+    return 'summary_template';
+  }
+  return null;
+};
 
 export interface FindDuplicatesOptions {
   /**
@@ -115,6 +207,10 @@ export interface FindDuplicatesSummary {
   skippedByPath: number;
   /** Pairs surviving the doc-level prefilter (centroid distance ≤ prefilterMaxDistance). */
   candidatePairs: number;
+  /** Candidate pairs dropped by the pair-level damping rules. */
+  pairsExcluded: number;
+  /** Per-rule breakdown of `pairsExcluded`. */
+  pairsExcludedBy: Record<PairExclusionReason, number>;
   /** Unique pairs above threshold encountered (post-canonicalization, post-filter, post-chunk-confirm). */
   pairsFound: number;
   /** New `duplicate` suggestions filed. Pre-existing pairs do not refile. */
@@ -190,6 +286,8 @@ export const findDuplicates = (
     skippedByType: 0,
     skippedByPath: 0,
     candidatePairs: 0,
+    pairsExcluded: 0,
+    pairsExcludedBy: {type_mismatch: 0, project_structure: 0, summary_template: 0},
     pairsFound: 0,
     filed: 0,
     durationMs: 0
@@ -296,6 +394,19 @@ export const findDuplicates = (
       seenPairs.add(key);
       ++summary.candidatePairs;
 
+      const aRec = byId.get(aId);
+      const bRec = byId.get(bId);
+      if (!aRec || !bRec) continue;
+
+      // Pair-level damping — runs before the chunk-level work, so an
+      // excluded pair also skips the O(chunks²) confirmation.
+      const exclusion = pairExclusionReason(aRec, bRec);
+      if (exclusion) {
+        ++summary.pairsExcluded;
+        ++summary.pairsExcludedBy[exclusion];
+        continue;
+      }
+
       // Phase 2: chunk-level pairwise min cosine — precise threshold.
       const aChunks = getChunks(aId);
       const bChunks = getChunks(bId);
@@ -305,9 +416,6 @@ export const findDuplicates = (
 
       summary.pairsFound++;
       if (limit !== undefined && summary.filed >= limit) break;
-      const aRec = byId.get(aId);
-      const bRec = byId.get(bId);
-      if (!aRec || !bRec) continue;
       const filed = filer.file(
         {a_record: aId, a_path: aRec.filePath, b_record: bId, b_path: bRec.filePath, distance},
         now
