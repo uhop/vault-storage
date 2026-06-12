@@ -12,6 +12,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import {buildEdges} from '../src/importer/build-edges.ts';
 import {importVault} from '../src/importer/import.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer, type ServerHandle} from '../src/server/server.ts';
@@ -150,13 +151,26 @@ test('supersede in place: old archived with status + record_id intact, successor
         successor.text.includes(`topics/archive/${YEAR}/flange: supersedes`),
         'successor FM carries the supersedes edge to the archived path'
       );
+      t.ok(
+        successor.text.includes(`> Supersedes [[topics/archive/${YEAR}/flange]].`),
+        'successor body carries the supersession footer (the edge-backing wikilink)'
+      );
 
       const archived = await authedFetch(`${url}/vault/topics/archive/${YEAR}/flange.md`);
       t.equal(archived.status, 200, 'archived copy readable');
       t.ok(archived.text.includes('old flange doctrine'), 'archived copy keeps the old body');
       t.ok(archived.text.includes('status: superseded'), 'archived copy stamped superseded');
 
-      void db;
+      // Edge materialization: FM `edges:` entries only retype body links, so
+      // the footer's wikilink is what backs the typed edge — run the edge
+      // pass (in production the watcher drain does this) and assert the DB.
+      buildEdges(db, {vaultRoot: root, now: new Date().toISOString()});
+      const edges = db
+        .prepare(`SELECT from_id, to_id, type FROM edges WHERE type = 'supersedes'`)
+        .all() as Array<{from_id: string; to_id: string; type: string}>;
+      t.equal(edges.length, 1, 'one supersedes edge materialized');
+      t.equal(edges[0]?.from_id, res.new.record_id, 'edge runs from the successor');
+      t.equal(edges[0]?.to_id, oldId, 'edge points at the archived record');
     } finally {
       await teardown(db, handle);
     }

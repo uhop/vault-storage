@@ -632,19 +632,25 @@ export const supersedeVaultHandler =
     });
     importFile(records, archivePath, archiveAbs, undefined, filers);
 
-    // 3. Write the successor with the `supersedes` edge merged in. The FM
-    //    edge key is the extension-less archived path (the house format for
-    //    `edges:` maps); caller-supplied edges survive the merge.
+    // 3. Write the successor with the supersession wired in. Edges are
+    //    backed by BODY wikilinks (the FM `edges:` map only retypes body
+    //    links — an FM entry with no backing link produces no edge), so the
+    //    typed edge comes from an appended footer whose `Supersedes [[…]]`
+    //    phrasing the wikilink classifier types natively. The FM entry is
+    //    added alongside to pin the type and document intent in
+    //    frontmatter. Found live 2026-06-11: the FM-only variant produced
+    //    edges=0 on the drain.
     const callerEdges =
       newFm['edges'] && typeof newFm['edges'] === 'object' && !Array.isArray(newFm['edges'])
         ? (newFm['edges'] as Record<string, unknown>)
         : {};
     const archiveEdgeKey = archivePath.slice(0, -'.md'.length);
+    const footer = `> Supersedes [[${archiveEdgeKey}]].`;
     const result = writeSplitRecordToDisk({
       filePath: newPath,
       existing: null,
       frontmatter: {...newFm, edges: {...callerEdges, [archiveEdgeKey]: 'supersedes'}},
-      body: newBody,
+      body: `${newBody.replace(/\s+$/, '')}\n\n${footer}\n`,
       vaultDataPath: deps.vaultDataPath
     });
     importFile(records, newPath, result.absolutePath, undefined, filers);
