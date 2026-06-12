@@ -1,8 +1,9 @@
 import test from 'tape-six';
 import {execFileSync, execSync} from 'node:child_process';
-import {mkdtempSync, rmSync, writeFileSync, mkdirSync} from 'node:fs';
+import {existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync, mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {isWithinWorkHours, startGitSync} from '../src/server/git-sync.ts';
 
 const initRepo = (): string => {
@@ -288,6 +289,109 @@ test('git-sync degrades gracefully when path is not a repo', async t => {
     handle.close();
     t.pass('no-repo path tolerated');
   } finally {
+    cleanup(root);
+  }
+});
+
+test('git-sync removes a stale index.lock and commits on the retry', async t => {
+  const root = initRepo();
+  const errors: string[] = [];
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    log: () => {},
+    onError: err => errors.push(String(err))
+  });
+  try {
+    writeFileSync(join(root, 'note.md'), '---\ntitle: Note\n---\nbody\n');
+    const lockPath = join(root, '.git', 'index.lock');
+    writeFileSync(lockPath, '');
+    const past = new Date(Date.now() - 20 * 60_000);
+    utimesSync(lockPath, past, past);
+
+    await handle.syncNow();
+
+    t.equal(log(root).length, 2, 'commit landed despite the stale lock');
+    t.notOk(existsSync(lockPath), 'stale lock removed');
+    t.equal(errors.length, 0, 'recovery is not an error');
+  } finally {
+    handle.close();
+    cleanup(root);
+  }
+});
+
+test('git-sync leaves a fresh index.lock alone and reports the failure', async t => {
+  const root = initRepo();
+  const errors: string[] = [];
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    log: () => {},
+    onError: err => errors.push(String(err))
+  });
+  try {
+    writeFileSync(join(root, 'note.md'), '---\ntitle: Note\n---\nbody\n');
+    const lockPath = join(root, '.git', 'index.lock');
+    writeFileSync(lockPath, '');
+
+    await handle.syncNow();
+
+    t.equal(log(root).length, 1, 'no commit while the lock is fresh');
+    t.ok(existsSync(lockPath), 'fresh lock left in place');
+    t.equal(errors.length, 1, 'failure surfaced to onError');
+    t.ok(errors[0]?.includes('index.lock'), 'error names the lock');
+  } finally {
+    handle.close();
+    cleanup(root);
+  }
+});
+
+test('git-sync failure ledger: streak recorded in meta, cleared on success', async t => {
+  const root = initRepo();
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  const readMeta = (key: string): string | null => {
+    const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+      | {value: string}
+      | undefined;
+    return row?.value ?? null;
+  };
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    // A 1h staleness floor keeps the just-planted lock "fresh" for the
+    // whole test, so every poll fails without triggering recovery.
+    lockStaleMs: 3_600_000,
+    db,
+    log: () => {},
+    onError: () => {}
+  });
+  try {
+    writeFileSync(join(root, 'note.md'), '---\ntitle: Note\n---\nbody\n');
+    const lockPath = join(root, '.git', 'index.lock');
+    writeFileSync(lockPath, '');
+
+    await handle.syncNow();
+    await handle.syncNow();
+    await handle.syncNow();
+
+    t.equal(readMeta('git_sync_consecutive_failures'), '3', 'streak counts every failed poll');
+    t.ok(readMeta('git_sync_last_error')?.includes('index.lock'), 'last error preserved');
+    t.ok(readMeta('git_sync_failing_since'), 'first-failure timestamp recorded');
+    const since = readMeta('git_sync_failing_since');
+    await handle.syncNow();
+    t.equal(readMeta('git_sync_failing_since'), since, 'failing_since pins the streak start');
+
+    rmSync(lockPath);
+    await handle.syncNow();
+
+    t.equal(log(root).length, 2, 'commit landed once the lock was gone');
+    t.equal(readMeta('git_sync_consecutive_failures'), null, 'streak cleared on success');
+    t.equal(readMeta('git_sync_last_error'), null, 'last error cleared');
+    t.equal(readMeta('git_sync_failing_since'), null, 'failing_since cleared');
+  } finally {
+    handle.close();
+    db.close();
     cleanup(root);
   }
 });

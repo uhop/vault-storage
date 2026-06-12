@@ -837,3 +837,30 @@ test('POST /maintenance/embed-pending parallel calls do not double-embed', async
     t.equal(sumA + sumB, 1, 'one call embeds; the other observes nothing pending');
   });
 });
+
+test('GET /system/lint detects auto_commit_failing from the git-sync meta streak', async t => {
+  await withServer(async (url, db) => {
+    const upsert = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+    // Below threshold: a short streak is transient noise.
+    upsert.run('git_sync_consecutive_failures', '2');
+    upsert.run('git_sync_last_error', "git add failed: fatal: Unable to create '.git/index.lock': File exists.");
+    upsert.run('git_sync_failing_since', '2026-06-08T04:14:00.000Z');
+    let {body} = await fetchJson(`${url}/system/lint`);
+    let report = body as {
+      ok: boolean;
+      checks: Record<string, {count: number; samples: Array<Record<string, unknown>>}>;
+    };
+    t.equal(report.checks['auto_commit_failing']?.count, 0, 'streak of 2 stays quiet');
+    t.ok(report.ok, 'ok stays true below threshold');
+
+    upsert.run('git_sync_consecutive_failures', '3');
+    ({body} = await fetchJson(`${url}/system/lint`));
+    report = body as typeof report;
+    t.equal(report.checks['auto_commit_failing']?.count, 1, 'streak of 3 fires');
+    t.notOk(report.ok, 'ok flips false');
+    const sample = report.checks['auto_commit_failing']?.samples[0];
+    t.equal(sample?.['consecutive_failures'], 3, 'sample carries the streak');
+    t.equal(sample?.['failing_since'], '2026-06-08T04:14:00.000Z', 'sample carries the streak start');
+    t.ok(String(sample?.['last_error']).includes('index.lock'), 'sample carries the last error');
+  });
+});

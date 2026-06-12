@@ -19,6 +19,9 @@ interface LintReport {
 
 const SAMPLE_LIMIT = 10;
 
+/** Consecutive git-sync poll failures before `auto_commit_failing` fires. */
+const AUTO_COMMIT_FAILURE_THRESHOLD = 3;
+
 /**
  * GET /system/lint — bug-finding integrity checks.
  *
@@ -219,6 +222,36 @@ export const lintHandler =
           id: r.alias,
           canonical: r.canonical
         }))
+      };
+    }
+
+    // Auto-commit health (Tier-1 backup, C2). git-sync persists a
+    // consecutive-failure streak under meta `git_sync_*` keys; one failed
+    // poll is transient noise, a streak of AUTO_COMMIT_FAILURE_THRESHOLD+
+    // means the backup cadence is down across multiple polls. Motivating
+    // incident: a stale index.lock starved auto-commit silently for four
+    // days (2026-06-08→11) with the only signal in container stderr.
+    {
+      const rows = db
+        .prepare(
+          `SELECT key, value FROM meta
+            WHERE key IN ('git_sync_consecutive_failures', 'git_sync_last_error', 'git_sync_failing_since')`
+        )
+        .all() as {key: string; value: string}[];
+      const meta = new Map(rows.map(r => [r.key, r.value]));
+      const failures = Number(meta.get('git_sync_consecutive_failures') ?? '0');
+      const failing = Number.isFinite(failures) && failures >= AUTO_COMMIT_FAILURE_THRESHOLD;
+      checks['auto_commit_failing'] = {
+        count: failing ? 1 : 0,
+        samples: failing
+          ? [
+              {
+                consecutive_failures: failures,
+                failing_since: meta.get('git_sync_failing_since') ?? null,
+                last_error: meta.get('git_sync_last_error') ?? null
+              }
+            ]
+          : []
       };
     }
 

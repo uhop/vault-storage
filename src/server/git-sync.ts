@@ -17,7 +17,23 @@
 //     log but don't crash — push is best-effort.
 //   - All git invocations are wrapped: missing git, non-repo, network errors
 //     all surface as warnings, not crashes.
+//   - **Stale-lock recovery.** A leftover `.git/index.lock` (git process
+//     killed mid-poll, e.g. by a container stop) starves every subsequent
+//     `add`/`commit` — observed in production 2026-06-08→11: four days of
+//     silently failed polls. When add/commit fails on a lock collision and
+//     the lock is older than `lockStaleMs`, it cannot have a live holder
+//     (in-container this module is the only git spawner, and `runGit`
+//     children die with the server), so it is removed and the commit
+//     retried once. A fresh lock is left alone — it may belong to a
+//     user's manual git op through the host mount.
+//   - **Failure ledger.** When `db` is provided, status/add/commit failures
+//     increment `meta.git_sync_consecutive_failures` (+ `…_last_error`,
+//     `…_failing_since`); any successful poll clears them. `/system/lint`
+//     reads the streak as the `auto_commit_failing` check, so a dead
+//     auto-commit surfaces in `/vault resume` instead of stderr.
 
+import {statSync, unlinkSync} from 'node:fs';
+import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
 import {getCurrentHead, isGitRepo, runGit} from '../util/git.ts';
@@ -47,6 +63,13 @@ export interface GitSyncOptions {
   workHours?: WorkHoursWindow;
   /** Hook for tests — defaults to `() => Date.now()`. */
   now?: () => Date;
+  /**
+   * Age beyond which a `.git/index.lock` blocking add/commit is treated as
+   * orphaned and removed (one bounded retry follows). Default 10 minutes —
+   * far above any real git op on a vault-sized repo, far below the poll
+   * ceiling, so recovery lands within a couple of polls.
+   */
+  lockStaleMs?: number;
   autoPush?: boolean;
   /** Override the commit subject; default includes the file count. */
   commitSubject?: (changedFiles: number) => string;
@@ -77,6 +100,16 @@ export interface GitSyncHandle {
 
 const defaultSubject = (n: number): string =>
   `vault-storage auto-commit (${n} file${n === 1 ? '' : 's'})`;
+
+/** Initial attempt + one retry after a stale-lock removal. */
+const MAX_COMMIT_ATTEMPTS = 2;
+
+/** Matches git's `fatal: Unable to create '….git/index.lock': File exists.` */
+const isLockCollision = (gitOutput: string): boolean =>
+  gitOutput.includes('index.lock') && gitOutput.includes('File exists');
+
+const FAILURE_META_KEYS =
+  "('git_sync_consecutive_failures', 'git_sync_last_error', 'git_sync_failing_since')";
 
 const TIME_OF_DAY_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -109,6 +142,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
   const {vaultDataPath} = opts;
   const intervalMs = opts.intervalMs ?? 60_000;
   const intervalMaxMs = opts.intervalMaxMs ?? 0;
+  const lockStaleMs = opts.lockStaleMs ?? 600_000;
   const backoffEnabled = intervalMaxMs > intervalMs;
   const autoPush = opts.autoPush ?? false;
   const commitSubject = opts.commitSubject ?? defaultSubject;
@@ -143,33 +177,96 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
     return isWithinWorkHours(now(), workHours.start, workHours.end);
   };
 
+  const recordFailure = (message: string): void => {
+    if (!opts.db) return;
+    const row = opts.db
+      .prepare(`SELECT value FROM meta WHERE key = 'git_sync_consecutive_failures'`)
+      .get() as {value?: string} | undefined;
+    const prior = Number(row?.value ?? '0');
+    const upsert = opts.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+    upsert.run('git_sync_consecutive_failures', String((Number.isFinite(prior) ? prior : 0) + 1));
+    upsert.run('git_sync_last_error', message);
+    const since = opts.db
+      .prepare(`SELECT value FROM meta WHERE key = 'git_sync_failing_since'`)
+      .get();
+    if (!since) upsert.run('git_sync_failing_since', now().toISOString());
+  };
+
+  const clearFailures = (): void => {
+    if (!opts.db) return;
+    opts.db.prepare(`DELETE FROM meta WHERE key IN ${FAILURE_META_KEYS}`).run();
+  };
+
+  /** Ledger + warning in one step; always resolves the poll as 'quiet'. */
+  const fail = (err: Error): 'quiet' => {
+    recordFailure(err.message);
+    onError(err);
+    return 'quiet';
+  };
+
+  /**
+   * Remove `.git/index.lock` when it is provably orphaned (older than
+   * `lockStaleMs`). Returns true when a retry is warranted: the lock was
+   * removed, or it vanished on its own since the failed git call. A fresh
+   * lock returns false — its holder may still be alive.
+   */
+  const removeStaleLock = (): boolean => {
+    const lockPath = join(vaultDataPath, '.git', 'index.lock');
+    try {
+      const ageMs = now().getTime() - statSync(lockPath).mtimeMs;
+      if (ageMs < lockStaleMs) return false;
+      unlinkSync(lockPath);
+      log(`git-sync: removed stale .git/index.lock (age ${Math.round(ageMs / 60_000)}min)`);
+      return true;
+    } catch {
+      // statSync: lock already gone — its holder finished; retry is safe.
+      // unlinkSync: lost a removal race to the same effect.
+      return true;
+    }
+  };
+
   /** Returns 'committed', 'quiet', or 'skipped'. */
   const syncOnce = async (force: boolean): Promise<'committed' | 'quiet' | 'skipped'> => {
     if (!force && !inWindow()) return 'skipped';
 
     const status = await runGit(vaultDataPath, ['status', '--porcelain']);
     if (status.exitCode !== 0) {
-      onError(new Error(`git status failed: ${status.stderr.trim()}`));
-      return 'quiet';
+      return fail(new Error(`git status failed: ${status.stderr.trim()}`));
     }
     const dirtyLines = status.stdout.split('\n').filter(l => l.length > 0);
-    if (dirtyLines.length === 0) return 'quiet';
+    if (dirtyLines.length === 0) {
+      clearFailures();
+      return 'quiet';
+    }
 
-    const add = await runGit(vaultDataPath, ['add', '-A']);
-    if (add.exitCode !== 0) {
-      onError(new Error(`git add failed: ${add.stderr.trim()}`));
-      return 'quiet';
-    }
     const subject = commitSubject(dirtyLines.length);
-    const commit = await runGit(vaultDataPath, [...identityArgs, 'commit', '-m', subject]);
-    if (commit.exitCode !== 0) {
-      // "nothing to commit" can happen if files were only in .gitignore.
-      const benign =
-        /nothing to commit/i.test(commit.stdout) || /nothing to commit/i.test(commit.stderr);
-      if (!benign)
-        onError(new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`));
-      return 'quiet';
+    for (let attempt = 1; ; ++attempt) {
+      const add = await runGit(vaultDataPath, ['add', '-A']);
+      if (add.exitCode !== 0) {
+        if (attempt < MAX_COMMIT_ATTEMPTS && isLockCollision(add.stderr) && removeStaleLock())
+          continue;
+        return fail(new Error(`git add failed: ${add.stderr.trim()}`));
+      }
+      const commit = await runGit(vaultDataPath, [...identityArgs, 'commit', '-m', subject]);
+      if (commit.exitCode !== 0) {
+        // "nothing to commit" can happen if files were only in .gitignore.
+        const benign =
+          /nothing to commit/i.test(commit.stdout) || /nothing to commit/i.test(commit.stderr);
+        if (benign) {
+          clearFailures();
+          return 'quiet';
+        }
+        if (
+          attempt < MAX_COMMIT_ATTEMPTS &&
+          isLockCollision(commit.stderr + commit.stdout) &&
+          removeStaleLock()
+        )
+          continue;
+        return fail(new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`));
+      }
+      break;
     }
+    clearFailures();
     log(`git-sync: committed ${dirtyLines.length} change(s)`);
 
     // Advance the multi-writer reindex anchor so a later post-pull diff
