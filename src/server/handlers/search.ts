@@ -43,55 +43,77 @@ const findMatches = (haystack: string, needle: string): MatchSpan[] => {
   return out;
 };
 
-const escapeLike = (s: string): string => s.replace(/[\\%_]/g, '\\$&');
+// Build a safe FTS5 MATCH from a free-text query. Each whitespace term is
+// double-quoted (neutralizes FTS5 operators / special chars in user input)
+// and given a trailing `*` for prefix matching; space-separated terms AND in
+// FTS5, so every term must be present. Pure-punctuation terms are dropped —
+// they tokenize to nothing and would make a zero-token phrase.
+const HAS_TOKEN = /[\p{L}\p{N}]/u;
+
+const buildMatch = (query: string): {match: string; terms: string[]} | null => {
+  const terms = query.split(/\s+/).filter(t => t.length > 0 && HAS_TOKEN.test(t));
+  if (terms.length === 0) return null;
+  const match = terms.map(t => `"${t.replace(/"/g, '""')}"*`).join(' ');
+  return {match, terms};
+};
+
+interface FtsRow {
+  file_path: string;
+  body: string;
+  title: string | null;
+  rank: number;
+}
+
+// Title hits add a full point on top of the (0,1) body relevance, so a
+// title match always outranks a body-only one regardless of corpus stats.
+const TITLE_BOOST = 1;
 
 const lexicalSearch = (db: DatabaseSync, query: string, limit: number): SearchHit[] => {
-  // Tokenize on whitespace: every term must be present (AND), each matched
-  // independently anywhere in body or title. The previous single-substring
-  // LIKE required all words to be adjacent, so a multi-word query whose terms
-  // were scattered across the note returned nothing.
-  const terms = query.split(/\s+/).filter(t => t.length > 0);
-  if (terms.length === 0) return [];
+  const built = buildMatch(query);
+  if (!built) return [];
 
-  // One `(LOWER(body) LIKE ? OR LOWER(title) LIKE ?)` clause per term, AND-ed.
-  // LOWER on both sides makes the prefilter case-insensitive regardless of
-  // SQLite's LIKE collation, matching the case-folding `findMatches` does
-  // below — so a lowercase query can't miss a Titlecase-only occurrence.
-  const clause = terms
-    .map(() => `(LOWER(body) LIKE ? ESCAPE '\\' OR LOWER(title) LIKE ? ESCAPE '\\')`)
-    .join(' AND ');
-  const params: string[] = [];
-  for (const term of terms) {
-    const pattern = `%${escapeLike(term.toLowerCase())}%`;
-    params.push(pattern, pattern);
+  // Indexed FTS5 MATCH replaces the O(rows) LIKE scan. Fetch ALL matches (no
+  // SQL LIMIT) and rank in JS, so a title match with weak bm25 can't be sliced
+  // off before scoring — the property the "scores all before limit" test pins.
+  let rows: FtsRow[];
+  try {
+    rows = db
+      .prepare(
+        `SELECT r.file_path, r.body, r.title, bm25(records_fts) AS rank
+           FROM records_fts
+           JOIN records r ON r.rowid = records_fts.rowid
+          WHERE records_fts MATCH ?`
+      )
+      .all(built.match) as unknown[] as FtsRow[];
+  } catch {
+    // Defensive: any residual FTS5 query-syntax error degrades to no results
+    // rather than a 500. Quoting already neutralizes operators.
+    return [];
   }
 
-  const rows = db
-    .prepare(`SELECT file_path, body, title FROM records WHERE ${clause} ORDER BY updated DESC`)
-    .all(...params) as unknown[] as {
-    file_path: string;
-    body: string;
-    title: string | null;
-  }[];
-
-  // Score EVERY matching row, then sort by score and take the top `limit`.
-  // The old code sliced to `limit` in `updated DESC` order *before* scoring,
-  // so for a high-frequency term the strongest (title) match could be dropped
-  // when it wasn't among the most recently updated rows.
+  // Context spans come from the body via the same substring scan as before, so
+  // the {match:{start,end}, context} output contract is unchanged.
   const hits: SearchHit[] = [];
   for (const row of rows) {
-    let score = 0;
     const matches: MatchSpan[] = [];
-    for (const term of terms) {
-      const bodyMatches = findMatches(row.body, term);
-      const titleHits = row.title ? findMatches(row.title, term).length : 0;
-      score += bodyMatches.length + titleHits * 3;
-      for (const m of bodyMatches) {
+    let titleHits = 0;
+    for (const term of built.terms) {
+      if (row.title && findMatches(row.title, term).length > 0) ++titleHits;
+      for (const m of findMatches(row.body, term)) {
         if (matches.length < MAX_MATCHES_PER_FILE) matches.push(m);
       }
     }
-    if (score === 0) continue; // defensive: SQL AND guarantees each term hit
-    hits.push({filename: row.file_path, score, matches});
+    // bm25 (`rank`) is unbounded, negative-is-better, and turns positive for
+    // corpus-ubiquitous terms (negative idf) — a logistic tames it to a (0,1)
+    // relevance (same scale as semanticSearch). The title boost layered on top
+    // is the deterministic field preference bm25's idf can't guarantee in
+    // small/dense corpora.
+    const relevance = 1 / (1 + Math.exp(row.rank));
+    hits.push({
+      filename: row.file_path,
+      score: Number((titleHits * TITLE_BOOST + relevance).toFixed(4)),
+      matches
+    });
   }
   hits.sort((a, b) => b.score - a.score);
   return hits.slice(0, limit);

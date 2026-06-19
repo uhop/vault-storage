@@ -410,3 +410,26 @@ test('POST /search/simple/ scores all matches before applying limit (title match
     cleanup();
   }
 });
+
+test('POST /search/simple/ prefix-matches tokens, not infixes (FTS5 semantics)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      // Prefix: "dock" matches the "docker" token via the FTS5 prefix query.
+      const pre = await fetchAuthed(`${ctx.url}/search/simple/?query=dock`, {method: 'POST'});
+      const preNames = new Set((pre.body as Array<{filename: string}>).map(h => h.filename));
+      t.ok(preNames.has('topics/docker-networking.md'), 'prefix "dock" matched docker-networking');
+
+      // Infix: "ocker" is a substring of "docker" but not a token prefix, so —
+      // unlike the old LIKE '%term%' scan — it does not match.
+      const infix = await fetchAuthed(`${ctx.url}/search/simple/?query=ocker`, {method: 'POST'});
+      t.deepEqual(infix.body, [], 'infix "ocker" does not match (token-prefix, not substring)');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

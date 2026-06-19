@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    12,
-    'schema version is 12 after all migrations through records-modified-at'
+    13,
+    'schema version is 13 after all migrations through fts5-lexical-search'
   );
   t.deepEqual(
     result.applied,
@@ -34,7 +34,8 @@ test('runs the init migration and creates required tables', t => {
       '0009_records_cascade_to_suggestions.sql',
       '0010_chunks_table.sql',
       '0011_records_body_last.sql',
-      '0012_records_modified_at.sql'
+      '0012_records_modified_at.sql',
+      '0013_fts5_lexical_search.sql'
     ],
     'all migrations applied in order'
   );
@@ -51,6 +52,7 @@ test('runs the init migration and creates required tables', t => {
     'meta',
     'queue_items',
     'records',
+    'records_fts',
     'suggestions',
     'sync_baseline',
     'tag_aliases',
@@ -68,7 +70,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 12, 'schema version stays at 12');
+  t.equal(second.current, 13, 'schema version stays at 13');
   db.close();
 });
 
@@ -110,8 +112,13 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
   const result = runMigrations(db);
   t.deepEqual(
     result.applied,
-    ['0010_chunks_table.sql', '0011_records_body_last.sql', '0012_records_modified_at.sql'],
-    'migrations from schema 9 onward applied (0010–0012)'
+    [
+      '0010_chunks_table.sql',
+      '0011_records_body_last.sql',
+      '0012_records_modified_at.sql',
+      '0013_fts5_lexical_search.sql'
+    ],
+    'migrations from schema 9 onward applied (0010–0013)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {
