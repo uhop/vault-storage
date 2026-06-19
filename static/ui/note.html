@@ -240,21 +240,38 @@
         min-height: 0;
         display: flex;
       }
-      textarea#editor {
+      vault-editor {
+        display: block;
         flex: 1;
         min-height: 0;
         min-width: 0;
         width: 100%;
         padding: 1rem;
-        border: 0;
         outline: none;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
         font-family: var(--mono);
         font-size: 0.9rem;
         line-height: 1.55;
         background: var(--bg);
         color: var(--fg);
-        resize: none;
         tab-size: 2;
+      }
+      vault-editor.empty::before {
+        content: attr(data-placeholder);
+        color: var(--muted);
+        pointer-events: none;
+      }
+      vault-editor.loading {
+        opacity: 0.6;
+      }
+      ::highlight(vault-find) {
+        background-color: rgba(255, 213, 0, 0.28);
+      }
+      ::highlight(vault-find-current) {
+        background-color: var(--accent);
+        color: #fff;
       }
       .preview {
         flex: 1;
@@ -268,7 +285,7 @@
       body[data-view='edit'] .preview {
         display: none;
       }
-      body[data-view='preview'] textarea#editor {
+      body[data-view='preview'] vault-editor {
         display: none;
       }
       body[data-view='preview'] .preview {
@@ -466,7 +483,7 @@
         body[data-editor-focused] .insert-row {
           display: flex;
         }
-        body[data-editor-focused] textarea#editor {
+        body[data-editor-focused] vault-editor {
           padding-bottom: 4rem;
         }
       }
@@ -682,11 +699,11 @@
         </div>
       </div>
       <div class="panes">
-        <textarea
+        <vault-editor
           id="editor"
           spellcheck="true"
-          placeholder="Start typing… frontmatter at the top, body below."
-        ></textarea>
+          data-placeholder="Start typing… frontmatter at the top, body below."
+        ></vault-editor>
         <vault-markdown class="preview" id="preview" show-frontmatter></vault-markdown>
       </div>
     </main>
@@ -775,6 +792,7 @@
 
     <script type="module">
       import '/ui/components/vault-markdown.js';
+      import '/ui/components/vault-editor.js';
       import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 
       const DRAFT_PREFIX = 'vault.draft.';
@@ -927,79 +945,11 @@ ready: false
         return headings;
       };
 
-      // Measure where a character offset would visually land inside a textarea.
-      // Builds a hidden div mirroring the textarea's wrap-relevant styles, places
-      // a marker span at the offset, and reads its position. The mirror approach
-      // is the standard way to get visual line position from a textarea — line
-      // counting alone misses soft-wrapped long lines, which drift the cursor
-      // noticeably on long notes (queue.md, learnings.md).
-      const measureCaretTop = (ta, offset) => {
-        const cs = getComputedStyle(ta);
-        const mirror = document.createElement('div');
-        for (const p of [
-          'boxSizing',
-          'fontFamily',
-          'fontSize',
-          'fontWeight',
-          'fontStyle',
-          'fontVariant',
-          'fontStretch',
-          'lineHeight',
-          'letterSpacing',
-          'wordSpacing',
-          'tabSize',
-          'whiteSpace',
-          'wordBreak',
-          'overflowWrap',
-          'wordWrap',
-          'textTransform',
-          'textIndent',
-          'direction',
-          'paddingTop',
-          'paddingRight',
-          'paddingBottom',
-          'paddingLeft',
-          'borderTopWidth',
-          'borderRightWidth',
-          'borderBottomWidth',
-          'borderLeftWidth',
-          'borderTopStyle',
-          'borderRightStyle',
-          'borderBottomStyle',
-          'borderLeftStyle'
-        ]) {
-          mirror.style[p] = cs[p];
-        }
-        mirror.style.position = 'absolute';
-        mirror.style.visibility = 'hidden';
-        mirror.style.top = '0';
-        mirror.style.left = '-9999px';
-        mirror.style.width = ta.offsetWidth + 'px';
-        mirror.style.height = 'auto';
-        mirror.style.whiteSpace = 'pre-wrap';
-        mirror.style.overflowWrap = 'break-word';
-
-        const text = ta.value;
-        mirror.appendChild(document.createTextNode(text.slice(0, offset)));
-        const marker = document.createElement('span');
-        marker.textContent = text.charAt(offset) || '​';
-        mirror.appendChild(marker);
-        if (offset < text.length) {
-          mirror.appendChild(document.createTextNode(text.slice(offset + 1)));
-        }
-
-        document.body.appendChild(mirror);
-        const top = marker.offsetTop;
-        document.body.removeChild(mirror);
-        return top;
-      };
-
       const jumpInEditor = offset => {
         const ta = $('#editor');
         ta.focus();
         ta.setSelectionRange(offset, offset);
-        const top = measureCaretTop(ta, offset);
-        ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
+        ta.scrollToOffset(offset);
       };
 
       const jumpInPreview = index => {
@@ -1266,6 +1216,8 @@ ready: false
         const body = $('#editor').value;
         state.dirty = body !== state.serverContent;
         schedulePreview();
+        // Keep find highlights in sync if the bar is open while editing.
+        if (!$('#find-bar').hidden) recomputeFind();
         if (!state.dirty) {
           setStatus(
             'saved',
@@ -1470,7 +1422,7 @@ ready: false
       };
 
       $$('#insert-row button').forEach(btn => {
-        // Prevent the button from stealing focus from the textarea on tap.
+        // Prevent the button from stealing focus from the editor on tap.
         btn.addEventListener('mousedown', e => e.preventDefault());
         btn.addEventListener('click', e => {
           e.preventDefault();
@@ -1526,13 +1478,16 @@ ready: false
       };
 
       const selectCurrentMatch = () => {
-        if (findState.idx < 0) return;
         const ta = $('#editor');
-        const start = findMatches[findState.idx];
-        ta.setSelectionRange(start, start + $('#find-input').value.length);
-        // Scroll the match into view without taking focus from the find box, so
-        // Enter keeps advancing; the textarea shows the match as a blurred selection.
-        ta.scrollTop = Math.max(0, measureCaretTop(ta, start) - ta.clientHeight / 3);
+        const len = $('#find-input').value.length;
+        // Paint every match (current one distinctly) via the Custom Highlight API —
+        // no DOM mutation, so editor focus/caret/undo are untouched and Enter keeps
+        // advancing. Then scroll the current match into view.
+        ta.setHighlights(findMatches, findState.idx, len);
+        if (findState.idx >= 0) {
+          const start = findMatches[findState.idx];
+          ta.scrollToOffset(start, start + len);
+        }
       };
 
       const recomputeFind = () => {
@@ -1606,6 +1561,7 @@ ready: false
         $('#find-bar').hidden = true;
         $('#find-input').classList.remove('no-match');
         const ta = $('#editor');
+        ta.clearHighlights();
         ta.focus();
         if (findState.idx >= 0 && findMatches[findState.idx] != null) {
           const s = findMatches[findState.idx];
