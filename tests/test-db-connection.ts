@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    13,
-    'schema version is 13 after all migrations through fts5-lexical-search'
+    14,
+    'schema version is 14 after all migrations through normalize-created-dates'
   );
   t.deepEqual(
     result.applied,
@@ -35,7 +35,8 @@ test('runs the init migration and creates required tables', t => {
       '0010_chunks_table.sql',
       '0011_records_body_last.sql',
       '0012_records_modified_at.sql',
-      '0013_fts5_lexical_search.sql'
+      '0013_fts5_lexical_search.sql',
+      '0014_normalize_created_dates.sql'
     ],
     'all migrations applied in order'
   );
@@ -70,7 +71,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 13, 'schema version stays at 13');
+  t.equal(second.current, 14, 'schema version stays at 14');
   db.close();
 });
 
@@ -116,9 +117,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0010_chunks_table.sql',
       '0011_records_body_last.sql',
       '0012_records_modified_at.sql',
-      '0013_fts5_lexical_search.sql'
+      '0013_fts5_lexical_search.sql',
+      '0014_normalize_created_dates.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0013)'
+    'migrations from schema 9 onward applied (0010–0014)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {
@@ -160,6 +162,44 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
   t.equal(counts.c, 0, 'chunks cascaded on record delete');
   t.equal(counts.v, 0, 'record_vec cascaded on record delete');
 
+  db.close();
+});
+
+test('0014 truncates a fossil full-timestamp created to date-only, leaves dates untouched', t => {
+  const db = openDatabase({path: ':memory:'});
+  // Replay to schema 9, seed records, then runMigrations applies 0010..0014.
+  const schemaDir = new URL('../src/db/schema/', import.meta.url);
+  db.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+  db.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '0')`);
+  for (const file of [
+    '0001_init.sql',
+    '0002_add_title.sql',
+    '0003_sync_baseline.sql',
+    '0004_doc_vecs.sql',
+    '0005_agent_enrichment.sql',
+    '0006_agent_enrichment_stale_kind.sql',
+    '0007_records_cascade_to_vecs.sql',
+    '0008_queue_items.sql',
+    '0009_records_cascade_to_suggestions.sql'
+  ]) {
+    db.exec(readFileSync(new URL(file, schemaDir), 'utf8'));
+  }
+  db.prepare(
+    `INSERT INTO records (record_id, file_path, type, body, content_hash, created, updated)
+     VALUES ('fossil', 'projects/x/state.md', 'state', 'b', 'h1', '2026-04-29T02:39:23.977Z', '2026-04-30')`
+  ).run();
+  db.prepare(
+    `INSERT INTO records (record_id, file_path, type, body, content_hash, created, updated)
+     VALUES ('clean', 'projects/y/state.md', 'state', 'b', 'h2', '2026-04-29', '2026-04-30')`
+  ).run();
+
+  runMigrations(db);
+
+  const createdOf = (id: string): string =>
+    (db.prepare('SELECT created FROM records WHERE record_id = ?').get(id) as {created: string})
+      .created;
+  t.equal(createdOf('fossil'), '2026-04-29', 'full-timestamp created truncated to date');
+  t.equal(createdOf('clean'), '2026-04-29', 'already-date created untouched');
   db.close();
 });
 
