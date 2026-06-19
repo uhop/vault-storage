@@ -67,7 +67,6 @@
   }
   section.ops { margin-top: 1.5rem; }
   section.ops h2 { font-size: 1rem; margin: 0 0 .4rem; color: var(--muted); font-weight: 600; }
-  .ops-help { color: var(--muted); font-size: .85rem; margin: 0 0 .6rem; }
   .status-grid { display: grid; grid-template-columns: max-content 1fr auto; gap: .35rem 1rem; align-items: baseline; padding: .8rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
   .status-grid .status-label { color: var(--muted); font-size: .8rem; }
   .status-grid .status-value { font-family: var(--mono); font-size: .9rem; font-variant-numeric: tabular-nums; }
@@ -86,11 +85,16 @@
   .status-foot { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; color: var(--muted); font-size: .8rem; font-family: var(--mono); }
   .status-foot .live-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-in-out infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-  .ops-btn { padding: .4rem .8rem; font-size: .9rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
-  .ops-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .ops-btn:disabled { opacity: .7; cursor: progress; }
-  .ops-btn.done { border-color: var(--ok); color: var(--ok); }
-  .ops-btn.failed { border-color: var(--bad); color: var(--bad); }
+  .header-btn { padding: .3rem .65rem; font-size: .85rem; line-height: 1.2; white-space: nowrap; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
+  .header-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .header-btn:disabled { opacity: .7; cursor: progress; }
+  .header-btn.done { border-color: var(--ok); color: var(--ok); }
+  .header-btn.failed { border-color: var(--bad); color: var(--bad); }
+  /* Result of the header Run-scans action: a transient toast under the header,
+     since the header has no room for the full "N filed · Xms" line. */
+  .toast { position: fixed; top: calc(env(safe-area-inset-top) + 3.4rem); right: 1rem; z-index: 20; padding: .4rem .7rem; font-size: .85rem; font-family: var(--mono); color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.18); opacity: 0; transform: translateY(-.4rem); transition: opacity .2s, transform .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+  .toast.failed { border-color: var(--bad); color: var(--bad); }
   .ops-result { margin-left: .6rem; color: var(--muted); font-size: .85rem; font-family: var(--mono); }
   .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -119,9 +123,11 @@
     <a href="/ui/note.html">note</a>
   </nav>
   <div class="spacer"></div>
+  <button id="run-scans" class="header-btn" title="Refresh suggestion queues — runs four read-only scans (duplicates, compaction, retention, upgrade signals)">⟳ Run scans</button>
   <div id="theme-toggle"></div>
   <button id="settings" title="Settings">⚙</button>
 </header>
+<div id="scan-toast" class="toast" role="status" aria-live="polite"></div>
 <main id="root">
   <div class="grid" id="stats"></div>
   <section class="recs">
@@ -131,12 +137,6 @@
   <section class="recent">
     <h2>Recently updated</h2>
     <div id="recent"></div>
-  </section>
-  <section class="ops">
-    <h2>Maintenance</h2>
-    <p class="ops-help">Refresh suggestion queues. Runs four read-only scans (duplicates, compaction candidates, retention candidates, upgrade signals). No destructive actions.</p>
-    <button id="run-scans" class="ops-btn">Run scans</button>
-    <span id="run-scans-result" class="ops-result"></span>
   </section>
   <section class="ops">
     <h2>System</h2>
@@ -572,13 +572,22 @@ document.addEventListener('click', e => {
   if (btn) runAction(btn);
 });
 
+const SCAN_LABEL = '⟳ Run scans';
+let scanToastTimer = null;
+function showScanToast(msg, failed) {
+  const t = $('#scan-toast');
+  t.textContent = msg;
+  t.classList.toggle('failed', !!failed);
+  t.classList.add('show');
+  if (scanToastTimer) clearTimeout(scanToastTimer);
+  scanToastTimer = setTimeout(() => t.classList.remove('show'), 4000);
+}
+
 const runScans = async () => {
   const btn = $('#run-scans');
-  const result = $('#run-scans-result');
   btn.disabled = true;
   btn.classList.remove('done', 'failed');
   btn.innerHTML = '<span class="spinner"></span> running…';
-  result.textContent = '';
   try {
     const data = await apiJson('/maintenance/run-all', { method: 'POST' });
     btn.classList.add('done');
@@ -588,17 +597,28 @@ const runScans = async () => {
       (data.compaction?.filed ?? 0) +
       (data.retention?.filed ?? 0) +
       (data.upgrade?.filed ?? 0);
-    result.textContent = `${filed} new suggestion${filed === 1 ? '' : 's'} filed · ${data.durationMs}ms`;
+    showScanToast(`${filed} new suggestion${filed === 1 ? '' : 's'} filed · ${data.durationMs}ms`);
     setTimeout(() => {
       btn.classList.remove('done');
       btn.disabled = false;
-      btn.textContent = 'Run scans';
+      btn.textContent = SCAN_LABEL;
       refresh();
     }, 1500);
   } catch (e) {
+    if (e.message === 'unauthorized' || e.message === 'no-token') {
+      showAuthDialog();
+      btn.disabled = false;
+      btn.textContent = SCAN_LABEL;
+      return;
+    }
     btn.classList.add('failed');
-    btn.textContent = `failed: ${e.message}`;
-    btn.disabled = false;
+    btn.textContent = 'failed';
+    showScanToast(`scan failed: ${e.message}`, true);
+    setTimeout(() => {
+      btn.classList.remove('failed');
+      btn.disabled = false;
+      btn.textContent = SCAN_LABEL;
+    }, 2500);
   }
 };
 
