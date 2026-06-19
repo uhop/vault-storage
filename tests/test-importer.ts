@@ -166,6 +166,36 @@ test('importFile detects created/updated FM changes as "updated" (body unchanged
   }
 });
 
+test('reindex treats a fossil timestamp created vs same-date file created as unchanged', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      ['---', 'title: X', 'created: 2026-04-29', 'updated: 2026-04-30', '---', 'body', ''].join(
+        '\n'
+      )
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    // Simulate the historical fossil: an early import stored `created` as a full
+    // ISO timestamp. It's preserved (never overwritten) on upsert, so it never
+    // reconciles to the file's date-only `created`. A strict === would then
+    // report "changed" on every reindex — re-importing and churning modified_at.
+    db.prepare(
+      "UPDATE records SET created = '2026-04-29T02:39:23.977Z' WHERE file_path = 'topics/x.md'"
+    ).run();
+
+    const second = importVault(db, root);
+    t.equal(second.unchanged, 1, 'date vs same-day timestamp created → unchanged');
+    t.equal(second.updated, 0, 'not spuriously re-imported');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('frontmatter title round-trips into the records.title column', t => {
   const {root, cleanup} = setupVault();
   try {

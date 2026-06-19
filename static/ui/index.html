@@ -659,6 +659,9 @@
           const items = (data.items ?? [])
             .filter(r => !r.file_path.includes('/archive/') && !r.file_path.includes('/sync/'))
             .filter(r => !r.file_path.split('/').pop().startsWith('_'))
+            // Drift baselines (type: state) are machine-managed and get
+            // re-imported in batches on restart/sync — noise here, not edits.
+            .filter(r => r.type !== 'state')
             .slice(0, 10);
           renderRecent(items);
         } catch (e) {

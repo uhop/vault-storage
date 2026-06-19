@@ -21,6 +21,18 @@ const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
 
 /**
+ * Compare two `created`/`updated` values at date granularity. Both are
+ * date-typed (`YYYY-MM-DD`) by the note-format convention, but the DB can hold
+ * a fossil full-timestamp `created` from an early import — and `created` is
+ * preserved (never overwritten) on upsert, so it's never reconciled to the
+ * file's date. A strict `===` then reports "changed" on every reindex,
+ * re-importing unchanged records and churning `modified_at`. Comparing the
+ * `YYYY-MM-DD` prefix avoids that; genuine date changes still differ, and any
+ * body change is still caught by `content_hash`.
+ */
+const sameDate = (a: string, b: string): boolean => a === b || a.slice(0, 10) === b.slice(0, 10);
+
+/**
  * Normalize FM `status` into a canonical {@link RecordStatus}. Canonical
  * values pass through; known legacy aliases (`completed`, `in-progress`,
  * etc.) map to their canonical equivalents per closed-enums design.
@@ -165,8 +177,8 @@ export const importFile = (
     existing.status === status &&
     existing.title === title &&
     existing.priority === priority &&
-    existing.created === created &&
-    existing.updated === updated &&
+    sameDate(existing.created, created) &&
+    sameDate(existing.updated, updated) &&
     existing.agentSummary === agent.summary &&
     existing.agentDerivedFromHash === agent.derivedFromHash;
 
