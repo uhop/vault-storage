@@ -94,6 +94,15 @@ export interface VaultRecord {
   created: string;
   /** ISO 8601 string. */
   updated: string;
+  /**
+   * Full ISO-8601 timestamp the repository upsert DB-stamps on every
+   * write/import (schema 0012) — callers never supply it (the SQL overrides
+   * any value), so it's optional on construction and only populated on read.
+   * Unlike date-only `updated` (mirrors the FM field), it carries sub-day
+   * precision for true recency ordering; null for rows not re-imported since
+   * 0012 (forward-only, never backfilled).
+   */
+  modifiedAt?: string | null;
   lastReferenced: string | null;
   decayScore: number;
   status: RecordStatus;

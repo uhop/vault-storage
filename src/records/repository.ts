@@ -13,6 +13,7 @@ interface RecordRow {
   title: string | null;
   created: string;
   updated: string;
+  modified_at: string | null;
   last_referenced: string | null;
   decay_score: number;
   status: string;
@@ -34,6 +35,7 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
   title: row.title,
   created: row.created,
   updated: row.updated,
+  modifiedAt: row.modified_at,
   lastReferenced: row.last_referenced,
   decayScore: row.decay_score,
   status: row.status as RecordStatus,
@@ -48,7 +50,7 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
 // of what a "full" read materializes. Exported for handlers that build
 // their own list queries over records (GET /sections).
 export const RECORD_COLUMNS = `record_id, file_path, parent_path, sequence_key, type, body, content_hash,
-   body_hash, title, created, updated, last_referenced, decay_score, status, priority,
+   body_hash, title, created, updated, modified_at, last_referenced, decay_score, status, priority,
    archived_at, agent_summary, agent_derived_from_hash`;
 
 export class RecordsRepository {
@@ -65,12 +67,14 @@ export class RecordsRepository {
   readonly #bumpGeneration: StatementSync;
 
   constructor(db: DatabaseSync) {
+    // modified_at is DB-stamped (strftime 'now', UTC, ms precision), not a
+    // bound param — every write re-stamps it. See schema 0012.
     this.#insert = db.prepare(
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
          title, created, updated, last_referenced, decay_score, status, priority, archived_at,
-         agent_summary, agent_derived_from_hash
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         agent_summary, agent_derived_from_hash, modified_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
     );
 
     // Upsert keyed on file_path. ON CONFLICT preserves record_id and created.
@@ -78,8 +82,8 @@ export class RecordsRepository {
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
          title, created, updated, last_referenced, decay_score, status, priority, archived_at,
-         agent_summary, agent_derived_from_hash
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         agent_summary, agent_derived_from_hash, modified_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        ON CONFLICT(file_path) DO UPDATE SET
          parent_path             = excluded.parent_path,
          sequence_key            = excluded.sequence_key,
@@ -95,7 +99,8 @@ export class RecordsRepository {
          priority                = excluded.priority,
          archived_at             = excluded.archived_at,
          agent_summary           = excluded.agent_summary,
-         agent_derived_from_hash = excluded.agent_derived_from_hash`
+         agent_derived_from_hash = excluded.agent_derived_from_hash,
+         modified_at             = strftime('%Y-%m-%dT%H:%M:%fZ','now')`
     );
 
     this.#getById = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records WHERE record_id = ?`);

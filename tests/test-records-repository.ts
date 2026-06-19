@@ -46,6 +46,14 @@ test('insert + getById round-trips a record', t => {
   records.insert(r);
   const got = records.getById(r.recordId);
   t.ok(got !== null, 'record fetched');
+  // modified_at is DB-stamped at write (schema 0012), not caller-supplied,
+  // so it won't be on the input record — assert it landed, then fold the
+  // generated value into the expected before the full-field comparison.
+  t.ok(
+    got?.modifiedAt != null && !Number.isNaN(Date.parse(got.modifiedAt)),
+    'modified_at stamped at insert'
+  );
+  r.modifiedAt = got?.modifiedAt;
   t.deepEqual(got, r, 'round-trip preserves all fields');
   db.close();
 });

@@ -32,6 +32,7 @@ interface RecordRow {
   title: string | null;
   created: string;
   updated: string;
+  modified_at: string | null;
   last_referenced: string | null;
   decay_score: number;
   status: string;
@@ -53,6 +54,7 @@ const rowToRecord = (row: RecordRow) => ({
   title: row.title,
   created: row.created,
   updated: row.updated,
+  modifiedAt: row.modified_at,
   lastReferenced: row.last_referenced,
   decayScore: row.decay_score,
   status: row.status as (typeof RECORD_STATUSES)[number],
@@ -62,10 +64,16 @@ const rowToRecord = (row: RecordRow) => ({
   agentDerivedFromHash: row.agent_derived_from_hash
 });
 
+// modified_at sorts by COALESCE(modified_at, updated): rows re-imported since
+// schema 0012 order by precise timestamp; older rows fall back to date-only
+// `updated`. This is also the default sort (see parseSort) so "recency" reflects
+// true sub-day write order.
+const RECENCY_SORT = 'COALESCE(modified_at, updated)';
 const SORT_COLUMNS: Record<string, string> = {
   priority: 'priority',
   created: 'created',
   updated: 'updated',
+  modified_at: RECENCY_SORT,
   last_referenced: 'last_referenced',
   decay_score: 'decay_score',
   file_path: 'file_path'
@@ -723,7 +731,7 @@ const buildListSql = (
 };
 
 const parseSort = (raw: string | undefined): {clause: string; error?: string} => {
-  if (!raw) return {clause: 'ORDER BY updated DESC'};
+  if (!raw) return {clause: `ORDER BY ${RECENCY_SORT} DESC`};
   const desc = !raw.endsWith('_asc');
   const colName = desc ? raw : raw.slice(0, -'_asc'.length);
   const column = SORT_COLUMNS[colName];

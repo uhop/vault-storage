@@ -15,13 +15,15 @@ import {
  * Writes that include any of these → 400.
  *
  * `record_id` and `content_hash` come from DB identity, not user input.
- * `last_referenced` and `decay_score` are reflection-time fields.
+ * `last_referenced`, `decay_score`, and `modified_at` are reflection-time
+ * fields (`modified_at` is stamped by the upsert at import; see schema 0012).
  */
 export const AUTO_MANAGED_KEYS: ReadonlySet<string> = new Set([
   'record_id',
   'content_hash',
   'last_referenced',
-  'decay_score'
+  'decay_score',
+  'modified_at'
 ]);
 
 /**

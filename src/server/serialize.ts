@@ -12,6 +12,12 @@ export interface JsonRecord {
   title: string | null;
   created: string;
   updated: string;
+  /**
+   * Precise write timestamp (ISO-8601, ms, UTC), stamped at every
+   * insert/upsert since schema 0012. Use for true recency ordering; `updated`
+   * is date-only. Null for rows not re-imported since 0012 (forward-only).
+   */
+  modified_at: string | null;
   last_referenced: string | null;
   decay_score: number;
   /**
@@ -62,6 +68,7 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
     title: r.title,
     created: r.created,
     updated: r.updated,
+    modified_at: r.modifiedAt ?? null,
     last_referenced: r.lastReferenced,
     decay_score: computeDecayScore(r),
     content_hash: r.contentHash,

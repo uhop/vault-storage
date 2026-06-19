@@ -230,7 +230,7 @@ const renderRecent = items => {
     <a class="recent-row" href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
       <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
       <span class="path">${esc(r.file_path)}</span>
-      <span class="when">${esc(fmtRelative(r.updated))}</span>
+      <span class="when">${esc(fmtRelative(r.modified_at ?? r.updated))}</span>
     </a>
   `).join('');
 };
