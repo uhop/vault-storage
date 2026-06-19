@@ -157,6 +157,83 @@
         min-height: 0;
         display: flex;
         flex-direction: column;
+        position: relative;
+      }
+      .find-bar {
+        position: absolute;
+        top: 0.5rem;
+        right: 0.9rem;
+        z-index: 6;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: 0.5rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+      }
+      .find-bar[hidden] {
+        display: none;
+      }
+      .find-row {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        flex-wrap: wrap;
+      }
+      .find-bar input[type='text'] {
+        width: 14rem;
+        padding: 0.35rem 0.5rem;
+        font: inherit;
+        font-size: 0.85rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .find-bar input.no-match {
+        border-color: var(--bad);
+      }
+      .find-bar button {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.8rem;
+        line-height: 1;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .find-bar button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .find-bar button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .find-bar button[aria-pressed='true'] {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .find-count {
+        min-width: 4rem;
+        font-size: 0.75rem;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+      }
+      @media (max-width: 600px) {
+        .find-bar {
+          left: 0.6rem;
+          right: 0.6rem;
+          top: 0.4rem;
+        }
+        .find-bar input[type='text'] {
+          width: 100%;
+          flex: 1;
+        }
       }
       .panes {
         flex: 1;
@@ -570,12 +647,40 @@
       <button id="save">Save</button>
       <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
       <button id="outline" title="Outline (jump to heading)">Outline</button>
+      <button id="find-btn" title="Find / replace (⌘F)">Find</button>
       <button id="recent" hidden>Recent</button>
       <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
       <button id="del" class="danger" hidden>Delete</button>
     </div>
     <div class="err" id="err" hidden></div>
     <main>
+      <div id="find-bar" class="find-bar" hidden role="search" aria-label="Find and replace">
+        <div class="find-row">
+          <input
+            id="find-input"
+            type="text"
+            placeholder="Find"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <span id="find-count" class="find-count" aria-live="polite"></span>
+          <button id="find-prev" type="button" title="Previous match (⇧⏎)">↑</button>
+          <button id="find-next" type="button" title="Next match (⏎)">↓</button>
+          <button id="find-case" type="button" aria-pressed="false" title="Match case">Aa</button>
+          <button id="find-close" type="button" title="Close (Esc)">✕</button>
+        </div>
+        <div class="find-row">
+          <input
+            id="replace-input"
+            type="text"
+            placeholder="Replace"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="replace-one" type="button" title="Replace this match (⏎)">Replace</button>
+          <button id="replace-all" type="button" title="Replace all matches">All</button>
+        </div>
+      </div>
       <div class="panes">
         <textarea
           id="editor"
@@ -1397,12 +1502,168 @@ ready: false
         adjustKeyboardOffset();
       }
 
-      // Cmd/Ctrl-S manual save.
+      // find / replace -------------------------------------------------
+      const findState = {idx: -1, caseSensitive: false, anchor: 0};
+      let findMatches = [];
+
+      const findAll = (hay, needle, cs) => {
+        const out = [];
+        if (!needle) return out;
+        const h = cs ? hay : hay.toLowerCase();
+        const n = cs ? needle : needle.toLowerCase();
+        for (let at = h.indexOf(n); at >= 0; at = h.indexOf(n, at + n.length)) out.push(at);
+        return out;
+      };
+
+      const updateFindUI = () => {
+        const n = findMatches.length;
+        const q = $('#find-input').value;
+        $('#find-count').textContent = n ? `${findState.idx + 1}/${n}` : q ? 'no results' : '';
+        for (const id of ['#find-prev', '#find-next', '#replace-one', '#replace-all']) {
+          $(id).disabled = n === 0;
+        }
+        $('#find-input').classList.toggle('no-match', !!q && n === 0);
+      };
+
+      const selectCurrentMatch = () => {
+        if (findState.idx < 0) return;
+        const ta = $('#editor');
+        const start = findMatches[findState.idx];
+        ta.setSelectionRange(start, start + $('#find-input').value.length);
+        // Scroll the match into view without taking focus from the find box, so
+        // Enter keeps advancing; the textarea shows the match as a blurred selection.
+        ta.scrollTop = Math.max(0, measureCaretTop(ta, start) - ta.clientHeight / 3);
+      };
+
+      const recomputeFind = () => {
+        const ta = $('#editor');
+        findMatches = findAll(ta.value, $('#find-input').value, findState.caseSensitive);
+        if (findMatches.length === 0) {
+          findState.idx = -1;
+        } else {
+          const at = findMatches.findIndex(s => s >= findState.anchor);
+          findState.idx = at >= 0 ? at : 0;
+        }
+        updateFindUI();
+        selectCurrentMatch();
+      };
+
+      const stepFind = dir => {
+        if (!findMatches.length) return;
+        findState.idx = (findState.idx + dir + findMatches.length) % findMatches.length;
+        findState.anchor = findMatches[findState.idx];
+        updateFindUI();
+        selectCurrentMatch();
+      };
+
+      const replaceOne = () => {
+        if (findState.idx < 0) return;
+        const ta = $('#editor');
+        const start = findMatches[findState.idx];
+        const rep = $('#replace-input').value;
+        ta.value =
+          ta.value.slice(0, start) + rep + ta.value.slice(start + $('#find-input').value.length);
+        ta.dispatchEvent(new Event('input', {bubbles: true}));
+        findState.anchor = start + rep.length;
+        recomputeFind();
+      };
+
+      const replaceAll = () => {
+        const q = $('#find-input').value;
+        const ta = $('#editor');
+        const matches = findAll(ta.value, q, findState.caseSensitive);
+        if (!matches.length) return;
+        const rep = $('#replace-input').value;
+        let out = '';
+        let prev = 0;
+        for (const s of matches) {
+          out += ta.value.slice(prev, s) + rep;
+          prev = s + q.length;
+        }
+        ta.value = out + ta.value.slice(prev);
+        ta.dispatchEvent(new Event('input', {bubbles: true}));
+        findState.anchor = 0;
+        recomputeFind();
+        $('#find-count').textContent = `${matches.length} replaced`;
+      };
+
+      const openFind = focusReplace => {
+        if (document.body.dataset.view === 'preview') return false;
+        const ta = $('#editor');
+        const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+        if (sel && !sel.includes('\n')) $('#find-input').value = sel;
+        findState.anchor = ta.selectionStart || 0;
+        $('#find-bar').hidden = false;
+        recomputeFind();
+        const focusEl = $(focusReplace ? '#replace-input' : '#find-input');
+        focusEl.focus();
+        focusEl.select();
+        return true;
+      };
+
+      const closeFind = () => {
+        if ($('#find-bar').hidden) return;
+        $('#find-bar').hidden = true;
+        $('#find-input').classList.remove('no-match');
+        const ta = $('#editor');
+        ta.focus();
+        if (findState.idx >= 0 && findMatches[findState.idx] != null) {
+          const s = findMatches[findState.idx];
+          ta.setSelectionRange(s, s + $('#find-input').value.length);
+        }
+      };
+
+      $('#find-input').addEventListener('input', recomputeFind);
+      $('#find-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          stepFind(e.shiftKey ? -1 : 1);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeFind();
+        }
+      });
+      $('#replace-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          replaceOne();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeFind();
+        }
+      });
+      $('#find-next').addEventListener('click', () => stepFind(1));
+      $('#find-prev').addEventListener('click', () => stepFind(-1));
+      $('#replace-one').addEventListener('click', replaceOne);
+      $('#replace-all').addEventListener('click', replaceAll);
+      $('#find-close').addEventListener('click', closeFind);
+      $('#find-case').addEventListener('click', () => {
+        findState.caseSensitive = !findState.caseSensitive;
+        $('#find-case').setAttribute('aria-pressed', String(findState.caseSensitive));
+        recomputeFind();
+      });
+      $('#find-btn').addEventListener('click', () => {
+        if (document.body.dataset.view === 'preview') setViewMode('split');
+        openFind(false);
+      });
+      // Buttons keep focus in the active find/replace input so Enter still navigates.
+      $$('#find-bar button').forEach(btn =>
+        btn.addEventListener('mousedown', e => e.preventDefault())
+      );
+
+      // Editor-wide shortcuts: ⌘S save, ⌘F find/replace, Esc closes the find bar.
       document.addEventListener('keydown', e => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
           e.preventDefault();
           save();
+          return;
         }
+        if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+          // Only hijack ⌘F when the editor is visible; preview keeps native find.
+          if (openFind(false)) e.preventDefault();
+          return;
+        }
+        if (e.key === 'Escape') closeFind();
       });
 
       init();
