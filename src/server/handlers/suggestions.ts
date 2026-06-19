@@ -109,9 +109,9 @@ export const listSuggestionsHandler =
       .all(...bindings, limit, offset) as unknown[] as SuggestionRow[];
 
     const total = (
-      deps.db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions ${whereClause}`)
-        .get(...bindings) as {n: number}
+      deps.db.prepare(`SELECT COUNT(*) AS n FROM suggestions ${whereClause}`).get(...bindings) as {
+        n: number;
+      }
     ).n;
 
     sendJson(ctx.res, 200, {
@@ -227,9 +227,9 @@ const makeResolveHandler =
       return;
     }
 
-    const existing = deps.db
-      .prepare('SELECT id, status FROM suggestions WHERE id = ?')
-      .get(id) as {id: string; status: string} | undefined;
+    const existing = deps.db.prepare('SELECT id, status FROM suggestions WHERE id = ?').get(id) as
+      | {id: string; status: string}
+      | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;
@@ -322,10 +322,20 @@ export const createSuggestionHandler =
     }
 
     if (typeof body.kind !== 'string' || !SUGGESTION_KINDS.has(body.kind)) {
-      sendError(ctx.res, 400, 'bad_request', `kind must be one of: ${[...SUGGESTION_KINDS].join(', ')}`);
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        `kind must be one of: ${[...SUGGESTION_KINDS].join(', ')}`
+      );
       return;
     }
-    if (body.payload === undefined || body.payload === null || typeof body.payload !== 'object' || Array.isArray(body.payload)) {
+    if (
+      body.payload === undefined ||
+      body.payload === null ||
+      typeof body.payload !== 'object' ||
+      Array.isArray(body.payload)
+    ) {
       sendError(ctx.res, 400, 'bad_request', 'payload must be a JSON object');
       return;
     }
@@ -371,9 +381,9 @@ export const reopenSuggestionHandler =
       sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
       return;
     }
-    const existing = deps.db
-      .prepare('SELECT id, status FROM suggestions WHERE id = ?')
-      .get(id) as {id: string; status: string} | undefined;
+    const existing = deps.db.prepare('SELECT id, status FROM suggestions WHERE id = ?').get(id) as
+      | {id: string; status: string}
+      | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;

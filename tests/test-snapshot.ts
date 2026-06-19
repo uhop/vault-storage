@@ -50,13 +50,11 @@ test('snapshotDb gzips when output path ends with .gz', async t => {
 
     // Decompress and verify the underlying SQLite is intact.
     const decompressed = join(tmp, 'verify.sqlite');
-    await pipeline(
-      createReadStream(snapPath),
-      createGunzip(),
-      createWriteStream(decompressed)
-    );
+    await pipeline(createReadStream(snapPath), createGunzip(), createWriteStream(decompressed));
     const snap = openDatabase({path: decompressed});
-    const row = snap.prepare(`SELECT value FROM meta WHERE key = 'compress'`).get() as {value: string};
+    const row = snap.prepare(`SELECT value FROM meta WHERE key = 'compress'`).get() as {
+      value: string;
+    };
     t.equal(row?.value, 'works', 'gunzip → valid SQLite with live data');
     snap.close();
     db.close();

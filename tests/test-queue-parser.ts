@@ -45,7 +45,8 @@ test('inferCloseReason — first-match-wins', async t => {
 
 test('parseQueueFile — queue.md basics', async t => {
   await t.test('empty Active section emits no items', t => {
-    const src = FM + ['## Active', '', '(empty)', '', '## Backlog', '', '## Watching', ''].join('\n');
+    const src =
+      FM + ['## Active', '', '(empty)', '', '## Backlog', '', '## Watching', ''].join('\n');
     const items = parseQueueFile('demo', QUEUE_PATH, src);
     t.equal(items.length, 0);
   });
@@ -155,7 +156,10 @@ test('parseQueueFile — queue.md basics', async t => {
     const items = parseQueueFile('demo', QUEUE_PATH, src);
     t.equal(items.length, 2);
     t.equal(items[0]?.title, 'Implement X.');
-    t.ok(items[0]?.body.includes('More prose still inside the item.'), 'continuation prose in body');
+    t.ok(
+      items[0]?.body.includes('More prose still inside the item.'),
+      'continuation prose in body'
+    );
     t.ok(items[0]?.body.includes('- sub-bullet A'), 'sub-bullets in body');
     t.equal(items[1]?.title, 'Second item.');
   });
@@ -180,20 +184,16 @@ test('parseQueueFile — queue.md basics', async t => {
     const items = parseQueueFile('demo', QUEUE_PATH, src);
     t.equal(items.length, 2);
     t.equal(items[0]?.title, 'Code-bearing item.');
-    t.ok(items[0]?.body.includes('- this looks like a bullet but is in code'), 'code body preserved verbatim');
+    t.ok(
+      items[0]?.body.includes('- this looks like a bullet but is in code'),
+      'code body preserved verbatim'
+    );
     t.ok(items[0]?.body.includes('## this looks like a heading'), 'code body preserved verbatim');
     t.equal(items[1]?.title, 'After code.');
   });
 
   await t.test('source_line is 1-based against the original file (FM included)', t => {
-    const src =
-      FM +
-      [
-        '## Backlog',
-        '',
-        '- **First.** body',
-        '- **Second.** body'
-      ].join('\n');
+    const src = FM + ['## Backlog', '', '- **First.** body', '- **Second.** body'].join('\n');
     // FM is 5 lines (---, title, type, ---, blank trailing newline before first body line)
     const items = parseQueueFile('demo', QUEUE_PATH, src);
     t.equal(items.length, 2);
@@ -204,22 +204,50 @@ test('parseQueueFile — queue.md basics', async t => {
   });
 
   await t.test('body_hash stable for same title+body, distinct otherwise', t => {
-    const a = parseQueueFile('demo', QUEUE_PATH, FM + ['## Backlog', '', '- **T.** Body A.'].join('\n'));
-    const b = parseQueueFile('demo', QUEUE_PATH, FM + ['## Backlog', '', '- **T.** Body A.'].join('\n'));
-    const c = parseQueueFile('demo', QUEUE_PATH, FM + ['## Backlog', '', '- **T.** Body B.'].join('\n'));
+    const a = parseQueueFile(
+      'demo',
+      QUEUE_PATH,
+      FM + ['## Backlog', '', '- **T.** Body A.'].join('\n')
+    );
+    const b = parseQueueFile(
+      'demo',
+      QUEUE_PATH,
+      FM + ['## Backlog', '', '- **T.** Body A.'].join('\n')
+    );
+    const c = parseQueueFile(
+      'demo',
+      QUEUE_PATH,
+      FM + ['## Backlog', '', '- **T.** Body B.'].join('\n')
+    );
     t.equal(a[0]?.body_hash, b[0]?.body_hash, 'identical content → identical hash');
     t.notEqual(a[0]?.body_hash, c[0]?.body_hash, 'different body → different hash');
   });
 
   await t.test('non-archive items have closed_at and close_reason null', t => {
-    const src = FM + ['## Backlog', '', '- **Shipped-looking title.** This says shipped but section is backlog.'].join('\n');
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Shipped-looking title.** This says shipped but section is backlog.'
+      ].join('\n');
     const items = parseQueueFile('demo', QUEUE_PATH, src);
     t.equal(items[0]?.closed_at, null);
     t.equal(items[0]?.close_reason, null);
   });
 
   await t.test('items above the first heading are dropped', t => {
-    const src = FM + ['Intro paragraph.', '', '- **Orphan.** No section.', '', '## Backlog', '', '- **Real.** Body.'].join('\n');
+    const src =
+      FM +
+      [
+        'Intro paragraph.',
+        '',
+        '- **Orphan.** No section.',
+        '',
+        '## Backlog',
+        '',
+        '- **Real.** Body.'
+      ].join('\n');
     const items = parseQueueFile('demo', QUEUE_PATH, src);
     t.equal(items.length, 1);
     t.equal(items[0]?.title, 'Real.');
@@ -372,7 +400,19 @@ test('parseQueueFile — queue-archive.md', async t => {
 });
 
 test('parseQueueFile — title_norm stable under cosmetic edits', t => {
-  const a = parseQueueFile('demo', QUEUE_PATH, FM + ['## Backlog', '', '- **Switch from nan to N-API.** ...'].join('\n'));
-  const b = parseQueueFile('demo', QUEUE_PATH, FM + ['## Backlog', '', '- **  Switch  from  nan  to  N–API.  ** ...'].join('\n'));
-  t.equal(a[0]?.title_norm, b[0]?.title_norm, 'whitespace + en-dash cosmetic variants normalize to the same key');
+  const a = parseQueueFile(
+    'demo',
+    QUEUE_PATH,
+    FM + ['## Backlog', '', '- **Switch from nan to N-API.** ...'].join('\n')
+  );
+  const b = parseQueueFile(
+    'demo',
+    QUEUE_PATH,
+    FM + ['## Backlog', '', '- **  Switch  from  nan  to  N–API.  ** ...'].join('\n')
+  );
+  t.equal(
+    a[0]?.title_norm,
+    b[0]?.title_norm,
+    'whitespace + en-dash cosmetic variants normalize to the same key'
+  );
 });

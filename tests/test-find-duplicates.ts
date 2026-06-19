@@ -292,8 +292,16 @@ test('pair damping: same-project role files are never duplicates (sub-pattern a)
   const fx = await setup();
   try {
     const shared = 'Shipped the thing. Published to npm. Dependabot bumped deps. js-check green.';
-    writeMd(fx.root, 'projects/demo/learnings.md', `---\ntitle: L\ntype: project\n---\n${shared}\n`);
-    writeMd(fx.root, 'projects/demo/decisions.md', `---\ntitle: D\ntype: project\n---\n${shared}\n`);
+    writeMd(
+      fx.root,
+      'projects/demo/learnings.md',
+      `---\ntitle: L\ntype: project\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'projects/demo/decisions.md',
+      `---\ntitle: D\ntype: project\n---\n${shared}\n`
+    );
 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
@@ -310,9 +318,18 @@ test('pair damping: same-project role files are never duplicates (sub-pattern a)
 test('pair damping: sibling projects sharing a role file are excluded (sub-pattern c)', async t => {
   const fx = await setup();
   try {
-    const shared = 'Shipped 1.2.3 to npm. Dependabot PRs merged. fleet-conventions conformance pass.';
-    writeMd(fx.root, 'projects/toolkit-a/queue-archive.md', `---\ntitle: A archive\ntype: project\n---\n${shared}\n`);
-    writeMd(fx.root, 'projects/toolkit-b/queue-archive.md', `---\ntitle: B archive\ntype: project\n---\n${shared}\n`);
+    const shared =
+      'Shipped 1.2.3 to npm. Dependabot PRs merged. fleet-conventions conformance pass.';
+    writeMd(
+      fx.root,
+      'projects/toolkit-a/queue-archive.md',
+      `---\ntitle: A archive\ntype: project\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'projects/toolkit-b/queue-archive.md',
+      `---\ntitle: B archive\ntype: project\n---\n${shared}\n`
+    );
 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
@@ -329,8 +346,16 @@ test('pair damping: old-style atomized queue items count as structure files (sub
   const fx = await setup();
   try {
     const shared = 'Queue item: upgrade the widget pipeline to the new flange format.';
-    writeMd(fx.root, 'projects/demo/queue/widget-upgrade.md', `---\ntitle: Old item\ntype: project\n---\n${shared}\n`);
-    writeMd(fx.root, 'projects/demo/queue-archive.md', `---\ntitle: Archive\ntype: project\n---\n${shared}\n`);
+    writeMd(
+      fx.root,
+      'projects/demo/queue/widget-upgrade.md',
+      `---\ntitle: Old item\ntype: project\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'projects/demo/queue-archive.md',
+      `---\ntitle: Archive\ntype: project\n---\n${shared}\n`
+    );
 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
@@ -347,7 +372,11 @@ test('pair damping: structural types only pair with themselves (sub-pattern d)',
   const fx = await setup();
   try {
     const shared = 'Wrapped the session: three commits, lint clean, suggestions drained.';
-    writeMd(fx.root, 'topics/wrap-pattern.md', `---\ntitle: Topic\ntype: permanent\n---\n${shared}\n`);
+    writeMd(
+      fx.root,
+      'topics/wrap-pattern.md',
+      `---\ntitle: Topic\ntype: permanent\n---\n${shared}\n`
+    );
     writeMd(fx.root, 'logs/2026-05-13-wrap.md', `---\ntitle: Log\ntype: log\n---\n${shared}\n`);
 
     importVault(fx.db, fx.root);
@@ -365,8 +394,16 @@ test('pair damping: _summary compaction slices are excluded (template rule)', as
   const fx = await setup();
   try {
     const shared = 'Summary of sessions: shipped, published, archived, repeated.';
-    writeMd(fx.root, 'logs/_summary-2026-05-01-to-2026-05-05.md', `---\ntitle: S1\ntype: log\n---\n${shared}\n`);
-    writeMd(fx.root, 'logs/_summary-2026-05-06-to-2026-05-10.md', `---\ntitle: S2\ntype: log\n---\n${shared}\n`);
+    writeMd(
+      fx.root,
+      'logs/_summary-2026-05-01-to-2026-05-05.md',
+      `---\ntitle: S1\ntype: log\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'logs/_summary-2026-05-06-to-2026-05-10.md',
+      `---\ntitle: S2\ntype: log\n---\n${shared}\n`
+    );
 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
@@ -383,8 +420,16 @@ test('pair damping: knowledge types stay mutually compatible (fleeting ↔ perma
   const fx = await setup();
   try {
     const shared = 'The flange pattern: always normalize the widget before the pipeline.';
-    writeMd(fx.root, 'raw/flange-idea.md', `---\ntitle: Raw idea\ntype: fleeting\n---\n${shared}\n`);
-    writeMd(fx.root, 'topics/flange-pattern.md', `---\ntitle: Topic\ntype: permanent\n---\n${shared}\n`);
+    writeMd(
+      fx.root,
+      'raw/flange-idea.md',
+      `---\ntitle: Raw idea\ntype: fleeting\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'topics/flange-pattern.md',
+      `---\ntitle: Topic\ntype: permanent\n---\n${shared}\n`
+    );
 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
@@ -401,8 +446,16 @@ test('pair damping: non-role project files still pair normally', async t => {
   const fx = await setup();
   try {
     const shared = 'Design note: the resolver cache invalidates on path-set changes only.';
-    writeMd(fx.root, 'projects/demo/design/resolver-v1.md', `---\ntitle: V1\ntype: project\n---\n${shared}\n`);
-    writeMd(fx.root, 'projects/demo/design/resolver-v2.md', `---\ntitle: V2\ntype: project\n---\n${shared}\n`);
+    writeMd(
+      fx.root,
+      'projects/demo/design/resolver-v1.md',
+      `---\ntitle: V1\ntype: project\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'projects/demo/design/resolver-v2.md',
+      `---\ntitle: V2\ntype: project\n---\n${shared}\n`
+    );
 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());

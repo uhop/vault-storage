@@ -141,10 +141,7 @@ export const simpleSearchHandler =
     }
 
     const limitRaw = ctx.query['limit'];
-    const limit = Math.min(
-      100,
-      Math.max(1, limitRaw ? Number.parseInt(limitRaw, 10) || 20 : 20)
-    );
+    const limit = Math.min(100, Math.max(1, limitRaw ? Number.parseInt(limitRaw, 10) || 20 : 20));
 
     const hits =
       mode === 'semantic'

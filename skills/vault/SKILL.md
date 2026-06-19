@@ -1,6 +1,6 @@
 ---
 name: vault
-description: "Read and write to the Obsidian knowledge base vault. Use when the user says /vault, asks to remember/save knowledge, wants to recall/query stored knowledge, asks to extract learnings from a project, or wants to log a session. Also use proactively at session end to capture non-obvious learnings."
+description: 'Read and write to the Obsidian knowledge base vault. Use when the user says /vault, asks to remember/save knowledge, wants to recall/query stored knowledge, asks to extract learnings from a project, or wants to log a session. Also use proactively at session end to capture non-obvious learnings.'
 user_invocable: true
 ---
 
@@ -67,14 +67,14 @@ _index.md          # archived 2026-04-29 — kept for inbound wikilinks; do not 
 
 Discovery is dynamic via the live API, not via a curated index file:
 
-| Question | Tool |
-| --- | --- |
-| What topics exist? | `vault_list_folder("topics/")` |
-| What projects? | `vault_list_folder("projects/")` |
-| Recent logs / queries | `vault_list_pieces(type=log, updated_since=…)` |
-| Find a note about X | `vault_search(X, mode=semantic)` |
+| Question                | Tool                                           |
+| ----------------------- | ---------------------------------------------- |
+| What topics exist?      | `vault_list_folder("topics/")`                 |
+| What projects?          | `vault_list_folder("projects/")`               |
+| Recent logs / queries   | `vault_list_pieces(type=log, updated_since=…)` |
+| Find a note about X     | `vault_search(X, mode=semantic)`               |
 | What links to / from X? | `vault_backlinks(X)` / `vault_neighborhood(X)` |
-| Tag taxonomy | `vault_list_tags`, `vault_records_by_tag` |
+| Tag taxonomy            | `vault_list_tags`, `vault_records_by_tag`      |
 
 ## Note format
 
@@ -88,11 +88,12 @@ created: YYYY-MM-DD
 updated: YYYY-MM-DD
 status: active
 type: permanent | fleeting | project | query | log
-related: ["[[other-note]]"]
+related: ['[[other-note]]']
 ---
 ```
 
 Rules:
+
 - Filenames in kebab-case: `auth-flow.md`
 - Use wikilinks: `[[note-name]]` (not markdown links) for internal references
 - 1 concept per topic note (atomicity)
@@ -150,6 +151,7 @@ at `topics/vault-hygiene-policy.md` (in the vault) and is the source of truth
 for thresholds.
 
 Findings are reported only — auto-fix is not implemented. After running, decide:
+
 - Fix legitimate issues directly (frontmatter backfill, broken-link rewrites).
 - For per-type retention findings (e.g., logs > 90 days), move to
   `logs/archive/<YYYY>/` rather than delete; archival preserves content while
@@ -211,6 +213,7 @@ Show vault status: note counts per folder, recently updated notes, any lint warn
 ## Proactive behavior
 
 This skill should be used proactively when:
+
 - The user discovers a non-obvious pattern, gotcha, or decision worth preserving
 - A debugging session reveals something that would save time in the future
 - Cross-project knowledge is generated (e.g., "this Docker networking trick works everywhere")

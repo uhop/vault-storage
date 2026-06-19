@@ -59,7 +59,10 @@ test('chunkBody', async t => {
     const body = `## A\n\n${'a'.repeat(600)}\n\n## B\n\n${'b'.repeat(600)}`;
     const out = chunkBody(body, {maxChars: 800});
     const second = out[1] ?? '';
-    t.notOk(second.includes('aaaaa'), 'second chunk (section B) does not include section A content');
+    t.notOk(
+      second.includes('aaaaa'),
+      'second chunk (section B) does not include section A content'
+    );
   });
 
   await t.test('nested header path is preserved on each chunk', t => {
@@ -70,7 +73,8 @@ test('chunkBody', async t => {
   });
 
   await t.test('code fences are kept intact within a single block', t => {
-    const code = '```js\n' + Array.from({length: 30}, (_, i) => `const x${i} = ${i};`).join('\n') + '\n```';
+    const code =
+      '```js\n' + Array.from({length: 30}, (_, i) => `const x${i} = ${i};`).join('\n') + '\n```';
     const body = `## S\n\nIntro paragraph.\n\n${code}\n\nOutro paragraph.`;
     const out = chunkBody(body, {maxChars: 2000});
     const fenceCount = out.reduce((n, c) => n + (c.match(/```/g)?.length ?? 0), 0);
@@ -92,7 +96,8 @@ test('chunkBody', async t => {
     const body = 'a'.repeat(3000); // hard-split path (no headers, > HARD_CAP)
     const out = chunkBody(body, {maxChars: 1500, summary});
     t.ok(out.length >= 2, 'multi-chunk via hard-split');
-    for (const chunk of out) t.ok(chunk.startsWith(`${summary}\n\n`), 'each chunk has summary prefix');
+    for (const chunk of out)
+      t.ok(chunk.startsWith(`${summary}\n\n`), 'each chunk has summary prefix');
   });
 
   await t.test('null/empty summary is a no-op (no prefix added)', t => {

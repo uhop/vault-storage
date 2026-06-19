@@ -285,15 +285,8 @@ test('PATCH fm: protected roots are rejected', async t => {
       ] as const) {
         const {status, body} = await patchFm(url, id, [{op: 'add', path, value: 'x'}]);
         t.equal(status, 400, `${path} → 400`);
-        t.equal(
-          (body as {code: string}).code,
-          'protected_field',
-          `${path} → protected_field`
-        );
-        t.ok(
-          (body as {error: string}).error.includes(expected),
-          `${path} error names the field`
-        );
+        t.equal((body as {code: string}).code, 'protected_field', `${path} → protected_field`);
+        t.ok((body as {error: string}).error.includes(expected), `${path} error names the field`);
       }
     } finally {
       await teardown(db, handle);

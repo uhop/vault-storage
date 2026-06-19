@@ -347,9 +347,9 @@ export const getRecordFmHandler =
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
       return;
     }
-    const row = deps.db
-      .prepare('SELECT file_path FROM records WHERE record_id = ?')
-      .get(id) as {file_path: string} | undefined;
+    const row = deps.db.prepare('SELECT file_path FROM records WHERE record_id = ?').get(id) as
+      | {file_path: string}
+      | undefined;
     if (!row) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;
@@ -384,7 +384,11 @@ const parseFmPointer = (pointer: string): string[] => {
     throw new WriterError('path must address an FM field, not the root', 'invalid_pointer', 400);
   }
   if (!pointer.startsWith('/')) {
-    throw new WriterError(`path must start with '/' (RFC 6901): ${pointer}`, 'invalid_pointer', 400);
+    throw new WriterError(
+      `path must start with '/' (RFC 6901): ${pointer}`,
+      'invalid_pointer',
+      400
+    );
   }
   // Unescape order per RFC 6901: ~1 → '/', then ~0 → '~'.
   return pointer
@@ -406,9 +410,7 @@ const deepEqual = (a: unknown, b: unknown): boolean => {
     const kb = Object.keys(b as Record<string, unknown>);
     return (
       ka.length === kb.length &&
-      ka.every(k =>
-        deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])
-      )
+      ka.every(k => deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
     );
   }
   return false;

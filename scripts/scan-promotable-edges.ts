@@ -13,15 +13,43 @@ const dataPath = process.env['VAULT_DATA_PATH'] ?? '/media/raid/Vault-Data/';
 const dbPath = process.env['VAULT_DB_PATH'] ?? join(dataPath, '.vault-storage', 'vault.sqlite');
 const db = new DatabaseSync(dbPath, {readOnly: true});
 
-const rows = db.prepare('SELECT record_id, file_path, parent_path, sequence_key, type, body, content_hash, created, updated, last_referenced, decay_score, status, priority, archived_at FROM records').all() as Array<{record_id: string; file_path: string; parent_path: string | null; sequence_key: number | null; type: string; body: string; content_hash: string; created: string; updated: string; last_referenced: string | null; decay_score: number; status: string; priority: number; archived_at: string | null}>;
+const rows = db
+  .prepare(
+    'SELECT record_id, file_path, parent_path, sequence_key, type, body, content_hash, created, updated, last_referenced, decay_score, status, priority, archived_at FROM records'
+  )
+  .all() as Array<{
+  record_id: string;
+  file_path: string;
+  parent_path: string | null;
+  sequence_key: number | null;
+  type: string;
+  body: string;
+  content_hash: string;
+  created: string;
+  updated: string;
+  last_referenced: string | null;
+  decay_score: number;
+  status: string;
+  priority: number;
+  archived_at: string | null;
+}>;
 
 const records: VaultRecord[] = rows.map(r => ({
-  recordId: r.record_id, filePath: r.file_path, parentPath: r.parent_path,
-  sequenceKey: r.sequence_key, type: r.type as VaultRecord['type'], body: r.body,
-  contentHash: r.content_hash, created: r.created, updated: r.updated,
-  lastReferenced: r.last_referenced, decayScore: r.decay_score,
-  status: r.status as VaultRecord['status'], priority: r.priority,
-  archivedAt: r.archived_at, title: null
+  recordId: r.record_id,
+  filePath: r.file_path,
+  parentPath: r.parent_path,
+  sequenceKey: r.sequence_key,
+  type: r.type as VaultRecord['type'],
+  body: r.body,
+  contentHash: r.content_hash,
+  created: r.created,
+  updated: r.updated,
+  lastReferenced: r.last_referenced,
+  decayScore: r.decay_score,
+  status: r.status as VaultRecord['status'],
+  priority: r.priority,
+  archivedAt: r.archived_at,
+  title: null
 }));
 
 const resolver = new WikilinkResolver(records);
@@ -32,7 +60,11 @@ const recordById = new Map(records.map(r => [r.recordId, r]));
 type Pattern = {type: string; re: RegExp; side: 'pre' | 'post'};
 const PATTERNS: Pattern[] = [
   // supersedes / replaces — strong cues
-  {type: 'supersedes', side: 'pre', re: /\b(?:supersedes?|superseded by|replaces?|replaced by|obsoletes?)\s*$/i},
+  {
+    type: 'supersedes',
+    side: 'pre',
+    re: /\b(?:supersedes?|superseded by|replaces?|replaced by|obsoletes?)\s*$/i
+  },
   {type: 'supersedes', side: 'post', re: /^\s*(?:supersedes?|replaces?|obsoletes?)\b/i},
   {type: 'supersedes', side: 'pre', re: /\b(?:in favor of|in favour of)\s*$/i},
 
@@ -41,25 +73,49 @@ const PATTERNS: Pattern[] = [
   {type: 'revises', side: 'post', re: /^\s*(?:revises?|refines?|amends?|clarifies)\b/i},
 
   // derived-from
-  {type: 'derived-from', side: 'pre', re: /\b(?:derived from|based on|builds on|builds upon|extracted from|extends|extending|follows from|informed by|drawn from|distilled from|inherits from)\s*$/i},
+  {
+    type: 'derived-from',
+    side: 'pre',
+    re: /\b(?:derived from|based on|builds on|builds upon|extracted from|extends|extending|follows from|informed by|drawn from|distilled from|inherits from)\s*$/i
+  },
   {type: 'derived-from', side: 'post', re: /^\s*(?:is derived from|builds on|extends)\b/i},
 
   // caused-by
-  {type: 'caused-by', side: 'pre', re: /\b(?:caused by|triggered by|provoked by|due to|because of|resulting from|stemming from|root cause:?)\s*$/i},
+  {
+    type: 'caused-by',
+    side: 'pre',
+    re: /\b(?:caused by|triggered by|provoked by|due to|because of|resulting from|stemming from|root cause:?)\s*$/i
+  },
 
   // fixed-by
-  {type: 'fixed-by', side: 'pre', re: /\b(?:fixed by|resolved by|patched by|addressed by|closed by)\s*$/i},
+  {
+    type: 'fixed-by',
+    side: 'pre',
+    re: /\b(?:fixed by|resolved by|patched by|addressed by|closed by)\s*$/i
+  },
   {type: 'fixed-by', side: 'post', re: /^\s*(?:fixes?|resolves?|addresses?|closes?)\b/i},
 
   // rejected-because
-  {type: 'rejected-because', side: 'pre', re: /\b(?:rejected because|rejected because of|rejected in favor of|abandoned in favor of|ruled out by)\s*$/i},
+  {
+    type: 'rejected-because',
+    side: 'pre',
+    re: /\b(?:rejected because|rejected because of|rejected in favor of|abandoned in favor of|ruled out by)\s*$/i
+  },
 
   // applies-to
-  {type: 'applies-to', side: 'pre', re: /\b(?:applies to|relevant to|applicable to|governs|governing)\s*$/i},
+  {
+    type: 'applies-to',
+    side: 'pre',
+    re: /\b(?:applies to|relevant to|applicable to|governs|governing)\s*$/i
+  },
   {type: 'applies-to', side: 'post', re: /^\s*(?:applies to|is relevant to|governs)\b/i},
 
   // contradicts
-  {type: 'contradicts', side: 'pre', re: /\b(?:contradicts?|disagrees with|conflicts with|inconsistent with|tension with|in tension with)\s*$/i},
+  {
+    type: 'contradicts',
+    side: 'pre',
+    re: /\b(?:contradicts?|disagrees with|conflicts with|inconsistent with|tension with|in tension with)\s*$/i
+  },
   {type: 'contradicts', side: 'post', re: /^\s*(?:contradicts?|disagrees with|conflicts with)\b/i}
 ];
 
@@ -120,7 +176,9 @@ for (const record of records) {
   }
 }
 
-console.log(`Scanned ${scanned} body wikilinks, found ${candidates.length} promotion candidates.\n`);
+console.log(
+  `Scanned ${scanned} body wikilinks, found ${candidates.length} promotion candidates.\n`
+);
 
 const byType = new Map<string, number>();
 for (const c of candidates) byType.set(c.suggested, (byType.get(c.suggested) ?? 0) + 1);

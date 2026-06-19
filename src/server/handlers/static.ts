@@ -23,7 +23,8 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8'
 };
 
-const mimeFor = (path: string): string => MIME[extname(path).toLowerCase()] ?? 'application/octet-stream';
+const mimeFor = (path: string): string =>
+  MIME[extname(path).toLowerCase()] ?? 'application/octet-stream';
 
 /**
  * Cheap, change-stable ETag from `<size>-<mtime-ms>` — no hash compute on
@@ -31,7 +32,8 @@ const mimeFor = (path: string): string => MIME[extname(path).toLowerCase()] ?? '
  * one of size / mtime; the only ambiguous case (same-byte-count edit at
  * the exact recorded ms) is a non-issue in practice.
  */
-const etagFor = (size: number, mtimeMs: number): string => `"${size.toString(36)}-${Math.floor(mtimeMs).toString(36)}"`;
+const etagFor = (size: number, mtimeMs: number): string =>
+  `"${size.toString(36)}-${Math.floor(mtimeMs).toString(36)}"`;
 
 /**
  * Serve files from a directory under a route prefix.

@@ -10,19 +10,13 @@ const makeClient = () =>
   new VaultClient({apiUrl: 'http://test', apiToken: 'tok', fetchImpl: noopFetch});
 
 test('registerTools runs without throwing', t => {
-  const mcp = new McpServer(
-    {name: 'test', version: '0.0.0'},
-    {capabilities: {tools: {}}}
-  );
+  const mcp = new McpServer({name: 'test', version: '0.0.0'}, {capabilities: {tools: {}}});
   registerTools(mcp, makeClient());
   t.pass('all tools registered');
 });
 
 test('registerResources runs without throwing', t => {
-  const mcp = new McpServer(
-    {name: 'test', version: '0.0.0'},
-    {capabilities: {resources: {}}}
-  );
+  const mcp = new McpServer({name: 'test', version: '0.0.0'}, {capabilities: {resources: {}}});
   registerResources(mcp, makeClient());
   t.pass('all resources registered');
 });

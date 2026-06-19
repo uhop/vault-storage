@@ -1,321 +1,563 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
-<title>vault-storage — archive review</title>
-<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-<link rel="icon" sizes="any" href="/favicon.ico">
-<link rel="stylesheet" href="/ui/theme.css">
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg); color: var(--fg);
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
-  header nav { display: flex; gap: .8rem; font-size: .9rem; }
-  header nav a { color: var(--muted); text-decoration: none; }
-  header nav a[aria-current] { color: var(--fg); }
-  header .spacer { flex: 1; }
-  main { padding: 1rem; max-width: 60rem; margin: 0 auto; }
-  h2 { font-size: 1rem; margin: 1.4rem 0 .6rem; }
-  h2:first-child { margin-top: 0; }
-  h2 .count { color: var(--muted); font-weight: 400; font-size: .85em; }
-  button { padding: .35rem .75rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; font-size: .85rem; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.danger { background: var(--bad); color: #fff; border-color: var(--bad); }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  .why { color: var(--muted); font-size: .85rem; margin-bottom: 1rem; }
-  .why code { font-family: var(--mono); font-size: .9em; }
-  .row { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: .8rem 1rem; margin-bottom: .8rem; }
-  .row.resolved { opacity: .5; }
-  .row-head { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
-  .row-head .path { font-family: var(--mono); font-size: .9rem; word-break: break-all; flex: 1; min-width: 16rem; }
-  .row-head .path a { color: var(--accent); text-decoration: none; }
-  .row-head .path a:hover { text-decoration: underline; }
-  .row-head .meta { font-family: var(--mono); font-size: .8rem; color: var(--muted); white-space: nowrap; }
-  .row-head .meta .tag { padding: 0 .35rem; border-radius: 3px; background: var(--bg); border: 1px solid var(--line); }
-  .row-excerpt { color: var(--muted); font-size: .85rem; margin: .6rem 0; max-height: 4.5rem; overflow: hidden; position: relative; }
-  .row-excerpt::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1.5rem; background: linear-gradient(transparent, var(--card)); pointer-events: none; }
-  .row-actions { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .6rem; align-items: center; }
-  .row-status { color: var(--muted); font-size: .8rem; font-family: var(--mono); margin-right: auto; }
-  .row-status.ok { color: var(--ok); }
-  .row-status.err { color: var(--bad); }
-  .row-status.warn { color: var(--bad); }
-  .empty { color: var(--muted); padding: 2rem 1rem; text-align: center; font-size: .95rem; }
-  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; margin-bottom: 1rem; }
-  .ok { color: var(--ok); padding: .6rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 6px; margin-bottom: 1rem; font-size: .9rem; }
-  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 28rem; }
-  dialog::backdrop { background: rgba(0,0,0,.5); }
-  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
-  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
-  dialog p.warn { color: var(--bad); }
-  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
-  dialog .dlg-row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
-  .footer { color: var(--muted); font-size: .8rem; padding: 1rem; text-align: center; font-family: var(--mono); }
-</style>
-</head>
-<body>
-<header>
-  <h1>vault-storage</h1>
-  <nav>
-    <a href="/ui/">dashboard</a>
-    <a href="/ui/search.html">search</a>
-    <a href="/ui/projects.html">projects</a>
-    <a href="/ui/tags.html">tags</a>
-    <a href="/ui/raw.html">raw</a>
-    <a href="/ui/folder.html">browse</a>
-    <a href="/ui/note.html">note</a>
-  </nav>
-  <div class="spacer"></div>
-  <div id="theme-toggle"></div>
-  <button id="settings" title="Settings">⚙</button>
-</header>
-<main>
-  <div id="status"></div>
-  <div id="content"><div class="empty"><span class="spinner"></span> loading archive candidates…</div></div>
-</main>
-<div class="footer" id="footer"></div>
-
-<dialog id="auth-dlg">
-  <h2>API token</h2>
-  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
-  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
-  <div class="dlg-row">
-    <button id="auth-cancel">Cancel</button>
-    <button id="auth-ok" class="primary">Save</button>
-  </div>
-</dialog>
-
-<dialog id="confirm-dlg">
-  <h2 id="confirm-title">Confirm</h2>
-  <p id="confirm-body"></p>
-  <p id="confirm-warn" class="warn" hidden></p>
-  <div class="dlg-row">
-    <button id="confirm-cancel">Cancel</button>
-    <button id="confirm-ok" class="danger">Delete</button>
-  </div>
-</dialog>
-
-<script type="module">
-import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
-const $ = sel => document.querySelector(sel);
-
-const showStatus = (kind, msg) => {
-  const el = $('#status');
-  if (!kind) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="${kind}">${msg}</div>`;
-};
-
-const confirmDialog = (title, body, warn) => new Promise(resolve => {
-  $('#confirm-title').textContent = title;
-  $('#confirm-body').textContent = body;
-  const warnEl = $('#confirm-warn');
-  if (warn) { warnEl.textContent = warn; warnEl.hidden = false; } else { warnEl.hidden = true; }
-  const dlg = $('#confirm-dlg');
-  const okBtn = $('#confirm-ok');
-  const cancelBtn = $('#confirm-cancel');
-  const close = result => {
-    okBtn.removeEventListener('click', onOk);
-    cancelBtn.removeEventListener('click', onCancel);
-    dlg.close();
-    resolve(result);
-  };
-  const onOk = () => close(true);
-  const onCancel = () => close(false);
-  okBtn.addEventListener('click', onOk);
-  cancelBtn.addEventListener('click', onCancel);
-  dlg.showModal();
-});
-
-// Rewrites or appends the top-level `status:` key inside the FM block.
-// Handles only single-line scalar form (`status: foo`) — bails on block
-// form (`status:\n  - foo`), which shouldn't appear in records flagged by
-// the retention scan (those are simple raw / log / query notes).
-const setFmStatus = (md, value) => {
-  const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-  if (!m) throw new Error('no frontmatter block');
-  const fmRaw = m[1];
-  const body = m[2];
-  const blockForm = /^status:\s*$/m;
-  if (blockForm.test(fmRaw)) throw new Error('status: is in block form; edit by hand');
-  let updated;
-  if (/^status:.*$/m.test(fmRaw)) {
-    updated = fmRaw.replace(/^status:.*$/m, `status: ${value}`);
-  } else {
-    updated = fmRaw + `\nstatus: ${value}`;
-  }
-  return `---\n${updated}\n---\n${body}`;
-};
-
-const stripFm = md => {
-  const m = md.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
-  return m ? m[1] : md;
-};
-
-const ageBadge = days => {
-  if (days < 7) return `${days}d`;
-  if (days < 60) return `${days}d`;
-  if (days < 365) return `${Math.round(days / 30)}mo`;
-  return `${(days / 365).toFixed(1)}y`;
-};
-
-let cache = {records: new Map()};
-
-const fetchRecordContent = async path => {
-  if (cache.records.has(path)) return cache.records.get(path);
-  const res = await api('/vault/' + path);
-  const text = await res.text();
-  cache.records.set(path, text);
-  return text;
-};
-
-const fetchBacklinkCount = async recordId => {
-  try {
-    const data = await apiJson(`/sections/${recordId}/backlinks`);
-    return Array.isArray(data) ? data.length : (data.backlinks?.length ?? 0);
-  } catch (e) {
-    return null;
-  }
-};
-
-const rowStatus = (suggId, kind, msg) => {
-  const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-status`);
-  if (!el) return;
-  el.className = 'row-status ' + kind;
-  el.textContent = msg;
-};
-
-const setRowResolved = suggId => {
-  const row = document.querySelector(`[data-sugg-id="${suggId}"]`);
-  if (!row) return;
-  row.classList.add('resolved');
-  row.querySelectorAll('button').forEach(b => { b.disabled = true; });
-};
-
-const archiveInFm = async (suggId, path, btn) => {
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'archiving…';
-  rowStatus(suggId, '', 'reading record…');
-  try {
-    const text = await fetchRecordContent(path);
-    let updated;
-    try {
-      updated = setFmStatus(text, 'archived');
-    } catch (e) {
-      throw new Error(`FM edit: ${e.message}`);
-    }
-    if (updated === text) {
-      rowStatus(suggId, 'ok', 'already archived; closing suggestion');
-    }
-    rowStatus(suggId, '', 'writing…');
-    await api('/vault/' + path, {
-      method: 'PUT',
-      headers: {'Content-Type': 'text/markdown'},
-      body: updated
-    });
-    // The indexer's fm-override auto-accept resolves the suggestion on
-    // re-import; the watcher fires within the debounce window. Surface the
-    // intent immediately for the user.
-    rowStatus(suggId, 'ok', 'archived ✓ (suggestion auto-resolves)');
-    setRowResolved(suggId);
-    cache.records.delete(path);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    rowStatus(suggId, 'err', `failed: ${e.message}`);
-    btn.disabled = false;
-    btn.textContent = original;
-  }
-};
-
-const deleteFile = async (suggId, recordId, path, btn) => {
-  const backlinks = await fetchBacklinkCount(recordId);
-  const warn = backlinks && backlinks > 0
-    ? `${backlinks} inbound wikilink${backlinks === 1 ? '' : 's'} will become broken. Consider "Archive in FM" instead.`
-    : null;
-  const confirmed = await confirmDialog(
-    'Delete record',
-    `${path} will be removed from disk and the DB. The suggestion is then auto-resolved.`,
-    warn
-  );
-  if (!confirmed) return;
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'deleting…';
-  try {
-    await api('/vault/' + path, {method: 'DELETE'});
-    cache.records.delete(path);
-    // Schema 0009's records_after_delete_resolve_suggestions trigger closes
-    // pending suggestions whose subject is the deleted record. Pre-0009
-    // servers don't have that trigger, so issue an explicit accept as a
-    // safety net — tolerate 409 (already_resolved) so the post-trigger path
-    // doesn't surface a spurious error.
-    try {
-      await api(`/suggestions/${suggId}/accept`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({resolved_by: 'ui-deleted'})
-      });
-    } catch (e) {
-      if (e.message !== 'already_resolved' && !/already/.test(e.message)) {
-        // Surface anything other than the expected race-with-trigger 409.
-        rowStatus(suggId, 'warn', `deleted ✓ but suggestion close failed: ${e.message}`);
-        setRowResolved(suggId);
-        return;
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — archive review</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      * {
+        box-sizing: border-box;
       }
-    }
-    rowStatus(suggId, 'ok', 'deleted ✓ (suggestion resolved)');
-    setRowResolved(suggId);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    rowStatus(suggId, 'err', `failed: ${e.message}`);
-    btn.disabled = false;
-    btn.textContent = original;
-  }
-};
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        font-weight: 600;
+      }
+      header nav {
+        display: flex;
+        gap: 0.8rem;
+        font-size: 0.9rem;
+      }
+      header nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      header nav a[aria-current] {
+        color: var(--fg);
+      }
+      header .spacer {
+        flex: 1;
+      }
+      main {
+        padding: 1rem;
+        max-width: 60rem;
+        margin: 0 auto;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 1.4rem 0 0.6rem;
+      }
+      h2:first-child {
+        margin-top: 0;
+      }
+      h2 .count {
+        color: var(--muted);
+        font-weight: 400;
+        font-size: 0.85em;
+      }
+      button {
+        padding: 0.35rem 0.75rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.85rem;
+      }
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      button.danger {
+        background: var(--bad);
+        color: #fff;
+        border-color: var(--bad);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .why {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+      }
+      .why code {
+        font-family: var(--mono);
+        font-size: 0.9em;
+      }
+      .row {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.8rem 1rem;
+        margin-bottom: 0.8rem;
+      }
+      .row.resolved {
+        opacity: 0.5;
+      }
+      .row-head {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      .row-head .path {
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        word-break: break-all;
+        flex: 1;
+        min-width: 16rem;
+      }
+      .row-head .path a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .row-head .path a:hover {
+        text-decoration: underline;
+      }
+      .row-head .meta {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .row-head .meta .tag {
+        padding: 0 0.35rem;
+        border-radius: 3px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+      }
+      .row-excerpt {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin: 0.6rem 0;
+        max-height: 4.5rem;
+        overflow: hidden;
+        position: relative;
+      }
+      .row-excerpt::after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 1.5rem;
+        background: linear-gradient(transparent, var(--card));
+        pointer-events: none;
+      }
+      .row-actions {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        margin-top: 0.6rem;
+        align-items: center;
+      }
+      .row-status {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-family: var(--mono);
+        margin-right: auto;
+      }
+      .row-status.ok {
+        color: var(--ok);
+      }
+      .row-status.err {
+        color: var(--bad);
+      }
+      .row-status.warn {
+        color: var(--bad);
+      }
+      .empty {
+        color: var(--muted);
+        padding: 2rem 1rem;
+        text-align: center;
+        font-size: 0.95rem;
+      }
+      .err {
+        color: var(--bad);
+        padding: 0.8rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--bad);
+        border-radius: 6px;
+        margin-bottom: 1rem;
+      }
+      .ok {
+        color: var(--ok);
+        padding: 0.6rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+      }
+      .spinner {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        border: 2px solid var(--line);
+        border-top-color: var(--muted);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -0.15em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1.2rem;
+        background: var(--card);
+        color: var(--fg);
+        max-width: 28rem;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+      dialog h2 {
+        margin: 0 0 0.8rem;
+        font-size: 1.05rem;
+      }
+      dialog p {
+        color: var(--muted);
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+      }
+      dialog p.warn {
+        color: var(--bad);
+      }
+      dialog input {
+        width: 100%;
+        padding: 0.5rem;
+        font-family: var(--mono);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      dialog .dlg-row {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.8rem;
+      }
+      .footer {
+        color: var(--muted);
+        font-size: 0.8rem;
+        padding: 1rem;
+        text-align: center;
+        font-family: var(--mono);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>vault-storage</h1>
+      <nav>
+        <a href="/ui/">dashboard</a>
+        <a href="/ui/search.html">search</a>
+        <a href="/ui/projects.html">projects</a>
+        <a href="/ui/tags.html">tags</a>
+        <a href="/ui/raw.html">raw</a>
+        <a href="/ui/folder.html">browse</a>
+        <a href="/ui/note.html">note</a>
+      </nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <button id="settings" title="Settings">⚙</button>
+    </header>
+    <main>
+      <div id="status"></div>
+      <div id="content">
+        <div class="empty"><span class="spinner"></span> loading archive candidates…</div>
+      </div>
+    </main>
+    <div class="footer" id="footer"></div>
 
-const rejectSuggestion = async (suggId, btn) => {
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'rejecting…';
-  try {
-    await api(`/suggestions/${suggId}/reject`, {method: 'POST'});
-    rowStatus(suggId, 'ok', 'rejected ✓');
-    setRowResolved(suggId);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    rowStatus(suggId, 'err', `failed: ${e.message}`);
-    btn.disabled = false;
-    btn.textContent = original;
-  }
-};
+    <dialog id="auth-dlg">
+      <h2>API token</h2>
+      <p>
+        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
+        localStorage.
+      </p>
+      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
+      <div class="dlg-row">
+        <button id="auth-cancel">Cancel</button>
+        <button id="auth-ok" class="primary">Save</button>
+      </div>
+    </dialog>
 
-const renderExcerpt = async (path, suggId) => {
-  try {
-    const text = await fetchRecordContent(path);
-    const body = stripFm(text).trim();
-    const lines = body.split(/\n+/).filter(l => l.trim() && !l.startsWith('>'));
-    const excerpt = lines.slice(0, 3).join(' ').slice(0, 300);
-    const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-excerpt`);
-    if (el) el.textContent = excerpt || '(empty body)';
-  } catch (e) {
-    const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-excerpt`);
-    if (el) el.textContent = `(failed to read: ${e.message})`;
-  }
-};
+    <dialog id="confirm-dlg">
+      <h2 id="confirm-title">Confirm</h2>
+      <p id="confirm-body"></p>
+      <p id="confirm-warn" class="warn" hidden></p>
+      <div class="dlg-row">
+        <button id="confirm-cancel">Cancel</button>
+        <button id="confirm-ok" class="danger">Delete</button>
+      </div>
+    </dialog>
 
-const renderRow = item => {
-  const p = item.payload;
-  return `
+    <script type="module">
+      import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+      const $ = sel => document.querySelector(sel);
+
+      const showStatus = (kind, msg) => {
+        const el = $('#status');
+        if (!kind) {
+          el.innerHTML = '';
+          return;
+        }
+        el.innerHTML = `<div class="${kind}">${msg}</div>`;
+      };
+
+      const confirmDialog = (title, body, warn) =>
+        new Promise(resolve => {
+          $('#confirm-title').textContent = title;
+          $('#confirm-body').textContent = body;
+          const warnEl = $('#confirm-warn');
+          if (warn) {
+            warnEl.textContent = warn;
+            warnEl.hidden = false;
+          } else {
+            warnEl.hidden = true;
+          }
+          const dlg = $('#confirm-dlg');
+          const okBtn = $('#confirm-ok');
+          const cancelBtn = $('#confirm-cancel');
+          const close = result => {
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+            dlg.close();
+            resolve(result);
+          };
+          const onOk = () => close(true);
+          const onCancel = () => close(false);
+          okBtn.addEventListener('click', onOk);
+          cancelBtn.addEventListener('click', onCancel);
+          dlg.showModal();
+        });
+
+      // Rewrites or appends the top-level `status:` key inside the FM block.
+      // Handles only single-line scalar form (`status: foo`) — bails on block
+      // form (`status:\n  - foo`), which shouldn't appear in records flagged by
+      // the retention scan (those are simple raw / log / query notes).
+      const setFmStatus = (md, value) => {
+        const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+        if (!m) throw new Error('no frontmatter block');
+        const fmRaw = m[1];
+        const body = m[2];
+        const blockForm = /^status:\s*$/m;
+        if (blockForm.test(fmRaw)) throw new Error('status: is in block form; edit by hand');
+        let updated;
+        if (/^status:.*$/m.test(fmRaw)) {
+          updated = fmRaw.replace(/^status:.*$/m, `status: ${value}`);
+        } else {
+          updated = fmRaw + `\nstatus: ${value}`;
+        }
+        return `---\n${updated}\n---\n${body}`;
+      };
+
+      const stripFm = md => {
+        const m = md.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n([\s\S]*)$/);
+        return m ? m[1] : md;
+      };
+
+      const ageBadge = days => {
+        if (days < 7) return `${days}d`;
+        if (days < 60) return `${days}d`;
+        if (days < 365) return `${Math.round(days / 30)}mo`;
+        return `${(days / 365).toFixed(1)}y`;
+      };
+
+      let cache = {records: new Map()};
+
+      const fetchRecordContent = async path => {
+        if (cache.records.has(path)) return cache.records.get(path);
+        const res = await api('/vault/' + path);
+        const text = await res.text();
+        cache.records.set(path, text);
+        return text;
+      };
+
+      const fetchBacklinkCount = async recordId => {
+        try {
+          const data = await apiJson(`/sections/${recordId}/backlinks`);
+          return Array.isArray(data) ? data.length : (data.backlinks?.length ?? 0);
+        } catch (e) {
+          return null;
+        }
+      };
+
+      const rowStatus = (suggId, kind, msg) => {
+        const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-status`);
+        if (!el) return;
+        el.className = 'row-status ' + kind;
+        el.textContent = msg;
+      };
+
+      const setRowResolved = suggId => {
+        const row = document.querySelector(`[data-sugg-id="${suggId}"]`);
+        if (!row) return;
+        row.classList.add('resolved');
+        row.querySelectorAll('button').forEach(b => {
+          b.disabled = true;
+        });
+      };
+
+      const archiveInFm = async (suggId, path, btn) => {
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'archiving…';
+        rowStatus(suggId, '', 'reading record…');
+        try {
+          const text = await fetchRecordContent(path);
+          let updated;
+          try {
+            updated = setFmStatus(text, 'archived');
+          } catch (e) {
+            throw new Error(`FM edit: ${e.message}`);
+          }
+          if (updated === text) {
+            rowStatus(suggId, 'ok', 'already archived; closing suggestion');
+          }
+          rowStatus(suggId, '', 'writing…');
+          await api('/vault/' + path, {
+            method: 'PUT',
+            headers: {'Content-Type': 'text/markdown'},
+            body: updated
+          });
+          // The indexer's fm-override auto-accept resolves the suggestion on
+          // re-import; the watcher fires within the debounce window. Surface the
+          // intent immediately for the user.
+          rowStatus(suggId, 'ok', 'archived ✓ (suggestion auto-resolves)');
+          setRowResolved(suggId);
+          cache.records.delete(path);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          rowStatus(suggId, 'err', `failed: ${e.message}`);
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      };
+
+      const deleteFile = async (suggId, recordId, path, btn) => {
+        const backlinks = await fetchBacklinkCount(recordId);
+        const warn =
+          backlinks && backlinks > 0
+            ? `${backlinks} inbound wikilink${backlinks === 1 ? '' : 's'} will become broken. Consider "Archive in FM" instead.`
+            : null;
+        const confirmed = await confirmDialog(
+          'Delete record',
+          `${path} will be removed from disk and the DB. The suggestion is then auto-resolved.`,
+          warn
+        );
+        if (!confirmed) return;
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'deleting…';
+        try {
+          await api('/vault/' + path, {method: 'DELETE'});
+          cache.records.delete(path);
+          // Schema 0009's records_after_delete_resolve_suggestions trigger closes
+          // pending suggestions whose subject is the deleted record. Pre-0009
+          // servers don't have that trigger, so issue an explicit accept as a
+          // safety net — tolerate 409 (already_resolved) so the post-trigger path
+          // doesn't surface a spurious error.
+          try {
+            await api(`/suggestions/${suggId}/accept`, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({resolved_by: 'ui-deleted'})
+            });
+          } catch (e) {
+            if (e.message !== 'already_resolved' && !/already/.test(e.message)) {
+              // Surface anything other than the expected race-with-trigger 409.
+              rowStatus(suggId, 'warn', `deleted ✓ but suggestion close failed: ${e.message}`);
+              setRowResolved(suggId);
+              return;
+            }
+          }
+          rowStatus(suggId, 'ok', 'deleted ✓ (suggestion resolved)');
+          setRowResolved(suggId);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          rowStatus(suggId, 'err', `failed: ${e.message}`);
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      };
+
+      const rejectSuggestion = async (suggId, btn) => {
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'rejecting…';
+        try {
+          await api(`/suggestions/${suggId}/reject`, {method: 'POST'});
+          rowStatus(suggId, 'ok', 'rejected ✓');
+          setRowResolved(suggId);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          rowStatus(suggId, 'err', `failed: ${e.message}`);
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      };
+
+      const renderExcerpt = async (path, suggId) => {
+        try {
+          const text = await fetchRecordContent(path);
+          const body = stripFm(text).trim();
+          const lines = body.split(/\n+/).filter(l => l.trim() && !l.startsWith('>'));
+          const excerpt = lines.slice(0, 3).join(' ').slice(0, 300);
+          const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-excerpt`);
+          if (el) el.textContent = excerpt || '(empty body)';
+        } catch (e) {
+          const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-excerpt`);
+          if (el) el.textContent = `(failed to read: ${e.message})`;
+        }
+      };
+
+      const renderRow = item => {
+        const p = item.payload;
+        return `
     <div class="row" data-sugg-id="${esc(item.id)}" data-record-id="${esc(item.subject_id)}" data-path="${esc(p.file_path)}">
       <div class="row-head">
         <div class="path"><a href="/ui/note.html?path=${encodeURIComponent(p.file_path)}">${esc(p.file_path)}</a></div>
@@ -334,43 +576,59 @@ const renderRow = item => {
       </div>
     </div>
   `;
-};
+      };
 
-const wireRow = item => {
-  const row = document.querySelector(`[data-sugg-id="${item.id}"]`);
-  if (!row) return;
-  const recordId = row.dataset.recordId;
-  const path = row.dataset.path;
-  const suggId = item.id;
-  row.querySelector('[data-act="archive"]').addEventListener('click', e => archiveInFm(suggId, path, e.currentTarget));
-  row.querySelector('[data-act="delete"]').addEventListener('click', e => deleteFile(suggId, recordId, path, e.currentTarget));
-  row.querySelector('[data-act="reject"]').addEventListener('click', e => rejectSuggestion(suggId, e.currentTarget));
-  renderExcerpt(path, suggId);
-};
+      const wireRow = item => {
+        const row = document.querySelector(`[data-sugg-id="${item.id}"]`);
+        if (!row) return;
+        const recordId = row.dataset.recordId;
+        const path = row.dataset.path;
+        const suggId = item.id;
+        row
+          .querySelector('[data-act="archive"]')
+          .addEventListener('click', e => archiveInFm(suggId, path, e.currentTarget));
+        row
+          .querySelector('[data-act="delete"]')
+          .addEventListener('click', e => deleteFile(suggId, recordId, path, e.currentTarget));
+        row
+          .querySelector('[data-act="reject"]')
+          .addEventListener('click', e => rejectSuggestion(suggId, e.currentTarget));
+        renderExcerpt(path, suggId);
+      };
 
-const refresh = async () => {
-  if (!getToken()) { showAuthDialog(); return; }
-  cache.records.clear();
-  $('#content').innerHTML = `<div class="empty"><span class="spinner"></span> loading archive candidates…</div>`;
-  let data;
-  try {
-    data = await apiJson('/suggestions?kind=archive_candidate&status=pending&limit=100');
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    $('#content').innerHTML = `<div class="err">Failed to read /suggestions: ${esc(e.message)}</div>`;
-    return;
-  }
-  const items = data.items ?? [];
-  const total = data.total ?? items.length;
-  if (items.length === 0) {
-    $('#content').innerHTML = `<div class="empty">No archive candidates pending. Vault retention is up-to-date.</div>`;
-    $('#footer').textContent = `archive_candidate: 0 pending`;
-    return;
-  }
-  const moreNote = total > items.length
-    ? `<div class="why">Showing ${items.length} of ${total}; refresh after acting on a batch to see the next.</div>`
-    : '';
-  const html = `
+      const refresh = async () => {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        cache.records.clear();
+        $('#content').innerHTML =
+          `<div class="empty"><span class="spinner"></span> loading archive candidates…</div>`;
+        let data;
+        try {
+          data = await apiJson('/suggestions?kind=archive_candidate&status=pending&limit=100');
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#content').innerHTML =
+            `<div class="err">Failed to read /suggestions: ${esc(e.message)}</div>`;
+          return;
+        }
+        const items = data.items ?? [];
+        const total = data.total ?? items.length;
+        if (items.length === 0) {
+          $('#content').innerHTML =
+            `<div class="empty">No archive candidates pending. Vault retention is up-to-date.</div>`;
+          $('#footer').textContent = `archive_candidate: 0 pending`;
+          return;
+        }
+        const moreNote =
+          total > items.length
+            ? `<div class="why">Showing ${items.length} of ${total}; refresh after acting on a batch to see the next.</div>`
+            : '';
+        const html = `
     <h2>Archive candidates <span class="count">(${items.length})</span></h2>
     <div class="why">
       Records flagged by per-type retention rules in <code>topics/vault-hygiene-policy</code>.
@@ -382,22 +640,25 @@ const refresh = async () => {
     ${moreNote}
     <div id="rows">${items.map(renderRow).join('')}</div>
   `;
-  $('#content').innerHTML = html;
-  for (const item of items) wireRow(item);
-  $('#footer').textContent = `archive_candidate: ${items.length} pending${total > items.length ? ` (${total} total)` : ''}`;
-};
+        $('#content').innerHTML = html;
+        for (const item of items) wireRow(item);
+        $('#footer').textContent =
+          `archive_candidate: ${items.length} pending${total > items.length ? ` (${total} total)` : ''}`;
+      };
 
-$('#settings').addEventListener('click', showAuthDialog);
-$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-$('#auth-ok').addEventListener('click', () => {
-  setToken($('#auth-input').value.trim());
-  $('#auth-dlg').close();
-  refresh();
-});
-$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+      $('#settings').addEventListener('click', showAuthDialog);
+      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+      $('#auth-ok').addEventListener('click', () => {
+        setToken($('#auth-input').value.trim());
+        $('#auth-dlg').close();
+        refresh();
+      });
+      $('#auth-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') $('#auth-ok').click();
+      });
 
-refresh();
-</script>
-<script type="module" src="/ui/theme.js"></script>
-</body>
+      refresh();
+    </script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
 </html>

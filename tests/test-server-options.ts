@@ -76,16 +76,17 @@ const teardown = async ({db, handle}: ServerCtx): Promise<void> => {
 };
 
 const seed = (root: string): void => {
-  writeMd(
-    root,
-    'topics/alpha.md',
-    ['---', 'title: Alpha', '---', 'Alpha body.', ''].join('\n')
-  );
+  writeMd(root, 'topics/alpha.md', ['---', 'title: Alpha', '---', 'Alpha body.', ''].join('\n'));
 };
 
 // Parse an `Allow` header into a Set of verbs for order-independent assertions.
 const allowSet = (header: string | null): Set<string> =>
-  new Set((header ?? '').split(',').map(s => s.trim()).filter(Boolean));
+  new Set(
+    (header ?? '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+  );
 
 test('OPTIONS /vault/{path} returns 204 with Allow listing the verbs', async t => {
   const {root, cleanup} = setupVault();

@@ -677,7 +677,11 @@ test('buildEdges deletes stale outbound edges when a record is archived after th
 test('scoped buildEdges: content-only edit rebuilds just that record and GCs its stale edges', async t => {
   const fx = setup();
   try {
-    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nCites [[topics/beta]] and [[topics/gamma]].\n');
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\n---\nCites [[topics/beta]] and [[topics/gamma]].\n'
+    );
     writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nCites [[topics/alpha]].\n');
     writeMd(fx.root, 'topics/gamma.md', '---\ntitle: Gamma\n---\nNo links.\n');
     importVault(fx.db, fx.root);
@@ -689,7 +693,11 @@ test('scoped buildEdges: content-only edit rebuilds just that record and GCs its
     const gamma = records.getByPath('topics/gamma.md')!;
 
     // Content-only edit: alpha drops the gamma link.
-    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nCites [[topics/beta]] only now.\n');
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\n---\nCites [[topics/beta]] only now.\n'
+    );
     importFile(records, 'topics/alpha.md', join(fx.root, 'topics/alpha.md'));
 
     const summary = buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([alpha.recordId])});
@@ -699,10 +707,14 @@ test('scoped buildEdges: content-only edit rebuilds just that record and GCs its
       t.notOk(edges.listOutbound(alpha.recordId).some(e => e.toId === gamma.recordId));
     });
     await t.test('alpha→beta retained', t => {
-      t.ok(edges.listOutbound(alpha.recordId).some(e => e.toId === beta.recordId && e.type === 'cites'));
+      t.ok(
+        edges.listOutbound(alpha.recordId).some(e => e.toId === beta.recordId && e.type === 'cites')
+      );
     });
     await t.test("beta's own outbound edge untouched by the scoped pass", t => {
-      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'cites'));
+      t.ok(
+        edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'cites')
+      );
     });
     await t.test('only the scoped record was re-extracted', t => {
       t.equal(summary.edgesCreated, 1, 'one upsert: alpha→beta');
@@ -737,10 +749,18 @@ test('scoped buildEdges: counterparty-backed edges survive scoped GC (symmetric 
       t.equal(summary.edgesDeleted, 0);
     });
     await t.test('mirror beta→alpha survives', t => {
-      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'related-to'));
+      t.ok(
+        edges
+          .listOutbound(beta.recordId)
+          .some(e => e.toId === alpha.recordId && e.type === 'related-to')
+      );
     });
     await t.test('alpha→beta survives', t => {
-      t.ok(edges.listOutbound(alpha.recordId).some(e => e.toId === beta.recordId && e.type === 'related-to'));
+      t.ok(
+        edges
+          .listOutbound(alpha.recordId)
+          .some(e => e.toId === beta.recordId && e.type === 'related-to')
+      );
     });
   } finally {
     teardown(fx);
@@ -750,7 +770,11 @@ test('scoped buildEdges: counterparty-backed edges survive scoped GC (symmetric 
 test('scoped buildEdges: inverse classification backed by the other endpoint survives', async t => {
   const fx = setup();
   try {
-    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nThis is superseded by [[topics/beta]].\n');
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\n---\nThis is superseded by [[topics/beta]].\n'
+    );
     writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
     importVault(fx.db, fx.root);
 
@@ -760,7 +784,11 @@ test('scoped buildEdges: inverse classification backed by the other endpoint sur
     const beta = records.getByPath('topics/beta.md')!;
 
     await t.test('precondition: inverse edge beta→alpha exists', t => {
-      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'supersedes'));
+      t.ok(
+        edges
+          .listOutbound(beta.recordId)
+          .some(e => e.toId === alpha.recordId && e.type === 'supersedes')
+      );
     });
 
     // beta declares nothing itself; the beta→alpha edge is backed by ALPHA's
@@ -769,7 +797,11 @@ test('scoped buildEdges: inverse classification backed by the other endpoint sur
 
     await t.test('inverse edge survives the scoped pass over beta', t => {
       t.equal(summary.edgesDeleted, 0);
-      t.ok(edges.listOutbound(beta.recordId).some(e => e.toId === alpha.recordId && e.type === 'supersedes'));
+      t.ok(
+        edges
+          .listOutbound(beta.recordId)
+          .some(e => e.toId === alpha.recordId && e.type === 'supersedes')
+      );
     });
   } finally {
     teardown(fx);

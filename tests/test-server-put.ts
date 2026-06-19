@@ -178,14 +178,7 @@ test('PUT /sections/{id} rejects DB-only frontmatter keys', async t => {
     const ctx = await startTestServer(root);
     try {
       const id = await findId(ctx.url, 'topics/alpha.md');
-      const newMd = [
-        '---',
-        'title: Alpha',
-        "record_id: 'fake-id'",
-        '---',
-        'body',
-        ''
-      ].join('\n');
+      const newMd = ['---', 'title: Alpha', "record_id: 'fake-id'", '---', 'body', ''].join('\n');
       const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
         method: 'PUT',
         headers: {'Content-Type': 'text/markdown'},
@@ -304,7 +297,9 @@ test('PUT /sections/{id} rejects unknown priority alias; integers and known alia
       t.equal(put.status, 204, 'named alias accepted');
 
       // Unknown string rejected.
-      const badMd = ['---', 'title: Alpha', 'priority: super-critical', '---', 'body', ''].join('\n');
+      const badMd = ['---', 'title: Alpha', 'priority: super-critical', '---', 'body', ''].join(
+        '\n'
+      );
       put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
         method: 'PUT',
         headers: {'Content-Type': 'text/markdown'},
@@ -448,7 +443,9 @@ test('PUT /sections/{id} syncs tags from frontmatter', async t => {
       `);
 
       const id = await findId(ctx.url, 'topics/alpha.md');
-      const newMd = ['---', 'title: Alpha', 'tags: [research, design]', '---', 'body', ''].join('\n');
+      const newMd = ['---', 'title: Alpha', 'tags: [research, design]', '---', 'body', ''].join(
+        '\n'
+      );
       const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
         method: 'PUT',
         headers: {'Content-Type': 'text/markdown'},
@@ -459,7 +456,11 @@ test('PUT /sections/{id} syncs tags from frontmatter', async t => {
       const rows = ctx.db
         .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
         .all(id) as Array<{tag: string}>;
-      t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'tags synced from PUT body frontmatter');
+      t.deepEqual(
+        rows.map(r => r.tag),
+        ['design', 'research'],
+        'tags synced from PUT body frontmatter'
+      );
     } finally {
       await teardown(ctx);
     }

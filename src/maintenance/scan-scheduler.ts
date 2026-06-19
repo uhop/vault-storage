@@ -24,11 +24,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {getContentGeneration, getMetaValue} from '../db/meta.ts';
 import {isWithinWorkHours, type WorkHoursWindow} from '../server/git-sync.ts';
-import {
-  runAllScans,
-  SCAN_LAST_PASS_AT_KEY,
-  SCAN_LAST_PASS_GENERATION_KEY
-} from './run-all.ts';
+import {runAllScans, SCAN_LAST_PASS_AT_KEY, SCAN_LAST_PASS_GENERATION_KEY} from './run-all.ts';
 
 export interface ScanSchedulerOptions {
   db: DatabaseSync;
@@ -94,7 +90,9 @@ export const startScanScheduler = (opts: ScanSchedulerOptions): ScanSchedulerHan
     await runScans(db);
     log(
       `scan-scheduler: maintenance pass completed (${
-        unchanged ? `quiet ${Math.round(quietMs / 3_600_000)}h exceeded max` : `generation ${lastGeneration ?? 'none'} → ${generation}`
+        unchanged
+          ? `quiet ${Math.round(quietMs / 3_600_000)}h exceeded max`
+          : `generation ${lastGeneration ?? 'none'} → ${generation}`
       })`
     );
     return 'ran';

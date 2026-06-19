@@ -12,7 +12,26 @@ const dataPath = process.env['VAULT_DATA_PATH'] ?? '/media/raid/Vault-Data/';
 const dbPath = process.env['VAULT_DB_PATH'] ?? join(dataPath, '.vault-storage', 'vault.sqlite');
 const db = new DatabaseSync(dbPath, {readOnly: true});
 
-const rows = db.prepare('SELECT record_id, file_path, parent_path, sequence_key, type, body, content_hash, created, updated, last_referenced, decay_score, status, priority, archived_at FROM records').all() as Array<{record_id: string; file_path: string; parent_path: string | null; sequence_key: number | null; type: string; body: string; content_hash: string; created: string; updated: string; last_referenced: string | null; decay_score: number; status: string; priority: number; archived_at: string | null}>;
+const rows = db
+  .prepare(
+    'SELECT record_id, file_path, parent_path, sequence_key, type, body, content_hash, created, updated, last_referenced, decay_score, status, priority, archived_at FROM records'
+  )
+  .all() as Array<{
+  record_id: string;
+  file_path: string;
+  parent_path: string | null;
+  sequence_key: number | null;
+  type: string;
+  body: string;
+  content_hash: string;
+  created: string;
+  updated: string;
+  last_referenced: string | null;
+  decay_score: number;
+  status: string;
+  priority: number;
+  archived_at: string | null;
+}>;
 
 const records: VaultRecord[] = rows.map(r => ({
   recordId: r.record_id,
@@ -65,7 +84,9 @@ for (const record of records) {
 
 const sorted = [...unresolvedCounts.entries()].sort((a, b) => b[1].count - a[1].count);
 console.log(`Total wikilinks: ${totalLinks}`);
-console.log(`Unresolved: ${totalUnresolved} (${((totalUnresolved / totalLinks) * 100).toFixed(1)}%)`);
+console.log(
+  `Unresolved: ${totalUnresolved} (${((totalUnresolved / totalLinks) * 100).toFixed(1)}%)`
+);
 console.log(`Distinct unresolved targets: ${sorted.length}`);
 console.log('');
 console.log('Top 50 unresolved targets:');

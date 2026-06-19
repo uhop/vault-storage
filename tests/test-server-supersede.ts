@@ -138,7 +138,11 @@ test('supersede in place: old archived with status + record_id intact, successor
       });
       t.equal(status, 200, '200 ok');
       const res = body as SupersedeResponse;
-      t.equal(res.old.path, `topics/archive/${YEAR}/flange.md`, 'old archived under the year folder');
+      t.equal(
+        res.old.path,
+        `topics/archive/${YEAR}/flange.md`,
+        'old archived under the year folder'
+      );
       t.equal(res.old.record_id, oldId, 'archived record keeps its record_id');
       t.equal(res.new.path, 'topics/flange.md', 'successor takes the original path');
       t.ok(res.new.record_id, 'successor has a record');

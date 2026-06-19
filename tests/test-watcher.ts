@@ -154,7 +154,11 @@ test('watcher: content-only edit takes the scoped edge rebuild', async t => {
   });
 
   try {
-    writeMd(fx.root, 'topics/alpha.md', '---\ntitle: Alpha\n---\nCites [[topics/beta]] and [[topics/gamma]].\n');
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\n---\nCites [[topics/beta]] and [[topics/gamma]].\n'
+    );
     writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nCites [[topics/gamma]].\n');
     writeMd(fx.root, 'topics/gamma.md', '---\ntitle: Gamma\n---\nNo links.\n');
     await sleep(150);

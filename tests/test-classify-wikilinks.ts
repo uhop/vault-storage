@@ -105,7 +105,9 @@ test('"replaced by" → supersedes edge with inverse direction', t => {
 });
 
 test('"extends" → derived-from edge', t => {
-  const out = classifyBodyLinks('## Relationship\nExtends [[base-design]]: first try the simple case.');
+  const out = classifyBodyLinks(
+    '## Relationship\nExtends [[base-design]]: first try the simple case.'
+  );
   t.equal(out[0]?.type, 'derived-from');
   t.notOk(out[0]?.inverse, 'active form, no inverse');
 });
@@ -121,7 +123,13 @@ test('"builds on" → derived-from edge', t => {
 });
 
 test('wikilinks inside fenced code blocks are skipped', t => {
-  const body = ['intro [[real]]', '```bash', 'if [[ -n $x ]]; then echo "[[fake]]"; fi', '```', 'after [[also-real]]'].join('\n');
+  const body = [
+    'intro [[real]]',
+    '```bash',
+    'if [[ -n $x ]]; then echo "[[fake]]"; fi',
+    '```',
+    'after [[also-real]]'
+  ].join('\n');
   const out = classifyBodyLinks(body);
   const targets = out.map(e => e.target).sort();
   t.deepEqual(targets, ['also-real', 'real']);

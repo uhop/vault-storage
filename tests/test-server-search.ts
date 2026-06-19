@@ -230,7 +230,10 @@ test('POST /search/simple/?mode=semantic returns embedding hits', async t => {
       t.equal(r.status, 200, '200 ok');
       const hits = r.body as Array<{filename: string; score: number}>;
       t.ok(hits.length > 0, 'returns at least one semantic hit');
-      t.ok(hits.every(h => typeof h.filename === 'string'), 'every hit has a filename');
+      t.ok(
+        hits.every(h => typeof h.filename === 'string'),
+        'every hit has a filename'
+      );
     } finally {
       await teardown(ctx);
     }
@@ -338,22 +341,54 @@ test('POST /search/simple/ scores all matches before applying limit (title match
     writeMd(
       root,
       'topics/body-1.md',
-      ['---', 'title: Body one', 'created: 2026-05-01', 'updated: 2026-05-10', '---', 'a common mention', ''].join('\n')
+      [
+        '---',
+        'title: Body one',
+        'created: 2026-05-01',
+        'updated: 2026-05-10',
+        '---',
+        'a common mention',
+        ''
+      ].join('\n')
     );
     writeMd(
       root,
       'topics/body-2.md',
-      ['---', 'title: Body two', 'created: 2026-05-01', 'updated: 2026-05-11', '---', 'another common mention', ''].join('\n')
+      [
+        '---',
+        'title: Body two',
+        'created: 2026-05-01',
+        'updated: 2026-05-11',
+        '---',
+        'another common mention',
+        ''
+      ].join('\n')
     );
     writeMd(
       root,
       'topics/body-3.md',
-      ['---', 'title: Body three', 'created: 2026-05-01', 'updated: 2026-05-12', '---', 'common once more', ''].join('\n')
+      [
+        '---',
+        'title: Body three',
+        'created: 2026-05-01',
+        'updated: 2026-05-12',
+        '---',
+        'common once more',
+        ''
+      ].join('\n')
     );
     writeMd(
       root,
       'topics/titled.md',
-      ['---', 'title: Common matters', 'created: 2026-01-01', 'updated: 2026-01-01', '---', 'nothing relevant in the body', ''].join('\n')
+      [
+        '---',
+        'title: Common matters',
+        'created: 2026-01-01',
+        'updated: 2026-01-01',
+        '---',
+        'nothing relevant in the body',
+        ''
+      ].join('\n')
     );
     const ctx = await startTestServer(root);
     try {
@@ -363,7 +398,11 @@ test('POST /search/simple/ scores all matches before applying limit (title match
       t.equal(r.status, 200, '200 ok');
       const hits = r.body as Array<{filename: string; score: number}>;
       t.equal(hits.length, 2, 'respects limit');
-      t.equal(hits[0]!.filename, 'topics/titled.md', 'title match ranks first despite being oldest');
+      t.equal(
+        hits[0]!.filename,
+        'topics/titled.md',
+        'title match ranks first despite being oldest'
+      );
     } finally {
       await teardown(ctx);
     }

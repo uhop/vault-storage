@@ -36,7 +36,7 @@ Exit code `0` means clean; `1` means drift detected. The `--update` flag re-writ
 
 One file per project at `projects/<name>/state.md` in the vault. Frontmatter + a single fenced `json` block the script reads & writes:
 
-```yaml
+````yaml
 ---
 title: <name> — state snapshot
 type: state
@@ -61,7 +61,8 @@ Auto-maintained by the `vault-check-drift` skill...
   "submodules": {"wiki": {"head": "…"}},
   "publishable": {"npm": {"name": "…", "latest": null, "versions": []}}
 }
-```
+````
+
 ```
 
 Only `repo.head.sha`, `repo.tags`, `submodules.*.head`, and `publishable.npm.versions` are used for diffing. The rest is context for human readers.
@@ -69,27 +70,29 @@ Only `repo.head.sha`, `repo.tags`, `submodules.*.head`, and `publishable.npm.ver
 ## Report sections
 
 ```
+
 DRIFT since last baseline:
-  commit: abc123 <subject>            ← new commits on current branch
-  tag: +3.1.1                         ← new tags
-  npm: +3.1.1 published               ← new publishes
-  submodule wiki: 6a1411c → 7cde892   ← submodule HEAD moved
+commit: abc123 <subject> ← new commits on current branch
+tag: +3.1.1 ← new tags
+npm: +3.1.1 published ← new publishes
+submodule wiki: 6a1411c → 7cde892 ← submodule HEAD moved
 
 LOCAL vs REMOTE:
-  master: 3 ahead, 0 behind upstream  ← unpushed commits
-    unpushed: abc123 <subject>
-    unpushed: def456 <subject>
-  wiki: 1 ahead, 0 behind upstream
+master: 3 ahead, 0 behind upstream ← unpushed commits
+unpushed: abc123 <subject>
+unpushed: def456 <subject>
+wiki: 1 ahead, 0 behind upstream
 
 WORKING TREE:
-  modified (2): src/index.js, package.json
-  staged (1): tests/test-new.js
-  untracked (1): notes/scratch.md
-  stash entries: 1
+modified (2): src/index.js, package.json
+staged (1): tests/test-new.js
+untracked (1): notes/scratch.md
+stash entries: 1
 
 RECONCILE tags ↔ npm:
-  tag 3.1.0: no matching npm publish  ← forgot to publish
-  npm 3.1.1: no matching git tag      ← forgot to tag
+tag 3.1.0: no matching npm publish ← forgot to publish
+npm 3.1.1: no matching git tag ← forgot to tag
+
 ```
 
 Empty sections are omitted. When nothing's wrong: one line — `project "X": state matches vault; tree clean; last checked <ts>`.
@@ -99,8 +102,10 @@ Empty sections are omitted. When nothing's wrong: one line — `project "X": sta
 First run in a project with no baseline emits:
 
 ```
+
 DRIFT since last baseline:
-  (no baseline recorded — run with --update to bootstrap)
+(no baseline recorded — run with --update to bootstrap)
+
 ```
 
 Run once with `--update` to seed `state.md`. Subsequent checks compare against that snapshot.
@@ -121,3 +126,4 @@ Safe to re-run repeatedly: `state.md` is idempotent. Rate-limit: a separate `las
 - `vault-curl` — Obsidian Local REST API access (reads + writes `state.md`).
 
 Script exits 2 on missing deps or when invoked outside a git repo.
+```

@@ -219,9 +219,9 @@ export const addTaxonomyHandler =
       return;
     }
 
-    const existing = deps.db
-      .prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?')
-      .get(tag) as {x: number} | undefined;
+    const existing = deps.db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag) as
+      | {x: number}
+      | undefined;
     if (existing) {
       sendError(ctx.res, 409, 'conflict', `tag '${tag}' already in taxonomy`);
       return;
@@ -247,7 +247,12 @@ export const addTaxonomyHandler =
       sendJson(ctx.res, 200, {tag, description: body.description ?? null, linked, accepted});
     } catch (err) {
       deps.db.exec('ROLLBACK');
-      sendError(ctx.res, 500, 'internal', `failed to add taxonomy entry: ${(err as Error).message}`);
+      sendError(
+        ctx.res,
+        500,
+        'internal',
+        `failed to add taxonomy entry: ${(err as Error).message}`
+      );
     }
   };
 

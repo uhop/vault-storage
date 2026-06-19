@@ -86,12 +86,7 @@ export const queueBySectionHandler =
   ctx => {
     const section = ctx.params['section'];
     if (section !== 'active' && section !== 'backlog' && section !== 'watching') {
-      sendError(
-        ctx.res,
-        400,
-        'bad_request',
-        'section must be one of: active, backlog, watching'
-      );
+      sendError(ctx.res, 400, 'bad_request', 'section must be one of: active, backlog, watching');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);

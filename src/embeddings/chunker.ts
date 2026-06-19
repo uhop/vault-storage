@@ -11,9 +11,9 @@
 // section starts fresh. For hard-split single paragraphs, overlap is char-
 // level (last `charOverlap` characters of the previous piece).
 
-const DEFAULT_MAX_CHARS = 1200;     // soft target — paragraphs may push slightly past
-const HARD_CAP = 1500;              // absolute upper bound per chunk
-const DEFAULT_CHAR_OVERLAP = 150;   // for hard-split paragraphs
+const DEFAULT_MAX_CHARS = 1200; // soft target — paragraphs may push slightly past
+const HARD_CAP = 1500; // absolute upper bound per chunk
+const DEFAULT_CHAR_OVERLAP = 150; // for hard-split paragraphs
 const HEADER_RE = /^(#{1,6})\s+(.*)$/;
 
 interface HeaderFrame {
@@ -153,11 +153,7 @@ export const chunkBody = (
     // becomes its own chunk with the header prefix and char-level overlap.
     if (prefixLen + blockLen > HARD_CAP) {
       flush();
-      const pieces = hardSplit(
-        block.text,
-        HARD_CAP - prefixLen,
-        overlapEnabled ? charOverlap : 0
-      );
+      const pieces = hardSplit(block.text, HARD_CAP - prefixLen, overlapEnabled ? charOverlap : 0);
       for (const piece of pieces) chunks.push(headerPrefix(block.headerPath) + piece);
       lastBlockText = pieces[pieces.length - 1] ?? null;
       currentPath = null; // next paragraph starts a fresh accumulation

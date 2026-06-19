@@ -6,7 +6,7 @@ user_invocable: true
 
 # Vault — typed-edge neighborhood
 
-BFS walk of typed edges (`cites`, `related-to`, `supersedes`, `derived-from`, …) starting from a record. The structural complement to `/vault-similar`: similar uses embeddings (semantic), graph uses the explicit edge classifier (relational). Useful when you need to know *how* two notes connect, not just *that* they're related.
+BFS walk of typed edges (`cites`, `related-to`, `supersedes`, `derived-from`, …) starting from a record. The structural complement to `/vault-similar`: similar uses embeddings (semantic), graph uses the explicit edge classifier (relational). Useful when you need to know _how_ two notes connect, not just _that_ they're related.
 
 ## Invocation
 
@@ -84,17 +84,17 @@ Combinable. `--depth=2 --via=supersedes,revises` traces a chain of revisions two
 
 10 closed types per the design's edge taxonomy:
 
-| Type | Meaning |
-| ---- | ------- |
-| `cites` | Default for unclassified body wikilinks |
-| `related-to` | Symmetric general relation; auto-mirrored |
-| `supersedes` | A obsoletes B (asymmetric) |
-| `revises` | A is a revision of B (asymmetric) |
-| `derived-from` | A builds on B |
-| `caused-by` / `fixed-by` | Bug-tracking flow |
-| `rejected-because` | A rejected, citing B as reason |
-| `applies-to` | Scope / context |
-| `contradicts` | Symmetric disagreement; auto-mirrored |
+| Type                     | Meaning                                   |
+| ------------------------ | ----------------------------------------- |
+| `cites`                  | Default for unclassified body wikilinks   |
+| `related-to`             | Symmetric general relation; auto-mirrored |
+| `supersedes`             | A obsoletes B (asymmetric)                |
+| `revises`                | A is a revision of B (asymmetric)         |
+| `derived-from`           | A builds on B                             |
+| `caused-by` / `fixed-by` | Bug-tracking flow                         |
+| `rejected-because`       | A rejected, citing B as reason            |
+| `applies-to`             | Scope / context                           |
+| `contradicts`            | Symmetric disagreement; auto-mirrored     |
 
 ## Backend requirement
 

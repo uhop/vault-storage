@@ -1,173 +1,390 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
-<title>vault-storage — search</title>
-<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-<link rel="icon" sizes="any" href="/favicon.ico">
-<link rel="stylesheet" href="/ui/theme.css">
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg); color: var(--fg);
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
-  header nav { display: flex; gap: .8rem; font-size: .9rem; }
-  header nav a { color: var(--muted); text-decoration: none; }
-  header nav a[aria-current] { color: var(--fg); }
-  header .spacer { flex: 1; }
-  main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
-  .search-bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
-  .search-bar input[type=search] {
-    flex: 1; min-width: 12rem; padding: .55rem .7rem; font: inherit;
-    border: 1px solid var(--line); border-radius: 4px;
-    background: var(--card); color: var(--fg);
-  }
-  .modes { display: flex; gap: .8rem; font-size: .85rem; color: var(--muted); }
-  .modes label { display: inline-flex; align-items: center; gap: .25rem; cursor: pointer; }
-  button { padding: .55rem .9rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .recents { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; }
-  .recents button.chip {
-    padding: .2rem .55rem; font-size: .8rem; font-family: var(--mono);
-    background: transparent; color: var(--muted); border-color: var(--line);
-  }
-  .recents button.chip:hover { color: var(--fg); border-color: var(--muted); }
-  .results { margin-top: 1.2rem; }
-  .result { padding: .7rem .9rem; border: 1px solid var(--line); border-radius: 6px; margin-bottom: .5rem; background: var(--card); }
-  .result .head { display: flex; flex-wrap: wrap; gap: .4rem; align-items: baseline; }
-  .result .filename {
-    font-family: var(--mono); font-size: .9rem; color: var(--accent);
-    cursor: pointer; word-break: break-all;
-  }
-  .result .filename:hover { text-decoration: underline; }
-  .result .edit { font-size: .8rem; color: var(--muted); text-decoration: none; padding: .1em .4em; border: 1px solid var(--line); border-radius: 3px; }
-  .result .edit:hover { color: var(--fg); border-color: var(--muted); }
-  .result .score { color: var(--muted); font-size: .8rem; }
-  .result .snippets { margin-top: .4rem; font-size: .85rem; color: var(--muted); font-family: var(--mono); }
-  .result .snippets div { padding: .15rem 0; word-break: break-word; }
-  .result .snippets mark { background: var(--hl); color: inherit; padding: 0 .1em; border-radius: 2px; }
-  .result .body {
-    display: none; margin-top: .6rem; padding: .6rem .8rem;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
-    font-family: var(--mono); font-size: .82rem; white-space: pre-wrap; word-break: break-word;
-    max-height: 30rem; overflow-y: auto;
-  }
-  .result.open .body { display: block; }
-  .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
-  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
-  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
-  dialog::backdrop { background: rgba(0,0,0,.5); }
-  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
-  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
-  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
-  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
-  .footer { color: var(--muted); font-size: .8rem; padding: 1rem; text-align: center; font-family: var(--mono); }
-</style>
-</head>
-<body>
-<header>
-  <h1>vault-storage</h1>
-  <nav>
-    <a href="/ui/">dashboard</a>
-    <a href="/ui/search.html" aria-current="page">search</a>
-    <a href="/ui/projects.html">projects</a>
-    <a href="/ui/tags.html">tags</a>
-    <a href="/ui/raw.html">raw</a>
-    <a href="/ui/folder.html">browse</a>
-    <a href="/ui/note.html">note</a>
-  </nav>
-  <div class="spacer"></div>
-  <div id="theme-toggle"></div>
-  <button id="settings" title="Settings">⚙</button>
-</header>
-<main id="root">
-  <div class="search-bar">
-    <input type="search" id="q" placeholder="Search the vault…" autocomplete="off" spellcheck="false">
-    <div class="modes">
-      <label><input type="radio" name="mode" value="lexical" checked> lexical</label>
-      <label><input type="radio" name="mode" value="semantic"> semantic</label>
-    </div>
-    <button id="go" class="primary">Search</button>
-  </div>
-  <div class="recents" id="recents"></div>
-  <div class="results" id="results"></div>
-</main>
-<div class="footer" id="footer"></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — search</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        font-weight: 600;
+      }
+      header nav {
+        display: flex;
+        gap: 0.8rem;
+        font-size: 0.9rem;
+      }
+      header nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      header nav a[aria-current] {
+        color: var(--fg);
+      }
+      header .spacer {
+        flex: 1;
+      }
+      main {
+        padding: 1rem;
+        max-width: 56rem;
+        margin: 0 auto;
+      }
+      .search-bar {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .search-bar input[type='search'] {
+        flex: 1;
+        min-width: 12rem;
+        padding: 0.55rem 0.7rem;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--card);
+        color: var(--fg);
+      }
+      .modes {
+        display: flex;
+        gap: 0.8rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .modes label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        cursor: pointer;
+      }
+      button {
+        padding: 0.55rem 0.9rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .recents {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.6rem;
+      }
+      .recents button.chip {
+        padding: 0.2rem 0.55rem;
+        font-size: 0.8rem;
+        font-family: var(--mono);
+        background: transparent;
+        color: var(--muted);
+        border-color: var(--line);
+      }
+      .recents button.chip:hover {
+        color: var(--fg);
+        border-color: var(--muted);
+      }
+      .results {
+        margin-top: 1.2rem;
+      }
+      .result {
+        padding: 0.7rem 0.9rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+        background: var(--card);
+      }
+      .result .head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        align-items: baseline;
+      }
+      .result .filename {
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        color: var(--accent);
+        cursor: pointer;
+        word-break: break-all;
+      }
+      .result .filename:hover {
+        text-decoration: underline;
+      }
+      .result .edit {
+        font-size: 0.8rem;
+        color: var(--muted);
+        text-decoration: none;
+        padding: 0.1em 0.4em;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+      }
+      .result .edit:hover {
+        color: var(--fg);
+        border-color: var(--muted);
+      }
+      .result .score {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .result .snippets {
+        margin-top: 0.4rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+        font-family: var(--mono);
+      }
+      .result .snippets div {
+        padding: 0.15rem 0;
+        word-break: break-word;
+      }
+      .result .snippets mark {
+        background: var(--hl);
+        color: inherit;
+        padding: 0 0.1em;
+        border-radius: 2px;
+      }
+      .result .body {
+        display: none;
+        margin-top: 0.6rem;
+        padding: 0.6rem 0.8rem;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        font-family: var(--mono);
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 30rem;
+        overflow-y: auto;
+      }
+      .result.open .body {
+        display: block;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 0.8rem 1rem;
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      .err {
+        color: var(--bad);
+        padding: 0.8rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--bad);
+        border-radius: 6px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        border: 2px solid var(--line);
+        border-top-color: var(--muted);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -0.15em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1.2rem;
+        background: var(--card);
+        color: var(--fg);
+        max-width: 24rem;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+      dialog h2 {
+        margin: 0 0 0.8rem;
+        font-size: 1.05rem;
+      }
+      dialog p {
+        color: var(--muted);
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+      }
+      dialog input {
+        width: 100%;
+        padding: 0.5rem;
+        font-family: var(--mono);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      dialog .row {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.8rem;
+      }
+      .footer {
+        color: var(--muted);
+        font-size: 0.8rem;
+        padding: 1rem;
+        text-align: center;
+        font-family: var(--mono);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>vault-storage</h1>
+      <nav>
+        <a href="/ui/">dashboard</a>
+        <a href="/ui/search.html" aria-current="page">search</a>
+        <a href="/ui/projects.html">projects</a>
+        <a href="/ui/tags.html">tags</a>
+        <a href="/ui/raw.html">raw</a>
+        <a href="/ui/folder.html">browse</a>
+        <a href="/ui/note.html">note</a>
+      </nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <button id="settings" title="Settings">⚙</button>
+    </header>
+    <main id="root">
+      <div class="search-bar">
+        <input
+          type="search"
+          id="q"
+          placeholder="Search the vault…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="modes">
+          <label><input type="radio" name="mode" value="lexical" checked /> lexical</label>
+          <label><input type="radio" name="mode" value="semantic" /> semantic</label>
+        </div>
+        <button id="go" class="primary">Search</button>
+      </div>
+      <div class="recents" id="recents"></div>
+      <div class="results" id="results"></div>
+    </main>
+    <div class="footer" id="footer"></div>
 
-<dialog id="auth-dlg">
-  <h2>API token</h2>
-  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
-  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
-  <div class="row">
-    <button id="auth-cancel">Cancel</button>
-    <button id="auth-ok" class="primary">Save</button>
-  </div>
-</dialog>
+    <dialog id="auth-dlg">
+      <h2>API token</h2>
+      <p>
+        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
+        localStorage.
+      </p>
+      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
+      <div class="row">
+        <button id="auth-cancel">Cancel</button>
+        <button id="auth-ok" class="primary">Save</button>
+      </div>
+    </dialog>
 
-<script type="module">
-import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
-const RECENT_KEY = 'vault.recent-searches';
-const RECENT_MAX = 8;
-const $ = sel => document.querySelector(sel);
+    <script type="module">
+      import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+      const RECENT_KEY = 'vault.recent-searches';
+      const RECENT_MAX = 8;
+      const $ = sel => document.querySelector(sel);
 
+      const getRecents = () => {
+        try {
+          return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]');
+        } catch {
+          return [];
+        }
+      };
+      const pushRecent = q => {
+        const r = [q, ...getRecents().filter(x => x !== q)].slice(0, RECENT_MAX);
+        localStorage.setItem(RECENT_KEY, JSON.stringify(r));
+        renderRecents();
+      };
+      const renderRecents = () => {
+        const r = getRecents();
+        $('#recents').innerHTML =
+          r.length === 0
+            ? ''
+            : r.map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('');
+      };
 
-const getRecents = () => {
-  try { return JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]'); } catch { return []; }
-};
-const pushRecent = q => {
-  const r = [q, ...getRecents().filter(x => x !== q)].slice(0, RECENT_MAX);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(r));
-  renderRecents();
-};
-const renderRecents = () => {
-  const r = getRecents();
-  $('#recents').innerHTML = r.length === 0
-    ? ''
-    : r.map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('');
-};
+      const highlightSnippet = (context, match) => {
+        // The /search/simple/ response gives match start/end as offsets into the
+        // FULL body, not into context. The context is a substring around the match;
+        // we don't know its absolute position. Best-effort: bold-highlight the
+        // first occurrence of the matched substring inside the context.
+        if (!context) return '';
+        const ctx = String(context);
+        // Try to find the match by reading the body offset range from the original
+        // body. Without that, we have no reliable highlight target. The /vault-search
+        // skill notes that matches[].context is short and typically contains the
+        // match — render plain, no highlight, until we add a server-side highlighter.
+        return esc(ctx);
+      };
 
-const highlightSnippet = (context, match) => {
-  // The /search/simple/ response gives match start/end as offsets into the
-  // FULL body, not into context. The context is a substring around the match;
-  // we don't know its absolute position. Best-effort: bold-highlight the
-  // first occurrence of the matched substring inside the context.
-  if (!context) return '';
-  const ctx = String(context);
-  // Try to find the match by reading the body offset range from the original
-  // body. Without that, we have no reliable highlight target. The /vault-search
-  // skill notes that matches[].context is short and typically contains the
-  // match — render plain, no highlight, until we add a server-side highlighter.
-  return esc(ctx);
-};
+      const fmtScore = (score, mode) => {
+        if (mode === 'semantic') return Number(score).toFixed(3);
+        const n = Number(score);
+        return `${n} match${n === 1 ? '' : 'es'}`;
+      };
 
-const fmtScore = (score, mode) => {
-  if (mode === 'semantic') return Number(score).toFixed(3);
-  const n = Number(score);
-  return `${n} match${n === 1 ? '' : 'es'}`;
-};
-
-const renderResults = (results, mode) => {
-  if (!Array.isArray(results) || results.length === 0) {
-    $('#results').innerHTML = '<div class="empty">No matches.</div>';
-    return;
-  }
-  $('#results').innerHTML = results.map((r, i) => {
-    const snippets = (r.matches ?? []).slice(0, 3).map(m => {
-      const ctx = highlightSnippet(m.context, m.match);
-      return `<div>… ${ctx} …</div>`;
-    }).join('');
-    const path = encodeURIComponent(r.filename);
-    return `
+      const renderResults = (results, mode) => {
+        if (!Array.isArray(results) || results.length === 0) {
+          $('#results').innerHTML = '<div class="empty">No matches.</div>';
+          return;
+        }
+        $('#results').innerHTML = results
+          .map((r, i) => {
+            const snippets = (r.matches ?? [])
+              .slice(0, 3)
+              .map(m => {
+                const ctx = highlightSnippet(m.context, m.match);
+                return `<div>… ${ctx} …</div>`;
+              })
+              .join('');
+            const path = encodeURIComponent(r.filename);
+            return `
       <div class="result" data-idx="${i}">
         <div class="head">
           <span class="filename" data-path="${esc(r.filename)}">${esc(r.filename)}</span>
@@ -179,77 +396,83 @@ const renderResults = (results, mode) => {
         <pre class="body" id="body-${i}"></pre>
       </div>
     `;
-  }).join('');
-};
+          })
+          .join('');
+      };
 
-const search = async () => {
-  const q = $('#q').value.trim();
-  if (!q) return;
-  const mode = document.querySelector('input[name=mode]:checked').value;
-  $('#results').innerHTML = '<div class="empty"><span class="spinner"></span> searching…</div>';
-  try {
-    const params = new URLSearchParams({ query: q });
-    if (mode === 'semantic') params.set('mode', 'semantic');
-    const data = await apiJson(`/search/simple/?${params.toString()}`, { method: 'POST' });
-    pushRecent(q);
-    renderResults(data, mode);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') {
-      showAuthDialog();
-      return;
-    }
-    $('#results').innerHTML = `<div class="err">Search failed: ${esc(e.message)}</div>`;
-  }
-};
+      const search = async () => {
+        const q = $('#q').value.trim();
+        if (!q) return;
+        const mode = document.querySelector('input[name=mode]:checked').value;
+        $('#results').innerHTML =
+          '<div class="empty"><span class="spinner"></span> searching…</div>';
+        try {
+          const params = new URLSearchParams({query: q});
+          if (mode === 'semantic') params.set('mode', 'semantic');
+          const data = await apiJson(`/search/simple/?${params.toString()}`, {method: 'POST'});
+          pushRecent(q);
+          renderResults(data, mode);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#results').innerHTML = `<div class="err">Search failed: ${esc(e.message)}</div>`;
+        }
+      };
 
-const expandResult = async (card, path) => {
-  if (card.classList.contains('open')) {
-    card.classList.remove('open');
-    return;
-  }
-  card.classList.add('open');
-  const body = card.querySelector('.body');
-  if (body.dataset.loaded === '1') return;
-  body.textContent = 'loading…';
-  try {
-    const encoded = path.split('/').map(encodeURIComponent).join('/');
-    const res = await api(`/vault/${encoded}`);
-    body.textContent = await res.text();
-    body.dataset.loaded = '1';
-  } catch (e) {
-    body.textContent = `failed: ${e.message}`;
-  }
-};
+      const expandResult = async (card, path) => {
+        if (card.classList.contains('open')) {
+          card.classList.remove('open');
+          return;
+        }
+        card.classList.add('open');
+        const body = card.querySelector('.body');
+        if (body.dataset.loaded === '1') return;
+        body.textContent = 'loading…';
+        try {
+          const encoded = path.split('/').map(encodeURIComponent).join('/');
+          const res = await api(`/vault/${encoded}`);
+          body.textContent = await res.text();
+          body.dataset.loaded = '1';
+        } catch (e) {
+          body.textContent = `failed: ${e.message}`;
+        }
+      };
 
-$('#settings').addEventListener('click', showAuthDialog);
-$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-$('#auth-ok').addEventListener('click', () => {
-  setToken($('#auth-input').value.trim());
-  $('#auth-dlg').close();
-  if ($('#q').value.trim()) search();
-});
-$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
-$('#go').addEventListener('click', search);
-$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+      $('#settings').addEventListener('click', showAuthDialog);
+      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+      $('#auth-ok').addEventListener('click', () => {
+        setToken($('#auth-input').value.trim());
+        $('#auth-dlg').close();
+        if ($('#q').value.trim()) search();
+      });
+      $('#auth-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') $('#auth-ok').click();
+      });
+      $('#go').addEventListener('click', search);
+      $('#q').addEventListener('keydown', e => {
+        if (e.key === 'Enter') search();
+      });
 
-document.addEventListener('click', e => {
-  const chip = e.target.closest('button.chip');
-  if (chip) {
-    $('#q').value = chip.dataset.q;
-    search();
-    return;
-  }
-  const fname = e.target.closest('.filename');
-  if (fname) {
-    const card = fname.closest('.result');
-    expandResult(card, fname.dataset.path);
-  }
-});
+      document.addEventListener('click', e => {
+        const chip = e.target.closest('button.chip');
+        if (chip) {
+          $('#q').value = chip.dataset.q;
+          search();
+          return;
+        }
+        const fname = e.target.closest('.filename');
+        if (fname) {
+          const card = fname.closest('.result');
+          expandResult(card, fname.dataset.path);
+        }
+      });
 
-if (!getToken()) showAuthDialog();
-renderRecents();
-$('#q').focus();
-</script>
-<script type="module" src="/ui/theme.js"></script>
-</body>
+      if (!getToken()) showAuthDialog();
+      renderRecents();
+      $('#q').focus();
+    </script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
 </html>

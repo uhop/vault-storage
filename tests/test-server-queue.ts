@@ -49,7 +49,12 @@ const fetchJson = async (
   return {status: res.status, body};
 };
 
-const writeQueueFile = (root: string, project: string, basename: string, content: string): string => {
+const writeQueueFile = (
+  root: string,
+  project: string,
+  basename: string,
+  content: string
+): string => {
   const dir = join(root, 'projects', project);
   mkdirSync(dir, {recursive: true});
   writeFileSync(join(dir, basename), content);
@@ -85,27 +90,63 @@ const withServer = async (
 
 const seedFleet = (db: ReturnType<typeof openDatabase>, root: string): void => {
   const repo = new QueueItemsRepository(db);
-  writeQueueFile(root, 'alpha', 'queue.md', FM + [
-    '## Active', '',
-    '- **A-active.** in flight',
-    '',
-    '## Backlog', '',
-    '### Priority +2', '', '- **A-top.** highest',
-    '### Priority +1', '', '- **A-boost.** boosted',
-    '### Priority 0', '', '- **A-normal.** normal',
-    '',
-    '## Watching', '',
-    '- **A-watch.** upstream'
-  ].join('\n'));
-  writeQueueFile(root, 'alpha', 'queue-archive.md', FM + [
-    '## 2026-05-13', '', '- **A-shipped.** shipped in commit abc',
-    '## 2026-04-01', '', '- **A-old.** rejected per design'
-  ].join('\n'));
-  writeQueueFile(root, 'bravo', 'queue.md', FM + [
-    '## Backlog', '',
-    '### Priority +1', '', '- **B-boost.** also boosted',
-    '### Priority -1', '', '- **B-demoted.** later'
-  ].join('\n'));
+  writeQueueFile(
+    root,
+    'alpha',
+    'queue.md',
+    FM +
+      [
+        '## Active',
+        '',
+        '- **A-active.** in flight',
+        '',
+        '## Backlog',
+        '',
+        '### Priority +2',
+        '',
+        '- **A-top.** highest',
+        '### Priority +1',
+        '',
+        '- **A-boost.** boosted',
+        '### Priority 0',
+        '',
+        '- **A-normal.** normal',
+        '',
+        '## Watching',
+        '',
+        '- **A-watch.** upstream'
+      ].join('\n')
+  );
+  writeQueueFile(
+    root,
+    'alpha',
+    'queue-archive.md',
+    FM +
+      [
+        '## 2026-05-13',
+        '',
+        '- **A-shipped.** shipped in commit abc',
+        '## 2026-04-01',
+        '',
+        '- **A-old.** rejected per design'
+      ].join('\n')
+  );
+  writeQueueFile(
+    root,
+    'bravo',
+    'queue.md',
+    FM +
+      [
+        '## Backlog',
+        '',
+        '### Priority +1',
+        '',
+        '- **B-boost.** also boosted',
+        '### Priority -1',
+        '',
+        '- **B-demoted.** later'
+      ].join('\n')
+  );
   syncQueueFile(repo, 'projects/alpha/queue.md', root, '2026-05-13T12:00:00Z');
   syncQueueFile(repo, 'projects/alpha/queue-archive.md', root, '2026-05-13T12:00:00Z');
   syncQueueFile(repo, 'projects/bravo/queue.md', root, '2026-05-13T12:00:00Z');
@@ -117,7 +158,11 @@ test('GET /queue/top — fleet-wide priority ordering, default limit', async t =
   await withServer(seedFleet, async url => {
     const {status, body} = await fetchJson(`${url}/queue/top`, {headers: authHeader});
     t.equal(status, 200);
-    const payload = body as {limit: number; count: number; items: Array<{title: string; priority: number; project: string}>};
+    const payload = body as {
+      limit: number;
+      count: number;
+      items: Array<{title: string; priority: number; project: string}>;
+    };
     t.equal(payload.limit, 20, 'default limit 20');
     t.deepEqual(
       payload.items.map(it => [it.priority, it.project, it.title]),
@@ -154,11 +199,16 @@ test('GET /queue/top?limit=bogus — 400', async t => {
 
 test('GET /queue/by-section/backlog — fleet-wide', async t => {
   await withServer(seedFleet, async url => {
-    const {status, body} = await fetchJson(`${url}/queue/by-section/backlog`, {headers: authHeader});
+    const {status, body} = await fetchJson(`${url}/queue/by-section/backlog`, {
+      headers: authHeader
+    });
     t.equal(status, 200);
     const payload = body as {section: string; items: Array<{title: string}>};
     t.equal(payload.section, 'backlog');
-    t.deepEqual(payload.items.map(it => it.title), ['A-top.', 'A-boost.', 'B-boost.', 'A-normal.', 'B-demoted.']);
+    t.deepEqual(
+      payload.items.map(it => it.title),
+      ['A-top.', 'A-boost.', 'B-boost.', 'A-normal.', 'B-demoted.']
+    );
   });
 });
 
@@ -175,7 +225,13 @@ test('GET /queue/by-priority/1 — fleet-wide Backlog at priority 1', async t =>
     t.equal(status, 200);
     const payload = body as {priority: number; items: Array<{title: string; project: string}>};
     t.equal(payload.priority, 1);
-    t.deepEqual(payload.items.map(it => [it.project, it.title]), [['alpha', 'A-boost.'], ['bravo', 'B-boost.']]);
+    t.deepEqual(
+      payload.items.map(it => [it.project, it.title]),
+      [
+        ['alpha', 'A-boost.'],
+        ['bravo', 'B-boost.']
+      ]
+    );
   });
 });
 
@@ -185,7 +241,10 @@ test('GET /queue/by-priority/-1 — handles negative integer', async t => {
     t.equal(status, 200);
     const payload = body as {priority: number; items: Array<{title: string}>};
     t.equal(payload.priority, -1);
-    t.deepEqual(payload.items.map(it => it.title), ['B-demoted.']);
+    t.deepEqual(
+      payload.items.map(it => it.title),
+      ['B-demoted.']
+    );
   });
 });
 
@@ -200,7 +259,10 @@ test('GET /queue/projects/{name} — open items only, section-grouped order', as
   await withServer(seedFleet, async url => {
     const {status, body} = await fetchJson(`${url}/queue/projects/alpha`, {headers: authHeader});
     t.equal(status, 200);
-    const payload = body as {project: string; items: Array<{section: string; title: string; priority: number}>};
+    const payload = body as {
+      project: string;
+      items: Array<{section: string; title: string; priority: number}>;
+    };
     t.equal(payload.project, 'alpha');
     t.deepEqual(
       payload.items.map(it => [it.section, it.priority, it.title]),
@@ -218,9 +280,14 @@ test('GET /queue/projects/{name} — open items only, section-grouped order', as
 
 test('GET /queue/projects/{name}/archive — closed_at DESC with nulls last', async t => {
   await withServer(seedFleet, async url => {
-    const {status, body} = await fetchJson(`${url}/queue/projects/alpha/archive`, {headers: authHeader});
+    const {status, body} = await fetchJson(`${url}/queue/projects/alpha/archive`, {
+      headers: authHeader
+    });
     t.equal(status, 200);
-    const payload = body as {project: string; items: Array<{closed_at: string | null; title: string; close_reason: string | null}>};
+    const payload = body as {
+      project: string;
+      items: Array<{closed_at: string | null; title: string; close_reason: string | null}>;
+    };
     t.deepEqual(
       payload.items.map(it => [it.closed_at, it.close_reason, it.title]),
       [
@@ -247,7 +314,12 @@ test('POST /maintenance/reindex-queues — populates from disk', async t => {
         headers: authHeader
       });
       t.equal(status, 200);
-      const summary = body as {projectsScanned: number; filesProcessed: number; inserted: number; deleted: number};
+      const summary = body as {
+        projectsScanned: number;
+        filesProcessed: number;
+        inserted: number;
+        deleted: number;
+      };
       t.equal(summary.projectsScanned, 1);
       t.equal(summary.filesProcessed, 1);
       t.equal(summary.inserted, 1);
@@ -255,7 +327,10 @@ test('POST /maintenance/reindex-queues — populates from disk', async t => {
       // Post-condition: visible via fleet endpoint.
       const after = await fetchJson(`${url}/queue/top`, {headers: authHeader});
       const payload = after.body as {items: Array<{project: string; title: string}>};
-      t.deepEqual(payload.items.map(it => [it.project, it.title]), [['gamma', 'C.']]);
+      t.deepEqual(
+        payload.items.map(it => [it.project, it.title]),
+        [['gamma', 'C.']]
+      );
     }
   );
 });

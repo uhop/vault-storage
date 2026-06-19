@@ -147,7 +147,10 @@ export const pairExclusionReason = (a: VaultRecord, b: VaultRecord): PairExclusi
   if (isProjectStructureFile(a.filePath) && isProjectStructureFile(b.filePath)) {
     return 'project_structure';
   }
-  if (basenameOf(a.filePath).startsWith('_summary-') && basenameOf(b.filePath).startsWith('_summary-')) {
+  if (
+    basenameOf(a.filePath).startsWith('_summary-') &&
+    basenameOf(b.filePath).startsWith('_summary-')
+  ) {
     return 'summary_template';
   }
   return null;

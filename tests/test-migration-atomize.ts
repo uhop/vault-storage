@@ -34,16 +34,16 @@ test('splitTopLevelSections splits on `## ` headings', t => {
 
 test('splitTopLevelSections returns empty when no `## ` heading exists', t => {
   t.deepEqual(splitTopLevelSections('plain body, no headings'), [], 'no sections');
-  t.deepEqual(
-    splitTopLevelSections('# H1 only\nbody'),
-    [],
-    'H1 alone is not a section boundary'
-  );
+  t.deepEqual(splitTopLevelSections('# H1 only\nbody'), [], 'H1 alone is not a section boundary');
 });
 
 test('slugifyHeading: kebab-case ASCII', t => {
   t.equal(slugifyHeading('API design'), 'api-design', 'simple');
-  t.equal(slugifyHeading('Authentication & authorization'), 'authentication-authorization', 'punctuation');
+  t.equal(
+    slugifyHeading('Authentication & authorization'),
+    'authentication-authorization',
+    'punctuation'
+  );
   t.equal(slugifyHeading('café résumé'), 'cafe-resume', 'accent strip');
   t.equal(slugifyHeading('  --hello--  '), 'hello', 'trim dashes');
 });
@@ -59,7 +59,9 @@ test('decideAtomization: respects byte and section thresholds', t => {
   const manyShort = '## h\n' + Array.from({length: 10}, (_, i) => `## h${i}\nbody\n`).join('');
   t.equal(decideAtomization(manyShort, {}).atomize, false, 'many sections but small body stays');
 
-  const sectionsBody = Array.from({length: 7}, (_, i) => `## h${i}\n${'x'.repeat(5_000)}\n`).join('');
+  const sectionsBody = Array.from({length: 7}, (_, i) => `## h${i}\n${'x'.repeat(5_000)}\n`).join(
+    ''
+  );
   t.equal(decideAtomization(sectionsBody, {}).atomize, true, 'big AND >5 sections atomizes');
 });
 
@@ -190,16 +192,8 @@ test('atomizeVault: splits oversized files in place, deletes originals', t => {
     t.equal(summary.atomized, 1, 'one file atomized');
     t.equal(summary.piecesWritten, 7, 'seven pieces');
 
-    t.equal(
-      existsSync(join(root, 'projects/demo/decisions.md')),
-      false,
-      'original deleted'
-    );
-    t.equal(
-      existsSync(join(root, 'projects/demo/decisions/_about.md')),
-      true,
-      'about written'
-    );
+    t.equal(existsSync(join(root, 'projects/demo/decisions.md')), false, 'original deleted');
+    t.equal(existsSync(join(root, 'projects/demo/decisions/_about.md')), true, 'about written');
     t.equal(
       existsSync(join(root, 'projects/demo/decisions/section-1.md')),
       true,

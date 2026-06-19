@@ -1,307 +1,685 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
-<title>vault-storage — note</title>
-<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-<link rel="icon" sizes="any" href="/favicon.ico">
-<link rel="stylesheet" href="/ui/theme.css">
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100%; }
-  body {
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg); color: var(--fg);
-    height: 100dvh;
-    display: flex; flex-direction: column;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); flex-shrink: 0; }
-  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
-  header nav { display: flex; gap: .8rem; font-size: .9rem; }
-  header nav a { color: var(--muted); text-decoration: none; }
-  header nav a[aria-current] { color: var(--fg); }
-  header .spacer { flex: 1; }
-  button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.danger { color: var(--bad); border-color: var(--bad); }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .5rem 1rem; border-bottom: 1px solid var(--line); flex-shrink: 0; background: var(--card); }
-  .toolbar .path { flex: 1; min-width: 0; font-family: var(--mono); font-size: .85rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pill {
-    display: inline-flex; align-items: center; gap: .35rem;
-    padding: .25rem .55rem; border-radius: 999px; font-size: .8rem; font-family: var(--mono);
-    background: rgba(127,127,127,.12); color: var(--muted);
-  }
-  .pill.editing { color: var(--muted); }
-  .pill.saving  { color: var(--accent); }
-  .pill.saved   { color: var(--ok); }
-  .pill.offline { color: var(--bad); }
-  .pill .spinner { width: .7em; height: .7em; border-width: 1.5px; }
-  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  main {
-    flex: 1; min-height: 0;
-    display: flex; flex-direction: column;
-  }
-  .panes {
-    flex: 1; min-height: 0; display: flex;
-  }
-  textarea#editor {
-    flex: 1; min-height: 0; min-width: 0; width: 100%;
-    padding: 1rem; border: 0; outline: none;
-    font-family: var(--mono); font-size: .9rem; line-height: 1.55;
-    background: var(--bg); color: var(--fg);
-    resize: none; tab-size: 2;
-  }
-  .preview {
-    flex: 1; min-width: 0; min-height: 0;
-    padding: 1rem 1.2rem; overflow-y: auto;
-    border-left: 1px solid var(--line);
-    background: var(--card);
-  }
-  body[data-view="edit"] .preview { display: none; }
-  body[data-view="preview"] textarea#editor { display: none; }
-  body[data-view="preview"] .preview { border-left: 0; }
-  @media (max-width: 767px) {
-    body[data-view="split"] .preview { display: none; }
-  }
-  .toolbar .modes {
-    display: inline-flex;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .toolbar .modes button {
-    border: 0; border-radius: 0;
-    padding: .35rem .7rem; font-size: .8rem;
-    background: transparent; color: var(--muted);
-  }
-  .toolbar .modes button[aria-pressed="true"] {
-    background: var(--card); color: var(--fg);
-  }
-  .toolbar .modes button + button { border-left: 1px solid var(--line); }
-  @media (max-width: 767px) { .toolbar .modes button[data-mode="split"] { display: none; } }
-  .preview .frontmatter {
-    padding: .5rem .7rem; margin: 0 0 1rem;
-    background: rgba(127,127,127,.08); border: 1px solid var(--line); border-radius: 4px;
-    font-family: var(--mono); font-size: .8rem; color: var(--muted);
-    white-space: pre-wrap; overflow-x: auto;
-  }
-  .preview h1, .preview h2, .preview h3, .preview h4 { line-height: 1.3; }
-  .preview h1 { font-size: 1.6rem; margin: 1.2rem 0 .6rem; }
-  .preview h2 { font-size: 1.3rem; margin: 1.2rem 0 .6rem; padding-bottom: .2rem; border-bottom: 1px solid var(--line); }
-  .preview h3 { font-size: 1.1rem; margin: 1rem 0 .5rem; }
-  .preview h4 { font-size: 1rem; margin: .8rem 0 .4rem; }
-  .preview p, .preview ul, .preview ol, .preview pre, .preview blockquote, .preview table { margin: .6rem 0; line-height: 1.6; }
-  .preview code { font-family: var(--mono); font-size: .85em; background: rgba(127,127,127,.12); padding: .1em .35em; border-radius: 3px; }
-  .preview pre { background: rgba(127,127,127,.08); border: 1px solid var(--line); border-radius: 6px; padding: .7rem .9rem; overflow-x: auto; }
-  .preview pre code { background: transparent; padding: 0; font-size: .85rem; }
-  .preview blockquote { border-left: 3px solid var(--line); padding-left: 1rem; color: var(--muted); }
-  .preview a { color: var(--accent); text-decoration: none; }
-  .preview a:hover { text-decoration: underline; }
-  .preview a.wikilink {
-    font-family: var(--mono); font-size: .9em;
-    background: rgba(127,127,127,.08); padding: .05em .3em; border-radius: 3px;
-  }
-  .preview a.wikilink.resolving { opacity: .65; }
-  .preview a.wikilink.unresolved {
-    color: var(--bad); text-decoration: line-through;
-    background: rgba(192,57,43,.12); cursor: not-allowed;
-  }
-  .preview a.wikilink.unresolved:hover { text-decoration: line-through; }
-  .preview ul, .preview ol { padding-left: 1.5rem; }
-  .preview li { margin: .2rem 0; }
-  .preview hr { border: 0; border-top: 1px solid var(--line); margin: 1.5rem 0; }
-  .preview table { border-collapse: collapse; font-size: .9rem; }
-  .preview th, .preview td { padding: .35rem .6rem; border: 1px solid var(--line); text-align: left; }
-  .preview th { background: rgba(127,127,127,.08); }
-  .preview img { max-width: 100%; height: auto; }
-  .insert-row {
-    display: none;
-    position: fixed;
-    left: 0; right: 0;
-    bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
-    background: var(--card);
-    border-top: 1px solid var(--line);
-    padding: .35rem .5rem;
-    gap: .3rem;
-    overflow-x: auto;
-    z-index: 10;
-    -webkit-user-select: none; user-select: none;
-  }
-  .insert-row button {
-    flex-shrink: 0;
-    min-width: 2.4rem;
-    padding: .55rem .65rem;
-    font-family: var(--mono); font-size: .9rem;
-    background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
-    color: var(--fg); cursor: pointer;
-  }
-  .insert-row button:active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  @media (max-width: 767px) {
-    body[data-editor-focused] .insert-row { display: flex; }
-    body[data-editor-focused] textarea#editor { padding-bottom: 4rem; }
-  }
-  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border-bottom: 1px solid var(--bad); flex-shrink: 0; font-size: .9rem; }
-  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
-  dialog::backdrop { background: rgba(0,0,0,.5); }
-  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
-  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
-  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
-  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
-  dialog#recent-dlg { max-width: 32rem; width: 90vw; }
-  .recent-list { list-style: none; padding: 0; margin: 0 0 .8rem; max-height: 60vh; overflow-y: auto; }
-  .recent-list li { padding: 0; margin: .15rem 0; }
-  .recent-list a {
-    display: flex; flex-direction: column; gap: .15rem;
-    padding: .55rem .7rem; border-radius: 4px;
-    text-decoration: none; color: var(--fg);
-  }
-  .recent-list a:hover { background: rgba(127,127,127,.12); }
-  .recent-list .title { font-weight: 600; font-size: .95rem; }
-  .recent-list .meta { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
-  .recent-list .empty { padding: .8rem; color: var(--muted); text-align: center; font-size: .9rem; }
-  dialog#wiki-dlg { max-width: 36rem; width: 90vw; }
-  .wiki-search {
-    width: 100%; padding: .55rem .7rem; font: inherit;
-    border: 1px solid var(--line); border-radius: 4px;
-    background: var(--bg); color: var(--fg);
-    margin-bottom: .6rem;
-  }
-  .wiki-results { list-style: none; padding: 0; margin: 0 0 .8rem; max-height: 50vh; overflow-y: auto; }
-  .wiki-results li { padding: 0; margin: .15rem 0; }
-  .wiki-results .item {
-    display: flex; flex-direction: column; gap: .15rem;
-    padding: .55rem .7rem; border-radius: 4px;
-    cursor: pointer;
-  }
-  .wiki-results .item:hover, .wiki-results .item.active { background: rgba(127,127,127,.18); }
-  .wiki-results .title { font-weight: 600; font-size: .9rem; }
-  .wiki-results .path { font-family: var(--mono); font-size: .75rem; color: var(--muted); word-break: break-all; }
-  .wiki-results .snippet { font-size: .8rem; color: var(--muted); margin-top: .15rem; word-break: break-word; }
-  .wiki-results .empty { padding: .8rem; color: var(--muted); text-align: center; font-size: .9rem; }
-</style>
-</head>
-<body>
-<header>
-  <h1>vault-storage</h1>
-  <nav>
-    <a href="/ui/">dashboard</a>
-    <a href="/ui/search.html">search</a>
-    <a href="/ui/projects.html">projects</a>
-    <a href="/ui/tags.html">tags</a>
-    <a href="/ui/raw.html">raw</a>
-    <a href="/ui/folder.html">browse</a>
-    <a href="/ui/note.html" aria-current="page">note</a>
-  </nav>
-  <div class="spacer"></div>
-  <div id="theme-toggle"></div>
-  <button id="settings" title="Settings">⚙</button>
-</header>
-<div class="toolbar">
-  <span class="path" id="path">new — unsaved</span>
-  <span class="pill" id="status">idle</span>
-  <span class="modes" role="group" aria-label="View mode">
-    <button data-mode="edit" aria-pressed="false" title="Edit only">edit</button>
-    <button data-mode="split" aria-pressed="false" title="Editor + preview side-by-side">split</button>
-    <button data-mode="preview" aria-pressed="false" title="Rendered preview only">preview</button>
-  </span>
-  <button id="save">Save</button>
-  <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
-  <button id="outline" title="Outline (jump to heading)">Outline</button>
-  <button id="recent" hidden>Recent</button>
-  <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
-  <button id="del" class="danger" hidden>Delete</button>
-</div>
-<div class="err" id="err" hidden></div>
-<main>
-  <div class="panes">
-    <textarea id="editor" spellcheck="true" placeholder="Start typing… frontmatter at the top, body below."></textarea>
-    <vault-markdown class="preview" id="preview" show-frontmatter></vault-markdown>
-  </div>
-</main>
-<div class="insert-row" id="insert-row" aria-label="Markdown shortcuts">
-  <button type="button" tabindex="-1" data-insert-wrap="**" title="Bold">**</button>
-  <button type="button" tabindex="-1" data-insert-wrap="_" title="Italic">_</button>
-  <button type="button" tabindex="-1" data-insert-wrap="`" title="Inline code">`</button>
-  <button type="button" tabindex="-1" data-insert-wrap="[[" data-insert-end="]]" title="Wikilink">[[ ]]</button>
-  <button type="button" tabindex="-1" data-insert-prefix="# " title="Heading">#</button>
-  <button type="button" tabindex="-1" data-insert-prefix="- " title="List item">- </button>
-  <button type="button" tabindex="-1" data-insert-prefix="- [ ] " title="Task">[ ]</button>
-</div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — note</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+      body {
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--line);
+        flex-shrink: 0;
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        font-weight: 600;
+      }
+      header nav {
+        display: flex;
+        gap: 0.8rem;
+        font-size: 0.9rem;
+      }
+      header nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      header nav a[aria-current] {
+        color: var(--fg);
+      }
+      header .spacer {
+        flex: 1;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      button.danger {
+        color: var(--bad);
+        border-color: var(--bad);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        padding: 0.5rem 1rem;
+        border-bottom: 1px solid var(--line);
+        flex-shrink: 0;
+        background: var(--card);
+      }
+      .toolbar .path {
+        flex: 1;
+        min-width: 0;
+        font-family: var(--mono);
+        font-size: 0.85rem;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.25rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-family: var(--mono);
+        background: rgba(127, 127, 127, 0.12);
+        color: var(--muted);
+      }
+      .pill.editing {
+        color: var(--muted);
+      }
+      .pill.saving {
+        color: var(--accent);
+      }
+      .pill.saved {
+        color: var(--ok);
+      }
+      .pill.offline {
+        color: var(--bad);
+      }
+      .pill .spinner {
+        width: 0.7em;
+        height: 0.7em;
+        border-width: 1.5px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        border: 2px solid var(--line);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -0.15em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .panes {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+      textarea#editor {
+        flex: 1;
+        min-height: 0;
+        min-width: 0;
+        width: 100%;
+        padding: 1rem;
+        border: 0;
+        outline: none;
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        line-height: 1.55;
+        background: var(--bg);
+        color: var(--fg);
+        resize: none;
+        tab-size: 2;
+      }
+      .preview {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        padding: 1rem 1.2rem;
+        overflow-y: auto;
+        border-left: 1px solid var(--line);
+        background: var(--card);
+      }
+      body[data-view='edit'] .preview {
+        display: none;
+      }
+      body[data-view='preview'] textarea#editor {
+        display: none;
+      }
+      body[data-view='preview'] .preview {
+        border-left: 0;
+      }
+      @media (max-width: 767px) {
+        body[data-view='split'] .preview {
+          display: none;
+        }
+      }
+      .toolbar .modes {
+        display: inline-flex;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .toolbar .modes button {
+        border: 0;
+        border-radius: 0;
+        padding: 0.35rem 0.7rem;
+        font-size: 0.8rem;
+        background: transparent;
+        color: var(--muted);
+      }
+      .toolbar .modes button[aria-pressed='true'] {
+        background: var(--card);
+        color: var(--fg);
+      }
+      .toolbar .modes button + button {
+        border-left: 1px solid var(--line);
+      }
+      @media (max-width: 767px) {
+        .toolbar .modes button[data-mode='split'] {
+          display: none;
+        }
+      }
+      .preview .frontmatter {
+        padding: 0.5rem 0.7rem;
+        margin: 0 0 1rem;
+        background: rgba(127, 127, 127, 0.08);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        color: var(--muted);
+        white-space: pre-wrap;
+        overflow-x: auto;
+      }
+      .preview h1,
+      .preview h2,
+      .preview h3,
+      .preview h4 {
+        line-height: 1.3;
+      }
+      .preview h1 {
+        font-size: 1.6rem;
+        margin: 1.2rem 0 0.6rem;
+      }
+      .preview h2 {
+        font-size: 1.3rem;
+        margin: 1.2rem 0 0.6rem;
+        padding-bottom: 0.2rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .preview h3 {
+        font-size: 1.1rem;
+        margin: 1rem 0 0.5rem;
+      }
+      .preview h4 {
+        font-size: 1rem;
+        margin: 0.8rem 0 0.4rem;
+      }
+      .preview p,
+      .preview ul,
+      .preview ol,
+      .preview pre,
+      .preview blockquote,
+      .preview table {
+        margin: 0.6rem 0;
+        line-height: 1.6;
+      }
+      .preview code {
+        font-family: var(--mono);
+        font-size: 0.85em;
+        background: rgba(127, 127, 127, 0.12);
+        padding: 0.1em 0.35em;
+        border-radius: 3px;
+      }
+      .preview pre {
+        background: rgba(127, 127, 127, 0.08);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.7rem 0.9rem;
+        overflow-x: auto;
+      }
+      .preview pre code {
+        background: transparent;
+        padding: 0;
+        font-size: 0.85rem;
+      }
+      .preview blockquote {
+        border-left: 3px solid var(--line);
+        padding-left: 1rem;
+        color: var(--muted);
+      }
+      .preview a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .preview a:hover {
+        text-decoration: underline;
+      }
+      .preview a.wikilink {
+        font-family: var(--mono);
+        font-size: 0.9em;
+        background: rgba(127, 127, 127, 0.08);
+        padding: 0.05em 0.3em;
+        border-radius: 3px;
+      }
+      .preview a.wikilink.resolving {
+        opacity: 0.65;
+      }
+      .preview a.wikilink.unresolved {
+        color: var(--bad);
+        text-decoration: line-through;
+        background: rgba(192, 57, 43, 0.12);
+        cursor: not-allowed;
+      }
+      .preview a.wikilink.unresolved:hover {
+        text-decoration: line-through;
+      }
+      .preview ul,
+      .preview ol {
+        padding-left: 1.5rem;
+      }
+      .preview li {
+        margin: 0.2rem 0;
+      }
+      .preview hr {
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 1.5rem 0;
+      }
+      .preview table {
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      .preview th,
+      .preview td {
+        padding: 0.35rem 0.6rem;
+        border: 1px solid var(--line);
+        text-align: left;
+      }
+      .preview th {
+        background: rgba(127, 127, 127, 0.08);
+      }
+      .preview img {
+        max-width: 100%;
+        height: auto;
+      }
+      .insert-row {
+        display: none;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(var(--kb-offset, 0px) + env(safe-area-inset-bottom));
+        background: var(--card);
+        border-top: 1px solid var(--line);
+        padding: 0.35rem 0.5rem;
+        gap: 0.3rem;
+        overflow-x: auto;
+        z-index: 10;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .insert-row button {
+        flex-shrink: 0;
+        min-width: 2.4rem;
+        padding: 0.55rem 0.65rem;
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      .insert-row button:active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      @media (max-width: 767px) {
+        body[data-editor-focused] .insert-row {
+          display: flex;
+        }
+        body[data-editor-focused] textarea#editor {
+          padding-bottom: 4rem;
+        }
+      }
+      .err {
+        color: var(--bad);
+        padding: 0.8rem 1rem;
+        background: var(--card);
+        border-bottom: 1px solid var(--bad);
+        flex-shrink: 0;
+        font-size: 0.9rem;
+      }
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1.2rem;
+        background: var(--card);
+        color: var(--fg);
+        max-width: 24rem;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+      dialog h2 {
+        margin: 0 0 0.8rem;
+        font-size: 1.05rem;
+      }
+      dialog p {
+        color: var(--muted);
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+      }
+      dialog input {
+        width: 100%;
+        padding: 0.5rem;
+        font-family: var(--mono);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      dialog .row {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.8rem;
+      }
+      dialog#recent-dlg {
+        max-width: 32rem;
+        width: 90vw;
+      }
+      .recent-list {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 0.8rem;
+        max-height: 60vh;
+        overflow-y: auto;
+      }
+      .recent-list li {
+        padding: 0;
+        margin: 0.15rem 0;
+      }
+      .recent-list a {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.55rem 0.7rem;
+        border-radius: 4px;
+        text-decoration: none;
+        color: var(--fg);
+      }
+      .recent-list a:hover {
+        background: rgba(127, 127, 127, 0.12);
+      }
+      .recent-list .title {
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+      .recent-list .meta {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .recent-list .empty {
+        padding: 0.8rem;
+        color: var(--muted);
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      dialog#wiki-dlg {
+        max-width: 36rem;
+        width: 90vw;
+      }
+      .wiki-search {
+        width: 100%;
+        padding: 0.55rem 0.7rem;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+        margin-bottom: 0.6rem;
+      }
+      .wiki-results {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 0.8rem;
+        max-height: 50vh;
+        overflow-y: auto;
+      }
+      .wiki-results li {
+        padding: 0;
+        margin: 0.15rem 0;
+      }
+      .wiki-results .item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.55rem 0.7rem;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .wiki-results .item:hover,
+      .wiki-results .item.active {
+        background: rgba(127, 127, 127, 0.18);
+      }
+      .wiki-results .title {
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+      .wiki-results .path {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--muted);
+        word-break: break-all;
+      }
+      .wiki-results .snippet {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 0.15rem;
+        word-break: break-word;
+      }
+      .wiki-results .empty {
+        padding: 0.8rem;
+        color: var(--muted);
+        text-align: center;
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>vault-storage</h1>
+      <nav>
+        <a href="/ui/">dashboard</a>
+        <a href="/ui/search.html">search</a>
+        <a href="/ui/projects.html">projects</a>
+        <a href="/ui/tags.html">tags</a>
+        <a href="/ui/raw.html">raw</a>
+        <a href="/ui/folder.html">browse</a>
+        <a href="/ui/note.html" aria-current="page">note</a>
+      </nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <button id="settings" title="Settings">⚙</button>
+    </header>
+    <div class="toolbar">
+      <span class="path" id="path">new — unsaved</span>
+      <span class="pill" id="status">idle</span>
+      <span class="modes" role="group" aria-label="View mode">
+        <button data-mode="edit" aria-pressed="false" title="Edit only">edit</button>
+        <button data-mode="split" aria-pressed="false" title="Editor + preview side-by-side">
+          split
+        </button>
+        <button data-mode="preview" aria-pressed="false" title="Rendered preview only">
+          preview
+        </button>
+      </span>
+      <button id="save">Save</button>
+      <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
+      <button id="outline" title="Outline (jump to heading)">Outline</button>
+      <button id="recent" hidden>Recent</button>
+      <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
+      <button id="del" class="danger" hidden>Delete</button>
+    </div>
+    <div class="err" id="err" hidden></div>
+    <main>
+      <div class="panes">
+        <textarea
+          id="editor"
+          spellcheck="true"
+          placeholder="Start typing… frontmatter at the top, body below."
+        ></textarea>
+        <vault-markdown class="preview" id="preview" show-frontmatter></vault-markdown>
+      </div>
+    </main>
+    <div class="insert-row" id="insert-row" aria-label="Markdown shortcuts">
+      <button type="button" tabindex="-1" data-insert-wrap="**" title="Bold">**</button>
+      <button type="button" tabindex="-1" data-insert-wrap="_" title="Italic">_</button>
+      <button type="button" tabindex="-1" data-insert-wrap="`" title="Inline code">`</button>
+      <button
+        type="button"
+        tabindex="-1"
+        data-insert-wrap="[["
+        data-insert-end="]]"
+        title="Wikilink"
+      >
+        [[ ]]
+      </button>
+      <button type="button" tabindex="-1" data-insert-prefix="# " title="Heading">#</button>
+      <button type="button" tabindex="-1" data-insert-prefix="- " title="List item">-</button>
+      <button type="button" tabindex="-1" data-insert-prefix="- [ ] " title="Task">[ ]</button>
+    </div>
 
-<dialog id="auth-dlg">
-  <h2>API token</h2>
-  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
-  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
-  <div class="row">
-    <button id="auth-cancel">Cancel</button>
-    <button id="auth-ok" class="primary">Save</button>
-  </div>
-</dialog>
+    <dialog id="auth-dlg">
+      <h2>API token</h2>
+      <p>
+        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
+        localStorage.
+      </p>
+      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
+      <div class="row">
+        <button id="auth-cancel">Cancel</button>
+        <button id="auth-ok" class="primary">Save</button>
+      </div>
+    </dialog>
 
-<dialog id="del-dlg">
-  <h2>Delete this note?</h2>
-  <p id="del-msg">This will remove the file from the vault. Cannot be undone via the UI.</p>
-  <div class="row">
-    <button id="del-cancel">Cancel</button>
-    <button id="del-confirm" class="danger primary">Delete</button>
-  </div>
-</dialog>
+    <dialog id="del-dlg">
+      <h2>Delete this note?</h2>
+      <p id="del-msg">This will remove the file from the vault. Cannot be undone via the UI.</p>
+      <div class="row">
+        <button id="del-cancel">Cancel</button>
+        <button id="del-confirm" class="danger primary">Delete</button>
+      </div>
+    </dialog>
 
-<dialog id="recent-dlg">
-  <h2>Recent notes</h2>
-  <p>Open a recent <code>raw/</code> note, or close to keep writing here.</p>
-  <ul id="recent-list" class="recent-list"></ul>
-  <div class="row">
-    <button id="recent-close">Close</button>
-  </div>
-</dialog>
+    <dialog id="recent-dlg">
+      <h2>Recent notes</h2>
+      <p>Open a recent <code>raw/</code> note, or close to keep writing here.</p>
+      <ul id="recent-list" class="recent-list"></ul>
+      <div class="row">
+        <button id="recent-close">Close</button>
+      </div>
+    </dialog>
 
-<dialog id="wiki-dlg">
-  <h2>Insert wikilink</h2>
-  <input id="wiki-search" type="search" placeholder="Search the vault…" autocomplete="off" spellcheck="false" class="wiki-search">
-  <ul id="wiki-results" class="wiki-results"></ul>
-  <div class="row">
-    <button id="wiki-cancel">Cancel</button>
-  </div>
-</dialog>
+    <dialog id="wiki-dlg">
+      <h2>Insert wikilink</h2>
+      <input
+        id="wiki-search"
+        type="search"
+        placeholder="Search the vault…"
+        autocomplete="off"
+        spellcheck="false"
+        class="wiki-search"
+      />
+      <ul id="wiki-results" class="wiki-results"></ul>
+      <div class="row">
+        <button id="wiki-cancel">Cancel</button>
+      </div>
+    </dialog>
 
-<dialog id="backlinks-dlg">
-  <h2>Backlinks</h2>
-  <p id="backlinks-count">No notes link to this one.</p>
-  <ul id="backlinks-list" class="recent-list"></ul>
-  <div class="row">
-    <button id="backlinks-close">Close</button>
-  </div>
-</dialog>
+    <dialog id="backlinks-dlg">
+      <h2>Backlinks</h2>
+      <p id="backlinks-count">No notes link to this one.</p>
+      <ul id="backlinks-list" class="recent-list"></ul>
+      <div class="row">
+        <button id="backlinks-close">Close</button>
+      </div>
+    </dialog>
 
-<dialog id="outline-dlg">
-  <h2>Outline</h2>
-  <p id="outline-count"></p>
-  <ul id="outline-list" class="recent-list"></ul>
-  <div class="row">
-    <button id="outline-close">Close</button>
-  </div>
-</dialog>
+    <dialog id="outline-dlg">
+      <h2>Outline</h2>
+      <p id="outline-count"></p>
+      <ul id="outline-list" class="recent-list"></ul>
+      <div class="row">
+        <button id="outline-close">Close</button>
+      </div>
+    </dialog>
 
-<script type="module">
-import '/ui/components/vault-markdown.js';
-import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+    <script type="module">
+      import '/ui/components/vault-markdown.js';
+      import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 
-const DRAFT_PREFIX = 'vault.draft.';
-const VIEW_KEY = 'vault.view-mode';
-const DEBOUNCE_MS = 1500;
-const PREVIEW_DEBOUNCE_MS = 150;
-const $ = sel => document.querySelector(sel);
-const $$ = sel => document.querySelectorAll(sel);
+      const DRAFT_PREFIX = 'vault.draft.';
+      const VIEW_KEY = 'vault.view-mode';
+      const DEBOUNCE_MS = 1500;
+      const PREVIEW_DEBOUNCE_MS = 150;
+      const $ = sel => document.querySelector(sel);
+      const $$ = sel => document.querySelectorAll(sel);
 
-const STARTER_TEMPLATE = `---
+      const STARTER_TEMPLATE = `---
 title: ""
 type: fleeting
 status: active
@@ -311,225 +689,256 @@ ready: false
 
 `;
 
-const newCapturePath = () => {
-  const d = new Date();
-  const p = n => String(n).padStart(2, '0');
-  return `raw/${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.md`;
-};
+      const newCapturePath = () => {
+        const d = new Date();
+        const p = n => String(n).padStart(2, '0');
+        return `raw/${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.md`;
+      };
 
-const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
+      const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
 
-// state -----------------------------------------------------------
-const params = new URLSearchParams(location.search);
-const state = {
-  path: params.get('path') ?? null,        // null = new capture
-  serverContent: '',                       // last-known server content
-  dirty: false,                            // editor != serverContent
-  saveTimer: null,
-  lastSavedAt: null
-};
+      // state -----------------------------------------------------------
+      const params = new URLSearchParams(location.search);
+      const state = {
+        path: params.get('path') ?? null, // null = new capture
+        serverContent: '', // last-known server content
+        dirty: false, // editor != serverContent
+        saveTimer: null,
+        lastSavedAt: null
+      };
 
-// status pill -----------------------------------------------------
-const setStatus = (kind, label) => {
-  const el = $('#status');
-  el.className = 'pill ' + kind;
-  el.innerHTML = kind === 'saving'
-    ? '<span class="spinner"></span> saving…'
-    : esc(label);
-};
+      // status pill -----------------------------------------------------
+      const setStatus = (kind, label) => {
+        const el = $('#status');
+        el.className = 'pill ' + kind;
+        el.innerHTML = kind === 'saving' ? '<span class="spinner"></span> saving…' : esc(label);
+      };
 
-const fmtTime = d => {
-  const p = n => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}`;
-};
+      const fmtTime = d => {
+        const p = n => String(n).padStart(2, '0');
+        return `${p(d.getHours())}:${p(d.getMinutes())}`;
+      };
 
-// draft staging ---------------------------------------------------
-const draftKey = () => DRAFT_PREFIX + (state.path ?? 'new');
-const stageDraft = body => localStorage.setItem(draftKey(), body);
-const dropDraft = () => localStorage.removeItem(draftKey());
-const loadDraft = () => localStorage.getItem(draftKey());
+      // draft staging ---------------------------------------------------
+      const draftKey = () => DRAFT_PREFIX + (state.path ?? 'new');
+      const stageDraft = body => localStorage.setItem(draftKey(), body);
+      const dropDraft = () => localStorage.removeItem(draftKey());
+      const loadDraft = () => localStorage.getItem(draftKey());
 
-// load / capture init ---------------------------------------------
-async function init() {
-  if (!getToken()) { showAuthDialog(); return; }
-  if (state.path) {
-    await loadExisting(state.path);
-  } else {
-    initCapture();
-  }
-  $('#editor').addEventListener('input', onInput);
-  schedulePreview();
-  window.addEventListener('beforeunload', e => {
-    if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
-  });
-}
+      // load / capture init ---------------------------------------------
+      async function init() {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        if (state.path) {
+          await loadExisting(state.path);
+        } else {
+          initCapture();
+        }
+        $('#editor').addEventListener('input', onInput);
+        schedulePreview();
+        window.addEventListener('beforeunload', e => {
+          if (state.dirty) {
+            e.preventDefault();
+            e.returnValue = '';
+          }
+        });
+      }
 
-async function loadExisting(path) {
-  $('#path').textContent = path;
-  $('#del').hidden = false;
-  $('#editor').disabled = true;
-  setStatus('saving', 'loading…');
-  try {
-    const res = await api(`/vault/${encodePath(path)}`);
-    const text = await res.text();
-    const draft = loadDraft();
-    if (draft && draft !== text) {
-      // Recover from a previous session that didn't reach the server.
-      state.serverContent = text;
-      $('#editor').value = draft;
-      state.dirty = true;
-      setStatus('offline', 'unsynced draft restored');
-    } else {
-      state.serverContent = text;
-      $('#editor').value = text;
-      setStatus('saved', `loaded ${fmtTime(new Date())}`);
-    }
-    $('#editor').disabled = false;
-    $('#editor').focus();
-    fetchBacklinks();
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    showError(`Failed to load: ${e.message}`);
-  }
-}
+      async function loadExisting(path) {
+        $('#path').textContent = path;
+        $('#del').hidden = false;
+        $('#editor').disabled = true;
+        setStatus('saving', 'loading…');
+        try {
+          const res = await api(`/vault/${encodePath(path)}`);
+          const text = await res.text();
+          const draft = loadDraft();
+          if (draft && draft !== text) {
+            // Recover from a previous session that didn't reach the server.
+            state.serverContent = text;
+            $('#editor').value = draft;
+            state.dirty = true;
+            setStatus('offline', 'unsynced draft restored');
+          } else {
+            state.serverContent = text;
+            $('#editor').value = text;
+            setStatus('saved', `loaded ${fmtTime(new Date())}`);
+          }
+          $('#editor').disabled = false;
+          $('#editor').focus();
+          fetchBacklinks();
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          showError(`Failed to load: ${e.message}`);
+        }
+      }
 
-function initCapture() {
-  $('#path').textContent = 'new — unsaved';
-  $('#del').hidden = true;
-  $('#recent').hidden = false;
-  const draft = loadDraft();
-  $('#editor').value = draft ?? STARTER_TEMPLATE;
-  state.serverContent = '';
-  state.dirty = !!draft;
-  setStatus('editing', state.dirty ? 'unsaved draft restored' : 'new note');
-  $('#editor').focus();
-  // Place cursor at end so the user starts typing body content after the FM.
-  const v = $('#editor').value;
-  $('#editor').setSelectionRange(v.length, v.length);
-}
+      function initCapture() {
+        $('#path').textContent = 'new — unsaved';
+        $('#del').hidden = true;
+        $('#recent').hidden = false;
+        const draft = loadDraft();
+        $('#editor').value = draft ?? STARTER_TEMPLATE;
+        state.serverContent = '';
+        state.dirty = !!draft;
+        setStatus('editing', state.dirty ? 'unsaved draft restored' : 'new note');
+        $('#editor').focus();
+        // Place cursor at end so the user starts typing body content after the FM.
+        const v = $('#editor').value;
+        $('#editor').setSelectionRange(v.length, v.length);
+      }
 
-// Outline ----------------------------------------------------------
-const parseHeadings = text => {
-  // Skip leading frontmatter so `# title` lines inside FM aren't headings.
-  const fmMatch = /^---\n[\s\S]*?\n---\n/.exec(text);
-  const headStart = fmMatch ? fmMatch[0].length : 0;
-  const lines = text.split('\n');
-  const headings = [];
-  let inFence = false;
-  let runningOffset = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (runningOffset < headStart) {
-      runningOffset += line.length + 1;
-      continue;
-    }
-    if (/^```/.test(line)) {
-      inFence = !inFence;
-      runningOffset += line.length + 1;
-      continue;
-    }
-    if (!inFence) {
-      const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
-      if (m) headings.push({level: m[1].length, text: m[2], offset: runningOffset});
-    }
-    runningOffset += line.length + 1;
-  }
-  return headings;
-};
+      // Outline ----------------------------------------------------------
+      const parseHeadings = text => {
+        // Skip leading frontmatter so `# title` lines inside FM aren't headings.
+        const fmMatch = /^---\n[\s\S]*?\n---\n/.exec(text);
+        const headStart = fmMatch ? fmMatch[0].length : 0;
+        const lines = text.split('\n');
+        const headings = [];
+        let inFence = false;
+        let runningOffset = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (runningOffset < headStart) {
+            runningOffset += line.length + 1;
+            continue;
+          }
+          if (/^```/.test(line)) {
+            inFence = !inFence;
+            runningOffset += line.length + 1;
+            continue;
+          }
+          if (!inFence) {
+            const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+            if (m) headings.push({level: m[1].length, text: m[2], offset: runningOffset});
+          }
+          runningOffset += line.length + 1;
+        }
+        return headings;
+      };
 
-// Measure where a character offset would visually land inside a textarea.
-// Builds a hidden div mirroring the textarea's wrap-relevant styles, places
-// a marker span at the offset, and reads its position. The mirror approach
-// is the standard way to get visual line position from a textarea — line
-// counting alone misses soft-wrapped long lines, which drift the cursor
-// noticeably on long notes (queue.md, learnings.md).
-const measureCaretTop = (ta, offset) => {
-  const cs = getComputedStyle(ta);
-  const mirror = document.createElement('div');
-  for (const p of [
-    'boxSizing', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
-    'fontVariant', 'fontStretch', 'lineHeight', 'letterSpacing',
-    'wordSpacing', 'tabSize', 'whiteSpace', 'wordBreak', 'overflowWrap',
-    'wordWrap', 'textTransform', 'textIndent', 'direction',
-    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-    'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'
-  ]) {
-    mirror.style[p] = cs[p];
-  }
-  mirror.style.position = 'absolute';
-  mirror.style.visibility = 'hidden';
-  mirror.style.top = '0';
-  mirror.style.left = '-9999px';
-  mirror.style.width = ta.offsetWidth + 'px';
-  mirror.style.height = 'auto';
-  mirror.style.whiteSpace = 'pre-wrap';
-  mirror.style.overflowWrap = 'break-word';
+      // Measure where a character offset would visually land inside a textarea.
+      // Builds a hidden div mirroring the textarea's wrap-relevant styles, places
+      // a marker span at the offset, and reads its position. The mirror approach
+      // is the standard way to get visual line position from a textarea — line
+      // counting alone misses soft-wrapped long lines, which drift the cursor
+      // noticeably on long notes (queue.md, learnings.md).
+      const measureCaretTop = (ta, offset) => {
+        const cs = getComputedStyle(ta);
+        const mirror = document.createElement('div');
+        for (const p of [
+          'boxSizing',
+          'fontFamily',
+          'fontSize',
+          'fontWeight',
+          'fontStyle',
+          'fontVariant',
+          'fontStretch',
+          'lineHeight',
+          'letterSpacing',
+          'wordSpacing',
+          'tabSize',
+          'whiteSpace',
+          'wordBreak',
+          'overflowWrap',
+          'wordWrap',
+          'textTransform',
+          'textIndent',
+          'direction',
+          'paddingTop',
+          'paddingRight',
+          'paddingBottom',
+          'paddingLeft',
+          'borderTopWidth',
+          'borderRightWidth',
+          'borderBottomWidth',
+          'borderLeftWidth',
+          'borderTopStyle',
+          'borderRightStyle',
+          'borderBottomStyle',
+          'borderLeftStyle'
+        ]) {
+          mirror.style[p] = cs[p];
+        }
+        mirror.style.position = 'absolute';
+        mirror.style.visibility = 'hidden';
+        mirror.style.top = '0';
+        mirror.style.left = '-9999px';
+        mirror.style.width = ta.offsetWidth + 'px';
+        mirror.style.height = 'auto';
+        mirror.style.whiteSpace = 'pre-wrap';
+        mirror.style.overflowWrap = 'break-word';
 
-  const text = ta.value;
-  mirror.appendChild(document.createTextNode(text.slice(0, offset)));
-  const marker = document.createElement('span');
-  marker.textContent = text.charAt(offset) || '​';
-  mirror.appendChild(marker);
-  if (offset < text.length) {
-    mirror.appendChild(document.createTextNode(text.slice(offset + 1)));
-  }
+        const text = ta.value;
+        mirror.appendChild(document.createTextNode(text.slice(0, offset)));
+        const marker = document.createElement('span');
+        marker.textContent = text.charAt(offset) || '​';
+        mirror.appendChild(marker);
+        if (offset < text.length) {
+          mirror.appendChild(document.createTextNode(text.slice(offset + 1)));
+        }
 
-  document.body.appendChild(mirror);
-  const top = marker.offsetTop;
-  document.body.removeChild(mirror);
-  return top;
-};
+        document.body.appendChild(mirror);
+        const top = marker.offsetTop;
+        document.body.removeChild(mirror);
+        return top;
+      };
 
-const jumpInEditor = offset => {
-  const ta = $('#editor');
-  ta.focus();
-  ta.setSelectionRange(offset, offset);
-  const top = measureCaretTop(ta, offset);
-  ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
-};
+      const jumpInEditor = offset => {
+        const ta = $('#editor');
+        ta.focus();
+        ta.setSelectionRange(offset, offset);
+        const top = measureCaretTop(ta, offset);
+        ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
+      };
 
-const jumpInPreview = index => {
-  // Pick the Nth heading element in the rendered output. The parser and
-  // marked agree on heading order for ATX headings (the convention in
-  // this vault); setext headings would mismatch but they're rare here.
-  const headings = $('#preview').querySelectorAll('h1, h2, h3, h4, h5, h6');
-  const target = headings[index];
-  if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
-};
+      const jumpInPreview = index => {
+        // Pick the Nth heading element in the rendered output. The parser and
+        // marked agree on heading order for ATX headings (the convention in
+        // this vault); setext headings would mismatch but they're rare here.
+        const headings = $('#preview').querySelectorAll('h1, h2, h3, h4, h5, h6');
+        const target = headings[index];
+        if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+      };
 
-const jumpToHeading = (offset, index) => {
-  // Editor pane is hidden in `preview` mode; preview pane is hidden in
-  // `edit` mode. Dispatch to whichever surface is visible (or both in
-  // `split`). If the preview is empty (we just rendered an edit-only
-  // session), fall back to scrolling the editor.
-  const previewMode = document.body.dataset.view;
-  if (previewMode === 'preview') {
-    // Trigger a render in case it's stale, then jump.
-    $('#preview').value = $('#editor').value;
-    requestAnimationFrame(() => jumpInPreview(index));
-  } else if (previewMode === 'edit') {
-    jumpInEditor(offset);
-  } else {
-    // split: jump both surfaces.
-    jumpInEditor(offset);
-    requestAnimationFrame(() => jumpInPreview(index));
-  }
-};
+      const jumpToHeading = (offset, index) => {
+        // Editor pane is hidden in `preview` mode; preview pane is hidden in
+        // `edit` mode. Dispatch to whichever surface is visible (or both in
+        // `split`). If the preview is empty (we just rendered an edit-only
+        // session), fall back to scrolling the editor.
+        const previewMode = document.body.dataset.view;
+        if (previewMode === 'preview') {
+          // Trigger a render in case it's stale, then jump.
+          $('#preview').value = $('#editor').value;
+          requestAnimationFrame(() => jumpInPreview(index));
+        } else if (previewMode === 'edit') {
+          jumpInEditor(offset);
+        } else {
+          // split: jump both surfaces.
+          jumpInEditor(offset);
+          requestAnimationFrame(() => jumpInPreview(index));
+        }
+      };
 
-const openOutline = () => {
-  const headings = parseHeadings($('#editor').value);
-  const list = $('#outline-list');
-  $('#outline-count').textContent =
-    headings.length === 0
-      ? 'No headings in this note.'
-      : `${headings.length} heading${headings.length === 1 ? '' : 's'}.`;
-  if (headings.length === 0) {
-    list.innerHTML = '<li class="empty">Add headings (`# `, `## `, …) to jump around long notes.</li>';
-  } else {
-    list.innerHTML = headings
-      .map(
-        (h, i) => `
+      const openOutline = () => {
+        const headings = parseHeadings($('#editor').value);
+        const list = $('#outline-list');
+        $('#outline-count').textContent =
+          headings.length === 0
+            ? 'No headings in this note.'
+            : `${headings.length} heading${headings.length === 1 ? '' : 's'}.`;
+        if (headings.length === 0) {
+          list.innerHTML =
+            '<li class="empty">Add headings (`# `, `## `, …) to jump around long notes.</li>';
+        } else {
+          list.innerHTML = headings
+            .map(
+              (h, i) => `
           <li>
             <a href="#" class="outline-item" data-offset="${h.offset}" data-index="${i}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
               <span class="title">${esc(h.text)}</span>
@@ -537,53 +946,53 @@ const openOutline = () => {
             </a>
           </li>
         `
-      )
-      .join('');
-  }
-  $('#outline-dlg').showModal();
-};
+            )
+            .join('');
+        }
+        $('#outline-dlg').showModal();
+      };
 
-// Backlinks --------------------------------------------------------
-const fetchBacklinks = async () => {
-  if (!state.path) return;
-  try {
-    const resolved = await apiJson(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
-    state.recordId = resolved.record_id;
-    const data = await apiJson(`/sections/${state.recordId}/backlinks?limit=50`);
-    state.backlinks = data.items ?? [];
-    state.backlinksTotal = data.total ?? state.backlinks.length;
-    const btn = $('#backlinks');
-    if (state.backlinksTotal === 0) {
-      btn.hidden = true;
-    } else {
-      btn.hidden = false;
-      btn.textContent = `Backlinks (${state.backlinksTotal})`;
-    }
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') return;
-    // Backlinks are nice-to-have; don't surface errors to the user.
-  }
-};
+      // Backlinks --------------------------------------------------------
+      const fetchBacklinks = async () => {
+        if (!state.path) return;
+        try {
+          const resolved = await apiJson(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
+          state.recordId = resolved.record_id;
+          const data = await apiJson(`/sections/${state.recordId}/backlinks?limit=50`);
+          state.backlinks = data.items ?? [];
+          state.backlinksTotal = data.total ?? state.backlinks.length;
+          const btn = $('#backlinks');
+          if (state.backlinksTotal === 0) {
+            btn.hidden = true;
+          } else {
+            btn.hidden = false;
+            btn.textContent = `Backlinks (${state.backlinksTotal})`;
+          }
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') return;
+          // Backlinks are nice-to-have; don't surface errors to the user.
+        }
+      };
 
-const openBacklinks = () => {
-  const list = $('#backlinks-list');
-  const items = state.backlinks ?? [];
-  const total = state.backlinksTotal ?? 0;
-  $('#backlinks-count').textContent =
-    total === 0
-      ? 'No notes link to this one.'
-      : `${total} note${total === 1 ? '' : 's'} link${total === 1 ? 's' : ''} to this one${
-          items.length < total ? ` (showing first ${items.length})` : ''
-        }.`;
-  if (items.length === 0) {
-    list.innerHTML = '<li class="empty">None.</li>';
-  } else {
-    list.innerHTML = items
-      .map(bl => {
-        const fr = bl.from_record;
-        const t = bl.edge?.type ?? 'cites';
-        const title = fr.title || fr.file_path.split('/').pop().replace(/\.md$/, '');
-        return `
+      const openBacklinks = () => {
+        const list = $('#backlinks-list');
+        const items = state.backlinks ?? [];
+        const total = state.backlinksTotal ?? 0;
+        $('#backlinks-count').textContent =
+          total === 0
+            ? 'No notes link to this one.'
+            : `${total} note${total === 1 ? '' : 's'} link${total === 1 ? 's' : ''} to this one${
+                items.length < total ? ` (showing first ${items.length})` : ''
+              }.`;
+        if (items.length === 0) {
+          list.innerHTML = '<li class="empty">None.</li>';
+        } else {
+          list.innerHTML = items
+            .map(bl => {
+              const fr = bl.from_record;
+              const t = bl.edge?.type ?? 'cites';
+              const title = fr.title || fr.file_path.split('/').pop().replace(/\.md$/, '');
+              return `
           <li>
             <a href="/ui/note.html?path=${encodeURIComponent(fr.file_path)}">
               <span class="title">${esc(title)}</span>
@@ -591,48 +1000,50 @@ const openBacklinks = () => {
             </a>
           </li>
         `;
-      })
-      .join('');
-  }
-  $('#backlinks-dlg').showModal();
-};
+            })
+            .join('');
+        }
+        $('#backlinks-dlg').showModal();
+      };
 
-// Wikilink picker --------------------------------------------------
-let wikiResults = [];
-let wikiSelected = -1;
-let wikiSearchTimer = null;
-let wikiAbort = null;
+      // Wikilink picker --------------------------------------------------
+      let wikiResults = [];
+      let wikiSelected = -1;
+      let wikiSearchTimer = null;
+      let wikiAbort = null;
 
-const insertAtCursor = text => {
-  const ta = $('#editor');
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
-  const pos = start + text.length;
-  ta.setSelectionRange(pos, pos);
-  ta.dispatchEvent(new Event('input', {bubbles: true}));
-};
+      const insertAtCursor = text => {
+        const ta = $('#editor');
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+        const pos = start + text.length;
+        ta.setSelectionRange(pos, pos);
+        ta.dispatchEvent(new Event('input', {bubbles: true}));
+      };
 
-const insertWikilink = path => {
-  const target = path.replace(/\.md$/, '');
-  insertAtCursor(`[[${target}]]`);
-};
+      const insertWikilink = path => {
+        const target = path.replace(/\.md$/, '');
+        insertAtCursor(`[[${target}]]`);
+      };
 
-const openWikiPicker = () => {
-  $('#wiki-search').value = '';
-  $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
-  wikiResults = [];
-  wikiSelected = -1;
-  $('#wiki-dlg').showModal();
-  $('#wiki-search').focus();
-};
+      const openWikiPicker = () => {
+        $('#wiki-search').value = '';
+        $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
+        wikiResults = [];
+        wikiSelected = -1;
+        $('#wiki-dlg').showModal();
+        $('#wiki-search').focus();
+      };
 
-const renderWikiResults = items => {
-  if (items.length === 0) {
-    $('#wiki-results').innerHTML = '<li class="empty">No matches.</li>';
-    return;
-  }
-  $('#wiki-results').innerHTML = items.map((r, i) => `
+      const renderWikiResults = items => {
+        if (items.length === 0) {
+          $('#wiki-results').innerHTML = '<li class="empty">No matches.</li>';
+          return;
+        }
+        $('#wiki-results').innerHTML = items
+          .map(
+            (r, i) => `
     <li>
       <div class="item ${i === wikiSelected ? 'active' : ''}" data-idx="${i}">
         <span class="title">${esc(r.title)}</span>
@@ -640,334 +1051,362 @@ const renderWikiResults = items => {
         ${r.snippet ? `<span class="snippet">… ${esc(r.snippet)} …</span>` : ''}
       </div>
     </li>
-  `).join('');
-  if (wikiSelected >= 0) {
-    const active = $('#wiki-results .item.active');
-    if (active) active.scrollIntoView({block: 'nearest'});
-  }
-};
+  `
+          )
+          .join('');
+        if (wikiSelected >= 0) {
+          const active = $('#wiki-results .item.active');
+          if (active) active.scrollIntoView({block: 'nearest'});
+        }
+      };
 
-const wikiSearchOnce = async q => {
-  if (wikiAbort) wikiAbort.abort();
-  wikiAbort = new AbortController();
-  try {
-    const params = new URLSearchParams({query: q});
-    const data = await apiJson(`/search/simple/?${params}`, {
-      method: 'POST',
-      signal: wikiAbort.signal
-    });
-    const items = (Array.isArray(data) ? data : [])
-      .filter(r => r.filename !== state.path)
-      .slice(0, 10)
-      .map(r => ({
-        filename: r.filename,
-        title: r.filename.split('/').pop().replace(/\.md$/, ''),
-        snippet: r.matches?.[0]?.context ?? null
-      }));
-    wikiResults = items;
-    wikiSelected = items.length > 0 ? 0 : -1;
-    renderWikiResults(items);
-  } catch (e) {
-    if (e.name === 'AbortError') return;
-    $('#wiki-results').innerHTML = `<li class="empty">Search failed: ${esc(e.message)}</li>`;
-  }
-};
+      const wikiSearchOnce = async q => {
+        if (wikiAbort) wikiAbort.abort();
+        wikiAbort = new AbortController();
+        try {
+          const params = new URLSearchParams({query: q});
+          const data = await apiJson(`/search/simple/?${params}`, {
+            method: 'POST',
+            signal: wikiAbort.signal
+          });
+          const items = (Array.isArray(data) ? data : [])
+            .filter(r => r.filename !== state.path)
+            .slice(0, 10)
+            .map(r => ({
+              filename: r.filename,
+              title: r.filename.split('/').pop().replace(/\.md$/, ''),
+              snippet: r.matches?.[0]?.context ?? null
+            }));
+          wikiResults = items;
+          wikiSelected = items.length > 0 ? 0 : -1;
+          renderWikiResults(items);
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+          $('#wiki-results').innerHTML = `<li class="empty">Search failed: ${esc(e.message)}</li>`;
+        }
+      };
 
-async function openRecent() {
-  const list = $('#recent-list');
-  list.innerHTML = '<li class="empty"><span class="spinner"></span> loading…</li>';
-  $('#recent-dlg').showModal();
-  try {
-    const data = await apiJson('/sections?file_prefix=raw&exclude=body&limit=50');
-    const items = (data.items ?? [])
-      .filter(r => !r.file_path.includes('/archive/'))
-      .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
-      .slice(0, 10);
-    if (items.length === 0) {
-      list.innerHTML = '<li class="empty">No recent notes in <code>raw/</code>.</li>';
-      return;
-    }
-    list.innerHTML = items.map(r => `
+      async function openRecent() {
+        const list = $('#recent-list');
+        list.innerHTML = '<li class="empty"><span class="spinner"></span> loading…</li>';
+        $('#recent-dlg').showModal();
+        try {
+          const data = await apiJson('/sections?file_prefix=raw&exclude=body&limit=50');
+          const items = (data.items ?? [])
+            .filter(r => !r.file_path.includes('/archive/'))
+            .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
+            .slice(0, 10);
+          if (items.length === 0) {
+            list.innerHTML = '<li class="empty">No recent notes in <code>raw/</code>.</li>';
+            return;
+          }
+          list.innerHTML = items
+            .map(
+              r => `
       <li>
         <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
           <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
           <span class="meta">${esc(r.file_path)} · ${esc(r.updated ?? '')}</span>
         </a>
       </li>
-    `).join('');
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') {
-      $('#recent-dlg').close();
-      showAuthDialog();
-      return;
-    }
-    list.innerHTML = `<li class="empty">Failed to load: ${esc(e.message)}</li>`;
-  }
-}
+    `
+            )
+            .join('');
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            $('#recent-dlg').close();
+            showAuthDialog();
+            return;
+          }
+          list.innerHTML = `<li class="empty">Failed to load: ${esc(e.message)}</li>`;
+        }
+      }
 
-// view modes ------------------------------------------------------
-// Precedence: URL `?view=` (one-shot for "open as rendered" affordances) >
-// localStorage (sticky user preference) > viewport-derived default.
-const urlView = new URLSearchParams(location.search).get('view');
-let viewMode;
-if (urlView === 'edit' || urlView === 'split' || urlView === 'preview') {
-  viewMode = urlView;
-} else {
-  viewMode = localStorage.getItem(VIEW_KEY);
-  if (viewMode !== 'edit' && viewMode !== 'split' && viewMode !== 'preview') {
-    viewMode = window.innerWidth >= 768 ? 'split' : 'edit';
-  }
-}
-document.body.dataset.view = viewMode;
+      // view modes ------------------------------------------------------
+      // Precedence: URL `?view=` (one-shot for "open as rendered" affordances) >
+      // localStorage (sticky user preference) > viewport-derived default.
+      const urlView = new URLSearchParams(location.search).get('view');
+      let viewMode;
+      if (urlView === 'edit' || urlView === 'split' || urlView === 'preview') {
+        viewMode = urlView;
+      } else {
+        viewMode = localStorage.getItem(VIEW_KEY);
+        if (viewMode !== 'edit' && viewMode !== 'split' && viewMode !== 'preview') {
+          viewMode = window.innerWidth >= 768 ? 'split' : 'edit';
+        }
+      }
+      document.body.dataset.view = viewMode;
 
-const setViewMode = mode => {
-  viewMode = mode;
-  localStorage.setItem(VIEW_KEY, mode);
-  document.body.dataset.view = mode;
-  $$('.modes button').forEach(btn => {
-    btn.setAttribute('aria-pressed', btn.dataset.mode === mode ? 'true' : 'false');
-  });
-  if (mode !== 'edit') schedulePreview();
-};
+      const setViewMode = mode => {
+        viewMode = mode;
+        localStorage.setItem(VIEW_KEY, mode);
+        document.body.dataset.view = mode;
+        $$('.modes button').forEach(btn => {
+          btn.setAttribute('aria-pressed', btn.dataset.mode === mode ? 'true' : 'false');
+        });
+        if (mode !== 'edit') schedulePreview();
+      };
 
-let previewTimer = null;
-const schedulePreview = () => {
-  if (viewMode === 'edit') return;
-  if (previewTimer) clearTimeout(previewTimer);
-  previewTimer = setTimeout(() => {
-    $('#preview').value = $('#editor').value;
-  }, PREVIEW_DEBOUNCE_MS);
-};
+      let previewTimer = null;
+      const schedulePreview = () => {
+        if (viewMode === 'edit') return;
+        if (previewTimer) clearTimeout(previewTimer);
+        previewTimer = setTimeout(() => {
+          $('#preview').value = $('#editor').value;
+        }, PREVIEW_DEBOUNCE_MS);
+      };
 
-// edit + autosave -------------------------------------------------
-function onInput() {
-  const body = $('#editor').value;
-  state.dirty = body !== state.serverContent;
-  schedulePreview();
-  if (!state.dirty) {
-    setStatus('saved', state.lastSavedAt ? `saved ${fmtTime(state.lastSavedAt)}` : 'no changes');
-    return;
-  }
-  stageDraft(body);
-  setStatus('editing', 'editing');
-  if (state.saveTimer) clearTimeout(state.saveTimer);
-  state.saveTimer = setTimeout(save, DEBOUNCE_MS);
-}
+      // edit + autosave -------------------------------------------------
+      function onInput() {
+        const body = $('#editor').value;
+        state.dirty = body !== state.serverContent;
+        schedulePreview();
+        if (!state.dirty) {
+          setStatus(
+            'saved',
+            state.lastSavedAt ? `saved ${fmtTime(state.lastSavedAt)}` : 'no changes'
+          );
+          return;
+        }
+        stageDraft(body);
+        setStatus('editing', 'editing');
+        if (state.saveTimer) clearTimeout(state.saveTimer);
+        state.saveTimer = setTimeout(save, DEBOUNCE_MS);
+      }
 
-async function save() {
-  if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
-  const body = $('#editor').value;
-  if (!state.dirty && state.path) return;
-  if (!state.path) state.path = newCapturePath();
-  setStatus('saving', '');
-  try {
-    await api(`/vault/${encodePath(state.path)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'text/markdown' },
-      body
-    });
-    state.serverContent = body;
-    state.dirty = false;
-    state.lastSavedAt = new Date();
-    // Clear both the per-path draft and the capture-mode "new" key — on a
-    // first capture save the staged draft lives under "new" but dropDraft()
-    // now keys by the freshly-assigned path.
-    localStorage.removeItem(DRAFT_PREFIX + 'new');
-    dropDraft();
-    $('#path').textContent = state.path;
-    $('#del').hidden = false;
-    $('#recent').hidden = true;
-    // Update URL so refresh stays on this note.
-    if (location.search === '' || params.get('path') !== state.path) {
-      const newUrl = `?path=${encodeURIComponent(state.path)}`;
-      history.replaceState(null, '', newUrl);
-      params.set('path', state.path);
-    }
-    setStatus('saved', `saved ${fmtTime(state.lastSavedAt)}`);
-    hideError();
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    setStatus('offline', 'offline; will retry');
-    showError(`Save failed: ${e.message}`);
-  }
-}
+      async function save() {
+        if (state.saveTimer) {
+          clearTimeout(state.saveTimer);
+          state.saveTimer = null;
+        }
+        const body = $('#editor').value;
+        if (!state.dirty && state.path) return;
+        if (!state.path) state.path = newCapturePath();
+        setStatus('saving', '');
+        try {
+          await api(`/vault/${encodePath(state.path)}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'text/markdown'},
+            body
+          });
+          state.serverContent = body;
+          state.dirty = false;
+          state.lastSavedAt = new Date();
+          // Clear both the per-path draft and the capture-mode "new" key — on a
+          // first capture save the staged draft lives under "new" but dropDraft()
+          // now keys by the freshly-assigned path.
+          localStorage.removeItem(DRAFT_PREFIX + 'new');
+          dropDraft();
+          $('#path').textContent = state.path;
+          $('#del').hidden = false;
+          $('#recent').hidden = true;
+          // Update URL so refresh stays on this note.
+          if (location.search === '' || params.get('path') !== state.path) {
+            const newUrl = `?path=${encodeURIComponent(state.path)}`;
+            history.replaceState(null, '', newUrl);
+            params.set('path', state.path);
+          }
+          setStatus('saved', `saved ${fmtTime(state.lastSavedAt)}`);
+          hideError();
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          setStatus('offline', 'offline; will retry');
+          showError(`Save failed: ${e.message}`);
+        }
+      }
 
-async function del() {
-  if (!state.path) return;
-  try {
-    await api(`/vault/${encodePath(state.path)}`, { method: 'DELETE' });
-    dropDraft();
-    state.dirty = false;
-    location.href = '/ui/projects.html';
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    showError(`Delete failed: ${e.message}`);
-  }
-}
+      async function del() {
+        if (!state.path) return;
+        try {
+          await api(`/vault/${encodePath(state.path)}`, {method: 'DELETE'});
+          dropDraft();
+          state.dirty = false;
+          location.href = '/ui/projects.html';
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          showError(`Delete failed: ${e.message}`);
+        }
+      }
 
-const showError = msg => { $('#err').textContent = msg; $('#err').hidden = false; };
-const hideError = () => { $('#err').hidden = true; };
+      const showError = msg => {
+        $('#err').textContent = msg;
+        $('#err').hidden = false;
+      };
+      const hideError = () => {
+        $('#err').hidden = true;
+      };
 
-// wiring ----------------------------------------------------------
-$('#settings').addEventListener('click', showAuthDialog);
-$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-$('#auth-ok').addEventListener('click', () => {
-  setToken($('#auth-input').value.trim());
-  $('#auth-dlg').close();
-  init();
-});
-$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+      // wiring ----------------------------------------------------------
+      $('#settings').addEventListener('click', showAuthDialog);
+      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+      $('#auth-ok').addEventListener('click', () => {
+        setToken($('#auth-input').value.trim());
+        $('#auth-dlg').close();
+        init();
+      });
+      $('#auth-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') $('#auth-ok').click();
+      });
 
-$('#save').addEventListener('click', save);
-$('#del').addEventListener('click', () => $('#del-dlg').showModal());
-$('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
-$('#del-confirm').addEventListener('click', () => { $('#del-dlg').close(); del(); });
-$('#recent').addEventListener('click', openRecent);
-$('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
+      $('#save').addEventListener('click', save);
+      $('#del').addEventListener('click', () => $('#del-dlg').showModal());
+      $('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
+      $('#del-confirm').addEventListener('click', () => {
+        $('#del-dlg').close();
+        del();
+      });
+      $('#recent').addEventListener('click', openRecent);
+      $('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
 
-$('#wiki-pick').addEventListener('click', openWikiPicker);
-$('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
+      $('#wiki-pick').addEventListener('click', openWikiPicker);
+      $('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
 
-$('#backlinks').addEventListener('click', openBacklinks);
-$('#backlinks-close').addEventListener('click', () => $('#backlinks-dlg').close());
+      $('#backlinks').addEventListener('click', openBacklinks);
+      $('#backlinks-close').addEventListener('click', () => $('#backlinks-dlg').close());
 
-$('#outline').addEventListener('click', openOutline);
-$('#outline-close').addEventListener('click', () => $('#outline-dlg').close());
-$('#outline-list').addEventListener('click', e => {
-  const item = e.target.closest('a.outline-item');
-  if (!item) return;
-  e.preventDefault();
-  const offset = Number(item.dataset.offset);
-  const index = Number(item.dataset.index);
-  if (Number.isFinite(offset) && Number.isFinite(index)) {
-    $('#outline-dlg').close();
-    jumpToHeading(offset, index);
-  }
-});
+      $('#outline').addEventListener('click', openOutline);
+      $('#outline-close').addEventListener('click', () => $('#outline-dlg').close());
+      $('#outline-list').addEventListener('click', e => {
+        const item = e.target.closest('a.outline-item');
+        if (!item) return;
+        e.preventDefault();
+        const offset = Number(item.dataset.offset);
+        const index = Number(item.dataset.index);
+        if (Number.isFinite(offset) && Number.isFinite(index)) {
+          $('#outline-dlg').close();
+          jumpToHeading(offset, index);
+        }
+      });
 
-$('#wiki-search').addEventListener('input', () => {
-  const q = $('#wiki-search').value.trim();
-  if (wikiSearchTimer) clearTimeout(wikiSearchTimer);
-  if (q.length < 2) {
-    wikiResults = [];
-    wikiSelected = -1;
-    $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
-    return;
-  }
-  wikiSearchTimer = setTimeout(() => wikiSearchOnce(q), 150);
-});
+      $('#wiki-search').addEventListener('input', () => {
+        const q = $('#wiki-search').value.trim();
+        if (wikiSearchTimer) clearTimeout(wikiSearchTimer);
+        if (q.length < 2) {
+          wikiResults = [];
+          wikiSelected = -1;
+          $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
+          return;
+        }
+        wikiSearchTimer = setTimeout(() => wikiSearchOnce(q), 150);
+      });
 
-$('#wiki-search').addEventListener('keydown', e => {
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (wikiResults.length === 0) return;
-    wikiSelected = (wikiSelected + 1) % wikiResults.length;
-    renderWikiResults(wikiResults);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (wikiResults.length === 0) return;
-    wikiSelected = (wikiSelected - 1 + wikiResults.length) % wikiResults.length;
-    renderWikiResults(wikiResults);
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    if (wikiResults.length > 0) {
-      const idx = wikiSelected >= 0 ? wikiSelected : 0;
-      insertWikilink(wikiResults[idx].filename);
-      $('#wiki-dlg').close();
-      $('#editor').focus();
-    }
-  }
-});
+      $('#wiki-search').addEventListener('keydown', e => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (wikiResults.length === 0) return;
+          wikiSelected = (wikiSelected + 1) % wikiResults.length;
+          renderWikiResults(wikiResults);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (wikiResults.length === 0) return;
+          wikiSelected = (wikiSelected - 1 + wikiResults.length) % wikiResults.length;
+          renderWikiResults(wikiResults);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (wikiResults.length > 0) {
+            const idx = wikiSelected >= 0 ? wikiSelected : 0;
+            insertWikilink(wikiResults[idx].filename);
+            $('#wiki-dlg').close();
+            $('#editor').focus();
+          }
+        }
+      });
 
-$('#wiki-results').addEventListener('click', e => {
-  const item = e.target.closest('.item[data-idx]');
-  if (!item) return;
-  const idx = Number(item.dataset.idx);
-  if (Number.isFinite(idx) && wikiResults[idx]) {
-    insertWikilink(wikiResults[idx].filename);
-    $('#wiki-dlg').close();
-    $('#editor').focus();
-  }
-});
+      $('#wiki-results').addEventListener('click', e => {
+        const item = e.target.closest('.item[data-idx]');
+        if (!item) return;
+        const idx = Number(item.dataset.idx);
+        if (Number.isFinite(idx) && wikiResults[idx]) {
+          insertWikilink(wikiResults[idx].filename);
+          $('#wiki-dlg').close();
+          $('#editor').focus();
+        }
+      });
 
-// View-mode toggle (Edit / Split / Preview).
-$$('.modes button').forEach(btn => {
-  btn.addEventListener('click', () => setViewMode(btn.dataset.mode));
-});
-setViewMode(viewMode);
+      // View-mode toggle (Edit / Split / Preview).
+      $$('.modes button').forEach(btn => {
+        btn.addEventListener('click', () => setViewMode(btn.dataset.mode));
+      });
+      setViewMode(viewMode);
 
-// Mobile insert-row -----------------------------------------------
-const insertWrap = (open, close) => {
-  const ta = $('#editor');
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  const before = ta.value.slice(0, start);
-  const sel = ta.value.slice(start, end);
-  const after = ta.value.slice(end);
-  const tail = close ?? open;
-  ta.value = before + open + sel + tail + after;
-  if (sel.length === 0) {
-    const pos = start + open.length;
-    ta.setSelectionRange(pos, pos);
-  } else {
-    ta.setSelectionRange(start, end + open.length + tail.length);
-  }
-  ta.dispatchEvent(new Event('input', {bubbles: true}));
-};
+      // Mobile insert-row -----------------------------------------------
+      const insertWrap = (open, close) => {
+        const ta = $('#editor');
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        const before = ta.value.slice(0, start);
+        const sel = ta.value.slice(start, end);
+        const after = ta.value.slice(end);
+        const tail = close ?? open;
+        ta.value = before + open + sel + tail + after;
+        if (sel.length === 0) {
+          const pos = start + open.length;
+          ta.setSelectionRange(pos, pos);
+        } else {
+          ta.setSelectionRange(start, end + open.length + tail.length);
+        }
+        ta.dispatchEvent(new Event('input', {bubbles: true}));
+      };
 
-const insertPrefix = prefix => {
-  const ta = $('#editor');
-  const cursor = ta.selectionStart;
-  const lineStart = ta.value.lastIndexOf('\n', cursor - 1) + 1;
-  ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart);
-  const newPos = cursor + prefix.length;
-  ta.setSelectionRange(newPos, newPos);
-  ta.dispatchEvent(new Event('input', {bubbles: true}));
-};
+      const insertPrefix = prefix => {
+        const ta = $('#editor');
+        const cursor = ta.selectionStart;
+        const lineStart = ta.value.lastIndexOf('\n', cursor - 1) + 1;
+        ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart);
+        const newPos = cursor + prefix.length;
+        ta.setSelectionRange(newPos, newPos);
+        ta.dispatchEvent(new Event('input', {bubbles: true}));
+      };
 
-$$('#insert-row button').forEach(btn => {
-  // Prevent the button from stealing focus from the textarea on tap.
-  btn.addEventListener('mousedown', e => e.preventDefault());
-  btn.addEventListener('click', e => {
-    e.preventDefault();
-    if (btn.dataset.insertWrap !== undefined) {
-      insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
-    } else if (btn.dataset.insertPrefix !== undefined) {
-      insertPrefix(btn.dataset.insertPrefix);
-    }
-  });
-});
+      $$('#insert-row button').forEach(btn => {
+        // Prevent the button from stealing focus from the textarea on tap.
+        btn.addEventListener('mousedown', e => e.preventDefault());
+        btn.addEventListener('click', e => {
+          e.preventDefault();
+          if (btn.dataset.insertWrap !== undefined) {
+            insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
+          } else if (btn.dataset.insertPrefix !== undefined) {
+            insertPrefix(btn.dataset.insertPrefix);
+          }
+        });
+      });
 
-$('#editor').addEventListener('focus', () => {
-  document.body.dataset.editorFocused = '1';
-});
-$('#editor').addEventListener('blur', () => {
-  delete document.body.dataset.editorFocused;
-});
+      $('#editor').addEventListener('focus', () => {
+        document.body.dataset.editorFocused = '1';
+      });
+      $('#editor').addEventListener('blur', () => {
+        delete document.body.dataset.editorFocused;
+      });
 
-// Track the on-screen keyboard via visualViewport so the insert-row
-// floats above the keyboard rather than being covered by it.
-if (window.visualViewport) {
-  const adjustKeyboardOffset = () => {
-    const vv = window.visualViewport;
-    const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    document.documentElement.style.setProperty('--kb-offset', `${offset}px`);
-  };
-  window.visualViewport.addEventListener('resize', adjustKeyboardOffset);
-  window.visualViewport.addEventListener('scroll', adjustKeyboardOffset);
-  adjustKeyboardOffset();
-}
+      // Track the on-screen keyboard via visualViewport so the insert-row
+      // floats above the keyboard rather than being covered by it.
+      if (window.visualViewport) {
+        const adjustKeyboardOffset = () => {
+          const vv = window.visualViewport;
+          const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+          document.documentElement.style.setProperty('--kb-offset', `${offset}px`);
+        };
+        window.visualViewport.addEventListener('resize', adjustKeyboardOffset);
+        window.visualViewport.addEventListener('scroll', adjustKeyboardOffset);
+        adjustKeyboardOffset();
+      }
 
-// Cmd/Ctrl-S manual save.
-document.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-    e.preventDefault();
-    save();
-  }
-});
+      // Cmd/Ctrl-S manual save.
+      document.addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+          e.preventDefault();
+          save();
+        }
+      });
 
-init();
-</script>
-<script type="module" src="/ui/theme.js"></script>
-</body>
+      init();
+    </script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
 </html>

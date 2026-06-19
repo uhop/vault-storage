@@ -29,8 +29,13 @@ test('TagsImporter: inserts known tags', t => {
     t.equal(result.inserted, 2);
     t.deepEqual(result.rejected, []);
     t.equal(result.suggestionsFiled, 0, 'no suggestions for known tags');
-    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag').all('r1') as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['design', 'research']);
+    const rows = db
+      .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+      .all('r1') as Array<{tag: string}>;
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['design', 'research']
+    );
   } finally {
     db.close();
   }
@@ -42,8 +47,14 @@ test('TagsImporter: applies aliases', t => {
     const tags = new TagsImporter(db);
     const result = tags.syncTags('r1', 'topics/x.md', ['designs', 'researches']);
     t.equal(result.inserted, 2);
-    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag').all('r1') as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['design', 'research'], 'aliases canonicalized');
+    const rows = db
+      .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+      .all('r1') as Array<{tag: string}>;
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['design', 'research'],
+      'aliases canonicalized'
+    );
   } finally {
     db.close();
   }
@@ -57,8 +68,13 @@ test('TagsImporter: unknown tags reported but not fatal', t => {
     t.equal(result.inserted, 1, 'known tag inserted');
     t.deepEqual(result.rejected, ['never-heard-of-this']);
     t.equal(result.suggestionsFiled, 1, 'one new_tag suggestion filed');
-    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ?').all('r1') as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['design']);
+    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ?').all('r1') as Array<{
+      tag: string;
+    }>;
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['design']
+    );
   } finally {
     db.close();
   }
@@ -71,8 +87,14 @@ test('TagsImporter: replaces previous tag set', t => {
     tags.syncTags('r1', 'topics/x.md', ['design', 'research']);
     const after = tags.syncTags('r1', 'topics/x.md', ['storage']);
     t.equal(after.inserted, 1);
-    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ?').all('r1') as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['storage'], 'old tags removed');
+    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ?').all('r1') as Array<{
+      tag: string;
+    }>;
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['storage'],
+      'old tags removed'
+    );
   } finally {
     db.close();
   }
@@ -85,8 +107,13 @@ test('TagsImporter: normalizes raw input', t => {
     // Whitespace, case, underscores get normalized to kebab-case lowercase.
     const result = tags.syncTags('r1', 'topics/x.md', ['  Design ', 'RESEARCH']);
     t.equal(result.inserted, 2);
-    const rows = db.prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag').all('r1') as Array<{tag: string}>;
-    t.deepEqual(rows.map(r => r.tag), ['design', 'research']);
+    const rows = db
+      .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+      .all('r1') as Array<{tag: string}>;
+    t.deepEqual(
+      rows.map(r => r.tag),
+      ['design', 'research']
+    );
   } finally {
     db.close();
   }

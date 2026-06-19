@@ -83,14 +83,16 @@ test('WikilinkResolver: folder fallback to _about.md', async t => {
   });
 
   await t.test('exact piece path still wins over folder fallback', t => {
-    t.equal(resolver.resolve('projects/blog/decisions/api-design'), 'p1', 'piece path resolves directly');
+    t.equal(
+      resolver.resolve('projects/blog/decisions/api-design'),
+      'p1',
+      'piece path resolves directly'
+    );
     t.equal(resolver.resolve('projects/blog/decisions/api-design.md'), 'p1', 'piece path with .md');
   });
 
   await t.test('folder without _about.md does not match', t => {
-    const noAbout = [
-      record('p', 'projects/blog/decisions/api-design.md')
-    ];
+    const noAbout = [record('p', 'projects/blog/decisions/api-design.md')];
     const r2 = new WikilinkResolver(noAbout);
     t.equal(r2.resolve('projects/blog/decisions'), null, 'no _about.md, no fallback');
   });

@@ -15,7 +15,11 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 12, 'schema version is 12 after all migrations through records-modified-at');
+  t.equal(
+    result.current,
+    12,
+    'schema version is 12 after all migrations through records-modified-at'
+  );
   t.deepEqual(
     result.applied,
     [
@@ -278,9 +282,11 @@ test('records_after_delete cascades to pending suggestions (schema 9)', t => {
 
   db.prepare('DELETE FROM records WHERE record_id = ?').run('rec-a');
 
-  const rows = db
-    .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
-    .all() as {id: string; status: string; resolved_by: string | null}[];
+  const rows = db.prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id').all() as {
+    id: string;
+    status: string;
+    resolved_by: string | null;
+  }[];
   const byId = Object.fromEntries(rows.map(r => [r.id, r]));
 
   t.equal(byId['s1']?.status, 'accepted', 's1 (pending) → accepted');

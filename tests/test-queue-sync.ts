@@ -22,7 +22,12 @@ const teardown = (handle: ReturnType<typeof setup>): void => {
   rmSync(handle.root, {recursive: true, force: true});
 };
 
-const writeQueueFile = (root: string, project: string, basename: string, content: string): string => {
+const writeQueueFile = (
+  root: string,
+  project: string,
+  basename: string,
+  content: string
+): string => {
   const dir = join(root, 'projects', project);
   mkdirSync(dir, {recursive: true});
   const abs = join(dir, basename);
@@ -74,7 +79,12 @@ test('syncQueueFile — reads from disk and applies', t => {
 
 test('syncQueueFile — file vanished mid-cycle drops the slice', t => {
   const handle = setup();
-  const rel = writeQueueFile(handle.root, 'demo', 'queue.md', FM + ['## Backlog', '', '- **X.** y'].join('\n'));
+  const rel = writeQueueFile(
+    handle.root,
+    'demo',
+    'queue.md',
+    FM + ['## Backlog', '', '- **X.** y'].join('\n')
+  );
   syncQueueFile(handle.repo, rel, handle.root, '2026-05-13T12:00:00Z');
   t.equal(handle.repo.count(), 1);
 
@@ -87,7 +97,12 @@ test('syncQueueFile — file vanished mid-cycle drops the slice', t => {
 
 test('dropQueueFile — drops slice without reading', t => {
   const handle = setup();
-  const rel = writeQueueFile(handle.root, 'demo', 'queue.md', FM + ['## Backlog', '', '- **A.** a', '- **B.** b'].join('\n'));
+  const rel = writeQueueFile(
+    handle.root,
+    'demo',
+    'queue.md',
+    FM + ['## Backlog', '', '- **A.** a', '- **B.** b'].join('\n')
+  );
   syncQueueFile(handle.repo, rel, handle.root, '2026-05-13T12:00:00Z');
   t.equal(handle.repo.count(), 2);
 
@@ -110,9 +125,24 @@ test('reindexAllQueues — empty projects/ → zero everything', t => {
 
 test('reindexAllQueues — walks projects/, ingests queue.md + queue-archive.md', t => {
   const handle = setup();
-  writeQueueFile(handle.root, 'alpha', 'queue.md', FM + ['## Backlog', '', '- **A1.** ...', '- **A2.** ...'].join('\n'));
-  writeQueueFile(handle.root, 'alpha', 'queue-archive.md', FM + ['## 2026-05-13', '', '- **Old.** shipped'].join('\n'));
-  writeQueueFile(handle.root, 'bravo', 'queue.md', FM + ['## Active', '', '- **B-active.** in flight'].join('\n'));
+  writeQueueFile(
+    handle.root,
+    'alpha',
+    'queue.md',
+    FM + ['## Backlog', '', '- **A1.** ...', '- **A2.** ...'].join('\n')
+  );
+  writeQueueFile(
+    handle.root,
+    'alpha',
+    'queue-archive.md',
+    FM + ['## 2026-05-13', '', '- **Old.** shipped'].join('\n')
+  );
+  writeQueueFile(
+    handle.root,
+    'bravo',
+    'queue.md',
+    FM + ['## Active', '', '- **B-active.** in flight'].join('\n')
+  );
   // Decoy: not a queue file, should be ignored.
   writeQueueFile(handle.root, 'bravo', 'decisions.md', '# not a queue');
 
@@ -128,7 +158,12 @@ test('reindexAllQueues — walks projects/, ingests queue.md + queue-archive.md'
 
 test('reindexAllQueues — re-run is idempotent (refreshed but no churn)', t => {
   const handle = setup();
-  writeQueueFile(handle.root, 'alpha', 'queue.md', FM + ['## Backlog', '', '- **A.** a'].join('\n'));
+  writeQueueFile(
+    handle.root,
+    'alpha',
+    'queue.md',
+    FM + ['## Backlog', '', '- **A.** a'].join('\n')
+  );
   reindexAllQueues(handle.repo, handle.root, '2026-05-13T12:00:00Z');
 
   const second = reindexAllQueues(handle.repo, handle.root, '2026-05-14T12:00:00Z');
@@ -142,7 +177,12 @@ test('reindexAllQueues — re-run is idempotent (refreshed but no churn)', t => 
 
 test('reindexAllQueues — drops slices for files no longer on disk', t => {
   const handle = setup();
-  const rel = writeQueueFile(handle.root, 'gamma', 'queue.md', FM + ['## Backlog', '', '- **G.** g'].join('\n'));
+  const rel = writeQueueFile(
+    handle.root,
+    'gamma',
+    'queue.md',
+    FM + ['## Backlog', '', '- **G.** g'].join('\n')
+  );
   reindexAllQueues(handle.repo, handle.root, '2026-05-13T12:00:00Z');
   t.equal(handle.repo.count(), 1);
 
@@ -156,7 +196,12 @@ test('reindexAllQueues — drops slices for files no longer on disk', t => {
 
 test('reindexAllQueues — parse errors collected per-file, sweep continues', t => {
   const handle = setup();
-  writeQueueFile(handle.root, 'good', 'queue.md', FM + ['## Backlog', '', '- **OK.** body'].join('\n'));
+  writeQueueFile(
+    handle.root,
+    'good',
+    'queue.md',
+    FM + ['## Backlog', '', '- **OK.** body'].join('\n')
+  );
   // queue-archive.md exists but is unreadable as UTF-8 directory — simulate
   // by making the path itself a directory.
   const archiveDir = join(handle.root, 'projects', 'good', 'queue-archive.md');

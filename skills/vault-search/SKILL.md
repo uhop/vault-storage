@@ -70,10 +70,10 @@ When the user is researching a topic, the natural next step after a search is to
 
 ## Backend compatibility
 
-| Backend                          | Lexical | Semantic           | Honors `limit` |
-| -------------------------------- | ------- | ------------------ | -------------- |
+| Backend                           | Lexical | Semantic                | Honors `limit`            |
+| --------------------------------- | ------- | ----------------------- | ------------------------- |
 | Obsidian Local REST API (`:8089`) | yes     | param ignored → lexical | **no** — returns all hits |
-| vault-storage (`:8123`)          | yes     | yes                | yes |
+| vault-storage (`:8123`)           | yes     | yes                     | yes                       |
 
 The skill works against whichever URL `$VAULT_API_URL` points at. If `--semantic` is requested but the backend doesn't support it, results will silently fall back to lexical — acceptable for now; flag it to the user only if the result shape suggests a fallback occurred (lexical hits returned when the user wanted embedding similarity).
 

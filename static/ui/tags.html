@@ -1,188 +1,395 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
-<title>vault-storage — tags</title>
-<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-<link rel="icon" sizes="any" href="/favicon.ico">
-<link rel="stylesheet" href="/ui/theme.css">
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg); color: var(--fg);
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
-  header nav { display: flex; gap: .8rem; font-size: .9rem; }
-  header nav a { color: var(--muted); text-decoration: none; }
-  header nav a[aria-current] { color: var(--fg); }
-  header .spacer { flex: 1; }
-  main { padding: 1rem; max-width: 64rem; margin: 0 auto; }
-  button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .layout { display: grid; gap: 1rem; grid-template-columns: 18rem 1fr; }
-  @media (max-width: 768px) {
-    .layout { grid-template-columns: 1fr; }
-  }
-  .tag-pane, .records-pane {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: .8rem; min-height: 0;
-  }
-  .tag-pane h2, .records-pane h2 {
-    font-size: .85rem; text-transform: uppercase; letter-spacing: .03em;
-    color: var(--muted); margin: 0 0 .5rem; font-weight: 600;
-  }
-  .tag-filter {
-    width: 100%; padding: .5rem .6rem; font: inherit;
-    border: 1px solid var(--line); border-radius: 4px;
-    background: var(--bg); color: var(--fg);
-    margin-bottom: .6rem;
-  }
-  .tag-list { list-style: none; padding: 0; margin: 0; max-height: 60vh; overflow-y: auto; }
-  .tag-list li { padding: 0; margin: .15rem 0; }
-  .tag-list button {
-    width: 100%; text-align: left;
-    display: flex; align-items: baseline; gap: .5rem;
-    padding: .35rem .55rem; border: 0;
-    background: transparent; color: var(--fg);
-    border-radius: 4px;
-  }
-  .tag-list button:hover { background: rgba(127,127,127,.12); }
-  .tag-list button[aria-current="true"] { background: var(--accent); color: #fff; }
-  .tag-list .name { font-family: var(--mono); font-size: .85rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tag-list .count { font-size: .75rem; color: inherit; opacity: .7; flex-shrink: 0; }
-  .records-pane {
-    min-height: 12rem;
-  }
-  .record-list { list-style: none; padding: 0; margin: 0; }
-  .record-list li { margin: .25rem 0; }
-  .record-list a {
-    display: flex; flex-direction: column; gap: .15rem;
-    padding: .55rem .7rem; border-radius: 4px;
-    text-decoration: none; color: var(--fg);
-  }
-  .record-list a:hover { background: rgba(127,127,127,.12); }
-  .record-list .title { font-weight: 600; font-size: .95rem; }
-  .record-list .path { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
-  .record-list .meta { font-family: var(--mono); font-size: .7rem; color: var(--muted); }
-  .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
-  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
-  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
-  dialog::backdrop { background: rgba(0,0,0,.5); }
-  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
-  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
-  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
-  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
-</style>
-</head>
-<body>
-<header>
-  <h1>vault-storage</h1>
-  <nav>
-    <a href="/ui/">dashboard</a>
-    <a href="/ui/search.html">search</a>
-    <a href="/ui/projects.html">projects</a>
-    <a href="/ui/tags.html" aria-current="page">tags</a>
-    <a href="/ui/raw.html">raw</a>
-    <a href="/ui/folder.html">browse</a>
-    <a href="/ui/note.html">note</a>
-  </nav>
-  <div class="spacer"></div>
-  <div id="theme-toggle"></div>
-  <button id="settings" title="Settings">⚙</button>
-</header>
-<main>
-  <div class="layout">
-    <section class="tag-pane">
-      <h2>Tags <span id="tag-total" style="color:var(--muted);font-weight:400;font-size:.75rem"></span></h2>
-      <input type="search" id="tag-filter" class="tag-filter" placeholder="Filter tags…" autocomplete="off" spellcheck="false">
-      <ul id="tag-list" class="tag-list"></ul>
-    </section>
-    <section class="records-pane">
-      <h2 id="records-heading">Pick a tag</h2>
-      <div id="records"></div>
-    </section>
-  </div>
-</main>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — tags</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        font-weight: 600;
+      }
+      header nav {
+        display: flex;
+        gap: 0.8rem;
+        font-size: 0.9rem;
+      }
+      header nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      header nav a[aria-current] {
+        color: var(--fg);
+      }
+      header .spacer {
+        flex: 1;
+      }
+      main {
+        padding: 1rem;
+        max-width: 64rem;
+        margin: 0 auto;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .layout {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 18rem 1fr;
+      }
+      @media (max-width: 768px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      .tag-pane,
+      .records-pane {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.8rem;
+        min-height: 0;
+      }
+      .tag-pane h2,
+      .records-pane h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--muted);
+        margin: 0 0 0.5rem;
+        font-weight: 600;
+      }
+      .tag-filter {
+        width: 100%;
+        padding: 0.5rem 0.6rem;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+        margin-bottom: 0.6rem;
+      }
+      .tag-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        max-height: 60vh;
+        overflow-y: auto;
+      }
+      .tag-list li {
+        padding: 0;
+        margin: 0.15rem 0;
+      }
+      .tag-list button {
+        width: 100%;
+        text-align: left;
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        padding: 0.35rem 0.55rem;
+        border: 0;
+        background: transparent;
+        color: var(--fg);
+        border-radius: 4px;
+      }
+      .tag-list button:hover {
+        background: rgba(127, 127, 127, 0.12);
+      }
+      .tag-list button[aria-current='true'] {
+        background: var(--accent);
+        color: #fff;
+      }
+      .tag-list .name {
+        font-family: var(--mono);
+        font-size: 0.85rem;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tag-list .count {
+        font-size: 0.75rem;
+        color: inherit;
+        opacity: 0.7;
+        flex-shrink: 0;
+      }
+      .records-pane {
+        min-height: 12rem;
+      }
+      .record-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .record-list li {
+        margin: 0.25rem 0;
+      }
+      .record-list a {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.55rem 0.7rem;
+        border-radius: 4px;
+        text-decoration: none;
+        color: var(--fg);
+      }
+      .record-list a:hover {
+        background: rgba(127, 127, 127, 0.12);
+      }
+      .record-list .title {
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+      .record-list .path {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+      .record-list .meta {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        color: var(--muted);
+      }
+      .empty {
+        color: var(--muted);
+        padding: 0.8rem 1rem;
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      .err {
+        color: var(--bad);
+        padding: 0.8rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--bad);
+        border-radius: 6px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        border: 2px solid var(--line);
+        border-top-color: var(--muted);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -0.15em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1.2rem;
+        background: var(--card);
+        color: var(--fg);
+        max-width: 24rem;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+      dialog h2 {
+        margin: 0 0 0.8rem;
+        font-size: 1.05rem;
+      }
+      dialog p {
+        color: var(--muted);
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+      }
+      dialog input {
+        width: 100%;
+        padding: 0.5rem;
+        font-family: var(--mono);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      dialog .row {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.8rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>vault-storage</h1>
+      <nav>
+        <a href="/ui/">dashboard</a>
+        <a href="/ui/search.html">search</a>
+        <a href="/ui/projects.html">projects</a>
+        <a href="/ui/tags.html" aria-current="page">tags</a>
+        <a href="/ui/raw.html">raw</a>
+        <a href="/ui/folder.html">browse</a>
+        <a href="/ui/note.html">note</a>
+      </nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <button id="settings" title="Settings">⚙</button>
+    </header>
+    <main>
+      <div class="layout">
+        <section class="tag-pane">
+          <h2>
+            Tags
+            <span
+              id="tag-total"
+              style="color: var(--muted); font-weight: 400; font-size: 0.75rem"
+            ></span>
+          </h2>
+          <input
+            type="search"
+            id="tag-filter"
+            class="tag-filter"
+            placeholder="Filter tags…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <ul id="tag-list" class="tag-list"></ul>
+        </section>
+        <section class="records-pane">
+          <h2 id="records-heading">Pick a tag</h2>
+          <div id="records"></div>
+        </section>
+      </div>
+    </main>
 
-<dialog id="auth-dlg">
-  <h2>API token</h2>
-  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
-  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
-  <div class="row">
-    <button id="auth-cancel">Cancel</button>
-    <button id="auth-ok" class="primary">Save</button>
-  </div>
-</dialog>
+    <dialog id="auth-dlg">
+      <h2>API token</h2>
+      <p>
+        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
+        localStorage.
+      </p>
+      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
+      <div class="row">
+        <button id="auth-cancel">Cancel</button>
+        <button id="auth-ok" class="primary">Save</button>
+      </div>
+    </dialog>
 
-<script type="module">
-import {apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
-const $ = sel => document.querySelector(sel);
-const $$ = sel => document.querySelectorAll(sel);
+    <script type="module">
+      import {apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+      const $ = sel => document.querySelector(sel);
+      const $$ = sel => document.querySelectorAll(sel);
 
-let allTags = [];
-let activeTag = null;
+      let allTags = [];
+      let activeTag = null;
 
-const renderTagList = filter => {
-  const f = filter.trim().toLowerCase();
-  const items = f
-    ? allTags.filter(t => t.tag.toLowerCase().includes(f))
-    : allTags;
-  if (items.length === 0) {
-    $('#tag-list').innerHTML = '<li><div class="empty">No tags match.</div></li>';
-    return;
-  }
-  $('#tag-list').innerHTML = items
-    .map(t => `
+      const renderTagList = filter => {
+        const f = filter.trim().toLowerCase();
+        const items = f ? allTags.filter(t => t.tag.toLowerCase().includes(f)) : allTags;
+        if (items.length === 0) {
+          $('#tag-list').innerHTML = '<li><div class="empty">No tags match.</div></li>';
+          return;
+        }
+        $('#tag-list').innerHTML = items
+          .map(
+            t => `
       <li>
         <button data-tag="${esc(t.tag)}" aria-current="${t.tag === activeTag}">
           <span class="name">${esc(t.tag)}</span>
           <span class="count">${t.record_count}</span>
         </button>
       </li>
-    `)
-    .join('');
-};
+    `
+          )
+          .join('');
+      };
 
-const fetchTags = async () => {
-  $('#tag-list').innerHTML = '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
-  try {
-    const data = await apiJson('/tags?limit=1000');
-    allTags = (Array.isArray(data) ? data : data.items ?? [])
-      .sort((a, b) => b.record_count - a.record_count);
-    $('#tag-total').textContent = `· ${allTags.length} total`;
-    renderTagList($('#tag-filter').value);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    $('#tag-list').innerHTML = `<li><div class="err">Failed to load: ${esc(e.message)}</div></li>`;
-  }
-};
+      const fetchTags = async () => {
+        $('#tag-list').innerHTML =
+          '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
+        try {
+          const data = await apiJson('/tags?limit=1000');
+          allTags = (Array.isArray(data) ? data : (data.items ?? [])).sort(
+            (a, b) => b.record_count - a.record_count
+          );
+          $('#tag-total').textContent = `· ${allTags.length} total`;
+          renderTagList($('#tag-filter').value);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#tag-list').innerHTML =
+            `<li><div class="err">Failed to load: ${esc(e.message)}</div></li>`;
+        }
+      };
 
-const fmtDate = iso => iso ? iso.slice(0, 10) : '';
+      const fmtDate = iso => (iso ? iso.slice(0, 10) : '');
 
-const fetchRecordsForTag = async tag => {
-  activeTag = tag;
-  $$('#tag-list button').forEach(b => b.setAttribute('aria-current', b.dataset.tag === tag ? 'true' : 'false'));
-  $('#records-heading').textContent = `Records tagged ${tag}`;
-  $('#records').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
-  try {
-    const data = await apiJson(`/tags/${encodeURIComponent(tag)}/records`);
-    const items = Array.isArray(data) ? data : data.items ?? [];
-    if (items.length === 0) {
-      $('#records').innerHTML = '<div class="empty">No records.</div>';
-      return;
-    }
-    items.sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
-    $('#records').innerHTML = `<ul class="record-list">${items
-      .map(r => `
+      const fetchRecordsForTag = async tag => {
+        activeTag = tag;
+        $$('#tag-list button').forEach(b =>
+          b.setAttribute('aria-current', b.dataset.tag === tag ? 'true' : 'false')
+        );
+        $('#records-heading').textContent = `Records tagged ${tag}`;
+        $('#records').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
+        try {
+          const data = await apiJson(`/tags/${encodeURIComponent(tag)}/records`);
+          const items = Array.isArray(data) ? data : (data.items ?? []);
+          if (items.length === 0) {
+            $('#records').innerHTML = '<div class="empty">No records.</div>';
+            return;
+          }
+          items.sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
+          $('#records').innerHTML = `<ul class="record-list">${items
+            .map(
+              r => `
         <li>
           <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
             <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
@@ -190,50 +397,59 @@ const fetchRecordsForTag = async tag => {
             <span class="meta">${esc(r.type ?? '')} · updated ${esc(fmtDate(r.updated))}</span>
           </a>
         </li>
-      `)
-      .join('')}</ul>`;
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    $('#records').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
-  }
-};
+      `
+            )
+            .join('')}</ul>`;
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#records').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+        }
+      };
 
-const init = async () => {
-  if (!getToken()) { showAuthDialog(); return; }
-  await fetchTags();
-  // Auto-select tag from URL hash if present.
-  const hashTag = decodeURIComponent(location.hash.replace(/^#/, ''));
-  if (hashTag && allTags.some(t => t.tag === hashTag)) {
-    fetchRecordsForTag(hashTag);
-  }
-};
+      const init = async () => {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        await fetchTags();
+        // Auto-select tag from URL hash if present.
+        const hashTag = decodeURIComponent(location.hash.replace(/^#/, ''));
+        if (hashTag && allTags.some(t => t.tag === hashTag)) {
+          fetchRecordsForTag(hashTag);
+        }
+      };
 
-$('#settings').addEventListener('click', showAuthDialog);
-$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-$('#auth-ok').addEventListener('click', () => {
-  setToken($('#auth-input').value.trim());
-  $('#auth-dlg').close();
-  init();
-});
-$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+      $('#settings').addEventListener('click', showAuthDialog);
+      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+      $('#auth-ok').addEventListener('click', () => {
+        setToken($('#auth-input').value.trim());
+        $('#auth-dlg').close();
+        init();
+      });
+      $('#auth-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') $('#auth-ok').click();
+      });
 
-$('#tag-filter').addEventListener('input', () => renderTagList($('#tag-filter').value));
+      $('#tag-filter').addEventListener('input', () => renderTagList($('#tag-filter').value));
 
-$('#tag-list').addEventListener('click', e => {
-  const btn = e.target.closest('button[data-tag]');
-  if (!btn) return;
-  const tag = btn.dataset.tag;
-  history.replaceState(null, '', `#${encodeURIComponent(tag)}`);
-  fetchRecordsForTag(tag);
-});
+      $('#tag-list').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-tag]');
+        if (!btn) return;
+        const tag = btn.dataset.tag;
+        history.replaceState(null, '', `#${encodeURIComponent(tag)}`);
+        fetchRecordsForTag(tag);
+      });
 
-window.addEventListener('hashchange', () => {
-  const hashTag = decodeURIComponent(location.hash.replace(/^#/, ''));
-  if (hashTag && hashTag !== activeTag) fetchRecordsForTag(hashTag);
-});
+      window.addEventListener('hashchange', () => {
+        const hashTag = decodeURIComponent(location.hash.replace(/^#/, ''));
+        if (hashTag && hashTag !== activeTag) fetchRecordsForTag(hashTag);
+      });
 
-init();
-</script>
-<script type="module" src="/ui/theme.js"></script>
-</body>
+      init();
+    </script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
 </html>

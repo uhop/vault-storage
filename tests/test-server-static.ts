@@ -58,9 +58,7 @@ const withServer = async (
   }
 };
 
-const withStaticDir = async (
-  fn: (dir: string) => Promise<void>
-): Promise<void> => {
+const withStaticDir = async (fn: (dir: string) => Promise<void>): Promise<void> => {
   const dir = mkdtempSync(join(tmpdir(), 'vault-static-'));
   try {
     await fn(dir);

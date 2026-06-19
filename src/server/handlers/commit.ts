@@ -108,7 +108,12 @@ export const commitHandler =
         }
         // Reject obvious traversal; vault-relative paths only.
         if (p.includes('..') || p.startsWith('/')) {
-          sendError(ctx.res, 400, 'invalid_path', `path must be vault-relative, no .. or leading /: ${p}`);
+          sendError(
+            ctx.res,
+            400,
+            'invalid_path',
+            `path must be vault-relative, no .. or leading /: ${p}`
+          );
           return;
         }
       }

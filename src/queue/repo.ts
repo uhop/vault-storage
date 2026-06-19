@@ -75,8 +75,7 @@ const rowFromDb = (row: DbRow): QueueItemRow => ({
   updated_at: row.updated_at
 });
 
-const sliceKey = (section: QueueSection, titleNorm: string): string =>
-  `${section}\0${titleNorm}`;
+const sliceKey = (section: QueueSection, titleNorm: string): string => `${section}\0${titleNorm}`;
 
 export interface ApplyResult {
   inserted: number;

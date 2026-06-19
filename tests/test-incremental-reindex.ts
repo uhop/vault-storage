@@ -19,7 +19,9 @@ const writeMd = (root: string, relativePath: string, content: string): void => {
 };
 
 const git = (cwd: string, args: string): string =>
-  execSync(`git ${args}`, {cwd, stdio: ['ignore', 'pipe', 'ignore']}).toString().trim();
+  execSync(`git ${args}`, {cwd, stdio: ['ignore', 'pipe', 'ignore']})
+    .toString()
+    .trim();
 
 const setup = () => {
   const root = mkdtempSync(join(tmpdir(), 'incremental-reindex-test-'));
@@ -106,11 +108,7 @@ test('incrementalReindex: dispatches modify / add / delete from a single diff ra
     t.equal(summary.deleted, 1, 'one delete');
 
     t.ok(repo.getByPath('topics/added.md'), 'added.md exists');
-    t.equal(
-      repo.getByPath('topics/modify.md')?.recordId,
-      modifiedId,
-      'modify preserves record_id'
-    );
+    t.equal(repo.getByPath('topics/modify.md')?.recordId, modifiedId, 'modify preserves record_id');
     t.equal(repo.getByPath('topics/delete.md'), null, 'delete.md gone');
   } finally {
     teardown(fx);
@@ -120,7 +118,11 @@ test('incrementalReindex: dispatches modify / add / delete from a single diff ra
 test('incrementalReindex: rename preserves record_id', async t => {
   const fx = setup();
   try {
-    writeMd(fx.root, 'topics/old.md', '---\ntitle: O\n---\nbody for rename test\nthis content stays the same so git detects it as a rename\n');
+    writeMd(
+      fx.root,
+      'topics/old.md',
+      '---\ntitle: O\n---\nbody for rename test\nthis content stays the same so git detects it as a rename\n'
+    );
     git(fx.root, 'add -A');
     git(fx.root, 'commit -m initial');
     await incrementalReindex(fx.db, fx.root);

@@ -95,7 +95,8 @@ export class BgeEmbedder implements Embedder {
     this.pooling = opts.pooling ?? 'cls';
     this.maxChars = opts.maxChars ?? DEFAULT_MAX_CHARS;
     this.maxBatch = opts.maxBatch ?? DEFAULT_MAX_BATCH;
-    if (this.maxBatch < 1) throw new Error(`BgeEmbedder.maxBatch must be ≥ 1 (got ${this.maxBatch})`);
+    if (this.maxBatch < 1)
+      throw new Error(`BgeEmbedder.maxBatch must be ≥ 1 (got ${this.maxBatch})`);
     this.anomalyLogger = opts.anomalyLogger ?? null;
     this.retentionMs = opts.retentionMs ?? DEFAULT_RETENTION_MS;
     this.#retainer = new Retainer<FeatureExtractionPipeline>({

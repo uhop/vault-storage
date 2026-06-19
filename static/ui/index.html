@@ -1,447 +1,880 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
-<script>(()=>{const t=localStorage.getItem('vault.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;})();</script>
-<title>vault-storage — dashboard</title>
-<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-<link rel="icon" sizes="any" href="/favicon.ico">
-<link rel="stylesheet" href="/ui/theme.css">
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg); color: var(--fg);
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  }
-  header { display: flex; align-items: baseline; gap: 1rem; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
-  header nav { display: flex; gap: .8rem; font-size: .9rem; }
-  header nav a { color: var(--muted); text-decoration: none; }
-  header nav a[aria-current] { color: var(--fg); }
-  header .spacer { flex: 1; }
-  main { padding: 1rem; max-width: 56rem; margin: 0 auto; }
-  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .8rem 1rem; }
-  .card .label { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; margin: 0; }
-  .card .value { font-size: 1.6rem; line-height: 1.2; margin: .2rem 0 0; font-variant-numeric: tabular-nums; }
-  .card .sub { color: var(--muted); font-size: .8rem; margin-top: .25rem; font-family: var(--mono); overflow-wrap: anywhere; }
-  .card .breakdown { display: flex; flex-wrap: wrap; column-gap: .5rem; row-gap: .15rem; font-size: .72rem; }
-  .card .breakdown > span { white-space: nowrap; }
-  .card .value.ok { color: var(--ok); } .card .value.warn { color: var(--warn); } .card .value.bad { color: var(--bad); }
-  section.recs { margin-top: 1.5rem; }
-  section.recs h2 { font-size: 1rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
-  .rec { display: flex; gap: .8rem; align-items: flex-start; padding: .7rem 1rem; border-left: 3px solid var(--accent); background: var(--card); border-radius: 0 6px 6px 0; margin-bottom: .5rem; }
-  .rec.warn { border-left-color: var(--warn); }
-  .rec.bad { border-left-color: var(--bad); }
-  .rec .body { flex: 1; }
-  .rec .title { font-weight: 600; }
-  .rec .why { color: var(--muted); font-size: .9rem; margin-top: .15rem; }
-  .rec code { font-family: var(--mono); font-size: .85em; background: rgba(127,127,127,.12); padding: .1em .4em; border-radius: 3px; }
-  .rec-action { flex-shrink: 0; padding: .35rem .7rem; font-size: .85rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; line-height: 1; }
-  .rec-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .rec-action:disabled { opacity: .7; cursor: progress; }
-  .rec-action.done { border-color: var(--ok); color: var(--ok); }
-  .rec-action.failed { border-color: var(--bad); color: var(--bad); }
-  .empty { color: var(--muted); padding: .8rem 1rem; text-align: center; font-size: .9rem; }
-  section.recent { margin-top: 1.5rem; }
-  section.recent h2 { font-size: 1rem; margin: 0 0 .6rem; color: var(--muted); font-weight: 600; }
-  .recent-row {
-    display: flex; gap: .8rem; align-items: baseline;
-    padding: .5rem .9rem;
-    background: var(--card);
-    border: 1px solid var(--line); border-radius: 6px;
-    margin-bottom: .35rem;
-    text-decoration: none; color: var(--fg);
-  }
-  .recent-row:hover { border-color: var(--accent); }
-  .recent-row .title { font-weight: 600; font-size: .95rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recent-row .path { font-family: var(--mono); font-size: .75rem; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recent-row .when { font-family: var(--mono); font-size: .75rem; color: var(--muted); flex-shrink: 0; }
-  @media (max-width: 600px) {
-    .recent-row { flex-wrap: wrap; gap: .25rem; }
-    .recent-row .path { width: 100%; }
-  }
-  section.ops { margin-top: 1.5rem; }
-  section.ops h2 { font-size: 1rem; margin: 0 0 .4rem; color: var(--muted); font-weight: 600; }
-  .status-grid { display: grid; grid-template-columns: max-content 1fr auto; gap: .35rem 1rem; align-items: baseline; padding: .8rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
-  .status-grid .status-label { color: var(--muted); font-size: .8rem; }
-  .status-grid .status-value { font-family: var(--mono); font-size: .9rem; font-variant-numeric: tabular-nums; }
-  .status-grid .status-value .sub { color: var(--muted); font-size: .8rem; margin-left: .4rem; }
-  .status-grid .badge { font-size: .72rem; padding: .1em .45em; border-radius: 3px; border: 1px solid var(--line); background: var(--bg); }
-  .status-grid .badge.on { border-color: var(--ok); color: var(--ok); }
-  .status-grid .badge.off { color: var(--muted); }
-  .status-grid .status-action { grid-column: 3; padding: .2rem .55rem; font-size: .78rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 3px; cursor: pointer; font: inherit; line-height: 1.4; }
-  .status-grid .status-action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .status-grid .status-action:disabled { opacity: .6; cursor: progress; }
-  /* Lock label/value to columns 1/2 so a missing action button in column 3
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        font-weight: 600;
+      }
+      header nav {
+        display: flex;
+        gap: 0.8rem;
+        font-size: 0.9rem;
+      }
+      header nav a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      header nav a[aria-current] {
+        color: var(--fg);
+      }
+      header .spacer {
+        flex: 1;
+      }
+      main {
+        padding: 1rem;
+        max-width: 56rem;
+        margin: 0 auto;
+      }
+      .grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.8rem 1rem;
+      }
+      .card .label {
+        color: var(--muted);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin: 0;
+      }
+      .card .value {
+        font-size: 1.6rem;
+        line-height: 1.2;
+        margin: 0.2rem 0 0;
+        font-variant-numeric: tabular-nums;
+      }
+      .card .sub {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-top: 0.25rem;
+        font-family: var(--mono);
+        overflow-wrap: anywhere;
+      }
+      .card .breakdown {
+        display: flex;
+        flex-wrap: wrap;
+        column-gap: 0.5rem;
+        row-gap: 0.15rem;
+        font-size: 0.72rem;
+      }
+      .card .breakdown > span {
+        white-space: nowrap;
+      }
+      .card .value.ok {
+        color: var(--ok);
+      }
+      .card .value.warn {
+        color: var(--warn);
+      }
+      .card .value.bad {
+        color: var(--bad);
+      }
+      section.recs {
+        margin-top: 1.5rem;
+      }
+      section.recs h2 {
+        font-size: 1rem;
+        margin: 0 0 0.6rem;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .rec {
+        display: flex;
+        gap: 0.8rem;
+        align-items: flex-start;
+        padding: 0.7rem 1rem;
+        border-left: 3px solid var(--accent);
+        background: var(--card);
+        border-radius: 0 6px 6px 0;
+        margin-bottom: 0.5rem;
+      }
+      .rec.warn {
+        border-left-color: var(--warn);
+      }
+      .rec.bad {
+        border-left-color: var(--bad);
+      }
+      .rec .body {
+        flex: 1;
+      }
+      .rec .title {
+        font-weight: 600;
+      }
+      .rec .why {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-top: 0.15rem;
+      }
+      .rec code {
+        font-family: var(--mono);
+        font-size: 0.85em;
+        background: rgba(127, 127, 127, 0.12);
+        padding: 0.1em 0.4em;
+        border-radius: 3px;
+      }
+      .rec-action {
+        flex-shrink: 0;
+        padding: 0.35rem 0.7rem;
+        font-size: 0.85rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+        line-height: 1;
+      }
+      .rec-action:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .rec-action:disabled {
+        opacity: 0.7;
+        cursor: progress;
+      }
+      .rec-action.done {
+        border-color: var(--ok);
+        color: var(--ok);
+      }
+      .rec-action.failed {
+        border-color: var(--bad);
+        color: var(--bad);
+      }
+      .empty {
+        color: var(--muted);
+        padding: 0.8rem 1rem;
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      section.recent {
+        margin-top: 1.5rem;
+      }
+      section.recent h2 {
+        font-size: 1rem;
+        margin: 0 0 0.6rem;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .recent-row {
+        display: flex;
+        gap: 0.8rem;
+        align-items: baseline;
+        padding: 0.5rem 0.9rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin-bottom: 0.35rem;
+        text-decoration: none;
+        color: var(--fg);
+      }
+      .recent-row:hover {
+        border-color: var(--accent);
+      }
+      .recent-row .title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .recent-row .path {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--muted);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .recent-row .when {
+        font-family: var(--mono);
+        font-size: 0.75rem;
+        color: var(--muted);
+        flex-shrink: 0;
+      }
+      @media (max-width: 600px) {
+        .recent-row {
+          flex-wrap: wrap;
+          gap: 0.25rem;
+        }
+        .recent-row .path {
+          width: 100%;
+        }
+      }
+      section.ops {
+        margin-top: 1.5rem;
+      }
+      section.ops h2 {
+        font-size: 1rem;
+        margin: 0 0 0.4rem;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .status-grid {
+        display: grid;
+        grid-template-columns: max-content 1fr auto;
+        gap: 0.35rem 1rem;
+        align-items: baseline;
+        padding: 0.8rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .status-grid .status-label {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .status-grid .status-value {
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        font-variant-numeric: tabular-nums;
+      }
+      .status-grid .status-value .sub {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-left: 0.4rem;
+      }
+      .status-grid .badge {
+        font-size: 0.72rem;
+        padding: 0.1em 0.45em;
+        border-radius: 3px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+      }
+      .status-grid .badge.on {
+        border-color: var(--ok);
+        color: var(--ok);
+      }
+      .status-grid .badge.off {
+        color: var(--muted);
+      }
+      .status-grid .status-action {
+        grid-column: 3;
+        padding: 0.2rem 0.55rem;
+        font-size: 0.78rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 3px;
+        cursor: pointer;
+        font: inherit;
+        line-height: 1.4;
+      }
+      .status-grid .status-action:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .status-grid .status-action:disabled {
+        opacity: 0.6;
+        cursor: progress;
+      }
+      /* Lock label/value to columns 1/2 so a missing action button in column 3
      doesn't let auto-placement pull the next row's label rightward. */
-  .status-grid .status-label { grid-column: 1; }
-  .status-grid .status-value { grid-column: 2; }
-  .status-grid .status-action.invisible { visibility: hidden; }
-  .status-foot { display: flex; align-items: center; gap: .6rem; margin-top: .5rem; color: var(--muted); font-size: .8rem; font-family: var(--mono); }
-  .status-foot .live-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: var(--ok); animation: pulse 2s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-  .header-btn { padding: .3rem .65rem; font-size: .85rem; line-height: 1.2; white-space: nowrap; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; }
-  .header-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .header-btn:disabled { opacity: .7; cursor: progress; }
-  .header-btn.done { border-color: var(--ok); color: var(--ok); }
-  .header-btn.failed { border-color: var(--bad); color: var(--bad); }
-  /* Result of the header Run-scans action: a transient toast under the header,
+      .status-grid .status-label {
+        grid-column: 1;
+      }
+      .status-grid .status-value {
+        grid-column: 2;
+      }
+      .status-grid .status-action.invisible {
+        visibility: hidden;
+      }
+      .status-foot {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.5rem;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-family: var(--mono);
+      }
+      .status-foot .live-dot {
+        display: inline-block;
+        width: 0.6em;
+        height: 0.6em;
+        border-radius: 50%;
+        background: var(--ok);
+        animation: pulse 2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+      .header-btn {
+        padding: 0.3rem 0.65rem;
+        font-size: 0.85rem;
+        line-height: 1.2;
+        white-space: nowrap;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .header-btn:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .header-btn:disabled {
+        opacity: 0.7;
+        cursor: progress;
+      }
+      .header-btn.done {
+        border-color: var(--ok);
+        color: var(--ok);
+      }
+      .header-btn.failed {
+        border-color: var(--bad);
+        color: var(--bad);
+      }
+      /* Result of the header Run-scans action: a transient toast under the header,
      since the header has no room for the full "N filed · Xms" line. */
-  .toast { position: fixed; top: calc(env(safe-area-inset-top) + 3.4rem); right: 1rem; z-index: 20; padding: .4rem .7rem; font-size: .85rem; font-family: var(--mono); color: var(--muted); background: var(--card); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.18); opacity: 0; transform: translateY(-.4rem); transition: opacity .2s, transform .2s; pointer-events: none; }
-  .toast.show { opacity: 1; transform: none; }
-  .toast.failed { border-color: var(--bad); color: var(--bad); }
-  .ops-result { margin-left: .6rem; color: var(--muted); font-size: .85rem; font-family: var(--mono); }
-  .spinner { display: inline-block; width: .9em; height: .9em; border: 2px solid var(--line); border-top-color: var(--muted); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.15em; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .err { color: var(--bad); padding: .8rem 1rem; background: var(--card); border: 1px solid var(--bad); border-radius: 6px; }
-  dialog { border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; background: var(--card); color: var(--fg); max-width: 24rem; }
-  dialog::backdrop { background: rgba(0,0,0,.5); }
-  dialog h2 { margin: 0 0 .8rem; font-size: 1.05rem; }
-  dialog p { color: var(--muted); margin: 0 0 .8rem; font-size: .9rem; }
-  dialog input { width: 100%; padding: .5rem; font-family: var(--mono); border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); }
-  dialog .row { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
-  button { padding: .5rem 1rem; border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font: inherit; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .footer { color: var(--muted); font-size: .8rem; padding: 1rem; text-align: center; font-family: var(--mono); }
-</style>
-</head>
-<body>
-<header>
-  <h1>vault-storage</h1>
-  <nav>
-    <a href="/ui/" aria-current="page">dashboard</a>
-    <a href="/ui/search.html">search</a>
-    <a href="/ui/projects.html">projects</a>
-    <a href="/ui/tags.html">tags</a>
-    <a href="/ui/raw.html">raw</a>
-    <a href="/ui/folder.html">browse</a>
-    <a href="/ui/note.html">note</a>
-  </nav>
-  <div class="spacer"></div>
-  <button id="run-scans" class="header-btn" title="Refresh suggestion queues — runs four read-only scans (duplicates, compaction, retention, upgrade signals)">⟳ Run scans</button>
-  <div id="theme-toggle"></div>
-  <button id="settings" title="Settings">⚙</button>
-</header>
-<div id="scan-toast" class="toast" role="status" aria-live="polite"></div>
-<main id="root">
-  <div class="grid" id="stats"></div>
-  <section class="recs">
-    <h2>Recommended actions</h2>
-    <div id="recs"></div>
-  </section>
-  <section class="recent">
-    <h2>Recently updated</h2>
-    <div id="recent"></div>
-  </section>
-  <section class="ops">
-    <h2>System</h2>
-    <div class="status-grid" id="status-grid">
-      <span class="status-label">RSS</span><span class="status-value" id="st-rss">—</span><span></span>
-      <span class="status-label">V8 heap</span><span class="status-value" id="st-heap">—</span><span></span>
-      <span class="status-label">External</span><span class="status-value" id="st-external">—</span><span></span>
-      <span class="status-label">ArrayBuffers</span><span class="status-value" id="st-arraybuffers">—</span><span></span>
-      <span class="status-label">Embedder</span><span class="status-value" id="st-embedder">—</span><button id="release-embedder" class="status-action invisible">Release</button>
-      <span class="status-label">Indexer</span><span class="status-value" id="st-indexer">—</span><span></span>
-      <span class="status-label">Last indexed</span><span class="status-value" id="st-commit">—</span><span></span>
-      <span class="status-label">sqlite-vec</span><span class="status-value" id="st-sqlitevec">—</span><span></span>
-    </div>
-    <div class="status-foot">
-      <span class="live-dot" id="status-live" hidden></span>
-      <span id="status-foot-text">refreshes every 10s when this tab is active</span>
-      <span id="release-embedder-result" class="ops-result"></span>
-    </div>
-  </section>
-</main>
-<div class="footer" id="footer"></div>
+      .toast {
+        position: fixed;
+        top: calc(env(safe-area-inset-top) + 3.4rem);
+        right: 1rem;
+        z-index: 20;
+        padding: 0.4rem 0.7rem;
+        font-size: 0.85rem;
+        font-family: var(--mono);
+        color: var(--muted);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+        opacity: 0;
+        transform: translateY(-0.4rem);
+        transition:
+          opacity 0.2s,
+          transform 0.2s;
+        pointer-events: none;
+      }
+      .toast.show {
+        opacity: 1;
+        transform: none;
+      }
+      .toast.failed {
+        border-color: var(--bad);
+        color: var(--bad);
+      }
+      .ops-result {
+        margin-left: 0.6rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        font-family: var(--mono);
+      }
+      .spinner {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        border: 2px solid var(--line);
+        border-top-color: var(--muted);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -0.15em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .err {
+        color: var(--bad);
+        padding: 0.8rem 1rem;
+        background: var(--card);
+        border: 1px solid var(--bad);
+        border-radius: 6px;
+      }
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1.2rem;
+        background: var(--card);
+        color: var(--fg);
+        max-width: 24rem;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.5);
+      }
+      dialog h2 {
+        margin: 0 0 0.8rem;
+        font-size: 1.05rem;
+      }
+      dialog p {
+        color: var(--muted);
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+      }
+      dialog input {
+        width: 100%;
+        padding: 0.5rem;
+        font-family: var(--mono);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      dialog .row {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: flex-end;
+        margin-top: 0.8rem;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--fg);
+        border-radius: 4px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .footer {
+        color: var(--muted);
+        font-size: 0.8rem;
+        padding: 1rem;
+        text-align: center;
+        font-family: var(--mono);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>vault-storage</h1>
+      <nav>
+        <a href="/ui/" aria-current="page">dashboard</a>
+        <a href="/ui/search.html">search</a>
+        <a href="/ui/projects.html">projects</a>
+        <a href="/ui/tags.html">tags</a>
+        <a href="/ui/raw.html">raw</a>
+        <a href="/ui/folder.html">browse</a>
+        <a href="/ui/note.html">note</a>
+      </nav>
+      <div class="spacer"></div>
+      <button
+        id="run-scans"
+        class="header-btn"
+        title="Refresh suggestion queues — runs four read-only scans (duplicates, compaction, retention, upgrade signals)"
+      >
+        ⟳ Run scans
+      </button>
+      <div id="theme-toggle"></div>
+      <button id="settings" title="Settings">⚙</button>
+    </header>
+    <div id="scan-toast" class="toast" role="status" aria-live="polite"></div>
+    <main id="root">
+      <div class="grid" id="stats"></div>
+      <section class="recs">
+        <h2>Recommended actions</h2>
+        <div id="recs"></div>
+      </section>
+      <section class="recent">
+        <h2>Recently updated</h2>
+        <div id="recent"></div>
+      </section>
+      <section class="ops">
+        <h2>System</h2>
+        <div class="status-grid" id="status-grid">
+          <span class="status-label">RSS</span><span class="status-value" id="st-rss">—</span
+          ><span></span> <span class="status-label">V8 heap</span
+          ><span class="status-value" id="st-heap">—</span><span></span>
+          <span class="status-label">External</span
+          ><span class="status-value" id="st-external">—</span><span></span>
+          <span class="status-label">ArrayBuffers</span
+          ><span class="status-value" id="st-arraybuffers">—</span><span></span>
+          <span class="status-label">Embedder</span
+          ><span class="status-value" id="st-embedder">—</span
+          ><button id="release-embedder" class="status-action invisible">Release</button>
+          <span class="status-label">Indexer</span
+          ><span class="status-value" id="st-indexer">—</span><span></span>
+          <span class="status-label">Last indexed</span
+          ><span class="status-value" id="st-commit">—</span><span></span>
+          <span class="status-label">sqlite-vec</span
+          ><span class="status-value" id="st-sqlitevec">—</span><span></span>
+        </div>
+        <div class="status-foot">
+          <span class="live-dot" id="status-live" hidden></span>
+          <span id="status-foot-text">refreshes every 10s when this tab is active</span>
+          <span id="release-embedder-result" class="ops-result"></span>
+        </div>
+      </section>
+    </main>
+    <div class="footer" id="footer"></div>
 
-<dialog id="auth-dlg">
-  <h2>API token</h2>
-  <p>Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's localStorage.</p>
-  <input id="auth-input" type="password" autocomplete="off" spellcheck="false">
-  <div class="row">
-    <button id="auth-cancel">Cancel</button>
-    <button id="auth-ok" class="primary">Save</button>
-  </div>
-</dialog>
+    <dialog id="auth-dlg">
+      <h2>API token</h2>
+      <p>
+        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
+        localStorage.
+      </p>
+      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
+      <div class="row">
+        <button id="auth-cancel">Cancel</button>
+        <button id="auth-ok" class="primary">Save</button>
+      </div>
+    </dialog>
 
-<script type="module">
-import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
-const $ = sel => document.querySelector(sel);
+    <script type="module">
+      import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+      const $ = sel => document.querySelector(sel);
 
-function fmtCount(n) { return n.toLocaleString(); }
-function fmtBytes(n) {
-  if (!Number.isFinite(n)) return '—';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-function fmtAge(iso) {
-  if (!iso) return '—';
-  const t = Date.parse(iso); if (!Number.isFinite(t)) return iso;
-  const d = (Date.now() - t) / 1000;
-  if (d < 60) return Math.floor(d) + 's ago';
-  if (d < 3600) return Math.floor(d/60) + 'm ago';
-  if (d < 86400) return Math.floor(d/3600) + 'h ago';
-  return Math.floor(d/86400) + 'd ago';
-}
-function shortSha(s) { return s ? s.slice(0, 7) : '—'; }
+      function fmtCount(n) {
+        return n.toLocaleString();
+      }
+      function fmtBytes(n) {
+        if (!Number.isFinite(n)) return '—';
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+      }
+      function fmtAge(iso) {
+        if (!iso) return '—';
+        const t = Date.parse(iso);
+        if (!Number.isFinite(t)) return iso;
+        const d = (Date.now() - t) / 1000;
+        if (d < 60) return Math.floor(d) + 's ago';
+        if (d < 3600) return Math.floor(d / 60) + 'm ago';
+        if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+        return Math.floor(d / 86400) + 'd ago';
+      }
+      function shortSha(s) {
+        return s ? s.slice(0, 7) : '—';
+      }
 
-const SLOTS = [
-  ['records', 'Records'],
-  ['edges', 'Edges'],
-  ['pending', 'Pending suggestions'],
-  ['lint', 'Integrity lint']
-];
+      const SLOTS = [
+        ['records', 'Records'],
+        ['edges', 'Edges'],
+        ['pending', 'Pending suggestions'],
+        ['lint', 'Integrity lint']
+      ];
 
-function renderSkeleton() {
-  $('#stats').innerHTML = SLOTS.map(([k, label]) => `
+      function renderSkeleton() {
+        $('#stats').innerHTML = SLOTS.map(
+          ([k, label]) => `
     <div class="card" data-slot="${k}">
       <p class="label">${label}</p>
       <p class="value"><span class="spinner"></span></p>
     </div>
-  `).join('');
-  $('#recs').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
-  $('#recent').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
-}
+  `
+        ).join('');
+        $('#recs').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
+        $('#recent').innerHTML = `<div class="empty"><span class="spinner"></span> loading…</div>`;
+      }
 
-const fmtRelative = iso => {
-  if (!iso) return '—';
-  const t = Date.parse(iso); if (!Number.isFinite(t)) return iso;
-  const d = (Date.now() - t) / 1000;
-  if (d < 60) return Math.floor(d) + 's ago';
-  if (d < 3600) return Math.floor(d/60) + 'm ago';
-  if (d < 86400) return Math.floor(d/3600) + 'h ago';
-  if (d < 86400 * 14) return Math.floor(d/86400) + 'd ago';
-  return new Date(t).toISOString().slice(0, 10);
-};
+      const fmtRelative = iso => {
+        if (!iso) return '—';
+        const t = Date.parse(iso);
+        if (!Number.isFinite(t)) return iso;
+        const d = (Date.now() - t) / 1000;
+        if (d < 60) return Math.floor(d) + 's ago';
+        if (d < 3600) return Math.floor(d / 60) + 'm ago';
+        if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+        if (d < 86400 * 14) return Math.floor(d / 86400) + 'd ago';
+        return new Date(t).toISOString().slice(0, 10);
+      };
 
-const renderRecent = items => {
-  if (items.length === 0) {
-    $('#recent').innerHTML = '<div class="empty">No records yet.</div>';
-    return;
-  }
-  $('#recent').innerHTML = items.map(r => `
+      const renderRecent = items => {
+        if (items.length === 0) {
+          $('#recent').innerHTML = '<div class="empty">No records yet.</div>';
+          return;
+        }
+        $('#recent').innerHTML = items
+          .map(
+            r => `
     <a class="recent-row" href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
       <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
       <span class="path">${esc(r.file_path)}</span>
       <span class="when">${esc(fmtRelative(r.modified_at ?? r.updated))}</span>
     </a>
-  `).join('');
-};
+  `
+          )
+          .join('');
+      };
 
-const fetchRecent = async () => {
-  try {
-    const data = await apiJson('/sections?exclude=body&limit=30');
-    const items = (data.items ?? [])
-      .filter(r => !r.file_path.includes('/archive/') && !r.file_path.includes('/sync/'))
-      .filter(r => !r.file_path.split('/').pop().startsWith('_'))
-      .slice(0, 10);
-    renderRecent(items);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') return;
-    $('#recent').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
-  }
-};
+      const fetchRecent = async () => {
+        try {
+          const data = await apiJson('/sections?exclude=body&limit=30');
+          const items = (data.items ?? [])
+            .filter(r => !r.file_path.includes('/archive/') && !r.file_path.includes('/sync/'))
+            .filter(r => !r.file_path.split('/').pop().startsWith('_'))
+            .slice(0, 10);
+          renderRecent(items);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') return;
+          $('#recent').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+        }
+      };
 
-function setSlot(key, value, sub, cls) {
-  const card = document.querySelector(`[data-slot="${key}"]`);
-  if (!card) return;
-  const valEl = card.querySelector('.value');
-  valEl.textContent = value;
-  valEl.className = `value ${cls ?? ''}`;
-  let subEl = card.querySelector('.sub');
-  if (sub) {
-    if (!subEl) {
-      subEl = document.createElement('p');
-      subEl.className = 'sub';
-      card.appendChild(subEl);
-    }
-    if (sub instanceof Node) subEl.replaceChildren(sub);
-    else subEl.textContent = sub;
-  } else if (subEl) {
-    subEl.remove();
-  }
-}
+      function setSlot(key, value, sub, cls) {
+        const card = document.querySelector(`[data-slot="${key}"]`);
+        if (!card) return;
+        const valEl = card.querySelector('.value');
+        valEl.textContent = value;
+        valEl.className = `value ${cls ?? ''}`;
+        let subEl = card.querySelector('.sub');
+        if (sub) {
+          if (!subEl) {
+            subEl = document.createElement('p');
+            subEl.className = 'sub';
+            card.appendChild(subEl);
+          }
+          if (sub instanceof Node) subEl.replaceChildren(sub);
+          else subEl.textContent = sub;
+        } else if (subEl) {
+          subEl.remove();
+        }
+      }
 
-function renderRawInboxTile(data) {
-  const ready = data.ready ?? [];
-  const drafts = data.drafts ?? [];
-  const existing = document.querySelector('[data-slot="raw-inbox"]');
-  if (ready.length === 0 && drafts.length === 0) {
-    if (existing) existing.remove();
-    return;
-  }
-  const value = String(ready.length + drafts.length);
-  const cls = ready.length > 0 ? 'warn' : '';
-  const sub = `ready: ${ready.length} · drafts: ${drafts.length}`;
-  if (existing) {
-    existing.querySelector('.value').textContent = value;
-    existing.querySelector('.value').className = `value ${cls}`;
-    existing.querySelector('.sub').textContent = sub;
-    return;
-  }
-  const card = document.createElement('a');
-  card.className = 'card';
-  card.href = '/ui/raw.html';
-  card.style.textDecoration = 'none';
-  card.style.color = 'inherit';
-  card.dataset.slot = 'raw-inbox';
-  card.innerHTML = `
+      function renderRawInboxTile(data) {
+        const ready = data.ready ?? [];
+        const drafts = data.drafts ?? [];
+        const existing = document.querySelector('[data-slot="raw-inbox"]');
+        if (ready.length === 0 && drafts.length === 0) {
+          if (existing) existing.remove();
+          return;
+        }
+        const value = String(ready.length + drafts.length);
+        const cls = ready.length > 0 ? 'warn' : '';
+        const sub = `ready: ${ready.length} · drafts: ${drafts.length}`;
+        if (existing) {
+          existing.querySelector('.value').textContent = value;
+          existing.querySelector('.value').className = `value ${cls}`;
+          existing.querySelector('.sub').textContent = sub;
+          return;
+        }
+        const card = document.createElement('a');
+        card.className = 'card';
+        card.href = '/ui/raw.html';
+        card.style.textDecoration = 'none';
+        card.style.color = 'inherit';
+        card.dataset.slot = 'raw-inbox';
+        card.innerHTML = `
     <p class="label">Raw inbox</p>
     <p class="value ${cls}">${value}</p>
     <p class="sub">${sub}</p>
   `;
-  $('#stats').appendChild(card);
-}
+        $('#stats').appendChild(card);
+      }
 
-function recommendFromSuggestions(summary, details) {
-  const recs = [];
-  const k = summary.by_kind ?? {};
-  const compactFolders = details?.compactFolders ?? [];
-  const rawInbox = details?.rawInbox ?? {ready: [], drafts: []};
-  if (rawInbox.ready.length > 0) {
-    const list = rawInbox.ready
-      .slice(0, 5)
-      .map(it => `<a href="/ui/note.html?path=${encodeURIComponent(it.path)}"><code>${esc(it.path)}</code></a>`)
-      .join(', ');
-    const more = rawInbox.ready.length > 5 ? ` … +${rawInbox.ready.length - 5} more` : '';
-    recs.push({
-      title: `${rawInbox.ready.length} raw note${rawInbox.ready.length === 1 ? '' : 's'} ready for ingest`,
-      why: `Run <code>/vault ingest</code> to compile into topics, projects, and queues. Files: ${list}${more}. <a href="/ui/raw.html">Open inbox</a>.`
-    });
-  }
-  if (k.edge_type) recs.push({
-    title: `${k.edge_type} pending edge_type suggestions`,
-    why: `Run <code>/vault-review-edges</code> to triage. Sonnet sub-agent for bulk; default to <code>cites</code> when in doubt.`,
-    level: k.edge_type > 200 ? 'warn' : ''
-  });
-  if (k.duplicate) recs.push({
-    title: `${k.duplicate} pending duplicate pairs`,
-    why: `Run <code>/vault-review-duplicates</code> to confirm/relate/contradict.`
-  });
-  if (k.new_tag) recs.push({
-    title: `${k.new_tag} unknown tags awaiting taxonomy decisions`,
-    why: `Run <code>/vault-review-tags</code> to canonicalize, alias, or reject.`
-  });
-  if (k.tag_suggestion) recs.push({
-    title: `${k.tag_suggestion} agent-proposed tag adds`,
-    why: `Run <code>/vault-review-tags --kind=tag_suggestion</code> to accept or reject per record.`
-  });
-  if (k.compaction_candidate) {
-    const list = compactFolders
-      .slice()
-      .sort((a, b) => (b.piece_count ?? 0) - (a.piece_count ?? 0))
-      .map(f => `<code>/vault-compact ${esc(f.folder_path)}</code> (${f.piece_count} pieces)`)
-      .join('<br>');
-    recs.push({
-      title: `${k.compaction_candidate} folders past compaction threshold`,
-      why: list
-        ? `Run per candidate:<br>${list}`
-        : `Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
-    });
-  }
-  if (k.archive_candidate) recs.push({
-    title: `${k.archive_candidate} retention candidates`,
-    why: `Stale records past per-type retention. Per-record judgment: archive in FM, delete, or reject. <a href="/ui/archive-review.html">Review →</a>`
-  });
-  if (k.agent_enrichment_stale) recs.push({
-    title: `${k.agent_enrichment_stale} stale enrichment blocks`,
-    why: `Run <code>/vault-enrich-all</code> with the stale list to refresh derived summaries.`
-  });
-  if (k.inefficiency_detected || k.infrastructure_upgrade) recs.push({
-    title: `Backend-shape signals filed`,
-    why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
-    level: k.infrastructure_upgrade ? 'warn' : ''
-  });
-  return recs;
-}
+      function recommendFromSuggestions(summary, details) {
+        const recs = [];
+        const k = summary.by_kind ?? {};
+        const compactFolders = details?.compactFolders ?? [];
+        const rawInbox = details?.rawInbox ?? {ready: [], drafts: []};
+        if (rawInbox.ready.length > 0) {
+          const list = rawInbox.ready
+            .slice(0, 5)
+            .map(
+              it =>
+                `<a href="/ui/note.html?path=${encodeURIComponent(it.path)}"><code>${esc(it.path)}</code></a>`
+            )
+            .join(', ');
+          const more = rawInbox.ready.length > 5 ? ` … +${rawInbox.ready.length - 5} more` : '';
+          recs.push({
+            title: `${rawInbox.ready.length} raw note${rawInbox.ready.length === 1 ? '' : 's'} ready for ingest`,
+            why: `Run <code>/vault ingest</code> to compile into topics, projects, and queues. Files: ${list}${more}. <a href="/ui/raw.html">Open inbox</a>.`
+          });
+        }
+        if (k.edge_type)
+          recs.push({
+            title: `${k.edge_type} pending edge_type suggestions`,
+            why: `Run <code>/vault-review-edges</code> to triage. Sonnet sub-agent for bulk; default to <code>cites</code> when in doubt.`,
+            level: k.edge_type > 200 ? 'warn' : ''
+          });
+        if (k.duplicate)
+          recs.push({
+            title: `${k.duplicate} pending duplicate pairs`,
+            why: `Run <code>/vault-review-duplicates</code> to confirm/relate/contradict.`
+          });
+        if (k.new_tag)
+          recs.push({
+            title: `${k.new_tag} unknown tags awaiting taxonomy decisions`,
+            why: `Run <code>/vault-review-tags</code> to canonicalize, alias, or reject.`
+          });
+        if (k.tag_suggestion)
+          recs.push({
+            title: `${k.tag_suggestion} agent-proposed tag adds`,
+            why: `Run <code>/vault-review-tags --kind=tag_suggestion</code> to accept or reject per record.`
+          });
+        if (k.compaction_candidate) {
+          const list = compactFolders
+            .slice()
+            .sort((a, b) => (b.piece_count ?? 0) - (a.piece_count ?? 0))
+            .map(f => `<code>/vault-compact ${esc(f.folder_path)}</code> (${f.piece_count} pieces)`)
+            .join('<br>');
+          recs.push({
+            title: `${k.compaction_candidate} folders past compaction threshold`,
+            why: list
+              ? `Run per candidate:<br>${list}`
+              : `Run <code>/vault-compact &lt;folder&gt;</code> per candidate.`
+          });
+        }
+        if (k.archive_candidate)
+          recs.push({
+            title: `${k.archive_candidate} retention candidates`,
+            why: `Stale records past per-type retention. Per-record judgment: archive in FM, delete, or reject. <a href="/ui/archive-review.html">Review →</a>`
+          });
+        if (k.agent_enrichment_stale)
+          recs.push({
+            title: `${k.agent_enrichment_stale} stale enrichment blocks`,
+            why: `Run <code>/vault-enrich-all</code> with the stale list to refresh derived summaries.`
+          });
+        if (k.inefficiency_detected || k.infrastructure_upgrade)
+          recs.push({
+            title: `Backend-shape signals filed`,
+            why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
+            level: k.infrastructure_upgrade ? 'warn' : ''
+          });
+        return recs;
+      }
 
-function recommendFromLint(lint) {
-  const recs = [];
-  const embeddingPending =
-    (lint.checks?.records_without_embeddings?.count ?? 0) +
-    (lint.checks?.embedding_hash_drift?.count ?? 0);
-  if (embeddingPending > 0) {
-    recs.push({
-      title: `${embeddingPending} record${embeddingPending === 1 ? '' : 's'} pending re-embedding`,
-      why: `<code>records_without_embeddings</code> / <code>embedding_hash_drift</code> — the watcher normally handles this on file change; this trigger catches up if it missed an event or the embedder was unavailable.`,
-      level: 'warn',
-      action: 'embed-pending'
-    });
-  }
-  if (!lint.ok) {
-    const broken = Object.entries(lint.checks ?? {})
-      .filter(([, c]) => c.count > 0)
-      .map(([name, c]) => `${name}:${c.count}`)
-      .join(', ');
-    const nowIso = new Date().toISOString();
-    const futureStamps = (lint.checks?.temporal_anomalies?.samples ?? [])
-      .filter(s => (s.created && s.created > nowIso) || (s.updated && s.updated > nowIso))
-      .length;
-    const fixable = (lint.checks?.orphan_embeddings?.count ?? 0) + (lint.checks?.orphan_doc_embeddings?.count ?? 0) + (lint.checks?.orphan_suggestions?.count ?? 0) + futureStamps;
-    const reviewOnly = lint.total_issues - fixable;
-    const reviewLink = reviewOnly > 0 ? ` <a href="/ui/lint-review.html">Review →</a>` : '';
-    recs.push({
-      title: `${lint.total_issues} integrity-lint issues`,
-      why: `${broken ? broken + '. ' : ''}Auto-fixable: orphan embeddings, future-dated stamps. Other categories surface in <code>needsReview</code> for manual attention.${reviewLink}`,
-      level: 'bad',
-      action: fixable > 0 ? 'cleanup-lint' : null
-    });
-  }
-  return recs;
-}
+      function recommendFromLint(lint) {
+        const recs = [];
+        const embeddingPending =
+          (lint.checks?.records_without_embeddings?.count ?? 0) +
+          (lint.checks?.embedding_hash_drift?.count ?? 0);
+        if (embeddingPending > 0) {
+          recs.push({
+            title: `${embeddingPending} record${embeddingPending === 1 ? '' : 's'} pending re-embedding`,
+            why: `<code>records_without_embeddings</code> / <code>embedding_hash_drift</code> — the watcher normally handles this on file change; this trigger catches up if it missed an event or the embedder was unavailable.`,
+            level: 'warn',
+            action: 'embed-pending'
+          });
+        }
+        if (!lint.ok) {
+          const broken = Object.entries(lint.checks ?? {})
+            .filter(([, c]) => c.count > 0)
+            .map(([name, c]) => `${name}:${c.count}`)
+            .join(', ');
+          const nowIso = new Date().toISOString();
+          const futureStamps = (lint.checks?.temporal_anomalies?.samples ?? []).filter(
+            s => (s.created && s.created > nowIso) || (s.updated && s.updated > nowIso)
+          ).length;
+          const fixable =
+            (lint.checks?.orphan_embeddings?.count ?? 0) +
+            (lint.checks?.orphan_doc_embeddings?.count ?? 0) +
+            (lint.checks?.orphan_suggestions?.count ?? 0) +
+            futureStamps;
+          const reviewOnly = lint.total_issues - fixable;
+          const reviewLink = reviewOnly > 0 ? ` <a href="/ui/lint-review.html">Review →</a>` : '';
+          recs.push({
+            title: `${lint.total_issues} integrity-lint issues`,
+            why: `${broken ? broken + '. ' : ''}Auto-fixable: orphan embeddings, future-dated stamps. Other categories surface in <code>needsReview</code> for manual attention.${reviewLink}`,
+            level: 'bad',
+            action: fixable > 0 ? 'cleanup-lint' : null
+          });
+        }
+        return recs;
+      }
 
-const ACTIONS = {
-  'cleanup-lint': {
-    label: 'Clean now',
-    busyLabel: 'cleaning…',
-    doneLabel: 'cleaned ✓',
-    endpoint: '/maintenance/cleanup-lint',
-    method: 'POST'
-  },
-  'embed-pending': {
-    label: 'Re-embed',
-    busyLabel: 'embedding…',
-    doneLabel: 'embedded ✓',
-    endpoint: '/maintenance/embed-pending',
-    method: 'POST'
-  }
-};
+      const ACTIONS = {
+        'cleanup-lint': {
+          label: 'Clean now',
+          busyLabel: 'cleaning…',
+          doneLabel: 'cleaned ✓',
+          endpoint: '/maintenance/cleanup-lint',
+          method: 'POST'
+        },
+        'embed-pending': {
+          label: 'Re-embed',
+          busyLabel: 'embedding…',
+          doneLabel: 'embedded ✓',
+          endpoint: '/maintenance/embed-pending',
+          method: 'POST'
+        }
+      };
 
-// Recs are produced by two sources with very different latencies:
-// `/suggestions/summary` (~5ms) and `/system/lint` (~8s). Holding the panel
-// hostage to lint hides ~99% of the data the user could be acting on. Each
-// source paints its tiles independently as data arrives; the all-clear
-// state only renders once both sources have resolved at zero.
-const REC_ORDER = ['suggestions', 'lint'];
-let recsState = {suggestions: null, lint: null};
+      // Recs are produced by two sources with very different latencies:
+      // `/suggestions/summary` (~5ms) and `/system/lint` (~8s). Holding the panel
+      // hostage to lint hides ~99% of the data the user could be acting on. Each
+      // source paints its tiles independently as data arrives; the all-clear
+      // state only renders once both sources have resolved at zero.
+      const REC_ORDER = ['suggestions', 'lint'];
+      let recsState = {suggestions: null, lint: null};
 
-function renderRecs() {
-  const container = $('#recs');
-  const all = [];
-  for (const source of REC_ORDER) {
-    const recs = recsState[source];
-    if (recs === null) continue;
-    for (const r of recs) all.push({...r, source});
-  }
-  const allArrived = REC_ORDER.every(s => recsState[s] !== null);
-  if (allArrived && all.length === 0) {
-    container.innerHTML = `<div class="empty">No actions recommended. Vault is healthy.</div>`;
-    return;
-  }
-  if (all.length === 0) return; // keep skeleton until first source produces a tile
-  container.innerHTML = all.map(r => {
-    const action = r.action && ACTIONS[r.action];
-    const btn = action
-      ? `<button class="rec-action" data-action="${r.action}">${action.label}</button>`
-      : '';
-    return `
+      function renderRecs() {
+        const container = $('#recs');
+        const all = [];
+        for (const source of REC_ORDER) {
+          const recs = recsState[source];
+          if (recs === null) continue;
+          for (const r of recs) all.push({...r, source});
+        }
+        const allArrived = REC_ORDER.every(s => recsState[s] !== null);
+        if (allArrived && all.length === 0) {
+          container.innerHTML = `<div class="empty">No actions recommended. Vault is healthy.</div>`;
+          return;
+        }
+        if (all.length === 0) return; // keep skeleton until first source produces a tile
+        container.innerHTML = all
+          .map(r => {
+            const action = r.action && ACTIONS[r.action];
+            const btn = action
+              ? `<button class="rec-action" data-action="${r.action}">${action.label}</button>`
+              : '';
+            return `
       <div class="rec ${r.level ?? ''}" data-source="${r.source}">
         <div class="body">
           <div class="title">${r.title}</div>
@@ -450,261 +883,289 @@ function renderRecs() {
         ${btn}
       </div>
     `;
-  }).join('');
-}
+          })
+          .join('');
+      }
 
-function setRecs(source, recs) {
-  recsState[source] = recs;
-  renderRecs();
-}
+      function setRecs(source, recs) {
+        recsState[source] = recs;
+        renderRecs();
+      }
 
-async function runAction(btn) {
-  const id = btn.dataset.action;
-  const action = ACTIONS[id];
-  if (!action) return;
-  btn.disabled = true;
-  btn.innerHTML = `<span class="spinner"></span> ${action.busyLabel ?? 'working…'}`;
-  try {
-    await api(action.endpoint, { method: action.method ?? 'POST' });
-    btn.classList.add('done');
-    btn.textContent = action.doneLabel ?? 'done';
-    await new Promise(r => setTimeout(r, 600));
-    refresh();
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    btn.classList.remove('done');
-    btn.classList.add('failed');
-    btn.textContent = `failed: ${e.message}`;
-    btn.disabled = false;
-  }
-}
-
-async function refresh() {
-  renderSkeleton();
-  if (!getToken()) { showAuthDialog(); return; }
-
-  recsState = {suggestions: null, lint: null};
-
-  // Suggestions chain — fast (~5ms summary). Renders as soon as raw-inbox +
-  // summary land, plus the conditional compaction-candidate fetch.
-  const suggestionsP = (async () => {
-    const [rawInbox, summary] = await Promise.all([
-      apiJson('/maintenance/raw-inbox').then(d => {
-        renderRawInboxTile(d);
-        return d;
-      }),
-      apiJson('/suggestions/summary').then(d => {
-        const total = d.total ?? 0;
-        let breakdown = 'queue clear';
-        if (total) {
-          breakdown = document.createElement('span');
-          breakdown.className = 'breakdown';
-          for (const [k, v] of Object.entries(d.by_kind)) {
-            const pair = document.createElement('span');
-            pair.textContent = `${k}:${v}`;
-            breakdown.appendChild(pair);
+      async function runAction(btn) {
+        const id = btn.dataset.action;
+        const action = ACTIONS[id];
+        if (!action) return;
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner"></span> ${action.busyLabel ?? 'working…'}`;
+        try {
+          await api(action.endpoint, {method: action.method ?? 'POST'});
+          btn.classList.add('done');
+          btn.textContent = action.doneLabel ?? 'done';
+          await new Promise(r => setTimeout(r, 600));
+          refresh();
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
           }
+          btn.classList.remove('done');
+          btn.classList.add('failed');
+          btn.textContent = `failed: ${e.message}`;
+          btn.disabled = false;
         }
-        setSlot('pending', fmtCount(total), breakdown,
-          total ? (total > 50 ? 'warn' : '') : 'ok');
-        return d;
-      })
-    ]);
-    let compactFolders = [];
-    if (summary.by_kind?.compaction_candidate) {
-      const r = await apiJson('/suggestions?kind=compaction_candidate&status=pending&limit=20');
-      compactFolders = (r.items ?? []).map(s => s.payload ?? {});
-    }
-    setRecs('suggestions', recommendFromSuggestions(summary, {compactFolders, rawInbox}));
-  })();
+      }
 
-  // Lint chain — slow (~8s). Updates its own stat slot and rec tiles
-  // independently so the suggestion-derived tiles paint immediately
-  // instead of waiting for lint to finish.
-  const lintP = apiJson('/system/lint').then(d => {
-    const lvl = d.ok ? 'ok' : (d.total_issues > 5 ? 'bad' : 'warn');
-    const lbl = d.ok ? 'clean' : `${d.total_issues} issue${d.total_issues === 1 ? '' : 's'}`;
-    setSlot('lint', lbl, '/system/lint', lvl);
-    setRecs('lint', recommendFromLint(d));
-  });
+      async function refresh() {
+        renderSkeleton();
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
 
-  const statusP = apiJson('/system/status').then(d => {
-    setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
-    setSlot('edges', fmtCount(d.edges));
-    renderSystemPanel(d);
-    const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
-    // Append the browser's short TZ name (e.g. PDT, CET) so the stamp is
-    // unambiguous — `croc` runs in UTC, and a bare HH:MM:SS would leave the
-    // operator guessing which clock the line refers to.
-    const tz =
-      new Intl.DateTimeFormat(undefined, {timeZoneName: 'short'})
-        .formatToParts(now)
-        .find(p => p.type === 'timeZoneName')?.value ?? '';
-    $('#footer').textContent = `vault: ${d.vault_data_path} · loaded ${hh}:${mm}:${ss}${tz ? ' ' + tz : ''}`;
-  });
+        recsState = {suggestions: null, lint: null};
 
-  try {
-    await Promise.all([suggestionsP, lintP, statusP]);
-    fetchRecent();
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') {
-      showAuthDialog();
-      return;
-    }
-    $('#recs').innerHTML = `<div class="err">Failed to load: ${e.message}</div>`;
-  }
-}
+        // Suggestions chain — fast (~5ms summary). Renders as soon as raw-inbox +
+        // summary land, plus the conditional compaction-candidate fetch.
+        const suggestionsP = (async () => {
+          const [rawInbox, summary] = await Promise.all([
+            apiJson('/maintenance/raw-inbox').then(d => {
+              renderRawInboxTile(d);
+              return d;
+            }),
+            apiJson('/suggestions/summary').then(d => {
+              const total = d.total ?? 0;
+              let breakdown = 'queue clear';
+              if (total) {
+                breakdown = document.createElement('span');
+                breakdown.className = 'breakdown';
+                for (const [k, v] of Object.entries(d.by_kind)) {
+                  const pair = document.createElement('span');
+                  pair.textContent = `${k}:${v}`;
+                  breakdown.appendChild(pair);
+                }
+              }
+              setSlot(
+                'pending',
+                fmtCount(total),
+                breakdown,
+                total ? (total > 50 ? 'warn' : '') : 'ok'
+              );
+              return d;
+            })
+          ]);
+          let compactFolders = [];
+          if (summary.by_kind?.compaction_candidate) {
+            const r = await apiJson(
+              '/suggestions?kind=compaction_candidate&status=pending&limit=20'
+            );
+            compactFolders = (r.items ?? []).map(s => s.payload ?? {});
+          }
+          setRecs('suggestions', recommendFromSuggestions(summary, {compactFolders, rawInbox}));
+        })();
 
-$('#settings').addEventListener('click', showAuthDialog);
-$('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-$('#auth-ok').addEventListener('click', () => {
-  setToken($('#auth-input').value.trim());
-  $('#auth-dlg').close();
-  refresh();
-});
-$('#auth-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-ok').click(); });
+        // Lint chain — slow (~8s). Updates its own stat slot and rec tiles
+        // independently so the suggestion-derived tiles paint immediately
+        // instead of waiting for lint to finish.
+        const lintP = apiJson('/system/lint').then(d => {
+          const lvl = d.ok ? 'ok' : d.total_issues > 5 ? 'bad' : 'warn';
+          const lbl = d.ok ? 'clean' : `${d.total_issues} issue${d.total_issues === 1 ? '' : 's'}`;
+          setSlot('lint', lbl, '/system/lint', lvl);
+          setRecs('lint', recommendFromLint(d));
+        });
 
-document.addEventListener('click', e => {
-  const btn = e.target.closest('button.rec-action');
-  if (btn) runAction(btn);
-});
+        const statusP = apiJson('/system/status').then(d => {
+          setSlot('records', fmtCount(d.records), `schema ${d.schema_version}`);
+          setSlot('edges', fmtCount(d.edges));
+          renderSystemPanel(d);
+          const now = new Date();
+          const hh = String(now.getHours()).padStart(2, '0');
+          const mm = String(now.getMinutes()).padStart(2, '0');
+          const ss = String(now.getSeconds()).padStart(2, '0');
+          // Append the browser's short TZ name (e.g. PDT, CET) so the stamp is
+          // unambiguous — `croc` runs in UTC, and a bare HH:MM:SS would leave the
+          // operator guessing which clock the line refers to.
+          const tz =
+            new Intl.DateTimeFormat(undefined, {timeZoneName: 'short'})
+              .formatToParts(now)
+              .find(p => p.type === 'timeZoneName')?.value ?? '';
+          $('#footer').textContent =
+            `vault: ${d.vault_data_path} · loaded ${hh}:${mm}:${ss}${tz ? ' ' + tz : ''}`;
+        });
 
-const SCAN_LABEL = '⟳ Run scans';
-let scanToastTimer = null;
-function showScanToast(msg, failed) {
-  const t = $('#scan-toast');
-  t.textContent = msg;
-  t.classList.toggle('failed', !!failed);
-  t.classList.add('show');
-  if (scanToastTimer) clearTimeout(scanToastTimer);
-  scanToastTimer = setTimeout(() => t.classList.remove('show'), 4000);
-}
+        try {
+          await Promise.all([suggestionsP, lintP, statusP]);
+          fetchRecent();
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#recs').innerHTML = `<div class="err">Failed to load: ${e.message}</div>`;
+        }
+      }
 
-const runScans = async () => {
-  const btn = $('#run-scans');
-  btn.disabled = true;
-  btn.classList.remove('done', 'failed');
-  btn.innerHTML = '<span class="spinner"></span> running…';
-  try {
-    const data = await apiJson('/maintenance/run-all', { method: 'POST' });
-    btn.classList.add('done');
-    btn.textContent = 'done ✓';
-    const filed =
-      (data.duplicates?.filed ?? 0) +
-      (data.compaction?.filed ?? 0) +
-      (data.retention?.filed ?? 0) +
-      (data.upgrade?.filed ?? 0);
-    showScanToast(`${filed} new suggestion${filed === 1 ? '' : 's'} filed · ${data.durationMs}ms`);
-    setTimeout(() => {
-      btn.classList.remove('done');
-      btn.disabled = false;
-      btn.textContent = SCAN_LABEL;
-      refresh();
-    }, 1500);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') {
-      showAuthDialog();
-      btn.disabled = false;
-      btn.textContent = SCAN_LABEL;
-      return;
-    }
-    btn.classList.add('failed');
-    btn.textContent = 'failed';
-    showScanToast(`scan failed: ${e.message}`, true);
-    setTimeout(() => {
-      btn.classList.remove('failed');
-      btn.disabled = false;
-      btn.textContent = SCAN_LABEL;
-    }, 2500);
-  }
-};
+      $('#settings').addEventListener('click', showAuthDialog);
+      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
+      $('#auth-ok').addEventListener('click', () => {
+        setToken($('#auth-input').value.trim());
+        $('#auth-dlg').close();
+        refresh();
+      });
+      $('#auth-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter') $('#auth-ok').click();
+      });
 
-$('#run-scans').addEventListener('click', runScans);
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('button.rec-action');
+        if (btn) runAction(btn);
+      });
 
-function renderSystemPanel(d) {
-  const m = d.memory ?? {};
-  $('#st-rss').textContent = fmtBytes(m.rss);
-  $('#st-heap').innerHTML = `${fmtBytes(m.heap_used)}<span class="sub">/ ${fmtBytes(m.heap_total)} committed</span>`;
-  $('#st-external').textContent = fmtBytes(m.external);
-  $('#st-arraybuffers').textContent = fmtBytes(m.array_buffers);
-  const retained = d.embedder?.retained === true;
-  const model = d.embedder?.model ?? '—';
-  $('#st-embedder').innerHTML = `${esc(model)} <span class="badge ${retained ? 'on' : 'off'}">${retained ? 'loaded' : 'idle'}</span>`;
-  const releaseBtn = $('#release-embedder');
-  // Toggle visibility (not display) so the grid cell stays reserved — a
-  // missing button in column 3 would let auto-placement pull subsequent
-  // labels rightward by one column.
-  releaseBtn.classList.toggle('invisible', !retained);
-  if (!retained) releaseBtn.disabled = false;
-  $('#st-indexer').innerHTML = d.indexer_running
-    ? `<span class="badge on">running</span>`
-    : `<span class="badge off">idle</span>`;
-  $('#st-commit').textContent = d.last_indexed_commit ? shortSha(d.last_indexed_commit) : '—';
-  $('#st-sqlitevec').textContent = d.sqlite_vec_version ?? '—';
-}
+      const SCAN_LABEL = '⟳ Run scans';
+      let scanToastTimer = null;
+      function showScanToast(msg, failed) {
+        const t = $('#scan-toast');
+        t.textContent = msg;
+        t.classList.toggle('failed', !!failed);
+        t.classList.add('show');
+        if (scanToastTimer) clearTimeout(scanToastTimer);
+        scanToastTimer = setTimeout(() => t.classList.remove('show'), 4000);
+      }
 
-const STATUS_REFRESH_MS = 10_000;
-let statusTimer = null;
+      const runScans = async () => {
+        const btn = $('#run-scans');
+        btn.disabled = true;
+        btn.classList.remove('done', 'failed');
+        btn.innerHTML = '<span class="spinner"></span> running…';
+        try {
+          const data = await apiJson('/maintenance/run-all', {method: 'POST'});
+          btn.classList.add('done');
+          btn.textContent = 'done ✓';
+          const filed =
+            (data.duplicates?.filed ?? 0) +
+            (data.compaction?.filed ?? 0) +
+            (data.retention?.filed ?? 0) +
+            (data.upgrade?.filed ?? 0);
+          showScanToast(
+            `${filed} new suggestion${filed === 1 ? '' : 's'} filed · ${data.durationMs}ms`
+          );
+          setTimeout(() => {
+            btn.classList.remove('done');
+            btn.disabled = false;
+            btn.textContent = SCAN_LABEL;
+            refresh();
+          }, 1500);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            btn.disabled = false;
+            btn.textContent = SCAN_LABEL;
+            return;
+          }
+          btn.classList.add('failed');
+          btn.textContent = 'failed';
+          showScanToast(`scan failed: ${e.message}`, true);
+          setTimeout(() => {
+            btn.classList.remove('failed');
+            btn.disabled = false;
+            btn.textContent = SCAN_LABEL;
+          }, 2500);
+        }
+      };
 
-async function refreshStatus() {
-  try {
-    const d = await apiJson('/system/status');
-    renderSystemPanel(d);
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') {
-      stopStatusRefresh();
-      return;
-    }
-    // Transient errors: leave the panel as-is, retry on next tick.
-  }
-}
+      $('#run-scans').addEventListener('click', runScans);
 
-function startStatusRefresh() {
-  if (statusTimer !== null) return;
-  $('#status-live').hidden = false;
-  $('#status-foot-text').textContent = `live · refreshes every ${STATUS_REFRESH_MS / 1000}s`;
-  statusTimer = setInterval(refreshStatus, STATUS_REFRESH_MS);
-}
+      function renderSystemPanel(d) {
+        const m = d.memory ?? {};
+        $('#st-rss').textContent = fmtBytes(m.rss);
+        $('#st-heap').innerHTML =
+          `${fmtBytes(m.heap_used)}<span class="sub">/ ${fmtBytes(m.heap_total)} committed</span>`;
+        $('#st-external').textContent = fmtBytes(m.external);
+        $('#st-arraybuffers').textContent = fmtBytes(m.array_buffers);
+        const retained = d.embedder?.retained === true;
+        const model = d.embedder?.model ?? '—';
+        $('#st-embedder').innerHTML =
+          `${esc(model)} <span class="badge ${retained ? 'on' : 'off'}">${retained ? 'loaded' : 'idle'}</span>`;
+        const releaseBtn = $('#release-embedder');
+        // Toggle visibility (not display) so the grid cell stays reserved — a
+        // missing button in column 3 would let auto-placement pull subsequent
+        // labels rightward by one column.
+        releaseBtn.classList.toggle('invisible', !retained);
+        if (!retained) releaseBtn.disabled = false;
+        $('#st-indexer').innerHTML = d.indexer_running
+          ? `<span class="badge on">running</span>`
+          : `<span class="badge off">idle</span>`;
+        $('#st-commit').textContent = d.last_indexed_commit ? shortSha(d.last_indexed_commit) : '—';
+        $('#st-sqlitevec').textContent = d.sqlite_vec_version ?? '—';
+      }
 
-function stopStatusRefresh() {
-  if (statusTimer === null) return;
-  clearInterval(statusTimer);
-  statusTimer = null;
-  $('#status-live').hidden = true;
-  $('#status-foot-text').textContent = `paused (tab hidden)`;
-}
+      const STATUS_REFRESH_MS = 10_000;
+      let statusTimer = null;
 
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopStatusRefresh();
-  else { startStatusRefresh(); refreshStatus(); }
-});
+      async function refreshStatus() {
+        try {
+          const d = await apiJson('/system/status');
+          renderSystemPanel(d);
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            stopStatusRefresh();
+            return;
+          }
+          // Transient errors: leave the panel as-is, retry on next tick.
+        }
+      }
 
-$('#release-embedder').addEventListener('click', async () => {
-  const btn = $('#release-embedder');
-  const result = $('#release-embedder-result');
-  btn.disabled = true;
-  btn.textContent = 'releasing…';
-  result.textContent = '';
-  try {
-    const r = await apiJson('/maintenance/release-embedder', {method: 'POST'});
-    const freed = fmtBytes(r.rss_freed);
-    const after = fmtBytes(r.rss_after);
-    result.textContent = `freed ${freed} in ${r.duration_ms}ms · now ${after}`;
-    await refreshStatus();
-  } catch (e) {
-    if (e.message === 'unauthorized' || e.message === 'no-token') { showAuthDialog(); return; }
-    result.textContent = `failed: ${e.message}`;
-    btn.disabled = false;
-    btn.textContent = 'Release';
-  }
-});
+      function startStatusRefresh() {
+        if (statusTimer !== null) return;
+        $('#status-live').hidden = false;
+        $('#status-foot-text').textContent = `live · refreshes every ${STATUS_REFRESH_MS / 1000}s`;
+        statusTimer = setInterval(refreshStatus, STATUS_REFRESH_MS);
+      }
 
-// Start auto-refresh once the dashboard has rendered at least once.
-refresh().then(() => { if (!document.hidden) startStatusRefresh(); });
-</script>
-<script type="module" src="/ui/theme.js"></script>
-</body>
+      function stopStatusRefresh() {
+        if (statusTimer === null) return;
+        clearInterval(statusTimer);
+        statusTimer = null;
+        $('#status-live').hidden = true;
+        $('#status-foot-text').textContent = `paused (tab hidden)`;
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopStatusRefresh();
+        else {
+          startStatusRefresh();
+          refreshStatus();
+        }
+      });
+
+      $('#release-embedder').addEventListener('click', async () => {
+        const btn = $('#release-embedder');
+        const result = $('#release-embedder-result');
+        btn.disabled = true;
+        btn.textContent = 'releasing…';
+        result.textContent = '';
+        try {
+          const r = await apiJson('/maintenance/release-embedder', {method: 'POST'});
+          const freed = fmtBytes(r.rss_freed);
+          const after = fmtBytes(r.rss_after);
+          result.textContent = `freed ${freed} in ${r.duration_ms}ms · now ${after}`;
+          await refreshStatus();
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          result.textContent = `failed: ${e.message}`;
+          btn.disabled = false;
+          btn.textContent = 'Release';
+        }
+      });
+
+      // Start auto-refresh once the dashboard has rendered at least once.
+      refresh().then(() => {
+        if (!document.hidden) startStatusRefresh();
+      });
+    </script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
 </html>

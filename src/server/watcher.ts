@@ -72,7 +72,8 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
   const debounceMs = opts.debounceMs ?? 1500;
   const log = opts.log ?? (msg => process.stdout.write(`vault-storage: ${msg}\n`));
   const onError =
-    opts.onError ?? (err => process.stderr.write(`watcher: ${err instanceof Error ? err.message : String(err)}\n`));
+    opts.onError ??
+    (err => process.stderr.write(`watcher: ${err instanceof Error ? err.message : String(err)}\n`));
 
   const records = new RecordsRepository(db);
   const tags = new TagsImporter(db);
@@ -87,7 +88,14 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
 
   const drain = async (): Promise<FlushSummary> => {
     if (pending.size === 0)
-      return {imported: 0, deleted: 0, errors: 0, edgesCreated: 0, embedded: 0, queueItemsTouched: 0};
+      return {
+        imported: 0,
+        deleted: 0,
+        errors: 0,
+        edgesCreated: 0,
+        embedded: 0,
+        queueItemsTouched: 0
+      };
     const batch = [...pending];
     pending.clear();
 
@@ -148,7 +156,8 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
           // path outside `projects/<name>/queue{,-archive}.md`.
           const result = syncQueueFile(queueItems, relativePath, vaultDataPath, now);
           if (result) {
-            queueItemsTouched += result.inserted + result.updated + result.refreshed + result.deleted;
+            queueItemsTouched +=
+              result.inserted + result.updated + result.refreshed + result.deleted;
           }
         } catch (err) {
           errors++;
@@ -204,7 +213,15 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
         onError(err);
       });
     return inFlight.then(
-      () => result ?? {imported: 0, deleted: 0, errors: 0, edgesCreated: 0, embedded: 0, queueItemsTouched: 0}
+      () =>
+        result ?? {
+          imported: 0,
+          deleted: 0,
+          errors: 0,
+          edgesCreated: 0,
+          embedded: 0,
+          queueItemsTouched: 0
+        }
     );
   };
 

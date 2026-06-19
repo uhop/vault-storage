@@ -45,7 +45,11 @@ export async function api(path, init = {}) {
 export const apiJson = (path, init) => api(path, init).then(res => res.json());
 
 /** HTML-escape for interpolating untrusted text into innerHTML templates. */
-export const esc = s => String(s).replace(/[<>&"']/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;' })[c]);
+export const esc = s =>
+  String(s).replace(
+    /[<>&"']/g,
+    c => ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'})[c]
+  );
 
 /**
  * Open the shared settings/auth dialog (`#auth-dlg`), pre-filled with the

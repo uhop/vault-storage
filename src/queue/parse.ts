@@ -66,7 +66,10 @@ const CLOSE_REASON_RULES: Array<{re: RegExp; reason: CloseReason}> = [
   {re: /\bshipped\b|\bpublished\b|\breleased\b/i, reason: 'shipped'},
   {re: /\brejected\b|won['’]?t\s+(?:fix|do)\b|never\s+going\s+to\b/i, reason: 'rejected'},
   {re: /\bparked\b|\bon\s+hold\b|put\s+on\s+ice/i, reason: 'parked'},
-  {re: /\bdeferred\s+(?:to|until|indefinitely)\b|absorbed\s+into|folded\s+into|moved\s+to\s+(?:the\s+)?[a-z-]+/i, reason: 'deferred'},
+  {
+    re: /\bdeferred\s+(?:to|until|indefinitely)\b|absorbed\s+into|folded\s+into|moved\s+to\s+(?:the\s+)?[a-z-]+/i,
+    reason: 'deferred'
+  },
   {re: /\bcompleted\b|\bdone\b|\bfinished\b|\bclosed\b|\bfixed\b|\bresolved\b/i, reason: 'shipped'}
 ];
 
@@ -75,11 +78,7 @@ const CLOSE_REASON_RULES: Array<{re: RegExp; reason: CloseReason}> = [
  * whitespace runs, trim. Used to make identity stable across cosmetic edits.
  */
 export const normalizeTitle = (title: string): string =>
-  title
-    .toLowerCase()
-    .replace(/[‐-―]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
+  title.toLowerCase().replace(/[‐-―]/g, '-').replace(/\s+/g, ' ').trim();
 
 /** First-match-wins regex inference. Returns null when no rule matches. */
 export const inferCloseReason = (body: string): CloseReason | null => {

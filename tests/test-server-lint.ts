@@ -843,7 +843,10 @@ test('GET /system/lint detects auto_commit_failing from the git-sync meta streak
     const upsert = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     // Below threshold: a short streak is transient noise.
     upsert.run('git_sync_consecutive_failures', '2');
-    upsert.run('git_sync_last_error', "git add failed: fatal: Unable to create '.git/index.lock': File exists.");
+    upsert.run(
+      'git_sync_last_error',
+      "git add failed: fatal: Unable to create '.git/index.lock': File exists."
+    );
     upsert.run('git_sync_failing_since', '2026-06-08T04:14:00.000Z');
     let {body} = await fetchJson(`${url}/system/lint`);
     let report = body as {
@@ -860,7 +863,11 @@ test('GET /system/lint detects auto_commit_failing from the git-sync meta streak
     t.notOk(report.ok, 'ok flips false');
     const sample = report.checks['auto_commit_failing']?.samples[0];
     t.equal(sample?.['consecutive_failures'], 3, 'sample carries the streak');
-    t.equal(sample?.['failing_since'], '2026-06-08T04:14:00.000Z', 'sample carries the streak start');
+    t.equal(
+      sample?.['failing_since'],
+      '2026-06-08T04:14:00.000Z',
+      'sample carries the streak start'
+    );
     t.ok(String(sample?.['last_error']).includes('index.lock'), 'sample carries the last error');
   });
 });

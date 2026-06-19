@@ -1,12 +1,12 @@
 ---
 name: vault-propose-related
-description: "Propose missing `related:` entries for vault notes by reviewing BGE-retrieval candidates. Use when the user says /vault propose-related, asks to densify cross-references in the vault, or wants to expand `related:` arrays without reading every note manually. Loads top-N nearest neighbours per source note (excluding existing related: and body wikilinks), reasons about which are genuine semantic matches, writes accepted proposals to a review note in the vault."
+description: 'Propose missing `related:` entries for vault notes by reviewing BGE-retrieval candidates. Use when the user says /vault propose-related, asks to densify cross-references in the vault, or wants to expand `related:` arrays without reading every note manually. Loads top-N nearest neighbours per source note (excluding existing related: and body wikilinks), reasons about which are genuine semantic matches, writes accepted proposals to a review note in the vault.'
 user_invocable: true
 ---
 
 # Propose missing `related:` entries
 
-The vault's hand-curated `related:` arrays are **sparse** — typically 1–3 entries per note, while many notes have 8–15 genuinely related neighbours. This sparsity caps the embedding-quality eval at low absolute precision/recall numbers and leaves the knowledge graph thinner than it could be. This skill closes the gap by combining the existing BGE retrieval index (which surfaces candidates cheaply) with LLM judgment (which decides which candidates are *meaningful* relationships).
+The vault's hand-curated `related:` arrays are **sparse** — typically 1–3 entries per note, while many notes have 8–15 genuinely related neighbours. This sparsity caps the embedding-quality eval at low absolute precision/recall numbers and leaves the knowledge graph thinner than it could be. This skill closes the gap by combining the existing BGE retrieval index (which surfaces candidates cheaply) with LLM judgment (which decides which candidates are _meaningful_ relationships).
 
 The skill is **suggestion-only** — proposals are written into a vault note for human review, not auto-applied to source notes. This matches the design's agent-driven-suggestions model (C16).
 
@@ -40,10 +40,11 @@ node eval/propose-related.ts \
 Output: `/tmp/related-candidates.md` (review-friendly grouped markdown) and `/tmp/related-candidates.tsv` (machine-parseable).
 
 The extractor:
+
 - Loads each source note's first chunk vector as the query
 - Returns top-N nearest records by chunk-aware max-sim (default N = `per-note × 3` chunks aggregated to records, then trimmed to per-note records)
 - Excludes self, existing `related:` entries (resolved via the same wikilink resolver the importer uses), and existing body `[[wikilinks]]`
-- The remaining are *new* candidates, sorted by cosine distance (nearest first)
+- The remaining are _new_ candidates, sorted by cosine distance (nearest first)
 
 ### 2. Review candidates
 
@@ -64,6 +65,7 @@ The candidate extractor uses a **distance cap of 0.30** (cosine ≥ 0.70) by def
 **Why high recall over precision**: a false-positive candidate is bounded cost — you check it, decide skip, move on. A false-negative is unbounded cost — a relationship that exists but never got proposed becomes a latent bug in the knowledge graph, surfacing as "I should have noticed this connection ages ago" at the worst time. We tilt heavily toward recall.
 
 When deciding accept/skip per candidate:
+
 - distance ≤ 0.20 (cosine ≥ 0.80): accept by default; only skip if the candidate is clearly homonymous or topically off
 - 0.20 < distance ≤ 0.25 (cosine 0.75–0.80): default-accept on subject-overlap, skip if only superficially similar
 - 0.25 < distance ≤ 0.30 (cosine 0.70–0.75): be selective; accept only with strong topical justification
@@ -81,20 +83,23 @@ created: YYYY-MM-DD
 updated: YYYY-MM-DD
 status: pending-review
 type: query
-related: ["[[projects/vault-storage/queue]]", "[[projects/vault-storage/design/embedding-baseline]]"]
+related:
+  ['[[projects/vault-storage/queue]]', '[[projects/vault-storage/design/embedding-baseline]]']
 ---
 ```
 
-Body structure: one section per source note. For each, list accepted proposals as wikilinks with a one-line rationale. Skipped/rejected candidates can be omitted, but flag any *ambiguous* ones in a "needs human verdict" section.
+Body structure: one section per source note. For each, list accepted proposals as wikilinks with a one-line rationale. Skipped/rejected candidates can be omitted, but flag any _ambiguous_ ones in a "needs human verdict" section.
 
 ```markdown
 ## `<source-note-path>`
 
 **Add to `related:`**:
+
 - `[[<candidate-1>]]` — <one-line reason: e.g., "same project; covers the schema-decision side of <topic>">
 - `[[<candidate-2>]]` — <reason>
 
 **Ambiguous (human verdict needed)**:
+
 - `[[<candidate-3>]]` — <why it's borderline>
 ```
 
@@ -111,6 +116,7 @@ Add an entry under `## Recent Queries` in `_index.md` so the proposals note is d
 ### 5. Tell the user
 
 Report:
+
 - Number of source notes reviewed in this batch
 - Number of accepted proposals
 - Number of ambiguous flagged-for-review entries
@@ -125,9 +131,9 @@ Report:
 
 ## When NOT to use this skill
 
-- **Per-query semantic search** — that's runtime BGE retrieval, not this offline pass. The whole point of the index is to answer "what's near X?" cheaply at query time without an LLM in the loop. This skill is for *enriching the curated edges*, run periodically (weekly / on demand), not on every search.
+- **Per-query semantic search** — that's runtime BGE retrieval, not this offline pass. The whole point of the index is to answer "what's near X?" cheaply at query time without an LLM in the loop. This skill is for _enriching the curated edges_, run periodically (weekly / on demand), not on every search.
 - **High-precision edge classification** (e.g., `supersedes`, `caused-by`) — those are typed edges per the edge taxonomy, requiring more nuanced judgment than `related-to`. A separate `/vault review-edges` skill covers that.
 
 ## Background
 
-Why this works: BGE retrieval (chunked, CLS-pooled, see `[[projects/vault-storage/design/embedding-model]]`) achieves ~24× lift over random for R@10 on the live vault, but absolute precision is depressed by sparse curation. Each "false positive" at high cosine is often a *real* match that no human got around to writing into the source note's frontmatter. This skill captures those — the LLM judges which top-K candidates are genuine, and the curated set densifies. Subsequent eval runs against the densified ground truth produce both higher precision numbers (model finds more curated positives) and a more accurate picture of where the model genuinely lacks. See `[[projects/vault-storage/design/embedding-baseline]]` § PR sweep.
+Why this works: BGE retrieval (chunked, CLS-pooled, see `[[projects/vault-storage/design/embedding-model]]`) achieves ~24× lift over random for R@10 on the live vault, but absolute precision is depressed by sparse curation. Each "false positive" at high cosine is often a _real_ match that no human got around to writing into the source note's frontmatter. This skill captures those — the LLM judges which top-K candidates are genuine, and the curated set densifies. Subsequent eval runs against the densified ground truth produce both higher precision numbers (model finds more curated positives) and a more accurate picture of where the model genuinely lacks. See `[[projects/vault-storage/design/embedding-baseline]]` § PR sweep.

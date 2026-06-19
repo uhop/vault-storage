@@ -262,7 +262,9 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
           removeStaleLock()
         )
           continue;
-        return fail(new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`));
+        return fail(
+          new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`)
+        );
       }
       break;
     }

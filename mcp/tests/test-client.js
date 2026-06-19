@@ -1,10 +1,12 @@
 import test from 'tape-six';
 import {VaultClient, VaultClientError} from '../src/client.js';
 
-const fakeFetch = responder => (url, init = {}) => {
-  const result = responder(typeof url === 'string' ? url : url.toString(), init);
-  return Promise.resolve(result);
-};
+const fakeFetch =
+  responder =>
+  (url, init = {}) => {
+    const result = responder(typeof url === 'string' ? url : url.toString(), init);
+    return Promise.resolve(result);
+  };
 
 const ok = (body, status = 200, contentType = 'application/json') =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -124,14 +126,8 @@ test('VaultClient: getText returns body as string', async t => {
 });
 
 test('VaultClient: throws on missing apiUrl or apiToken at construction', t => {
-  t.throws(
-    () => new VaultClient({apiUrl: '', apiToken: 'tok'}),
-    'missing apiUrl throws'
-  );
-  t.throws(
-    () => new VaultClient({apiUrl: 'http://test', apiToken: ''}),
-    'missing apiToken throws'
-  );
+  t.throws(() => new VaultClient({apiUrl: '', apiToken: 'tok'}), 'missing apiUrl throws');
+  t.throws(() => new VaultClient({apiUrl: 'http://test', apiToken: ''}), 'missing apiToken throws');
 });
 
 test('VaultClient: trailing slash on apiUrl is normalised', async t => {

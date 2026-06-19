@@ -158,9 +158,7 @@ export const incrementalReindex = async (
   }
 
   const changes = parseDiff(diff.stdout);
-  summary.changedFiles = changes.filter(
-    c => isMd(c.kind === 'rename' ? c.new : c.path)
-  ).length;
+  summary.changedFiles = changes.filter(c => isMd(c.kind === 'rename' ? c.new : c.path)).length;
 
   const records = new RecordsRepository(db);
   const tags = new TagsImporter(db);

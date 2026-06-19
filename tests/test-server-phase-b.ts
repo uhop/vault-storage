@@ -100,24 +100,36 @@ const seedGraph = (root: string): void => {
   writeMd(
     root,
     'topics/alpha.md',
-    ['---', 'title: Alpha', 'created: 2026-04-01', 'updated: 2026-04-01', '---', 'About alpha.', ''].join(
+    [
+      '---',
+      'title: Alpha',
+      'created: 2026-04-01',
+      'updated: 2026-04-01',
+      '---',
+      'About alpha.',
+      ''
+    ].join('\n')
+  );
+  writeMd(
+    root,
+    'topics/beta.md',
+    ['---', 'title: Beta', 'created: 2026-04-02', 'updated: 2026-04-02', '---', 'Beta.', ''].join(
       '\n'
     )
   );
   writeMd(
     root,
-    'topics/beta.md',
-    ['---', 'title: Beta', 'created: 2026-04-02', 'updated: 2026-04-02', '---', 'Beta.', ''].join('\n')
-  );
-  writeMd(
-    root,
     'topics/gamma.md',
-    ['---', 'title: Gamma', 'created: 2026-04-03', 'updated: 2026-04-03', '---', 'Gamma.', ''].join('\n')
+    ['---', 'title: Gamma', 'created: 2026-04-03', 'updated: 2026-04-03', '---', 'Gamma.', ''].join(
+      '\n'
+    )
   );
   writeMd(
     root,
     'topics/delta.md',
-    ['---', 'title: Delta', 'created: 2026-04-04', 'updated: 2026-04-04', '---', 'Delta.', ''].join('\n')
+    ['---', 'title: Delta', 'created: 2026-04-04', 'updated: 2026-04-04', '---', 'Delta.', ''].join(
+      '\n'
+    )
   );
 };
 
@@ -237,9 +249,7 @@ test('GET /sections/{unknown}/neighborhood returns 404', async t => {
     seedGraph(root);
     const ctx = await startTestServer(root);
     try {
-      const r = await fetchAuthed(
-        `${ctx.url}/sections/01HFFFFFFFFFFFFFFFFFFFFFFFFF/neighborhood`
-      );
+      const r = await fetchAuthed(`${ctx.url}/sections/01HFFFFFFFFFFFFFFFFFFFFFFFFF/neighborhood`);
       t.equal(r.status, 404, '404 not found');
     } finally {
       await teardown(ctx);
@@ -316,7 +326,10 @@ test('GET /sections/{id}/similar returns nearest records (excluding self)', asyn
       const env = r.body as {root_id: string; items: Array<{record_id: string}>};
       t.equal(env.root_id, alphaId, 'root id echoed');
       t.ok(env.items.length > 0, 'at least one match');
-      t.ok(env.items.every(i => i.record_id !== alphaId), 'self excluded from results');
+      t.ok(
+        env.items.every(i => i.record_id !== alphaId),
+        'self excluded from results'
+      );
     } finally {
       await teardown(ctx);
     }
@@ -346,10 +359,7 @@ test('GET /sections/{id}/similar with no embeddings returns empty items', async 
 
 // ─── tags ───────────────────────────────────────────────────────────────────
 
-const seedTags = (
-  db: DatabaseSync,
-  pairs: Array<{recordId: string; tag: string}>
-): void => {
+const seedTags = (db: DatabaseSync, pairs: Array<{recordId: string; tag: string}>): void => {
   const seenTags = new Set<string>();
   for (const p of pairs) seenTags.add(p.tag);
   for (const tag of seenTags) {
@@ -586,7 +596,9 @@ test('GET /suggestions/summary groups pending by kind', async t => {
       // accepted ones must be excluded from the default pending summary
       seedSuggestion(ctx.db, {id: 'z1', kind: 'edge_type'});
       ctx.db
-        .prepare(`UPDATE suggestions SET status = 'accepted', resolved_at = '2026-04-30' WHERE id = 'z1'`)
+        .prepare(
+          `UPDATE suggestions SET status = 'accepted', resolved_at = '2026-04-30' WHERE id = 'z1'`
+        )
         .run();
 
       const r = await fetchAuthed(`${ctx.url}/suggestions/summary`);
@@ -614,7 +626,9 @@ test('GET /suggestions/summary?status=accepted filters status', async t => {
       seedSuggestion(ctx.db, {id: 'p1', kind: 'edge_type'});
       seedSuggestion(ctx.db, {id: 'a1', kind: 'duplicate'});
       ctx.db
-        .prepare(`UPDATE suggestions SET status = 'accepted', resolved_at = '2026-04-30' WHERE id = 'a1'`)
+        .prepare(
+          `UPDATE suggestions SET status = 'accepted', resolved_at = '2026-04-30' WHERE id = 'a1'`
+        )
         .run();
       const r = await fetchAuthed(`${ctx.url}/suggestions/summary?status=accepted`);
       const env = r.body as {total: number; by_kind: Record<string, number>};
@@ -739,7 +753,11 @@ test('POST /suggestions/{id}/reopen reverts an accepted suggestion to pending', 
 
       const reopen = await fetchAuthed(`${ctx.url}/suggestions/s1/reopen`, {method: 'POST'});
       t.equal(reopen.status, 200, '200 ok');
-      const body = reopen.body as {status: string; resolved_at: string | null; resolved_by: string | null};
+      const body = reopen.body as {
+        status: string;
+        resolved_at: string | null;
+        resolved_by: string | null;
+      };
       t.equal(body.status, 'pending', 'now pending');
       t.equal(body.resolved_at, null, 'resolved_at cleared');
       t.equal(body.resolved_by, null, 'resolved_by cleared');

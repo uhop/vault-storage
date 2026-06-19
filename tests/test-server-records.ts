@@ -116,7 +116,15 @@ const seedVault = (root: string): void => {
   writeMd(
     root,
     'logs/2026-04-25-x.md',
-    ['---', 'title: Log', 'created: 2026-04-25', 'updated: 2026-04-25', '---', 'Log body.', ''].join('\n')
+    [
+      '---',
+      'title: Log',
+      'created: 2026-04-25',
+      'updated: 2026-04-25',
+      '---',
+      'Log body.',
+      ''
+    ].join('\n')
   );
   writeMd(
     root,
@@ -187,7 +195,10 @@ test('GET /sections?file_prefix= filters by path prefix', async t => {
       t.equal(status, 200, '200 ok');
       const env = body as {items: Array<{file_path: string}>; total: number};
       t.equal(env.total, 2, 'two items under topics/');
-      t.ok(env.items.every(i => i.file_path.startsWith('topics/')), 'all paths under topics/');
+      t.ok(
+        env.items.every(i => i.file_path.startsWith('topics/')),
+        'all paths under topics/'
+      );
     } finally {
       await teardown(db, handle);
     }
@@ -321,10 +332,7 @@ test('GET /sections/{id} bumps last_referenced (decay reinforcement)', async t =
         .prepare('SELECT last_referenced FROM records WHERE record_id = ?')
         .get(id) as {last_referenced: string | null};
       t.ok(typeof after.last_referenced === 'string', 'last_referenced now set');
-      t.ok(
-        Date.parse(after.last_referenced!) > Date.now() - 5_000,
-        'set to ~now (within 5s)'
-      );
+      t.ok(Date.parse(after.last_referenced!) > Date.now() - 5_000, 'set to ~now (within 5s)');
     } finally {
       await teardown(db, handle);
     }
@@ -363,9 +371,9 @@ test('GET /sections/{id} bulk listing does NOT bump last_referenced', async t =>
     try {
       // Bulk listing — should NOT cascade-bump every record's clock.
       await authedFetch(`${url}/sections?type=permanent&limit=50`);
-      const rows = db
-        .prepare('SELECT last_referenced FROM records')
-        .all() as Array<{last_referenced: string | null}>;
+      const rows = db.prepare('SELECT last_referenced FROM records').all() as Array<{
+        last_referenced: string | null;
+      }>;
       const bumped = rows.filter(r => r.last_referenced !== null).length;
       t.equal(bumped, 0, 'bulk list does not bump');
     } finally {
@@ -473,10 +481,7 @@ test('GET /sections/{id}/fm?exclude=body omits body', async t => {
       const {status, body} = await authedFetch(`${url}/sections/${id}/fm?exclude=body`);
       t.equal(status, 200, '200 ok');
       t.equal('body' in (body as object), false, 'body field absent');
-      t.ok(
-        'frontmatter' in (body as object),
-        'frontmatter field present'
-      );
+      t.ok('frontmatter' in (body as object), 'frontmatter field present');
     } finally {
       await teardown(db, handle);
     }
@@ -491,9 +496,7 @@ test('GET /sections/{unknown-id}/fm returns 404', async t => {
     seedVault(root);
     const {db, handle, url} = await startTestServer(root);
     try {
-      const {status, body} = await authedFetch(
-        `${url}/sections/01HFFFFFFFFFFFFFFFFFFFFFFFFF/fm`
-      );
+      const {status, body} = await authedFetch(`${url}/sections/01HFFFFFFFFFFFFFFFFFFFFFFFFF/fm`);
       t.equal(status, 404, '404 not found');
       t.equal((body as {code: string}).code, 'record_not_found', 'code=record_not_found');
     } finally {
@@ -700,16 +703,11 @@ test('DELETE /sections/{id}/tags/{tag} is idempotent on a tag not present', asyn
     try {
       const list = await authedFetch(`${url}/sections?file_path=topics/alpha.md`);
       const id = (list.body as {items: Array<{record_id: string}>}).items[0]?.record_id;
-      const {status, body} = await authedFetch(
-        `${url}/sections/${id}/tags/not-there-anyway`,
-        {method: 'DELETE'}
-      );
+      const {status, body} = await authedFetch(`${url}/sections/${id}/tags/not-there-anyway`, {
+        method: 'DELETE'
+      });
       t.equal(status, 200, '200 ok (idempotent no-op)');
-      t.deepEqual(
-        (body as {tags: string[]}).tags,
-        [],
-        'tag list unchanged when tag absent'
-      );
+      t.deepEqual((body as {tags: string[]}).tags, [], 'tag list unchanged when tag absent');
     } finally {
       await teardown(db, handle);
     }

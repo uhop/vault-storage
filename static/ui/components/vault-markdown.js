@@ -27,7 +27,10 @@
 import {marked} from '/ui/vendor/marked.esm.js';
 
 const esc = s =>
-  String(s).replace(/[<>&"']/g, c => ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'})[c]);
+  String(s).replace(
+    /[<>&"']/g,
+    c => ({'<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;'})[c]
+  );
 
 const splitFrontmatter = text => {
   const m = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);

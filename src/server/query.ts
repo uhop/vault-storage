@@ -21,7 +21,10 @@ export const parsePagination = (
 
   const offset = offsetRaw === undefined ? 0 : Math.max(0, Number.parseInt(offsetRaw, 10) || 0);
   const limitParsed = limitRaw === undefined ? defaultLimit : Number.parseInt(limitRaw, 10);
-  const limit = Math.min(maxLimit, Math.max(1, Number.isFinite(limitParsed) ? limitParsed : defaultLimit));
+  const limit = Math.min(
+    maxLimit,
+    Math.max(1, Number.isFinite(limitParsed) ? limitParsed : defaultLimit)
+  );
 
   return {offset, limit};
 };
@@ -29,5 +32,8 @@ export const parsePagination = (
 /** Split a comma-separated query value into a trimmed string array. Empty input → []. */
 export const splitCsv = (value: string | undefined): string[] => {
   if (!value) return [];
-  return value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  return value
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
 };

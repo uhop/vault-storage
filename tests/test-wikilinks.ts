@@ -1,5 +1,9 @@
 import test from 'tape-six';
-import {extractRelatedFromFrontmatter, extractWikilinks, maskCodeRegions} from '../src/markdown/wikilinks.ts';
+import {
+  extractRelatedFromFrontmatter,
+  extractWikilinks,
+  maskCodeRegions
+} from '../src/markdown/wikilinks.ts';
 
 test('extractWikilinks', async t => {
   await t.test('finds a single link', t => {
@@ -24,7 +28,13 @@ test('extractWikilinks', async t => {
     t.deepEqual(extractWikilinks('start [[unclosed and [[ok]]'), ['ok']);
   });
   await t.test('skips wikilinks inside fenced code blocks', t => {
-    const text = ['before [[real]]', '```bash', 'if [[ -z $x ]]; then echo [[fake]]; fi', '```', 'after [[also-real]]'].join('\n');
+    const text = [
+      'before [[real]]',
+      '```bash',
+      'if [[ -z $x ]]; then echo [[fake]]; fi',
+      '```',
+      'after [[also-real]]'
+    ].join('\n');
     t.deepEqual(extractWikilinks(text), ['real', 'also-real']);
   });
   await t.test('skips wikilinks in tilde-fenced code blocks', t => {

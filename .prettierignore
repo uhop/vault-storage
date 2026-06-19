@@ -4,3 +4,6 @@ coverage/
 *.sqlite
 *.sqlite-*
 package-lock.json
+
+# Vendored third-party bundles — kept as upstream ships them.
+static/ui/vendor/

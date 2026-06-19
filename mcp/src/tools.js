@@ -506,9 +506,7 @@ export const registerTools = (mcp, client) => {
         section: z.enum(['active', 'backlog', 'watching'])
       }
     },
-    wrap(async ({section}) =>
-      client.getJson(`/queue/by-section/${encodeURIComponent(section)}`)
-    )
+    wrap(async ({section}) => client.getJson(`/queue/by-section/${encodeURIComponent(section)}`))
   );
 
   mcp.registerTool(
@@ -534,9 +532,7 @@ export const registerTools = (mcp, client) => {
         project: z.string().min(1).describe('Project slug, e.g. "node-re2"')
       }
     },
-    wrap(async ({project}) =>
-      client.getJson(`/queue/projects/${encodeURIComponent(project)}`)
-    )
+    wrap(async ({project}) => client.getJson(`/queue/projects/${encodeURIComponent(project)}`))
   );
 
   mcp.registerTool(

@@ -16,7 +16,14 @@
 // inside the container. See README.md § Backup for the recommended
 // host-cron snippet.
 
-import {createReadStream, createWriteStream, existsSync, mkdirSync, statSync, unlinkSync} from 'node:fs';
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  statSync,
+  unlinkSync
+} from 'node:fs';
 import {dirname} from 'node:path';
 import {pipeline} from 'node:stream/promises';
 import {createGzip} from 'node:zlib';
@@ -37,10 +44,7 @@ export interface SnapshotResult {
  * a shared lock briefly. On a WAL database this is non-disruptive: in-
  * flight writes proceed normally; readers never block.
  */
-export const snapshotDb = async (
-  db: DatabaseSync,
-  outputPath: string
-): Promise<SnapshotResult> => {
+export const snapshotDb = async (db: DatabaseSync, outputPath: string): Promise<SnapshotResult> => {
   const start = performance.now();
   const dir = dirname(outputPath);
   if (!existsSync(dir)) mkdirSync(dir, {recursive: true});

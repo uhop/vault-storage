@@ -220,10 +220,7 @@ export const parseWriteRequest = (
  *   and known aliases pass; anything else 400s so authoring typos surface
  *   at the boundary rather than silently coercing to a default.
  */
-export const validateWritePayload = (
-  frontmatter: Record<string, unknown>,
-  body: string
-): void => {
+export const validateWritePayload = (frontmatter: Record<string, unknown>, body: string): void => {
   if (looksLikeAnotherFmBlock(body)) {
     throw new WriterError(
       'request body begins with another frontmatter-style block (`---\\n…\\n---`) — almost certainly a malformed PUT (the caller likely appended the original file to a new FM block, which would silently destroy the body). Construct the PUT body as `---\\n<merged FM>\\n---\\n<body>` with a single FM block.',

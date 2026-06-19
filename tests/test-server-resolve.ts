@@ -171,11 +171,7 @@ test('GET /resolve folder fallback to _about.md', async t => {
     try {
       const {status, body} = await fetchJson(`${ctx.url}/resolve?wikilink=projects/demo`);
       t.equal(status, 200, 'folder resolves to _about');
-      t.equal(
-        (body as {file_path: string}).file_path,
-        'projects/demo/_about.md',
-        'right target'
-      );
+      t.equal((body as {file_path: string}).file_path, 'projects/demo/_about.md', 'right target');
     } finally {
       await teardown(ctx);
     }

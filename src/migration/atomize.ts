@@ -246,10 +246,7 @@ export interface AtomizeSummary {
  * Original files are deleted; pieces and `_about.md` written under a sibling
  * folder named after the original file's stem.
  */
-export const atomizeVault = (
-  targetDir: string,
-  opts: AtomizationOptions = {}
-): AtomizeSummary => {
+export const atomizeVault = (targetDir: string, opts: AtomizationOptions = {}): AtomizeSummary => {
   const start = performance.now();
   let total = 0;
   let atomized = 0;
@@ -286,5 +283,11 @@ export const atomizeVault = (
     atomized++;
   }
 
-  return {total, atomized, optedOut, piecesWritten, durationMs: Math.round(performance.now() - start)};
+  return {
+    total,
+    atomized,
+    optedOut,
+    piecesWritten,
+    durationMs: Math.round(performance.now() - start)
+  };
 };

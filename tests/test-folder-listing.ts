@@ -12,7 +12,13 @@ const setup = (): DatabaseSync => {
 
 const seed = (
   db: DatabaseSync,
-  rows: Array<{path: string; title?: string | null; type?: string; status?: string; updated?: string}>
+  rows: Array<{
+    path: string;
+    title?: string | null;
+    type?: string;
+    status?: string;
+    updated?: string;
+  }>
 ): void => {
   const insert = db.prepare(
     `INSERT INTO records

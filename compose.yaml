@@ -18,14 +18,14 @@ services:
     # writes via PUT) land with ownership the host user can edit. Defaults to
     # 1000:1000 (matches the base image's `node` user); override in .env when
     # the host user has a different uid.
-    user: "${VAULT_UID:-1000}:${VAULT_GID:-1000}"
+    user: '${VAULT_UID:-1000}:${VAULT_GID:-1000}'
     container_name: vault-storage
     restart: unless-stopped
     ports:
       # Default: bind on all interfaces so remote machines can reach the API.
       # If you only want LAN/local access, change to "127.0.0.1:8123:8123" or
       # "${LAN_IP}:8123:8123" and use Tailscale / a reverse proxy for remote.
-      - "${VAULT_PUBLISH_HOST:-0.0.0.0}:${VAULT_PORT:-8123}:8123"
+      - '${VAULT_PUBLISH_HOST:-0.0.0.0}:${VAULT_PORT:-8123}:8123'
     env_file:
       - .env
     environment:
@@ -46,7 +46,7 @@ services:
     volumes:
       # Markdown source-of-truth tree. Read-write — the server's PUT /sections
       # endpoint writes here, and the watcher detects external edits.
-      - "${VAULT_DATA_PATH_HOST}:/data"
+      - '${VAULT_DATA_PATH_HOST}:/data'
       # Persist the BGE model cache so container restarts don't re-download.
       - vault-hf-cache:/home/node/.cache/huggingface
     healthcheck:

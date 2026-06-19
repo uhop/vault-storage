@@ -33,8 +33,12 @@ interface CliArgs {
 
 const parseArgs = (argv: string[]): CliArgs => {
   const args: CliArgs = {
-    db: '', vault: '', output: 'eval/related-candidates.tsv',
-    perNote: 20, limit: 0, maxDistance: 0.30
+    db: '',
+    vault: '',
+    output: 'eval/related-candidates.tsv',
+    perNote: 20,
+    limit: 0,
+    maxDistance: 0.3
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -46,7 +50,9 @@ const parseArgs = (argv: string[]): CliArgs => {
     else if (a === '--max-distance') args.maxDistance = Number.parseFloat(argv[++i] ?? '0.30');
   }
   if (!args.db || !args.vault) {
-    process.stderr.write('usage: propose-related.ts --db <path> --vault <root> [--output <tsv>] [--per-note N] [--limit N] [--max-distance D]\n');
+    process.stderr.write(
+      'usage: propose-related.ts --db <path> --vault <root> [--output <tsv>] [--per-note N] [--limit N] [--max-distance D]\n'
+    );
     process.exit(2);
   }
   return args;
@@ -88,16 +94,33 @@ const rows: Row[] = rawRows.map(r => {
 
 const byId = new Map(rows.map(r => [r.id, r]));
 const vaultRecords: VaultRecord[] = rows.map(r => ({
-  recordId: r.id, filePath: r.path, parentPath: null, sequenceKey: null,
-  type: 'permanent', body: r.body, contentHash: '', bodyHash: '', title: r.title || null,
-  created: '', updated: '',
-  lastReferenced: null, decayScore: 1, status: 'active', priority: 0, archivedAt: null, agentSummary: null, agentDerivedFromHash: null
+  recordId: r.id,
+  filePath: r.path,
+  parentPath: null,
+  sequenceKey: null,
+  type: 'permanent',
+  body: r.body,
+  contentHash: '',
+  bodyHash: '',
+  title: r.title || null,
+  created: '',
+  updated: '',
+  lastReferenced: null,
+  decayScore: 1,
+  status: 'active',
+  priority: 0,
+  archivedAt: null,
+  agentSummary: null,
+  agentDerivedFromHash: null
 }));
 const resolver = new WikilinkResolver(vaultRecords);
 
 // Existing related/cites edges per source — exclude these from candidates.
 const existingEdges = new Map<string, Set<string>>();
-for (const e of db.prepare('SELECT from_id, to_id FROM edges').all() as Array<{from_id: string; to_id: string}>) {
+for (const e of db.prepare('SELECT from_id, to_id FROM edges').all() as Array<{
+  from_id: string;
+  to_id: string;
+}>) {
   const set = existingEdges.get(e.from_id) ?? new Set();
   set.add(e.to_id);
   existingEdges.set(e.from_id, set);
@@ -141,9 +164,9 @@ for (let i = 0; i < Math.min(limit, rows.length); i++) {
   // Use the record's own first chunk's vector as the query — fast,
   // and chunk 0 typically captures the title + leading content (which is
   // most representative of the note's identity).
-  const v0Row = db.prepare(
-    'SELECT embedding FROM record_vec WHERE record_id = ? AND chunk_index = 0'
-  ).get(r.id) as {embedding: Uint8Array} | undefined;
+  const v0Row = db
+    .prepare('SELECT embedding FROM record_vec WHERE record_id = ? AND chunk_index = 0')
+    .get(r.id) as {embedding: Uint8Array} | undefined;
   if (!v0Row) continue;
   const queryVec = blobToFloat32(v0Row.embedding);
 
@@ -155,7 +178,12 @@ for (let i = 0; i < Math.min(limit, rows.length); i++) {
     if (hit.distance > args.maxDistance) break; // sorted ascending; once past cap, stop
     const target = byId.get(hit.recordId);
     if (!target) continue;
-    candidates.push({fromPath: r.path, toPath: target.path, toTitle: target.title, distance: hit.distance});
+    candidates.push({
+      fromPath: r.path,
+      toPath: target.path,
+      toTitle: target.title,
+      distance: hit.distance
+    });
     added++;
     if (added >= args.perNote) break;
   }
@@ -166,15 +194,21 @@ const outPath = resolve(args.output);
 mkdirSync(dirname(outPath), {recursive: true});
 const tsvLines = ['from\tto\tdistance\ttitle'];
 for (const c of candidates) {
-  tsvLines.push(`${c.fromPath}\t${c.toPath}\t${c.distance.toFixed(4)}\t${c.toTitle.replace(/\t/g, ' ')}`);
+  tsvLines.push(
+    `${c.fromPath}\t${c.toPath}\t${c.distance.toFixed(4)}\t${c.toTitle.replace(/\t/g, ' ')}`
+  );
 }
 writeFileSync(outPath, tsvLines.join('\n') + '\n', 'utf8');
 
 // Also write a markdown review-friendly summary, grouped by source.
 const mdPath = outPath.replace(/\.tsv$/, '.md');
 const mdLines: string[] = [`# related-to candidates from BGE retrieval\n`];
-mdLines.push(`Generated ${new Date().toISOString().slice(0, 10)} from \`${dbPath}\`. ${candidates.length} candidates across ${Math.min(limit, rows.length)} source notes (top-${args.perNote} each, max distance ${args.maxDistance.toFixed(2)}, excluding existing \`related:\` and body \`[[wikilinks]]\`).\n`);
-mdLines.push(`Distance interpretation: cosine distance (0 = identical, 2 = opposite). Default cap of 0.30 corresponds to cosine ≥ 0.70 — the 99%-recall operating point on the curated set. Candidates are sorted nearest-first per source.\n`);
+mdLines.push(
+  `Generated ${new Date().toISOString().slice(0, 10)} from \`${dbPath}\`. ${candidates.length} candidates across ${Math.min(limit, rows.length)} source notes (top-${args.perNote} each, max distance ${args.maxDistance.toFixed(2)}, excluding existing \`related:\` and body \`[[wikilinks]]\`).\n`
+);
+mdLines.push(
+  `Distance interpretation: cosine distance (0 = identical, 2 = opposite). Default cap of 0.30 corresponds to cosine ≥ 0.70 — the 99%-recall operating point on the curated set. Candidates are sorted nearest-first per source.\n`
+);
 
 const grouped = new Map<string, Candidate[]>();
 for (const c of candidates) {
@@ -191,6 +225,8 @@ for (const [from, list] of grouped) {
 }
 writeFileSync(mdPath, mdLines.join('\n'), 'utf8');
 
-process.stdout.write(`wrote ${outPath} and ${mdPath} (${candidates.length} candidates across ${grouped.size} source notes)\n`);
+process.stdout.write(
+  `wrote ${outPath} and ${mdPath} (${candidates.length} candidates across ${grouped.size} source notes)\n`
+);
 
 db.close();

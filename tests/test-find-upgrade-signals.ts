@@ -52,7 +52,9 @@ test('findUpgradeSignals: record_count_high trips at the high threshold', t => {
   const db = setup();
   try {
     seedRecords(db, 100);
-    const summary = findUpgradeSignals(db, {thresholds: {recordCountHigh: 50, recordCountMigrate: 200}});
+    const summary = findUpgradeSignals(db, {
+      thresholds: {recordCountHigh: 50, recordCountMigrate: 200}
+    });
     t.deepEqual(summary.tripped, ['record_count_high']);
     t.equal(summary.filed, 1);
     t.equal(pendingByKind(db)['inefficiency_detected'], 1);
@@ -65,7 +67,9 @@ test('findUpgradeSignals: record_count_migrate trips at the migrate threshold (a
   const db = setup();
   try {
     seedRecords(db, 250);
-    const summary = findUpgradeSignals(db, {thresholds: {recordCountHigh: 50, recordCountMigrate: 200}});
+    const summary = findUpgradeSignals(db, {
+      thresholds: {recordCountHigh: 50, recordCountMigrate: 200}
+    });
     t.deepEqual(summary.tripped, ['record_count_migrate']);
     t.equal(pendingByKind(db)['infrastructure_upgrade'], 1);
     t.notOk(pendingByKind(db)['inefficiency_detected'], 'no high while migrate trips');

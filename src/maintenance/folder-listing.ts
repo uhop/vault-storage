@@ -37,8 +37,7 @@ const escapeLike = (s: string): string => s.replace(/[\\%_]/g, '\\$&');
  * Normalize a folder path: strip leading and trailing slashes, collapse
  * runs of slashes. Empty input → empty (vault root).
  */
-const normalize = (raw: string): string =>
-  raw.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
+const normalize = (raw: string): string => raw.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
 
 export const listFolder = (db: DatabaseSync, rawPath: string): FolderListing => {
   const path = normalize(rawPath);

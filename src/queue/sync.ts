@@ -60,10 +60,7 @@ export const syncQueueFile = (
  * null) when the path isn't a queue file. Returns the row count that was
  * dropped (0 when the slice was already empty).
  */
-export const dropQueueFile = (
-  repo: QueueItemsRepository,
-  relativePath: string
-): number | null => {
+export const dropQueueFile = (repo: QueueItemsRepository, relativePath: string): number | null => {
   const match = matchQueueFile(relativePath);
   if (!match) return null;
   return repo.deleteSlice(match.project, match.sourceFile);

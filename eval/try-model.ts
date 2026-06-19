@@ -35,7 +35,9 @@ const parseArgs = (argv: string[]): CliArgs => {
     else if (a === '--db') args.db = argv[++i] ?? '';
   }
   if (!args.model || !args.dim || !args.vault || !args.db) {
-    process.stderr.write('usage: try-model.ts --model <hf-path> --dim <n> --vault <root> --db <out.sqlite>\n');
+    process.stderr.write(
+      'usage: try-model.ts --model <hf-path> --dim <n> --vault <root> --db <out.sqlite>\n'
+    );
     process.exit(2);
   }
   return args;
@@ -68,7 +70,7 @@ const summary = importVault(db, resolve(args.vault));
 const tImport = Math.round(performance.now() - t0);
 process.stdout.write(
   `imported ${summary.total} files: ${summary.inserted} inserted, ${summary.skipped} skipped ` +
-  `(${tImport} ms)\nedges: ${summary.edges.edgesCreated} created (${summary.edges.durationMs} ms)\n`
+    `(${tImport} ms)\nedges: ${summary.edges.edgesCreated} created (${summary.edges.durationMs} ms)\n`
 );
 
 const embedder = new BgeEmbedder({modelName: args.model, dim: args.dim});

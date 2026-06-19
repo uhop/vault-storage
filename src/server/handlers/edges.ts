@@ -66,7 +66,12 @@ export const neighborhoodHandler =
     }
 
     const direction = parseDirection(ctx.query['direction']);
-    if (typeof direction === 'string' && direction !== 'outbound' && direction !== 'inbound' && direction !== 'both') {
+    if (
+      typeof direction === 'string' &&
+      direction !== 'outbound' &&
+      direction !== 'inbound' &&
+      direction !== 'both'
+    ) {
       sendError(ctx.res, 400, 'bad_request', direction);
       return;
     }

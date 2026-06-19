@@ -114,9 +114,7 @@ export class RecordsRepository {
     this.#bumpLastReferenced = db.prepare(
       'UPDATE records SET last_referenced = ? WHERE record_id = ?'
     );
-    this.#updateFilePath = db.prepare(
-      'UPDATE records SET file_path = ? WHERE record_id = ?'
-    );
+    this.#updateFilePath = db.prepare('UPDATE records SET file_path = ? WHERE record_id = ?');
 
     // Content-generation bump (see src/db/meta.ts CONTENT_GENERATION_KEY):
     // every content-shaping mutation below increments the counter so the

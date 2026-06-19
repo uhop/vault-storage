@@ -10,15 +10,15 @@ caveats below before installing — paths and assumptions may need substitution.
 
 ## What's in here
 
-| Path                              | Purpose                                                                                            |
-| --------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `skills/vault/`                   | The `/vault` master skill: ingest / learn / query / log / resume / check.                          |
-| `skills/vault-check-drift/`       | Drift check between project state and the vault-recorded baseline. Used by `/vault resume`.        |
-| `skills/vault-propose-related/`   | Densify the knowledge graph by proposing missing `related:` cross-references using BGE retrieval.  |
-| `skills/vault-search/`            | Single-shot search against the vault (`POST /search/simple/`). Lexical + semantic.                 |
-| `skills/vault-similar/`           | Embedding nearest-neighbours of a record (`GET /sections/{id}/similar`). vault-storage only.       |
-| `skills/vault-graph/`             | Typed-edge neighborhood walk (`GET /sections/{id}/neighborhood`). vault-storage only.              |
-| `../bin/vault-curl`               | `curl` wrapper that prepends `$VAULT_API_URL` and the auth header. Required by all six skills.     |
+| Path                            | Purpose                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `skills/vault/`                 | The `/vault` master skill: ingest / learn / query / log / resume / check.                         |
+| `skills/vault-check-drift/`     | Drift check between project state and the vault-recorded baseline. Used by `/vault resume`.       |
+| `skills/vault-propose-related/` | Densify the knowledge graph by proposing missing `related:` cross-references using BGE retrieval. |
+| `skills/vault-search/`          | Single-shot search against the vault (`POST /search/simple/`). Lexical + semantic.                |
+| `skills/vault-similar/`         | Embedding nearest-neighbours of a record (`GET /sections/{id}/similar`). vault-storage only.      |
+| `skills/vault-graph/`           | Typed-edge neighborhood walk (`GET /sections/{id}/neighborhood`). vault-storage only.             |
+| `../bin/vault-curl`             | `curl` wrapper that prepends `$VAULT_API_URL` and the auth header. Required by all six skills.    |
 
 ### Known gap — `vault-lint`
 
