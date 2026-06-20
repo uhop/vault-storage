@@ -135,6 +135,60 @@ test('GET /system/lint on empty DB: ok=true, all checks 0', async t => {
   });
 });
 
+test('GET /system/lint reports enrichment coverage per type, excludes archive, outside ok/total', async t => {
+  await withServer(async (url, db) => {
+    const enrich = db.prepare('UPDATE records SET agent_summary = ? WHERE record_id = ?');
+    insertRecord(db, {
+      record_id: 'p-enriched',
+      file_path: 'topics/p-enriched.md',
+      type: 'permanent'
+    });
+    enrich.run('a derived summary', 'p-enriched');
+    insertVecChunk(db, {chunk_id: 'c-p-enr', record_id: 'p-enriched', content_hash: 'hash-fresh'});
+    insertRecord(db, {record_id: 'p-bare', file_path: 'topics/p-bare.md', type: 'permanent'});
+    insertVecChunk(db, {chunk_id: 'c-p-bare', record_id: 'p-bare', content_hash: 'hash-fresh'});
+    insertRecord(db, {
+      record_id: 'proj-bare',
+      file_path: 'projects/x/decisions.md',
+      type: 'project'
+    });
+    insertVecChunk(db, {chunk_id: 'c-proj', record_id: 'proj-bare', content_hash: 'hash-fresh'});
+    // archived permanent (enriched): must be excluded from coverage entirely.
+    insertRecord(db, {
+      record_id: 'arch',
+      file_path: 'topics/archive/2026/old.md',
+      type: 'permanent'
+    });
+    enrich.run('archived summary', 'arch');
+    insertVecChunk(db, {chunk_id: 'c-arch', record_id: 'arch', content_hash: 'hash-fresh'});
+
+    const {body} = await fetchJson(`${url}/system/lint`);
+    const r = body as {
+      ok: boolean;
+      total_issues: number;
+      coverage: {
+        enrichment: {
+          total: number;
+          enriched: number;
+          unenriched: number;
+          by_type: Record<string, {total: number; enriched: number; unenriched: number}>;
+        };
+      };
+    };
+    const cov = r.coverage.enrichment;
+    t.equal(cov.total, 3, 'active records counted (archived excluded)');
+    t.equal(cov.enriched, 1, 'one enriched active record');
+    t.equal(cov.unenriched, 2, 'two unenriched active records');
+    t.equal(cov.by_type['permanent']?.total, 2, 'permanent total excludes the archived note');
+    t.equal(cov.by_type['permanent']?.enriched, 1, 'permanent enriched=1');
+    t.equal(cov.by_type['permanent']?.unenriched, 1, 'permanent unenriched=1');
+    t.equal(cov.by_type['project']?.unenriched, 1, 'project unenriched=1');
+    // Coverage is a backfill metric, not an integrity bug — it must not move ok/total.
+    t.equal(r.total_issues, 0, 'coverage adds nothing to total_issues');
+    t.equal(r.ok, true, 'ok stays true despite unenriched notes');
+  });
+});
+
 test('GET /system/lint detects embedding_hash_drift', async t => {
   await withServer(async (url, db) => {
     insertRecord(db, {

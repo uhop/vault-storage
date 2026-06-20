@@ -829,6 +829,22 @@
             action: fixable > 0 ? 'cleanup-lint' : null
           });
         }
+        // A note with no `agent:` block files no suggestion of its own (only
+        // hash-drift on an existing block fires agent_enrichment_stale), so
+        // without this tile the enrichment debt would be invisible.
+        const cov = lint.coverage?.enrichment;
+        if (cov && cov.unenriched > 0) {
+          const breakdown = Object.entries(cov.by_type)
+            .filter(([, s]) => s.unenriched > 0)
+            .sort((a, b) => b[1].unenriched - a[1].unenriched)
+            .map(([type, s]) => `<code>${esc(type)}</code> ${s.unenriched}/${s.total}`)
+            .join(', ');
+          const pct = cov.total ? Math.round((cov.enriched / cov.total) * 100) : 100;
+          recs.push({
+            title: `${cov.unenriched} of ${cov.total} notes without an enrichment block (${pct}% enriched)`,
+            why: `No <code>agent:</code> block → no HyDE summary prefix at embed time. Files no suggestion of its own, so it never shows in scans — this is a live count. Run <code>/vault-enrich-all</code> to backfill. By type: ${breakdown}.`
+          });
+        }
         return recs;
       }
 

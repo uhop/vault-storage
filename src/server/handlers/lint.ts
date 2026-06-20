@@ -11,10 +11,22 @@ interface LintCheck {
   samples: Array<Record<string, unknown>>;
 }
 
+interface CoverageStat {
+  total: number;
+  enriched: number;
+  unenriched: number;
+}
+
 interface LintReport {
   ok: boolean;
   total_issues: number;
   checks: Record<string, LintCheck>;
+  // A backfill metric, not an integrity bug: a non-zero `unenriched` is the
+  // steady state, so it stays out of `checks` and adds nothing to
+  // `ok`/`total_issues` — which would otherwise trip resume every session.
+  coverage: {
+    enrichment: CoverageStat & {by_type: Record<string, CoverageStat>};
+  };
 }
 
 const SAMPLE_LIMIT = 10;
@@ -255,12 +267,41 @@ export const lintHandler =
       };
     }
 
+    // Active set matches vault-lint.mjs's archive exclusion so the two agree;
+    // computed live here rather than in a scan so the count never lags run-all.
+    let coverage: LintReport['coverage'];
+    {
+      const rows = db
+        .prepare(
+          `SELECT type,
+                  COUNT(*) AS total,
+                  SUM(CASE WHEN agent_summary IS NOT NULL AND agent_summary != '' THEN 1 ELSE 0 END) AS enriched
+             FROM records
+            WHERE file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
+            GROUP BY type
+            ORDER BY type`
+        )
+        .all() as {type: string | null; total: number; enriched: number}[];
+      const by_type: Record<string, CoverageStat> = {};
+      let total = 0;
+      let enriched = 0;
+      for (const row of rows) {
+        const t = Number(row.total);
+        const e = Number(row.enriched);
+        by_type[row.type ?? 'untyped'] = {total: t, enriched: e, unenriched: t - e};
+        total += t;
+        enriched += e;
+      }
+      coverage = {enrichment: {total, enriched, unenriched: total - enriched, by_type}};
+    }
+
     const total = Object.values(checks).reduce((sum, c) => sum + c.count, 0);
 
     const report: LintReport = {
       ok: total === 0,
       total_issues: total,
-      checks
+      checks,
+      coverage
     };
     sendJson(ctx.res, 200, report);
   };
