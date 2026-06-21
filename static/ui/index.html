@@ -829,20 +829,24 @@
             action: fixable > 0 ? 'cleanup-lint' : null
           });
         }
-        // A note with no `agent:` block files no suggestion of its own (only
-        // hash-drift on an existing block fires agent_enrichment_stale), so
-        // without this tile the enrichment debt would be invisible.
+        // Enrichment backlog. cov.unenriched is the *actionable* count —
+        // enrichable knowledge types with a non-empty body (operational types
+        // and empty stubs are excluded server-side), so this only surfaces real
+        // backfill, never intentional non-coverage. A note with no agent: block
+        // files no suggestion of its own, so without this tile the debt is invisible.
         const cov = lint.coverage?.enrichment;
         if (cov && cov.unenriched > 0) {
+          const enrichable = new Set(cov.enrichable_types || []);
           const breakdown = Object.entries(cov.by_type)
-            .filter(([, s]) => s.unenriched > 0)
-            .sort((a, b) => b[1].unenriched - a[1].unenriched)
-            .map(([type, s]) => `<code>${esc(type)}</code> ${s.unenriched}/${s.total}`)
+            .map(([type, s]) => [type, s.unenriched - (s.empty || 0)])
+            .filter(([type, n]) => enrichable.has(type) && n > 0)
+            .sort((a, b) => b[1] - a[1])
+            .map(([type, n]) => `<code>${esc(type)}</code> ${n}`)
             .join(', ');
           const pct = cov.total ? Math.round((cov.enriched / cov.total) * 100) : 100;
           recs.push({
-            title: `${cov.unenriched} of ${cov.total} notes without an enrichment block (${pct}% enriched)`,
-            why: `No <code>agent:</code> block → no HyDE summary prefix at embed time. Files no suggestion of its own, so it never shows in scans — this is a live count. Run <code>/vault-enrich-all</code> to backfill. By type: ${breakdown}.`
+            title: `${cov.unenriched} knowledge notes without enrichment (${pct}% of enrichable enriched)`,
+            why: `No <code>agent:</code> block → no HyDE summary prefix at embed time, and it files no suggestion of its own. Live count; operational types (log/meta/queue-item/state) and empty stubs are excluded. Run <code>/vault-enrich-all</code> to backfill. By type: ${breakdown}.`
           });
         }
         return recs;

@@ -15,6 +15,7 @@ interface CoverageStat {
   total: number;
   enriched: number;
   unenriched: number;
+  empty: number;
 }
 
 interface LintReport {
@@ -24,8 +25,17 @@ interface LintReport {
   // A backfill metric, not an integrity bug: a non-zero `unenriched` is the
   // steady state, so it stays out of `checks` and adds nothing to
   // `ok`/`total_issues` — which would otherwise trip resume every session.
+  // The headline (total/enriched/unenriched) is the *actionable* backlog —
+  // enrichable knowledge types with a non-empty body; `by_type` carries every
+  // active type raw (incl. operational + empty) for transparency.
   coverage: {
-    enrichment: CoverageStat & {by_type: Record<string, CoverageStat>};
+    enrichment: {
+      total: number;
+      enriched: number;
+      unenriched: number;
+      enrichable_types: string[];
+      by_type: Record<string, CoverageStat>;
+    };
   };
 }
 
@@ -33,6 +43,16 @@ const SAMPLE_LIMIT = 10;
 
 /** Consecutive git-sync poll failures before `auto_commit_failing` fires. */
 const AUTO_COMMIT_FAILURE_THRESHOLD = 3;
+
+/**
+ * Note types whose enrichment is a real backfill goal — the knowledge corpus.
+ * Operational/ephemeral types (log/meta/queue-item/state/index) are excluded
+ * from the actionable headline: state churns on every drift check, queue-items
+ * are short and volatile, and logs are born-enriched at capture, not
+ * backfilled — counting them would make the dashboard nag about intentional
+ * non-coverage forever. They still appear in `coverage.by_type` raw.
+ */
+const ENRICHABLE_TYPES = ['permanent', 'project', 'design', 'research', 'query'];
 
 /**
  * GET /system/lint — bug-finding integrity checks.
@@ -267,32 +287,57 @@ export const lintHandler =
       };
     }
 
-    // Active set matches vault-lint.mjs's archive exclusion so the two agree;
-    // computed live here rather than in a scan so the count never lags run-all.
+    // Enrichment coverage. `by_type` is the raw per-type breakdown over active
+    // (non-archive) records — matching vault-lint.mjs's archive exclusion. The
+    // headline is the *actionable* backlog: enrichable knowledge types only,
+    // with empty-body notes (the `null`/empty stubs the BODY lint owns)
+    // excluded — those need a body before enrichment means anything. Computed
+    // live here, not via a scan, so the count never lags run-all.
     let coverage: LintReport['coverage'];
     {
+      const emptyBody = `(body IS NULL OR TRIM(body) = '' OR LOWER(TRIM(body)) = 'null')`;
       const rows = db
         .prepare(
           `SELECT type,
                   COUNT(*) AS total,
-                  SUM(CASE WHEN agent_summary IS NOT NULL AND agent_summary != '' THEN 1 ELSE 0 END) AS enriched
+                  SUM(CASE WHEN agent_summary IS NOT NULL AND agent_summary != '' THEN 1 ELSE 0 END) AS enriched,
+                  SUM(CASE WHEN ${emptyBody} THEN 1 ELSE 0 END) AS empty,
+                  SUM(CASE WHEN (agent_summary IS NOT NULL AND agent_summary != '') AND NOT ${emptyBody} THEN 1 ELSE 0 END) AS enriched_nonempty
              FROM records
             WHERE file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
             GROUP BY type
             ORDER BY type`
         )
-        .all() as {type: string | null; total: number; enriched: number}[];
+        .all() as {
+        type: string | null;
+        total: number;
+        enriched: number;
+        empty: number;
+        enriched_nonempty: number;
+      }[];
+      const enrichable = new Set(ENRICHABLE_TYPES);
       const by_type: Record<string, CoverageStat> = {};
       let total = 0;
       let enriched = 0;
       for (const row of rows) {
         const t = Number(row.total);
         const e = Number(row.enriched);
-        by_type[row.type ?? 'untyped'] = {total: t, enriched: e, unenriched: t - e};
-        total += t;
-        enriched += e;
+        const em = Number(row.empty);
+        by_type[row.type ?? 'untyped'] = {total: t, enriched: e, unenriched: t - e, empty: em};
+        if (enrichable.has(row.type ?? '')) {
+          total += t - em; // actionable = enrichable type with a non-empty body
+          enriched += Number(row.enriched_nonempty);
+        }
       }
-      coverage = {enrichment: {total, enriched, unenriched: total - enriched, by_type}};
+      coverage = {
+        enrichment: {
+          total,
+          enriched,
+          unenriched: total - enriched,
+          enrichable_types: ENRICHABLE_TYPES,
+          by_type
+        }
+      };
     }
 
     const total = Object.values(checks).reduce((sum, c) => sum + c.count, 0);

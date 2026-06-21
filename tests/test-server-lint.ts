@@ -135,9 +135,10 @@ test('GET /system/lint on empty DB: ok=true, all checks 0', async t => {
   });
 });
 
-test('GET /system/lint reports enrichment coverage per type, excludes archive, outside ok/total', async t => {
+test('GET /system/lint enrichment coverage: actionable headline excludes archive, operational types, and empty bodies; by_type carries all', async t => {
   await withServer(async (url, db) => {
     const enrich = db.prepare('UPDATE records SET agent_summary = ? WHERE record_id = ?');
+    // Enrichable knowledge notes (non-empty body) — these drive the headline.
     insertRecord(db, {
       record_id: 'p-enriched',
       file_path: 'topics/p-enriched.md',
@@ -149,11 +150,28 @@ test('GET /system/lint reports enrichment coverage per type, excludes archive, o
     insertVecChunk(db, {chunk_id: 'c-p-bare', record_id: 'p-bare', content_hash: 'hash-fresh'});
     insertRecord(db, {
       record_id: 'proj-bare',
-      file_path: 'projects/x/decisions.md',
+      file_path: 'projects/x/learnings.md',
       type: 'project'
     });
     insertVecChunk(db, {chunk_id: 'c-proj', record_id: 'proj-bare', content_hash: 'hash-fresh'});
-    // archived permanent (enriched): must be excluded from coverage entirely.
+    // Empty-body enrichable note: in by_type, but NOT in the actionable headline
+    // (needs a body first — the BODY lint owns it).
+    insertRecord(db, {
+      record_id: 'p-empty',
+      file_path: 'topics/p-empty.md',
+      type: 'permanent',
+      body: 'null'
+    });
+    insertVecChunk(db, {chunk_id: 'c-p-empty', record_id: 'p-empty', content_hash: 'hash-fresh'});
+    // Operational type: in by_type, but excluded from the actionable headline.
+    insertRecord(db, {
+      record_id: 'st',
+      file_path: 'projects/x/state.md',
+      type: 'state',
+      body: '{"x":1}'
+    });
+    insertVecChunk(db, {chunk_id: 'c-st', record_id: 'st', content_hash: 'hash-fresh'});
+    // Archived (enriched): excluded from coverage entirely.
     insertRecord(db, {
       record_id: 'arch',
       file_path: 'topics/archive/2026/old.md',
@@ -171,18 +189,36 @@ test('GET /system/lint reports enrichment coverage per type, excludes archive, o
           total: number;
           enriched: number;
           unenriched: number;
-          by_type: Record<string, {total: number; enriched: number; unenriched: number}>;
+          enrichable_types: string[];
+          by_type: Record<
+            string,
+            {total: number; enriched: number; unenriched: number; empty: number}
+          >;
         };
       };
     };
     const cov = r.coverage.enrichment;
-    t.equal(cov.total, 3, 'active records counted (archived excluded)');
-    t.equal(cov.enriched, 1, 'one enriched active record');
-    t.equal(cov.unenriched, 2, 'two unenriched active records');
-    t.equal(cov.by_type['permanent']?.total, 2, 'permanent total excludes the archived note');
-    t.equal(cov.by_type['permanent']?.enriched, 1, 'permanent enriched=1');
-    t.equal(cov.by_type['permanent']?.unenriched, 1, 'permanent unenriched=1');
-    t.equal(cov.by_type['project']?.unenriched, 1, 'project unenriched=1');
+    // Headline = actionable: p-enriched + p-bare + proj-bare (3); p-empty (empty),
+    // st (operational), arch (archived) all excluded.
+    t.equal(cov.total, 3, 'headline counts only non-empty enrichable notes');
+    t.equal(cov.enriched, 1, 'one enriched in the actionable set');
+    t.equal(cov.unenriched, 2, 'two actionable unenriched (p-bare, proj-bare)');
+    t.ok(cov.enrichable_types.includes('permanent'), 'permanent is enrichable');
+    t.notOk(cov.enrichable_types.includes('state'), 'state is not enrichable');
+    // by_type carries all active types raw, incl. the empty count.
+    t.equal(
+      cov.by_type['permanent']?.total,
+      3,
+      'permanent raw total = 3 (incl. empty, excl. archive)'
+    );
+    t.equal(cov.by_type['permanent']?.empty, 1, 'permanent empty=1 (p-empty)');
+    t.equal(
+      cov.by_type['permanent']?.unenriched,
+      2,
+      'permanent raw unenriched=2 (p-bare, p-empty)'
+    );
+    t.equal(cov.by_type['state']?.total, 1, 'state present in by_type (operational, raw)');
+    t.equal(cov.by_type['project']?.empty, 0, 'project empty=0');
     // Coverage is a backfill metric, not an integrity bug — it must not move ok/total.
     t.equal(r.total_issues, 0, 'coverage adds nothing to total_issues');
     t.equal(r.ok, true, 'ok stays true despite unenriched notes');
