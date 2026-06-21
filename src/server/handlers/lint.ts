@@ -22,12 +22,8 @@ interface LintReport {
   ok: boolean;
   total_issues: number;
   checks: Record<string, LintCheck>;
-  // A backfill metric, not an integrity bug: a non-zero `unenriched` is the
-  // steady state, so it stays out of `checks` and adds nothing to
-  // `ok`/`total_issues` — which would otherwise trip resume every session.
-  // The headline (total/enriched/unenriched) is the *actionable* backlog —
-  // enrichable knowledge types with a non-empty body; `by_type` carries every
-  // active type raw (incl. operational + empty) for transparency.
+  // Backfill metric, not an integrity bug — kept out of `checks`/`ok`/
+  // `total_issues` so a normal non-zero `unenriched` doesn't trip resume.
   coverage: {
     enrichment: {
       total: number;
@@ -44,14 +40,9 @@ const SAMPLE_LIMIT = 10;
 /** Consecutive git-sync poll failures before `auto_commit_failing` fires. */
 const AUTO_COMMIT_FAILURE_THRESHOLD = 3;
 
-/**
- * Note types whose enrichment is a real backfill goal — the knowledge corpus.
- * Operational/ephemeral types (log/meta/queue-item/state/index) are excluded
- * from the actionable headline: state churns on every drift check, queue-items
- * are short and volatile, and logs are born-enriched at capture, not
- * backfilled — counting them would make the dashboard nag about intentional
- * non-coverage forever. They still appear in `coverage.by_type` raw.
- */
+// Knowledge corpus — the only types the actionable backlog counts. Operational
+// types (log/meta/queue-item/state/index) are excluded: churny or born-enriched-
+// not-backfilled, so counting them would nag forever (vault-storage decisions D4).
 const ENRICHABLE_TYPES = ['permanent', 'project', 'design', 'research', 'query'];
 
 /**
@@ -287,15 +278,15 @@ export const lintHandler =
       };
     }
 
-    // Enrichment coverage. `by_type` is the raw per-type breakdown over active
-    // (non-archive) records — matching vault-lint.mjs's archive exclusion. The
-    // headline is the *actionable* backlog: enrichable knowledge types only,
-    // with empty-body notes (the `null`/empty stubs the BODY lint owns)
-    // excluded — those need a body before enrichment means anything. Computed
-    // live here, not via a scan, so the count never lags run-all.
+    // Headline = actionable backlog (enrichable types, non-empty body); empty
+    // stubs are the BODY lint's job. Active set matches vault-lint.mjs's archive
+    // exclusion; computed live so it never lags run-all.
     let coverage: LintReport['coverage'];
     {
-      const emptyBody = `(body IS NULL OR TRIM(body) = '' OR LOWER(TRIM(body)) = 'null')`;
+      // SQLite TRIM() strips spaces only, not \n/\t/\r — trim an explicit charset
+      // so a "null\n" body matches vault-lint.mjs's `.trim()` empty-detection.
+      const trimmed = `TRIM(body, char(32) || char(9) || char(10) || char(13))`;
+      const emptyBody = `(body IS NULL OR ${trimmed} = '' OR LOWER(${trimmed}) = 'null')`;
       const rows = db
         .prepare(
           `SELECT type,

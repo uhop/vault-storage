@@ -160,7 +160,7 @@ test('GET /system/lint enrichment coverage: actionable headline excludes archive
       record_id: 'p-empty',
       file_path: 'topics/p-empty.md',
       type: 'permanent',
-      body: 'null'
+      body: 'null\n' // trailing newline: SQLite TRIM() must strip \n to catch this
     });
     insertVecChunk(db, {chunk_id: 'c-p-empty', record_id: 'p-empty', content_hash: 'hash-fresh'});
     // Operational type: in by_type, but excluded from the actionable headline.
