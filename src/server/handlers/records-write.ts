@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {join} from 'node:path';
+import {buildEdges} from '../../importer/build-edges.ts';
 import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
@@ -83,12 +84,15 @@ export const putRecordHandler =
     // Re-import: parses the file we just wrote, recomputes content_hash, and
     // upserts. Preserves record_id (upsert is keyed on file_path).
     const absolutePath = join(deps.vaultDataPath, existing.filePath);
-    importFile(records, existing.filePath, absolutePath, undefined, {
+    const {recordId} = importFile(records, existing.filePath, absolutePath, undefined, {
       tags,
       agentStale,
       tagSuggestion,
       archiveCandidate
     });
+    // Scoped edge pass so an FM `edges:` override settles its edge_type
+    // suggestion on the write itself, not at the next watcher/reindex pass.
+    buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
 
     sendNoContent(ctx.res, {ETag: `"${etag}"`});
   };

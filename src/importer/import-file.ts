@@ -226,26 +226,30 @@ export const importFile = (
 
   // Agent-judged tag suggestions. Each tag in `agent.tags_suggested` that
   // isn't already on the record's resolved tag set files a pending
-  // `tag_suggestion`. Tags that ARE realized auto-accept any prior pending
-  // suggestion (the user/agent followed through). Requires both options.tags
-  // and options.tagSuggestion — without TagsImporter we can't tell what's
-  // realized, so the comparison would be unsafe.
-  if (options.tagSuggestion && options.tags && agent.tagsSuggested.length > 0) {
+  // `tag_suggestion`. Requires both options.tags and options.tagSuggestion —
+  // without TagsImporter we can't tell what's realized, so the comparison
+  // would be unsafe.
+  if (options.tagSuggestion && options.tags) {
     const tags = options.tags;
     const realized = tags.getTagsForRecord(recordId);
-    const seen = new Set<string>();
-    for (const raw of agent.tagsSuggested) {
-      const tag = tags.resolveTag(raw);
-      if (tag === null || seen.has(tag)) continue;
-      seen.add(tag);
-      if (!realized.has(tag)) {
-        options.tagSuggestion.file({tag, record_id: recordId, file_path: relativePath}, now);
+    if (agent.tagsSuggested.length > 0) {
+      const seen = new Set<string>();
+      for (const raw of agent.tagsSuggested) {
+        const tag = tags.resolveTag(raw);
+        if (tag === null || seen.has(tag)) continue;
+        seen.add(tag);
+        if (!realized.has(tag)) {
+          options.tagSuggestion.file({tag, record_id: recordId, file_path: relativePath}, now);
+        }
       }
     }
     // Auto-accept any pending suggestion for this record whose payload tag,
     // resolved through the alias map, is now realized — covers an alias-spelled
     // payload (e.g. `standard` vs realized canonical `conventions`) that the
-    // per-tag canonical lookup would otherwise miss.
+    // per-tag canonical lookup would otherwise miss. Must run even when
+    // `agent.tags_suggested` is empty or absent: the block may have been
+    // cleared or refreshed while a pending suggestion remains, and gating the
+    // accept on the filing condition orphans it forever.
     acceptRealizedTagSuggestions(
       options.tagSuggestion,
       recordId,

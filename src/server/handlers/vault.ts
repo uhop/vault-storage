@@ -12,6 +12,7 @@ import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import type {Embedder} from '../../embeddings/types.ts';
+import {buildEdges} from '../../importer/build-edges.ts';
 import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
@@ -344,12 +345,15 @@ export const putVaultHandler =
       throw err;
     }
 
-    importFile(records, path, absolutePath, undefined, {
+    const {recordId} = importFile(records, path, absolutePath, undefined, {
       tags,
       agentStale,
       tagSuggestion,
       archiveCandidate
     });
+    // Scoped edge pass so an FM `edges:` override settles its edge_type
+    // suggestion on the write itself, not at the next watcher/reindex pass.
+    buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
     // A create adds a path the cached wikilink resolver doesn't know.
     if (!existing) deps.resolverCache.invalidate();
     sendNoContent(ctx.res, {ETag: `"${etag}"`});
@@ -630,7 +634,7 @@ export const supersedeVaultHandler =
       body: archivedFm.body,
       vaultDataPath: deps.vaultDataPath
     });
-    importFile(records, archivePath, archiveAbs, undefined, filers);
+    const archived = importFile(records, archivePath, archiveAbs, undefined, filers);
 
     // 3. Write the successor with the supersession wired in. Edges are
     //    backed by BODY wikilinks (the FM `edges:` map only retypes body
@@ -653,7 +657,14 @@ export const supersedeVaultHandler =
       body: `${newBody.replace(/\s+$/, '')}\n\n${footer}\n`,
       vaultDataPath: deps.vaultDataPath
     });
-    importFile(records, newPath, result.absolutePath, undefined, filers);
+    const successor = importFile(records, newPath, result.absolutePath, undefined, filers);
+    // Scoped edge pass: materializes the successor's `supersedes` edge (and
+    // settles any pending edge_type suggestions) in the same request instead
+    // of waiting for the watcher drain.
+    buildEdges(deps.db, {
+      vaultRoot: deps.vaultDataPath,
+      scope: new Set([archived.recordId, successor.recordId])
+    });
 
     // Two path-set changes (old moved, new created).
     deps.resolverCache.invalidate();

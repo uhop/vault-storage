@@ -188,6 +188,17 @@ const readFmTags = (abs: string): FmReadResult => {
   return {body, tags};
 };
 
+// The write-side re-import: full filer set so suggestion resolution settles
+// on contact rather than at the next reindex.
+const reimport = (deps: FmHandlerDeps, row: RecordPathRow, abs: string): void => {
+  importFile(deps.records, row.file_path, abs, undefined, {
+    tags: new TagsImporter(deps.db),
+    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
+    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
+    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
+  });
+};
+
 const persistTags = (
   deps: FmHandlerDeps,
   row: RecordPathRow,
@@ -211,12 +222,7 @@ const persistTags = (
     }
     throw err;
   }
-  importFile(deps.records, row.file_path, abs, undefined, {
-    tags: new TagsImporter(deps.db),
-    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-  });
+  reimport(deps, row, abs);
   return true;
 };
 
@@ -291,6 +297,11 @@ export const postRecordTagHandler =
     if (!abs) return;
     const {body, tags} = readFmTags(abs);
     if (tags.includes(tag)) {
+      // No-op adds still re-import (no disk write): the tag being already
+      // realized is exactly what settles a pending tag_suggestion, and
+      // skipping the import here left those accepts deferred to the next
+      // reindex (the 2026-06-20 "no-op accept" residue).
+      reimport(deps, row, abs);
       sendJson(ctx.res, 200, {tags});
       return;
     }
@@ -622,12 +633,7 @@ export const patchRecordFmHandler =
         }
         throw err;
       }
-      importFile(deps.records, row.file_path, abs, undefined, {
-        tags: new TagsImporter(deps.db),
-        agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-        tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-        archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-      });
+      reimport(deps, row, abs);
     }
 
     sendJson(ctx.res, 200, {changed: touchedRoots.size > 0, results});

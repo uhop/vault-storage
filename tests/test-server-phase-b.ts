@@ -639,6 +639,174 @@ test('POST /suggestions/{id}/accept on already-resolved returns 409', async t =>
   }
 });
 
+// ─── suggestion resolution settles on contact ───────────────────────────────
+
+const suggestionRow = (
+  db: DatabaseSync,
+  id: string
+): {status: string; resolved_by: string | null} =>
+  db.prepare('SELECT status, resolved_by FROM suggestions WHERE id = ?').get(id) as {
+    status: string;
+    resolved_by: string | null;
+  };
+
+const seedTaggedNote = (root: string): void => {
+  writeMd(
+    root,
+    'topics/tagged.md',
+    [
+      '---',
+      'title: Tagged',
+      'created: 2026-04-01',
+      'updated: 2026-04-01',
+      'tags:',
+      '  - docker',
+      '---',
+      'Tagged body.',
+      ''
+    ].join('\n')
+  );
+};
+
+test('POST /sections/{id}/tags no-op add still settles pending tag_suggestion', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedTaggedNote(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/tagged.md');
+      // Import rejected `docker` (unknown tag); the taxonomy add backfills
+      // the tags row via the pending new_tag suggestion, realizing the tag.
+      const add = await fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'docker'})
+      });
+      t.equal(add.status, 200, 'taxonomy add ok');
+      seedSuggestion(ctx.db, {
+        id: 'ts-noop',
+        kind: 'tag_suggestion',
+        subjectId: id,
+        payload: {tag: 'docker', record_id: id, file_path: 'topics/tagged.md'}
+      });
+
+      const r = await fetchAuthed(`${ctx.url}/sections/${id}/tags`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'docker'})
+      });
+      t.equal(r.status, 200, '200 ok');
+      t.match(r.body, {tags: ['docker']}, 'no-op: tag already on FM');
+
+      t.match(
+        suggestionRow(ctx.db, 'ts-noop'),
+        {status: 'accepted', resolved_by: 'tag-realized'},
+        'pending settled on the no-op add'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} settles pending tag_suggestion without agent.tags_suggested', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedTaggedNote(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/tagged.md');
+      await fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'docker'})
+      });
+      seedSuggestion(ctx.db, {
+        id: 'ts-put',
+        kind: 'tag_suggestion',
+        subjectId: id,
+        payload: {tag: 'docker', record_id: id, file_path: 'topics/tagged.md'}
+      });
+
+      const r = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Tagged', tags: ['docker']},
+          body: 'Edited body.\n'
+        })
+      });
+      t.equal(r.status, 204, '204 written');
+
+      t.match(
+        suggestionRow(ctx.db, 'ts-put'),
+        {status: 'accepted', resolved_by: 'tag-realized'},
+        'realized tag settles even with no agent.tags_suggested block'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} FM edges override settles pending edge_type suggestion', async t => {
+  const {root, cleanup} = setup();
+  try {
+    writeMd(
+      root,
+      'topics/alpha.md',
+      [
+        '---',
+        'title: Alpha',
+        'created: 2026-04-01',
+        'updated: 2026-04-01',
+        '---',
+        'See [[topics/beta]].',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/beta.md',
+      ['---', 'title: Beta', 'created: 2026-04-02', 'updated: 2026-04-02', '---', 'Beta.', ''].join(
+        '\n'
+      )
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const pending = await fetchAuthed(`${ctx.url}/suggestions?kind=edge_type`);
+      const items = (pending.body as {items: Array<{id: string}>}).items;
+      t.equal(items.length, 1, 'importVault filed the default-cites review');
+      const suggestionId = items[0]!.id;
+
+      const r = await fetchAuthed(`${ctx.url}/sections/${alphaId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Alpha', edges: {'topics/beta': 'derived-from'}},
+          body: 'See [[topics/beta]].\n'
+        })
+      });
+      t.equal(r.status, 204, '204 written');
+
+      t.match(
+        suggestionRow(ctx.db, suggestionId),
+        {status: 'accepted', resolved_by: 'fm-override'},
+        'edge_type settled by the write itself, no reindex needed'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /suggestions/{unknown}/accept returns 404', async t => {
   const {root, cleanup} = setup();
   try {
