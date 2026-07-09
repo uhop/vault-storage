@@ -31,6 +31,7 @@ export interface LintReport {
       unenriched: number;
       enrichable_types: string[];
       by_type: Record<string, CoverageStat>;
+      unenriched_records: Array<{record_id: string; file_path: string; type: string}>;
     };
   };
 }
@@ -44,6 +45,8 @@ const AUTO_COMMIT_FAILURE_THRESHOLD = 3;
 // types (log/meta/queue-item/state/index) are excluded: churny or born-enriched-
 // not-backfilled, so counting them would nag forever (vault-storage decisions D4).
 const ENRICHABLE_TYPES = ['permanent', 'project', 'design', 'research', 'query'];
+
+const UNENRICHED_RECORDS_CAP = 500;
 
 /**
  * GET /system/lint — bug-finding integrity checks.
@@ -317,13 +320,37 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
         enriched += Number(row.enriched_nonempty);
       }
     }
+    // The authoritative worklist for enrichment consumers (/vault-enrich-all):
+    // exactly the headline's exclusion rules, so skills stop reconstructing
+    // them client-side (that reconstruction drifted twice — 2026-06-30).
+    // Capped; a consumer detects truncation by comparing length to `unenriched`.
+    const unenrichedRecords =
+      total - enriched > 0
+        ? (db
+            .prepare(
+              `SELECT record_id, file_path, type
+                 FROM records
+                WHERE file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
+                  AND type IN (${ENRICHABLE_TYPES.map(() => '?').join(',')})
+                  AND NOT ${emptyBody}
+                  AND (agent_summary IS NULL OR agent_summary = '')
+                ORDER BY file_path
+                LIMIT ${UNENRICHED_RECORDS_CAP}`
+            )
+            .all(...ENRICHABLE_TYPES) as unknown[] as Array<{
+            record_id: string;
+            file_path: string;
+            type: string;
+          }>)
+        : [];
     coverage = {
       enrichment: {
         total,
         enriched,
         unenriched: total - enriched,
         enrichable_types: ENRICHABLE_TYPES,
-        by_type
+        by_type,
+        unenriched_records: unenrichedRecords
       }
     };
   }

@@ -194,6 +194,7 @@ test('GET /system/lint enrichment coverage: actionable headline excludes archive
             string,
             {total: number; enriched: number; unenriched: number; empty: number}
           >;
+          unenriched_records: Array<{record_id: string; file_path: string; type: string}>;
         };
       };
     };
@@ -219,6 +220,16 @@ test('GET /system/lint enrichment coverage: actionable headline excludes archive
     );
     t.equal(cov.by_type['state']?.total, 1, 'state present in by_type (operational, raw)');
     t.equal(cov.by_type['project']?.empty, 0, 'project empty=0');
+    // The authoritative worklist: exactly the headline's unenriched records,
+    // with the same exclusions (empty bodies, operational types, archive).
+    t.deepEqual(
+      cov.unenriched_records,
+      [
+        {record_id: 'proj-bare', file_path: 'projects/x/learnings.md', type: 'project'},
+        {record_id: 'p-bare', file_path: 'topics/p-bare.md', type: 'permanent'}
+      ],
+      'unenriched_records lists the actionable records, path-ordered'
+    );
     // Coverage is a backfill metric, not an integrity bug — it must not move ok/total.
     t.equal(r.total_issues, 0, 'coverage adds nothing to total_issues');
     t.equal(r.ok, true, 'ok stays true despite unenriched notes');
