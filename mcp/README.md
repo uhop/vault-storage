@@ -32,16 +32,27 @@ was started with (e.g., the one in your `.env`).
 
 ## Tools
 
-Twenty tools mapping to the REST surface, grouped by purpose:
+Thirty-one tools mapping to the REST surface, grouped by purpose:
 
-- **Search & list** — `vault_search`, `vault_list_pieces`, `vault_list_folder`,
-  `vault_list_tags`, `vault_records_by_tag`
+- **Search & list** — `vault_search`, `vault_list_pieces` (filters incl.
+  alias-aware `tag`), `vault_list_folder`
 - **Read** — `vault_read_piece`, `vault_read_meta`, `vault_read_file`
 - **Write** — `vault_write_file`, `vault_update_piece`, `vault_delete_file`
+  (writes accept `agent.derived_from_hash: "auto"` — the server stamps the
+  body hash + `derived_at`)
+- **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
-- **Review queue** — `vault_list_suggestions`, `vault_read_suggestion`,
-  `vault_accept_suggestion`, `vault_reject_suggestion`
-- **Sync & system** — `vault_sync_from_obsidian`, `vault_status`
+- **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
+  per-item record briefs + tag taxonomy info), `vault_read_suggestion`,
+  `vault_suggestions_summary`, `vault_accept_suggestion`,
+  `vault_reject_suggestion`, `vault_reopen_suggestion`,
+  `vault_create_suggestion`
+- **Queue items** — `vault_queue_top`, `vault_queue_by_section`,
+  `vault_queue_by_priority`, `vault_queue_by_project`,
+  `vault_queue_project_archive`, `vault_queue_reindex`
+- **System** — `vault_status`, `vault_lint`, `vault_resume_bundle` (one-shot
+  session-start bundle: reindex + lint + suggestions + workflow + log
+  summaries + project notes)
 
 Tool input schemas inline closed-enum lists (record types, statuses, edge
 types, suggestion kinds) so the agent learns the canonical surface at

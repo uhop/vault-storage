@@ -2,7 +2,7 @@
 
 An AI-agent-first persistent knowledge base. Markdown files are the source of truth; a SQLite + `sqlite-vec` index sits next to them and provides fast lookup, semantic search, and typed-edge traversal for AI agents.
 
-**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue), MCP adapter (32 tools / 3 resources), file-watcher with auto-reindex, edge GC, auto-commit, Docker packaging. The Obsidian cutover machinery (`/sync/from-obsidian`, mount plumbing) was retired 2026-06-11 after the migration completed; the one-time `migrate` CLI command remains for vault-tree imports. Not yet: suggestions review surface, decay/maintenance jobs.
+**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue), MCP adapter (31 tools / 3 resources), file-watcher with auto-reindex, edge GC, auto-commit, Docker packaging. The Obsidian cutover machinery (`/sync/from-obsidian`, mount plumbing) was retired 2026-06-11 after the migration completed; the one-time `migrate` CLI command remains for vault-tree imports. Not yet: suggestions review surface, decay/maintenance jobs.
 
 ## Architecture
 
@@ -119,7 +119,7 @@ All endpoints require `Authorization: Bearer <token>`.
 | POST   | `/vault/supersede`              | Replace a note with a successor, archiving the superseded one. Body: `{old_path, new_path?, frontmatter, body}` (new note in the standard JSON write shape; `new_path` defaults to `old_path` — supersede-in-place, so inbound wikilinks resolve to the replacement). Validation-first: a doomed request mutates nothing. The old note moves to `<dir>/archive/<YYYY>/<name>` with `record_id` preserved (edges/embeddings/suggestions survive) and gets `status: superseded`; the successor's `edges:` map gains a `supersedes` edge to the archived path (caller edges preserved). 404 missing old, 409 occupied `new_path`/archive slot. Returns `{old: {path, record_id}, new: {path, record_id, etag}}`.                                                                                                                                                                                                                                                                                                                       |
 | PATCH  | `/sections/{record_id}/fm`      | Atomic value-based membership ops on frontmatter **arrays**. Body: `{ops: [{op: "add" \| "remove", path: "/agent/tags_suggested", value: <json>}, …]}` — paths are RFC 6901 pointers addressing the array itself; `add` appends unless a structurally-equal member exists, `remove` drops every match; both idempotent. The whole request is atomic, and a no-change request skips the write entirely (no `updated` churn). Deliberately not RFC 6902 — its index-based `remove` would reintroduce the read-find-index TOCTOU this primitive retires. Protected roots: DB-only keys, `created`/`updated`, and `tags` (use the tag endpoints). Returns `{changed, results: [{op, path, changed, array}]}`.                                                                                                                                                                                                                                                                                                                           |
 
-The table above is a selection. The full surface also covers search (`POST /search/simple`), edges (`/sections/{id}/neighborhood`, `/backlinks`, `/similar`), tags (`GET /tags`, `GET /tags/{tag}` — taxonomy row with description/aliases/count, `GET /tags/{tag}/records`, `POST /tags/taxonomy`, `POST /tags/aliases`), the suggestions review queue (`?expand=context` inlines per-item record briefs + tag info for triage), queue-item slices (`/queue/*`), and maintenance ops (`POST /maintenance/*`); the MCP adapter mirrors it as 32 tools.
+The table above is a selection. The full surface also covers search (`POST /search/simple`), edges (`/sections/{id}/neighborhood`, `/backlinks`, `/similar`), tags (`GET /tags`, `GET /tags/{tag}` — taxonomy row with description/aliases/count, `GET /tags/{tag}/records`, `POST /tags/taxonomy`, `POST /tags/aliases`), the suggestions review queue (`?expand=context` inlines per-item record briefs + tag info for triage), queue-item slices (`/queue/*`), and maintenance ops (`POST /maintenance/*`); the MCP adapter mirrors it as 31 tools.
 
 ### CLI subcommands
 
@@ -151,7 +151,7 @@ session:
   the REST API directly through the `bin/vault-curl` wrapper. Backup +
   install instructions in [`skills/README.md`](skills/README.md).
 - **MCP adapter** — the `mcp/` sub-package exposes the REST surface to Claude
-  Code as 32 tools and 3 resources with closed-enum input schemas. See
+  Code as 31 tools and 3 resources with closed-enum input schemas. See
   `.mcp.json.example` for project-scope activation; `skills/README.md` covers
   user-scope setup. A standalone, checkout-free installer (release tarball +
   `curl | sh`) ships with each `mcp-*` release: `scripts/install-mcp.sh`.
