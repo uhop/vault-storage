@@ -18,7 +18,7 @@ interface CoverageStat {
   empty: number;
 }
 
-interface LintReport {
+export interface LintReport {
   ok: boolean;
   total_issues: number;
   checks: Record<string, LintCheck>;
@@ -56,240 +56,237 @@ const ENRICHABLE_TYPES = ['permanent', 'project', 'design', 'research', 'query']
  * provides up to 10 identifiers per check so the agent can investigate
  * without a follow-up query.
  */
-export const lintHandler =
-  (deps: LintDeps): Handler =>
-  ctx => {
-    const {db} = deps;
-    const checks: Record<string, LintCheck> = {};
+export const computeLintReport = (db: DatabaseSync): LintReport => {
+  const checks: Record<string, LintCheck> = {};
 
-    // Embedding chunks whose recorded content_hash drifted from the
-    // record's current hash. embedPending re-embeds when these mismatch;
-    // persistent drift means the pass didn't run (or crashed) since the
-    // body changed.
-    {
-      const rows = db
-        .prepare(
-          `SELECT DISTINCT c.record_id, r.file_path
+  // Embedding chunks whose recorded content_hash drifted from the
+  // record's current hash. embedPending re-embeds when these mismatch;
+  // persistent drift means the pass didn't run (or crashed) since the
+  // body changed.
+  {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT c.record_id, r.file_path
              FROM chunks c
              JOIN records r ON r.record_id = c.record_id
             WHERE c.content_hash != r.content_hash`
-        )
-        .all() as {record_id: string; file_path: string}[];
-      checks['embedding_hash_drift'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
-          id: r.record_id,
-          file_path: r.file_path
-        }))
-      };
-    }
+      )
+      .all() as {record_id: string; file_path: string}[];
+    checks['embedding_hash_drift'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
+        id: r.record_id,
+        file_path: r.file_path
+      }))
+    };
+  }
 
-    // Records with no chunks. Indicates the embedder was disabled at
-    // import time, embedPending hasn't run, or a crash between record
-    // insert and embed. (Plain correlated NOT EXISTS — chunks.record_id
-    // is B-tree-indexed since schema 0010; the pre-0010 CTE workaround
-    // for the unindexed vec0 aux column is gone.)
-    {
-      const rows = db
-        .prepare(
-          `SELECT r.record_id, r.file_path
+  // Records with no chunks. Indicates the embedder was disabled at
+  // import time, embedPending hasn't run, or a crash between record
+  // insert and embed. (Plain correlated NOT EXISTS — chunks.record_id
+  // is B-tree-indexed since schema 0010; the pre-0010 CTE workaround
+  // for the unindexed vec0 aux column is gone.)
+  {
+    const rows = db
+      .prepare(
+        `SELECT r.record_id, r.file_path
              FROM records r
             WHERE NOT EXISTS (
               SELECT 1 FROM chunks c WHERE c.record_id = r.record_id
             )`
-        )
-        .all() as {record_id: string; file_path: string}[];
-      checks['records_without_embeddings'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
-          id: r.record_id,
-          file_path: r.file_path
-        }))
-      };
-    }
+      )
+      .all() as {record_id: string; file_path: string}[];
+    checks['records_without_embeddings'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
+        id: r.record_id,
+        file_path: r.file_path
+      }))
+    };
+  }
 
-    // Chunks whose record_id no longer exists in records. The
-    // records_after_delete trigger (0007, rebuilt in 0010) guards
-    // against new orphans by cascading records-delete to chunks +
-    // record_vec; orphans that slip past it (raw DB access) need
-    // /maintenance/cleanup-lint to drain.
-    {
-      const rows = db
-        .prepare(
-          `SELECT DISTINCT c.record_id
+  // Chunks whose record_id no longer exists in records. The
+  // records_after_delete trigger (0007, rebuilt in 0010) guards
+  // against new orphans by cascading records-delete to chunks +
+  // record_vec; orphans that slip past it (raw DB access) need
+  // /maintenance/cleanup-lint to drain.
+  {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT c.record_id
              FROM chunks c
             WHERE NOT EXISTS (
               SELECT 1 FROM records r WHERE r.record_id = c.record_id
             )`
-        )
-        .all() as {record_id: string}[];
-      checks['orphan_embeddings'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
-      };
-    }
+      )
+      .all() as {record_id: string}[];
+    checks['orphan_embeddings'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
+    };
+  }
 
-    // record_vec rows with no chunks metadata row. The two tables are
-    // written and deleted together (setChunks, deleteRecord, the 0010
-    // trigger), so divergence indicates a bug or raw DB access. New
-    // failure class introduced by the 0010 metadata split; cleaned by
-    // /maintenance/cleanup-lint.
-    {
-      const rows = db
-        .prepare(
-          `SELECT v.chunk_id
+  // record_vec rows with no chunks metadata row. The two tables are
+  // written and deleted together (setChunks, deleteRecord, the 0010
+  // trigger), so divergence indicates a bug or raw DB access. New
+  // failure class introduced by the 0010 metadata split; cleaned by
+  // /maintenance/cleanup-lint.
+  {
+    const rows = db
+      .prepare(
+        `SELECT v.chunk_id
              FROM record_vec v
             WHERE NOT EXISTS (
               SELECT 1 FROM chunks c WHERE c.chunk_id = v.chunk_id
             )`
-        )
-        .all() as {chunk_id: string}[];
-      checks['orphan_vec_rows'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.chunk_id}))
-      };
-    }
+      )
+      .all() as {chunk_id: string}[];
+    checks['orphan_vec_rows'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.chunk_id}))
+    };
+  }
 
-    // record_doc_vec rows whose record_id no longer exists in records.
-    // Same structural cause + cascade as orphan_embeddings; tracked
-    // separately so the operator sees which vec table is affected.
-    {
-      const rows = db
-        .prepare(
-          `SELECT v.record_id
+  // record_doc_vec rows whose record_id no longer exists in records.
+  // Same structural cause + cascade as orphan_embeddings; tracked
+  // separately so the operator sees which vec table is affected.
+  {
+    const rows = db
+      .prepare(
+        `SELECT v.record_id
              FROM record_doc_vec v
             WHERE NOT EXISTS (
               SELECT 1 FROM records r WHERE r.record_id = v.record_id
             )`
-        )
-        .all() as {record_id: string}[];
-      checks['orphan_doc_embeddings'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
-      };
-    }
+      )
+      .all() as {record_id: string}[];
+    checks['orphan_doc_embeddings'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
+    };
+  }
 
-    // Records with temporal anomalies: updated < created, or stamps in
-    // the future. Future stamps usually indicate clock skew at write
-    // time; updated < created indicates frontmatter corruption.
-    {
-      const now = new Date().toISOString();
-      const rows = db
-        .prepare(
-          `SELECT record_id, file_path, created, updated
+  // Records with temporal anomalies: updated < created, or stamps in
+  // the future. Future stamps usually indicate clock skew at write
+  // time; updated < created indicates frontmatter corruption.
+  {
+    const now = new Date().toISOString();
+    const rows = db
+      .prepare(
+        `SELECT record_id, file_path, created, updated
              FROM records
             WHERE updated < created OR created > ? OR updated > ?`
-        )
-        .all(now, now) as {
-        record_id: string;
-        file_path: string;
-        created: string;
-        updated: string;
-      }[];
-      checks['temporal_anomalies'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
-          id: r.record_id,
-          file_path: r.file_path,
-          created: r.created,
-          updated: r.updated
-        }))
-      };
-    }
+      )
+      .all(now, now) as {
+      record_id: string;
+      file_path: string;
+      created: string;
+      updated: string;
+    }[];
+    checks['temporal_anomalies'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
+        id: r.record_id,
+        file_path: r.file_path,
+        created: r.created,
+        updated: r.updated
+      }))
+    };
+  }
 
-    // Pending suggestions whose subject_id points at a record that no
-    // longer exists. Schema 9's records_after_delete_resolve_suggestions
-    // trigger prevents new orphans by cascading records-delete to
-    // suggestions; pre-trigger orphans (suggestions whose subject was
-    // deleted before schema 9 landed) still need /maintenance/cleanup-lint
-    // to drain. NULL subject_id is allowed (system-level kinds like
-    // inefficiency_detected); only NOT NULL rows are checked.
-    {
-      const rows = db
-        .prepare(
-          `SELECT s.id, s.kind, s.subject_id
+  // Pending suggestions whose subject_id points at a record that no
+  // longer exists. Schema 9's records_after_delete_resolve_suggestions
+  // trigger prevents new orphans by cascading records-delete to
+  // suggestions; pre-trigger orphans (suggestions whose subject was
+  // deleted before schema 9 landed) still need /maintenance/cleanup-lint
+  // to drain. NULL subject_id is allowed (system-level kinds like
+  // inefficiency_detected); only NOT NULL rows are checked.
+  {
+    const rows = db
+      .prepare(
+        `SELECT s.id, s.kind, s.subject_id
              FROM suggestions s
             WHERE s.status = 'pending'
               AND s.subject_id IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1 FROM records r WHERE r.record_id = s.subject_id
               )`
-        )
-        .all() as {id: string; kind: string; subject_id: string}[];
-      checks['orphan_suggestions'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
-          id: r.id,
-          kind: r.kind,
-          subject_id: r.subject_id
-        }))
-      };
-    }
+      )
+      .all() as {id: string; kind: string; subject_id: string}[];
+    checks['orphan_suggestions'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
+        id: r.id,
+        kind: r.kind,
+        subject_id: r.subject_id
+      }))
+    };
+  }
 
-    // tag_aliases pointing to a canonical missing from tags_taxonomy.
-    // Foreign keys prevent this when PRAGMA foreign_keys = ON, but
-    // check as a safety net.
-    {
-      const rows = db
-        .prepare(
-          `SELECT a.alias, a.canonical
+  // tag_aliases pointing to a canonical missing from tags_taxonomy.
+  // Foreign keys prevent this when PRAGMA foreign_keys = ON, but
+  // check as a safety net.
+  {
+    const rows = db
+      .prepare(
+        `SELECT a.alias, a.canonical
              FROM tag_aliases a
             WHERE NOT EXISTS (
               SELECT 1 FROM tags_taxonomy t WHERE t.tag = a.canonical
             )`
-        )
-        .all() as {alias: string; canonical: string}[];
-      checks['dangling_tag_aliases'] = {
-        count: rows.length,
-        samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
-          id: r.alias,
-          canonical: r.canonical
-        }))
-      };
-    }
+      )
+      .all() as {alias: string; canonical: string}[];
+    checks['dangling_tag_aliases'] = {
+      count: rows.length,
+      samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
+        id: r.alias,
+        canonical: r.canonical
+      }))
+    };
+  }
 
-    // Auto-commit health (Tier-1 backup, C2). git-sync persists a
-    // consecutive-failure streak under meta `git_sync_*` keys; one failed
-    // poll is transient noise, a streak of AUTO_COMMIT_FAILURE_THRESHOLD+
-    // means the backup cadence is down across multiple polls. Motivating
-    // incident: a stale index.lock starved auto-commit silently for four
-    // days (2026-06-08→11) with the only signal in container stderr.
-    {
-      const rows = db
-        .prepare(
-          `SELECT key, value FROM meta
+  // Auto-commit health (Tier-1 backup, C2). git-sync persists a
+  // consecutive-failure streak under meta `git_sync_*` keys; one failed
+  // poll is transient noise, a streak of AUTO_COMMIT_FAILURE_THRESHOLD+
+  // means the backup cadence is down across multiple polls. Motivating
+  // incident: a stale index.lock starved auto-commit silently for four
+  // days (2026-06-08→11) with the only signal in container stderr.
+  {
+    const rows = db
+      .prepare(
+        `SELECT key, value FROM meta
             WHERE key IN ('git_sync_consecutive_failures', 'git_sync_last_error', 'git_sync_failing_since')`
-        )
-        .all() as {key: string; value: string}[];
-      const meta = new Map(rows.map(r => [r.key, r.value]));
-      const failures = Number(meta.get('git_sync_consecutive_failures') ?? '0');
-      const failing = Number.isFinite(failures) && failures >= AUTO_COMMIT_FAILURE_THRESHOLD;
-      checks['auto_commit_failing'] = {
-        count: failing ? 1 : 0,
-        samples: failing
-          ? [
-              {
-                consecutive_failures: failures,
-                failing_since: meta.get('git_sync_failing_since') ?? null,
-                last_error: meta.get('git_sync_last_error') ?? null
-              }
-            ]
-          : []
-      };
-    }
+      )
+      .all() as {key: string; value: string}[];
+    const meta = new Map(rows.map(r => [r.key, r.value]));
+    const failures = Number(meta.get('git_sync_consecutive_failures') ?? '0');
+    const failing = Number.isFinite(failures) && failures >= AUTO_COMMIT_FAILURE_THRESHOLD;
+    checks['auto_commit_failing'] = {
+      count: failing ? 1 : 0,
+      samples: failing
+        ? [
+            {
+              consecutive_failures: failures,
+              failing_since: meta.get('git_sync_failing_since') ?? null,
+              last_error: meta.get('git_sync_last_error') ?? null
+            }
+          ]
+        : []
+    };
+  }
 
-    // Headline = actionable backlog (enrichable types, non-empty body); empty
-    // stubs are the BODY lint's job. Active set matches vault-lint.mjs's archive
-    // exclusion; computed live so it never lags run-all.
-    let coverage: LintReport['coverage'];
-    {
-      // SQLite TRIM() strips spaces only, not \n/\t/\r — trim an explicit charset
-      // so a "null\n" body matches vault-lint.mjs's `.trim()` empty-detection.
-      const trimmed = `TRIM(body, char(32) || char(9) || char(10) || char(13))`;
-      const emptyBody = `(body IS NULL OR ${trimmed} = '' OR LOWER(${trimmed}) = 'null')`;
-      const rows = db
-        .prepare(
-          `SELECT type,
+  // Headline = actionable backlog (enrichable types, non-empty body); empty
+  // stubs are the BODY lint's job. Active set matches vault-lint.mjs's archive
+  // exclusion; computed live so it never lags run-all.
+  let coverage: LintReport['coverage'];
+  {
+    // SQLite TRIM() strips spaces only, not \n/\t/\r — trim an explicit charset
+    // so a "null\n" body matches vault-lint.mjs's `.trim()` empty-detection.
+    const trimmed = `TRIM(body, char(32) || char(9) || char(10) || char(13))`;
+    const emptyBody = `(body IS NULL OR ${trimmed} = '' OR LOWER(${trimmed}) = 'null')`;
+    const rows = db
+      .prepare(
+        `SELECT type,
                   COUNT(*) AS total,
                   SUM(CASE WHEN agent_summary IS NOT NULL AND agent_summary != '' THEN 1 ELSE 0 END) AS enriched,
                   SUM(CASE WHEN ${emptyBody} THEN 1 ELSE 0 END) AS empty,
@@ -298,46 +295,50 @@ export const lintHandler =
             WHERE file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
             GROUP BY type
             ORDER BY type`
-        )
-        .all() as {
-        type: string | null;
-        total: number;
-        enriched: number;
-        empty: number;
-        enriched_nonempty: number;
-      }[];
-      const enrichable = new Set(ENRICHABLE_TYPES);
-      const by_type: Record<string, CoverageStat> = {};
-      let total = 0;
-      let enriched = 0;
-      for (const row of rows) {
-        const t = Number(row.total);
-        const e = Number(row.enriched);
-        const em = Number(row.empty);
-        by_type[row.type ?? 'untyped'] = {total: t, enriched: e, unenriched: t - e, empty: em};
-        if (enrichable.has(row.type ?? '')) {
-          total += t - em; // actionable = enrichable type with a non-empty body
-          enriched += Number(row.enriched_nonempty);
-        }
+      )
+      .all() as {
+      type: string | null;
+      total: number;
+      enriched: number;
+      empty: number;
+      enriched_nonempty: number;
+    }[];
+    const enrichable = new Set(ENRICHABLE_TYPES);
+    const by_type: Record<string, CoverageStat> = {};
+    let total = 0;
+    let enriched = 0;
+    for (const row of rows) {
+      const t = Number(row.total);
+      const e = Number(row.enriched);
+      const em = Number(row.empty);
+      by_type[row.type ?? 'untyped'] = {total: t, enriched: e, unenriched: t - e, empty: em};
+      if (enrichable.has(row.type ?? '')) {
+        total += t - em; // actionable = enrichable type with a non-empty body
+        enriched += Number(row.enriched_nonempty);
       }
-      coverage = {
-        enrichment: {
-          total,
-          enriched,
-          unenriched: total - enriched,
-          enrichable_types: ENRICHABLE_TYPES,
-          by_type
-        }
-      };
     }
-
-    const total = Object.values(checks).reduce((sum, c) => sum + c.count, 0);
-
-    const report: LintReport = {
-      ok: total === 0,
-      total_issues: total,
-      checks,
-      coverage
+    coverage = {
+      enrichment: {
+        total,
+        enriched,
+        unenriched: total - enriched,
+        enrichable_types: ENRICHABLE_TYPES,
+        by_type
+      }
     };
-    sendJson(ctx.res, 200, report);
+  }
+
+  const total = Object.values(checks).reduce((sum, c) => sum + c.count, 0);
+
+  return {
+    ok: total === 0,
+    total_issues: total,
+    checks,
+    coverage
   };
+};
+
+export const lintHandler =
+  (deps: LintDeps): Handler =>
+  ctx =>
+    sendJson(ctx.res, 200, computeLintReport(deps.db));

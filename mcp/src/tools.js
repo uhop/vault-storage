@@ -496,6 +496,31 @@ export const registerTools = (mcp, client) => {
     wrap(async () => client.getJson('/system/lint'))
   );
 
+  mcp.registerTool(
+    'vault_resume_bundle',
+    {
+      description:
+        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes — feedback with full body, the rest as summaries + sizes)}. Replaces the separate reindex/lint/summary/queue/log reads.',
+      inputSchema: {
+        project: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9-]*$/)
+          .optional()
+          .describe('Project name for the project-notes block'),
+        logs: z
+          .number()
+          .int()
+          .min(0)
+          .max(20)
+          .optional()
+          .describe('Recent session logs to include (default 3)')
+      }
+    },
+    wrap(async ({project, logs}) =>
+      client.postJson('/system/resume-bundle', undefined, {project, logs})
+    )
+  );
+
   // ── queue items ───────────────────────────────────────────────────────────
   // Backed by the queue_items table — a watcher-maintained derivative of every
   // projects/<name>/queue.md and queue-archive.md. Markdown stays source of

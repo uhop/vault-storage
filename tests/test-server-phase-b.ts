@@ -639,6 +639,163 @@ test('POST /suggestions/{id}/accept on already-resolved returns 409', async t =>
   }
 });
 
+// ─── resume bundle ───────────────────────────────────────────────────────────
+
+test('POST /system/resume-bundle packages session-start state in one call', async t => {
+  const {root, cleanup} = setup();
+  try {
+    const days: Array<[string, string]> = [
+      ['2026-07-01', 'first'],
+      ['2026-07-02', 'second'],
+      ['2026-07-03', 'third'],
+      ['2026-07-04', 'fourth']
+    ];
+    for (const [day, summary] of days) {
+      writeMd(
+        root,
+        `logs/${day}-entry.md`,
+        [
+          '---',
+          `title: Log ${day}`,
+          'type: log',
+          `created: ${day}`,
+          `updated: ${day}`,
+          'agent:',
+          `  summary: ${summary}`,
+          '  derived_from_hash: irrelevant',
+          '---',
+          `Body ${day}.`,
+          ''
+        ].join('\n')
+      );
+    }
+    writeMd(
+      root,
+      'projects/agent-workflow/queue.md',
+      [
+        '---',
+        'title: Workflow queue',
+        'created: 2026-07-01',
+        'updated: 2026-07-01',
+        '---',
+        '## Active',
+        '',
+        '- Do the thing.',
+        '',
+        '## Backlog',
+        '',
+        '(empty)',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'projects/agent-workflow/clarify-queue.md',
+      [
+        '---',
+        'title: Clarify queue',
+        'created: 2026-07-01',
+        'updated: 2026-07-01',
+        '---',
+        '## Pending',
+        '',
+        '### Q-1 one',
+        '',
+        '### Q-2 two',
+        '',
+        '## Resolved',
+        '',
+        '### Q-0 done',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'projects/myproj/feedback.md',
+      [
+        '---',
+        'title: myproj feedback',
+        'created: 2026-07-01',
+        'updated: 2026-07-01',
+        '---',
+        'Rule: do X.',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'projects/myproj/queue.md',
+      [
+        '---',
+        'title: myproj queue',
+        'created: 2026-07-01',
+        'updated: 2026-07-01',
+        '---',
+        '## Active',
+        '',
+        '(empty)',
+        ''
+      ].join('\n')
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=myproj`, {
+        method: 'POST'
+      });
+      t.equal(r.status, 200, '200 ok');
+      const bundle = r.body as {
+        reindex: {fellBack: boolean};
+        lint: {ok: boolean; checks: Record<string, {count: number}>};
+        suggestions: {total: number; by_kind: Record<string, number>};
+        workflow: {active: string | null; clarify_pending: number | null};
+        logs: Array<{file_path: string; summary: string | null}>;
+        project: {
+          name: string;
+          found: boolean;
+          files: Record<string, {summary: string | null; body?: string; body_bytes: number} | null>;
+        };
+      };
+
+      t.ok(bundle.reindex.fellBack, 'non-git tree falls back to full import');
+      t.equal(bundle.lint.ok, false, 'lint not ok (no embeddings in this setup)');
+      t.ok(
+        (bundle.lint.checks['records_without_embeddings']?.count ?? 0) > 0,
+        'non-zero check included'
+      );
+      t.notOk('orphan_embeddings' in bundle.lint.checks, 'zero checks are filtered out');
+      // The seeded logs carry a mismatched derived_from_hash, so the import
+      // files one agent_enrichment_stale per log — the bundle must report them.
+      t.equal(bundle.suggestions.total, 4, 'pending suggestions counted');
+      t.equal(bundle.suggestions.by_kind['agent_enrichment_stale'], 4, 'by-kind breakdown present');
+
+      t.matchString(bundle.workflow.active ?? '', /Do the thing/, 'Active section surfaced');
+      t.equal(bundle.workflow.clarify_pending, 2, 'pending clarifications counted');
+
+      t.equal(bundle.logs.length, 3, 'default 3 logs');
+      t.equal(bundle.logs[0]?.file_path, 'logs/2026-07-04-entry.md', 'newest log first');
+      t.equal(bundle.logs[0]?.summary, 'fourth', 'log ships its agent.summary');
+
+      t.equal(bundle.project.found, true, 'project resolved');
+      t.matchString(
+        bundle.project.files['feedback']?.body ?? '',
+        /Rule: do X\./,
+        'feedback ships its full body'
+      );
+      t.notOk('body' in (bundle.project.files['queue'] ?? {}), 'queue ships summary + size only');
+      t.equal(bundle.project.files['decisions'], null, 'absent project file is null');
+
+      const bad = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=Bad_Name`, {
+        method: 'POST'
+      });
+      t.equal(bad.status, 400, 'invalid project name is a 400');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── suggestion resolution settles on contact ───────────────────────────────
 
 const suggestionRow = (
