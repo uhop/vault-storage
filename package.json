@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "AI-agent-first knowledge base over markdown. SQLite + sqlite-vec for fast lookup, semantic search, and typed-edge traversal; BGE embeddings; REST server (MCP planned).",
+  "description": "AI-agent-first knowledge base over markdown. SQLite + sqlite-vec for fast lookup, semantic search, and typed-edge traversal; BGE embeddings; REST server + MCP adapter.",
   "keywords": [
     "knowledge-base",
     "markdown",
@@ -47,12 +47,16 @@
   "github": "https://github.com/uhop/vault-storage",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/uhop/vault-storage.git"
+    "url": "git+https://github.com/uhop/vault-storage.git"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/uhop"
   },
   "bugs": {
     "url": "https://github.com/uhop/vault-storage/issues"
   },
   "homepage": "https://github.com/uhop/vault-storage#readme",
   "author": "Eugene Lazutkin <eugene.lazutkin@gmail.com>",
-  "license": "UNLICENSED"
+  "license": "BSD-3-Clause"
 }

@@ -1,0 +1,36 @@
+name: Node.js CI
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: ['main']
+  pull_request:
+    branches: ['main']
+
+jobs:
+  tests:
+    name: Node.js ${{matrix.node-version}} on ${{matrix.os}}
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      # Server app pinned to the Docker runtime — single cell, not the fleet library matrix.
+      matrix:
+        os: [ubuntu-latest]
+        node-version: [26]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{matrix.node-version}}
+      - run: |
+          npm ci
+          npm run lint
+          npm run ts-check
+          npm test
+      - name: MCP adapter tests
+        working-directory: mcp
+        run: |
+          npm ci
+          npm test
