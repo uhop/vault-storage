@@ -133,8 +133,7 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
   t.equal(meta[0]?.content_hash, 'hash-1', 'content_hash preserved');
 
   const vecRow = db.prepare('SELECT embedding FROM record_vec WHERE chunk_id = ?').get('r1:0') as
-    | {embedding: Uint8Array}
-    | undefined;
+    {embedding: Uint8Array} | undefined;
   t.ok(vecRow, 'vec row survived the rebuild');
   const out = new Float32Array(
     vecRow!.embedding.buffer,

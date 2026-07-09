@@ -104,8 +104,7 @@ export class RecordVecRepository {
   /** Returns the content_hash recorded with this record's chunks, or null. */
   getRecordContentHash(recordId: string): string | null {
     const row = this.#getRecordHash.get(recordId) as Record<string, unknown> | undefined as
-      | {content_hash: string | null}
-      | undefined;
+      {content_hash: string | null} | undefined;
     return row?.content_hash ?? null;
   }
 

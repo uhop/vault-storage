@@ -228,8 +228,7 @@ const makeResolveHandler =
     }
 
     const existing = deps.db.prepare('SELECT id, status FROM suggestions WHERE id = ?').get(id) as
-      | {id: string; status: string}
-      | undefined;
+      {id: string; status: string} | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;
@@ -382,8 +381,7 @@ export const reopenSuggestionHandler =
       return;
     }
     const existing = deps.db.prepare('SELECT id, status FROM suggestions WHERE id = ?').get(id) as
-      | {id: string; status: string}
-      | undefined;
+      {id: string; status: string} | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;

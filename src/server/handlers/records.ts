@@ -348,8 +348,7 @@ export const getRecordFmHandler =
       return;
     }
     const row = deps.db.prepare('SELECT file_path FROM records WHERE record_id = ?').get(id) as
-      | {file_path: string}
-      | undefined;
+      {file_path: string} | undefined;
     if (!row) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
       return;

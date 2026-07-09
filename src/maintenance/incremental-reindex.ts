@@ -37,8 +37,7 @@ export interface IncrementalReindexSummary {
 
 export const getLastIndexedCommit = (db: DatabaseSync): string | null => {
   const row = db.prepare(`SELECT value FROM meta WHERE key = 'last_indexed_commit'`).get() as
-    | {value: string}
-    | undefined;
+    {value: string} | undefined;
   return row?.value ?? null;
 };
 
@@ -51,8 +50,7 @@ export const clearLastIndexedCommit = (db: DatabaseSync): void => {
 };
 
 type Change =
-  | {kind: 'add' | 'modify' | 'delete'; path: string}
-  | {kind: 'rename'; old: string; new: string};
+  {kind: 'add' | 'modify' | 'delete'; path: string} | {kind: 'rename'; old: string; new: string};
 
 /**
  * Parse `git diff --name-status -z --find-renames` output. The `-z`

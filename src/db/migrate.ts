@@ -36,8 +36,7 @@ export const runMigrations = (db: DatabaseSync): MigrationResult => {
 
   const getVersion = (): number => {
     const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as
-      | {value: string}
-      | undefined;
+      {value: string} | undefined;
     return row ? Number.parseInt(row.value, 10) : 0;
   };
 

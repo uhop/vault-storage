@@ -352,8 +352,7 @@ test('git-sync failure ledger: streak recorded in meta, cleared on success', asy
   db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const readMeta = (key: string): string | null => {
     const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
-      | {value: string}
-      | undefined;
+      {value: string} | undefined;
     return row?.value ?? null;
   };
   const handle = startGitSync({
