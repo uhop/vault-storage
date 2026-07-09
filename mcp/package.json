@@ -23,7 +23,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "tape-six": "^1.8.0"
+    "tape-six": "^1.14.0"
   },
   "keywords": [
     "mcp",
