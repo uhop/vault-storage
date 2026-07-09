@@ -784,10 +784,65 @@ test('POST /system/resume-bundle packages session-start state in one call', asyn
       t.notOk('body' in (bundle.project.files['queue'] ?? {}), 'queue ships summary + size only');
       t.equal(bundle.project.files['decisions'], null, 'absent project file is null');
 
+      const withBodies = await fetchAuthed(
+        `${ctx.url}/system/resume-bundle?project=myproj&project_bodies=queue`,
+        {method: 'POST'}
+      );
+      const files = (withBodies.body as typeof bundle).project.files;
+      t.ok('body' in (files['queue'] ?? {}), 'project_bodies opts queue into full-body delivery');
+      t.ok('body' in (files['feedback'] ?? {}), 'feedback body always included');
+
       const bad = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=Bad_Name`, {
         method: 'POST'
       });
       t.equal(bad.status, 400, 'invalid project name is a 400');
+      const badBodies = await fetchAuthed(
+        `${ctx.url}/system/resume-bundle?project=myproj&project_bodies=nonsense`,
+        {method: 'POST'}
+      );
+      t.equal(badBodies.status, 400, 'unknown project_bodies name is a 400');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{path} finalizes agent "auto" sentinels server-side', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/auto.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {
+            title: 'Auto',
+            agent: {summary: 'a server-stamped summary', derived_from_hash: 'auto'}
+          },
+          body: 'Auto body.\n'
+        })
+      });
+      t.equal(r.status, 204, '204 written');
+
+      const list = await fetchAuthed(`${ctx.url}/sections?file_path=topics/auto.md`);
+      const rec = (
+        list.body as {items: Array<{body_hash: string; agent_derived_from_hash?: string}>}
+      ).items[0]!;
+      t.matchString(rec.agent_derived_from_hash ?? '', /^[0-9a-f]{64}$/, 'sentinel replaced');
+      t.equal(rec.agent_derived_from_hash, rec.body_hash, 'server stamped the correct body hash');
+
+      const pending = await fetchAuthed(
+        `${ctx.url}/suggestions?kind=agent_enrichment_stale&status=pending`
+      );
+      t.equal(
+        (pending.body as {total: number}).total,
+        0,
+        'no stale suggestion — the stamped hash is fresh by construction'
+      );
     } finally {
       await teardown(ctx);
     }

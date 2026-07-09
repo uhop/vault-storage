@@ -65,6 +65,25 @@ export const resumeBundleHandler =
       }
       logsLimit = n;
     }
+    // `project_bodies` opts additional project files into full-body delivery
+    // (wrap prep needs learnings/decisions verbatim for dedup); feedback.md
+    // always ships its body — it is the fleet-feedback read path.
+    const projectBodies = new Set<string>(['feedback']);
+    const bodiesRaw = ctx.query['project_bodies'];
+    if (bodiesRaw !== undefined) {
+      for (const name of bodiesRaw.split(',').filter(s => s.length > 0)) {
+        if (!(PROJECT_FILES as readonly string[]).includes(name)) {
+          sendError(
+            ctx.res,
+            400,
+            'bad_request',
+            `unknown project file: ${name} (expected: ${PROJECT_FILES.join(', ')})`
+          );
+          return;
+        }
+        projectBodies.add(name);
+      }
+    }
 
     const {db, records} = deps;
     const reindex = await incrementalReindex(db, deps.vaultDataPath);
@@ -132,7 +151,7 @@ export const resumeBundleHandler =
           updated: record.updated,
           summary: record.agentSummary,
           body_bytes: Buffer.byteLength(record.body, 'utf8'),
-          ...(name === 'feedback' ? {body: record.body} : {})
+          ...(projectBodies.has(name) ? {body: record.body} : {})
         };
       }
       projectBlock = {name: project, found, files};

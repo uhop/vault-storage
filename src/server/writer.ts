@@ -398,6 +398,26 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
     merged['created'] = existing ? existing.created.slice(0, 10) : now.slice(0, 10);
   }
 
+  // Agent-block finalization: `"auto"` sentinels let the writer stamp
+  // derived_from_hash (sha256 of the body it is writing — the one value the
+  // caller can only look up or guess) and derived_at. Kills the wrong-hash
+  // class at the source (body_hash vs content_hash confusion; the 2026-05-01
+  // wave that mis-stamped 30 records).
+  const agent = merged['agent'];
+  if (agent && typeof agent === 'object' && !Array.isArray(agent)) {
+    const block = {...(agent as Record<string, unknown>)};
+    if (block['derived_from_hash'] === 'auto') {
+      block['derived_from_hash'] = contentHash(requestBody);
+      if (!('derived_at' in block) || block['derived_at'] === 'auto') {
+        block['derived_at'] = `${now.slice(0, 19)}Z`;
+      }
+      merged['agent'] = block;
+    } else if (block['derived_at'] === 'auto') {
+      block['derived_at'] = `${now.slice(0, 19)}Z`;
+      merged['agent'] = block;
+    }
+  }
+
   mkdirSync(dirname(absolutePath), {recursive: true});
   const out = serializeFrontmatter({data: merged, body: requestBody});
   writeFileSync(absolutePath, out, 'utf8');

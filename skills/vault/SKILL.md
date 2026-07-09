@@ -185,9 +185,10 @@ are skipped — the user is still iterating on them.
    — born-enriched is cheaper than a later backfill pass through
    `/vault-enrich-all`. Field shape and quality guidance:
    `~/.claude/skills/vault-enrich-all/SKILL.md` § "Per-note `agent:`
-   block shape" + § "Generate enrichment fields". Compute
-   `derived_from_hash` locally as `sha256(body)` over the bytes you're
-   about to write — no API round-trip needed, you own the body. **Use
+   block shape" + § "Generate enrichment fields". Set
+   `derived_from_hash: "auto"` — the server stamps the hash of the body
+   it writes plus `derived_at` (2026-07-09; on an older server compute
+   `sha256(body)` locally). **Use
    the JSON write path** (`Content-Type: application/json` with
    `{frontmatter: {...}, body: "..."}`); `agent.summary` regularly
    contains colon-space prose that 500s through the markdown path's
@@ -215,7 +216,10 @@ are skipped — the user is still iterating on them.
 Extract learnings from the current project/session.
 
 1. Identify the current project from git remote, directory name, or ask
-2. Read existing project notes if they exist (`projects/{name}/`)
+2. Read existing project notes if they exist (`projects/{name}/`) — in one
+   call via `vault-curl "/system/resume-bundle?project=<name>&logs=0&project_bodies=learnings,decisions,stack,queue" -X POST -s`
+   (full bodies for the dedup pass; feedback.md always included; on an older
+   server fall back to individual reads)
 3. Analyze recent work: git log, changed files, decisions made
 4. Create or update `projects/{name}/learnings.md`, `decisions.md`, `stack.md`
 5. Extract cross-project patterns into `topics/` notes (e.g., "api-rate-limiting", "docker-networking"). Propose-then-write: before creating, check neighbours with `POST /vault/propose` (search-before-write); if an existing note already covers the concept, extend it, and if the new write would _replace_ it wholesale, use `POST /vault/supersede` rather than minting a near-duplicate. When creating a new topic note here, enrich at capture per the `/vault ingest` step 5 procedure — write the `agent:` block in the same PUT.
@@ -276,8 +280,10 @@ Save a session log.
    hot (the `agent.summary` becomes a HyDE prefix at embed time), with no later
    backfill. Logs are append-only, so the block never re-stales. Use the JSON
    write path (`{frontmatter: {agent: {...}}, body: "..."}`); set
-   `complexity: log-entry`; compute `derived_from_hash` locally as
-   `sha256(body)` over the bytes you're writing (you own them — no round-trip).
+   `complexity: log-entry`; set `derived_from_hash: "auto"` — the server
+   replaces the sentinel with the hash of the body it writes and stamps
+   `derived_at` too (2026-07-09; on an older server compute `sha256(body)`
+   locally).
    Field shape + quality guidance:
    `~/.claude/skills/vault-enrich-all/SKILL.md`. **Don't backfill _old_ logs** —
    enrichment value is largest at capture: a log is already self-describing
