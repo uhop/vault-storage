@@ -59,7 +59,8 @@ import {
   addAliasHandler,
   addTaxonomyHandler,
   listTagsHandler,
-  recordsByTagHandler
+  recordsByTagHandler,
+  tagInfoHandler
 } from './handlers/tags.ts';
 import {
   deleteVaultHandler,
@@ -138,6 +139,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   const tagsDeps = {db: opts.db, records};
   router.get('/tags', listTagsHandler(tagsDeps));
   router.get('/tags/{tag}/records', recordsByTagHandler(tagsDeps));
+  router.get('/tags/{tag}', tagInfoHandler(tagsDeps));
   router.post('/tags/taxonomy', addTaxonomyHandler(tagsDeps));
   router.post('/tags/aliases', addAliasHandler(tagsDeps));
 

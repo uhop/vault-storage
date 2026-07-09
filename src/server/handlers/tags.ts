@@ -63,6 +63,53 @@ export const listTagsHandler =
   };
 
 /**
+ * GET /tags/{tag}
+ * Taxonomy row for one tag: description, added date, aliases, record count.
+ * Accepts an alias; resolves to the canonical row.
+ */
+export const tagInfoHandler =
+  (deps: TagsDeps): Handler =>
+  ctx => {
+    const tag = ctx.params['tag'];
+    if (!tag) {
+      sendError(ctx.res, 400, 'bad_request', 'missing tag');
+      return;
+    }
+
+    const aliasRow = deps.db
+      .prepare('SELECT canonical FROM tag_aliases WHERE alias = ?')
+      .get(tag) as {canonical: string} | undefined;
+    const canonical = aliasRow?.canonical ?? tag;
+
+    const row = deps.db
+      .prepare('SELECT tag, description, added FROM tags_taxonomy WHERE tag = ?')
+      .get(canonical) as
+      {tag: string; description: string | null; added: string | null} | undefined;
+    if (!row) {
+      sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
+      return;
+    }
+
+    const aliases = (
+      deps.db
+        .prepare('SELECT alias FROM tag_aliases WHERE canonical = ? ORDER BY alias')
+        .all(canonical) as unknown[] as {alias: string}[]
+    ).map(r => r.alias);
+    const recordCount = (
+      deps.db.prepare('SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {n: number}
+    ).n;
+
+    sendJson(ctx.res, 200, {
+      tag: row.tag,
+      ...(canonical !== tag ? {requested: tag} : {}),
+      description: row.description,
+      added: row.added,
+      aliases,
+      record_count: recordCount
+    });
+  };
+
+/**
  * GET /tags/{tag}/records?offset=&limit=
  * List records carrying the given tag. Same envelope as `/sections`.
  */

@@ -639,6 +639,7 @@ interface ListFilters {
   filePrefix: string | undefined;
   types: string[];
   statuses: string[];
+  tags: string[];
   priorityMin: number | undefined;
   priorityMax: number | undefined;
   updatedSince: string | undefined;
@@ -671,10 +672,25 @@ const parseListFilters = (query: Record<string, string>): ListFilters | string =
     filePrefix: query['file_prefix'],
     types,
     statuses,
+    tags: splitCsv(query['tag']),
     priorityMin: minRaw,
     priorityMax: maxRaw,
     updatedSince: query['updated_since']
   };
+};
+
+// Alias-resolve + taxonomy-validate; unknown tags are a 400, never silently ignored.
+const resolveTagFilters = (db: DatabaseSync, raw: string[]): string[] | string => {
+  const canonicalTags: string[] = [];
+  for (const tag of raw) {
+    const aliasRow = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?').get(tag) as
+      {canonical: string} | undefined;
+    const canonical = aliasRow?.canonical ?? tag;
+    const exists = db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(canonical);
+    if (!exists) return `unknown tag: ${tag}`;
+    canonicalTags.push(canonical);
+  }
+  return canonicalTags;
 };
 
 const buildListSql = (
@@ -710,6 +726,11 @@ const buildListSql = (
     const placeholders = filters.statuses.map(() => '?').join(',');
     where.push(`status IN (${placeholders})`);
     bindings.push(...filters.statuses);
+  }
+  if (filters.tags.length > 0) {
+    const placeholders = filters.tags.map(() => '?').join(',');
+    where.push(`record_id IN (SELECT record_id FROM tags WHERE tag IN (${placeholders}))`);
+    bindings.push(...filters.tags);
   }
   if (filters.priorityMin !== undefined) {
     where.push('priority >= ?');
@@ -748,6 +769,12 @@ export const listRecordsHandler =
       sendError(ctx.res, 400, 'bad_request', filters);
       return;
     }
+    const canonicalTags = resolveTagFilters(db, filters.tags);
+    if (typeof canonicalTags === 'string') {
+      sendError(ctx.res, 400, 'bad_request', canonicalTags);
+      return;
+    }
+    filters.tags = canonicalTags;
     const sort = parseSort(ctx.query['sort']);
     if (sort.error) {
       sendError(ctx.res, 400, 'bad_request', sort.error);

@@ -58,7 +58,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`search.ts`** — `POST /search/simple`: FTS5 bm25 + title boost (lexical) blended with chunk-KNN (semantic).
 - **`similar.ts`**, **`edges.ts`** — nearest-neighbour records; typed-edge neighborhood (depth ≤ 5) + backlinks.
 - **`suggestions.ts`** — the agent review queue: list/summary/accept/reject/reopen.
-- **`tags.ts`** — taxonomy + aliases + per-tag records.
+- **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds.
 - **`maintenance.ts`** — `POST /maintenance/*`: scans (duplicates, compaction, retention, upgrade signals), cleanups, embed-pending, incremental reindex, snapshots, raw inbox.
 - **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project).
 - **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5).
@@ -81,7 +81,7 @@ Standalone stdio MCP ↔ REST adapter (plain JS, no local state), distributed as
 
 - **`src/index.js`** — entry: env (`VAULT_API_URL`, `VAULT_API_TOKEN`), `McpServer` over stdio, tool + resource registration.
 - **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization.
-- **`src/tools.js`** — 30 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums.
+- **`src/tools.js`** — 31 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums.
 - **`src/resources.js`** — 3 read-only resources: `vault://status`, `vault://suggestions/pending`, `vault://taxonomy/tags`.
 
 ## static/ UI

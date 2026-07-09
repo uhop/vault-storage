@@ -440,6 +440,99 @@ test('GET /tags/{unknown-tag}/records returns 404', async t => {
   }
 });
 
+test('GET /tags/{tag} returns the taxonomy row', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const betaId = await findId(ctx.url, 'topics/beta.md');
+      seedTags(ctx.db, [
+        {recordId: alphaId, tag: 'docker'},
+        {recordId: betaId, tag: 'docker'}
+      ]);
+      ctx.db
+        .prepare('UPDATE tags_taxonomy SET description = ? WHERE tag = ?')
+        .run('Containers & images', 'docker');
+      ctx.db
+        .prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)')
+        .run('containers', 'docker');
+
+      const r = await fetchAuthed(`${ctx.url}/tags/docker`);
+      t.equal(r.status, 200, '200 ok');
+      t.match(r.body, {
+        tag: 'docker',
+        description: 'Containers & images',
+        aliases: ['containers'],
+        record_count: 2
+      });
+
+      const viaAlias = await fetchAuthed(`${ctx.url}/tags/containers`);
+      t.equal(viaAlias.status, 200, 'alias resolves');
+      t.match(viaAlias.body, {tag: 'docker', requested: 'containers', record_count: 2});
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /tags/{unknown-tag} returns 404', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/tags/nonexistent`);
+      t.equal(r.status, 404, '404 not found');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /sections?tag= filters by tag (alias-aware), 400 on unknown', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const betaId = await findId(ctx.url, 'topics/beta.md');
+      seedTags(ctx.db, [
+        {recordId: alphaId, tag: 'docker'},
+        {recordId: betaId, tag: 'k8s'}
+      ]);
+      ctx.db
+        .prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)')
+        .run('containers', 'docker');
+
+      const byTag = await fetchAuthed(`${ctx.url}/sections?tag=docker`);
+      t.equal(byTag.status, 200, '200 ok');
+      const env = byTag.body as {items: Array<{file_path: string}>; total: number};
+      t.equal(env.total, 1, 'only the tagged record');
+      t.equal(env.items[0]?.file_path, 'topics/alpha.md', 'alpha.md matched');
+
+      const byAlias = await fetchAuthed(`${ctx.url}/sections?tag=containers`);
+      t.equal((byAlias.body as {total: number}).total, 1, 'alias resolves to canonical');
+
+      const byCsv = await fetchAuthed(`${ctx.url}/sections?tag=docker,k8s`);
+      t.equal((byCsv.body as {total: number}).total, 2, 'CSV tags are OR-combined');
+
+      const unknown = await fetchAuthed(`${ctx.url}/sections?tag=nonexistent`);
+      t.equal(unknown.status, 400, 'unknown tag is a 400, not silently ignored');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── suggestions ────────────────────────────────────────────────────────────
 
 const seedSuggestion = (

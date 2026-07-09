@@ -125,6 +125,10 @@ export const registerTools = (mcp, client) => {
       inputSchema: {
         type: z.array(RECORD_TYPE).optional(),
         status: z.array(RECORD_STATUS).optional(),
+        tag: z
+          .array(z.string().min(1))
+          .optional()
+          .describe('Tags (aliases resolve; unknown tags are a 400)'),
         file_prefix: z.string().optional().describe('Vault-relative path prefix'),
         priority_min: z.number().int().optional(),
         priority_max: z.number().int().optional(),
@@ -141,6 +145,7 @@ export const registerTools = (mcp, client) => {
       client.getJson('/sections', {
         type: csv(args.type),
         status: csv(args.status),
+        tag: csv(args.tag),
         file_prefix: args.file_prefix,
         priority_min: args.priority_min,
         priority_max: args.priority_max,
@@ -324,6 +329,18 @@ export const registerTools = (mcp, client) => {
       }
     },
     wrap(async args => client.getJson('/tags', args))
+  );
+
+  mcp.registerTool(
+    'vault_tag_info',
+    {
+      description:
+        'Read one taxonomy tag: description, added date, aliases, record_count. Aliases resolve to the canonical row.',
+      inputSchema: {
+        tag: z.string().min(1)
+      }
+    },
+    wrap(async ({tag}) => client.getJson(`/tags/${encodeURIComponent(tag)}`))
   );
 
   mcp.registerTool(
