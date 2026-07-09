@@ -104,51 +104,18 @@ directory; the first session prompts to approve the project-level MCP config.
 claude mcp add --scope user vault \
   --env VAULT_API_URL=http://your-host:8123 \
   --env VAULT_API_TOKEN=<token> \
-  -- node /path/to/vault-storage/mcp/src/index.ts
+  -- npx -y @uhop/vault-storage-mcp@latest
 ```
 
-Lives in `~/.claude.json`; visible from every project on the machine.
-
-### Standalone install (no checkout)
-
-For machines where you don't want to clone `vault-storage`, use the install
-script. It pulls the latest MCP tarball from this repo's GitHub Releases
-(public — no auth needed), installs it under `~/.local/lib/vault-storage-mcp/`,
-and drops a launcher at `~/.local/bin/vault-storage-mcp`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/uhop/vault-storage/main/scripts/install-mcp.sh | sh
-```
-
-Pin a specific version (naked `0.0.1` or full `mcp-0.0.1` both work):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/uhop/vault-storage/main/scripts/install-mcp.sh | sh -s -- --version 0.0.1
-```
-
-Override the install root:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/uhop/vault-storage/main/scripts/install-mcp.sh | sh -s -- --prefix /opt/vault-mcp
-```
-
-Requirements: `node ≥ 25`, `npm`, `curl`, `tar`. The installer is idempotent
-— re-run to upgrade.
-
-After install, register with Claude Code:
-
-```bash
-claude mcp add --scope user vault \
-  --env VAULT_API_URL=http://your-host:8123 \
-  --env VAULT_API_TOKEN=<token> \
-  -- ~/.local/bin/vault-storage-mcp
-```
-
-This is the recommended path for new machines.
+Lives in `~/.claude.json`; visible from every project on the machine. No
+checkout needed — npm serves the adapter
+([`@uhop/vault-storage-mcp`](https://www.npmjs.com/package/@uhop/vault-storage-mcp));
+pin a version with `@0.0.7` instead of `@latest`. From a local checkout,
+substitute `node /path/to/vault-storage/mcp/src/index.js`.
 
 ### Verify
 
-In a Claude Code session, `/mcp` should list `vault` connected with 20 tools
+In a Claude Code session, `/mcp` should list `vault` connected with 31 tools
 and 3 resources. Or hit the status tool directly:
 
 ```

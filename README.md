@@ -151,10 +151,11 @@ session:
   the REST API directly through the `bin/vault-curl` wrapper. Backup +
   install instructions in [`skills/README.md`](skills/README.md).
 - **MCP adapter** — the `mcp/` sub-package exposes the REST surface to Claude
-  Code as 31 tools and 3 resources with closed-enum input schemas. See
-  `.mcp.json.example` for project-scope activation; `skills/README.md` covers
-  user-scope setup. A standalone, checkout-free installer (release tarball +
-  `curl | sh`) ships with each `mcp-*` release: `scripts/install-mcp.sh`.
+  Code as 31 tools and 3 resources with closed-enum input schemas. Published
+  to npm as [`@uhop/vault-storage-mcp`](https://www.npmjs.com/package/@uhop/vault-storage-mcp) —
+  run it with `npx -y @uhop/vault-storage-mcp@latest` (full config in
+  [`mcp/README.md`](mcp/README.md)). See `.mcp.json.example` for
+  project-scope activation; `skills/README.md` covers user-scope setup.
 
 The two stack: skills can call the MCP tools, or fall back to `vault-curl`
 when MCP isn't configured. Both share the same backend.

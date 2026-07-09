@@ -1,4 +1,7 @@
-# @uhop/vault-storage-mcp
+# @uhop/vault-storage-mcp [![npm version][npm-img]][npm-url]
+
+[npm-img]: https://img.shields.io/npm/v/%40uhop%2Fvault-storage-mcp.svg
+[npm-url]: https://www.npmjs.com/package/@uhop/vault-storage-mcp
 
 MCP adapter for [vault-storage](https://github.com/uhop/vault-storage). Exposes
 the REST API as MCP tools and resources for Claude Code (and any other

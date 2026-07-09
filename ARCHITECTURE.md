@@ -77,7 +77,7 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 
 ## mcp/ subpackage
 
-Standalone stdio MCP ↔ REST adapter (plain JS, no local state), distributed as a GitHub-release tarball (`mcp-*` tags) installed by `scripts/install-mcp.sh`:
+Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to npm as `@uhop/vault-storage-mcp` (`mcp-*` tags mark releases; run via `npx`):
 
 - **`src/index.js`** — entry: env (`VAULT_API_URL`, `VAULT_API_TOKEN`), `McpServer` over stdio, tool + resource registration.
 - **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization.
@@ -95,6 +95,6 @@ Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's
 ## bin/, scripts/, skills/, eval/
 
 - **`bin/update.sh`** — update a deployed instance; **`bin/vault-curl`** — authenticated curl wrapper for the REST API.
-- **`scripts/install-mcp.sh`** — checkout-free MCP installer; `scripts/probe-unresolved.ts`, `scripts/scan-promotable-edges.ts` — one-off DB probes.
+- **`scripts/probe-unresolved.ts`**, **`scripts/scan-promotable-edges.ts`** — one-off DB probes.
 - **`skills/`** — Claude Code vault skills (see `skills/README.md`).
 - **`eval/`** — retrieval-quality harnesses over an imported DB: baseline report, `agent.summary`-prefix A/B, related-candidate proposals, alternate-model trials.

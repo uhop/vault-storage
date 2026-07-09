@@ -33,7 +33,7 @@ Start with `ARCHITECTURE.md` for the full module map. The coarse shape:
 - **`src/records/`**, **`src/queue/`** — record/edge repositories and the queue-items derivative synced from `queue.md` files.
 - **`src/maintenance/`** — scans (duplicates, compaction, retention, upgrade signals), lint cleanup, incremental reindex, raw inbox.
 - **`src/migration/`** — one-time Obsidian-vault → vault-storage tree transform (atomization, tag canonicalization, frontmatter backfill).
-- **`mcp/`** — plain-JS MCP adapter over the REST API (own package, tests, GitHub-release tarball distribution).
+- **`mcp/`** — plain-JS MCP adapter over the REST API (own package, tests, published to npm as `@uhop/vault-storage-mcp`).
 - **`static/ui/`** — light dashboard/editor UI served by the server.
 - **`skills/`** — Claude Code vault skills (install instructions in `skills/README.md`).
 
@@ -68,7 +68,7 @@ Runtime dependencies are deliberately few (fleet minimal-dependencies policy); j
 - UI: `static/`
 - Vault skills: `skills/`
 - Embedding eval harness: `eval/`
-- Operational scripts: `bin/` (update.sh, vault-curl), `scripts/` (install-mcp.sh)
+- Operational scripts: `bin/` (update.sh, vault-curl); one-off DB probes: `scripts/`
 
 ## When reading the codebase
 
