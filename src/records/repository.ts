@@ -178,15 +178,13 @@ export class RecordsRepository {
 
   getById(id: string): VaultRecord | null {
     const row = this.#getById.get(id) as Record<string, unknown> | undefined as
-      | RecordRow
-      | undefined;
+      RecordRow | undefined;
     return row ? rowToRecord(row) : null;
   }
 
   getByPath(path: string): VaultRecord | null {
     const row = this.#getByPath.get(path) as Record<string, unknown> | undefined as
-      | RecordRow
-      | undefined;
+      RecordRow | undefined;
     return row ? rowToRecord(row) : null;
   }
 

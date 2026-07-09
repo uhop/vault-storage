@@ -220,8 +220,7 @@ export const addTaxonomyHandler =
     }
 
     const existing = deps.db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag) as
-      | {x: number}
-      | undefined;
+      {x: number} | undefined;
     if (existing) {
       sendError(ctx.res, 409, 'conflict', `tag '${tag}' already in taxonomy`);
       return;

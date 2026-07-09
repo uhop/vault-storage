@@ -5,8 +5,7 @@ import type {DatabaseSync} from 'node:sqlite';
 
 export const getMetaValue = (db: DatabaseSync, key: string): string | null => {
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
-    | {value: string}
-    | undefined;
+    {value: string} | undefined;
   return row?.value ?? null;
 };
 

@@ -48,8 +48,7 @@ export const cleanupTagAliases = (
 
   for (const alias of aliases) {
     const row = checkAlias.get(alias) as
-      | {alias: string; canonical: string; canonical_exists: number}
-      | undefined;
+      {alias: string; canonical: string; canonical_exists: number} | undefined;
     if (row === undefined) {
       missing.push(alias);
       continue;
