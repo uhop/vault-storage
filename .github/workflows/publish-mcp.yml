@@ -26,6 +26,10 @@ jobs:
           npm version --no-git-tag-version --allow-same-version "$version"
           cp ../LICENSE LICENSE
           npm pack
+          # The scoped package packs as uhop-vault-storage-mcp-*.tgz; keep the
+          # historical unscoped asset name — install-mcp.sh builds it from the
+          # version, uniformly across pre- and post-scoping releases.
+          mv uhop-vault-storage-mcp-*.tgz "vault-storage-mcp-${version}.tgz"
           ls -la vault-storage-mcp-*.tgz
 
       - name: Create release & attach tarball
