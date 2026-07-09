@@ -363,11 +363,12 @@ export const registerTools = (mcp, client) => {
     'vault_list_suggestions',
     {
       description:
-        'List pending review-queue suggestions. Defaults to status=pending — the common case.',
+        'List pending review-queue suggestions. Defaults to status=pending — the common case. `expand: "context"` inlines per-item triage context: record briefs (title/type/status/summary, keyed by record_id, null for deleted records) for every record the payload references, plus taxonomy info for tag kinds — judge a prefetched page instead of fetching per item.',
       inputSchema: {
         kind: z.array(SUGGESTION_KIND).optional(),
         status: z.array(SUGGESTION_STATUS).optional(),
         subject_id: z.string().optional(),
+        expand: z.enum(['context']).optional(),
         offset: z.number().int().min(0).optional().default(0),
         limit: z.number().int().min(1).max(100).optional().default(20)
       }
@@ -377,6 +378,7 @@ export const registerTools = (mcp, client) => {
         kind: csv(args.kind),
         status: csv(args.status),
         subject_id: args.subject_id,
+        expand: args.expand,
         offset: args.offset,
         limit: args.limit
       })

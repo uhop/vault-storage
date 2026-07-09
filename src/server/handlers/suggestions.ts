@@ -55,14 +55,124 @@ const rowToJson = (row: SuggestionRow): Record<string, unknown> => {
   };
 };
 
+// Payload fields that reference records, per kind — the ids whose briefs
+// `expand=context` inlines. `subject_id` is always included when set.
+const CONTEXT_RECORD_KEYS: Record<string, readonly string[]> = {
+  edge_type: ['from_record', 'to_record'],
+  duplicate: ['a_record', 'b_record'],
+  new_tag: ['record_id'],
+  tag_suggestion: ['record_id'],
+  archive_candidate: ['record_id'],
+  agent_enrichment_stale: ['record_id']
+};
+const CONTEXT_TAG_KINDS: ReadonlySet<string> = new Set(['new_tag', 'tag_suggestion']);
+
+const itemRecordIds = (item: Record<string, unknown>): Set<string> => {
+  const payload = item['payload'] as Record<string, unknown> | null;
+  const ids = new Set<string>();
+  for (const key of CONTEXT_RECORD_KEYS[item['kind'] as string] ?? []) {
+    const v = payload?.[key];
+    if (typeof v === 'string' && v.length > 0) ids.add(v);
+  }
+  const subject = item['subject_id'];
+  if (typeof subject === 'string' && subject.length > 0) ids.add(subject);
+  return ids;
+};
+
 /**
- * GET /suggestions?kind=&status=&subject_id=&offset=&limit=
+ * Inline per-item triage context: record briefs (title/type/status/summary)
+ * for every record the payload references — keyed by record_id, `null` for
+ * records that no longer exist — plus taxonomy info for the tag kinds. One
+ * batched record query per page; triage agents judge a prefetched page
+ * instead of chasing per-item fetch chains.
+ */
+const attachContext = (db: DatabaseSync, items: Array<Record<string, unknown>>): void => {
+  const recordIds = new Set<string>();
+  const tags = new Set<string>();
+  for (const item of items) {
+    for (const id of itemRecordIds(item)) recordIds.add(id);
+    if (CONTEXT_TAG_KINDS.has(item['kind'] as string)) {
+      const tag = (item['payload'] as Record<string, unknown> | null)?.['tag'];
+      if (typeof tag === 'string' && tag.length > 0) tags.add(tag);
+    }
+  }
+
+  const briefs = new Map<string, unknown>();
+  if (recordIds.size > 0) {
+    const ids = [...recordIds];
+    const rows = db
+      .prepare(
+        `SELECT record_id, file_path, title, type, status, updated, agent_summary
+           FROM records WHERE record_id IN (${ids.map(() => '?').join(',')})`
+      )
+      .all(...ids) as unknown[] as Array<{
+      record_id: string;
+      file_path: string;
+      title: string | null;
+      type: string;
+      status: string;
+      updated: string;
+      agent_summary: string | null;
+    }>;
+    for (const r of rows) {
+      briefs.set(r.record_id, {
+        record_id: r.record_id,
+        file_path: r.file_path,
+        title: r.title,
+        type: r.type,
+        status: r.status,
+        updated: r.updated,
+        summary: r.agent_summary
+      });
+    }
+  }
+
+  const tagInfo = new Map<string, unknown>();
+  for (const t of tags) {
+    const aliasRow = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?').get(t) as
+      {canonical: string} | undefined;
+    const canonical = aliasRow?.canonical ?? t;
+    const tax = db
+      .prepare('SELECT tag, description FROM tags_taxonomy WHERE tag = ?')
+      .get(canonical) as {tag: string; description: string | null} | undefined;
+    const count = tax
+      ? (db.prepare('SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {n: number}).n
+      : 0;
+    tagInfo.set(t, {
+      requested: t,
+      ...(canonical !== t ? {canonical} : {}),
+      in_taxonomy: tax !== undefined,
+      description: tax?.description ?? null,
+      record_count: count
+    });
+  }
+
+  for (const item of items) {
+    const records: Record<string, unknown> = {};
+    for (const id of itemRecordIds(item)) records[id] = briefs.get(id) ?? null;
+    const context: Record<string, unknown> = {records};
+    if (CONTEXT_TAG_KINDS.has(item['kind'] as string)) {
+      const tag = (item['payload'] as Record<string, unknown> | null)?.['tag'];
+      if (typeof tag === 'string' && tagInfo.has(tag)) context['tag'] = tagInfo.get(tag);
+    }
+    item['context'] = context;
+  }
+};
+
+/**
+ * GET /suggestions?kind=&status=&subject_id=&offset=&limit=&expand=context
  * Defaults to status=pending when no status filter is given — the most
- * common agent-review query.
+ * common agent-review query. `expand=context` inlines per-item record
+ * briefs + tag taxonomy info (see {@link attachContext}).
  */
 export const listSuggestionsHandler =
   (deps: SuggestionsDeps): Handler =>
   ctx => {
+    const expand = ctx.query['expand'];
+    if (expand !== undefined && expand !== 'context') {
+      sendError(ctx.res, 400, 'bad_request', `unknown expand: ${expand} (expected: context)`);
+      return;
+    }
     const kinds = splitCsv(ctx.query['kind']);
     for (const k of kinds) {
       if (!SUGGESTION_KINDS.has(k)) {
@@ -114,8 +224,11 @@ export const listSuggestionsHandler =
       }
     ).n;
 
+    const items = rows.map(rowToJson);
+    if (expand === 'context') attachContext(deps.db, items);
+
     sendJson(ctx.res, 200, {
-      items: rows.map(rowToJson),
+      items,
       offset,
       limit,
       total

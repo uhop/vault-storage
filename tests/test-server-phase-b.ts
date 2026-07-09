@@ -809,6 +809,93 @@ test('POST /system/resume-bundle packages session-start state in one call', asyn
   }
 });
 
+test('GET /suggestions?expand=context inlines record briefs and tag info', async t => {
+  const {root, cleanup} = setup();
+  try {
+    writeMd(
+      root,
+      'topics/alpha.md',
+      [
+        '---',
+        'title: Alpha',
+        'created: 2026-04-01',
+        'updated: 2026-04-01',
+        '---',
+        'See [[topics/beta]].',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/beta.md',
+      ['---', 'title: Beta', 'created: 2026-04-02', 'updated: 2026-04-02', '---', 'Beta.', ''].join(
+        '\n'
+      )
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const betaId = await findId(ctx.url, 'topics/beta.md');
+      await fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tag: 'docker', description: 'Containers'})
+      });
+      seedSuggestion(ctx.db, {
+        id: 'ctx-tag',
+        kind: 'tag_suggestion',
+        subjectId: alphaId,
+        payload: {tag: 'docker', record_id: alphaId, file_path: 'topics/alpha.md'}
+      });
+      seedSuggestion(ctx.db, {
+        id: 'ctx-ghost',
+        kind: 'agent_enrichment_stale',
+        subjectId: 'ghost-id',
+        payload: {record_id: 'ghost-id', file_path: 'gone.md'}
+      });
+
+      const r = await fetchAuthed(`${ctx.url}/suggestions?expand=context`);
+      t.equal(r.status, 200, '200 ok');
+      interface CtxItem {
+        id: string;
+        kind: string;
+        context: {
+          records: Record<string, {title: string | null; summary: string | null} | null>;
+          tag?: {in_taxonomy: boolean; description: string | null; record_count: number};
+        };
+      }
+      const items = (r.body as {items: CtxItem[]}).items;
+
+      const edge = items.find(i => i.kind === 'edge_type')!;
+      t.equal(edge.context.records[alphaId]?.title, 'Alpha', 'edge_type: from-record brief');
+      t.equal(edge.context.records[betaId]?.title, 'Beta', 'edge_type: to-record brief');
+
+      const tagItem = items.find(i => i.id === 'ctx-tag')!;
+      t.match(
+        tagItem.context.tag,
+        {in_taxonomy: true, description: 'Containers'},
+        'tag kinds carry taxonomy info'
+      );
+      t.equal(tagItem.context.records[alphaId]?.title, 'Alpha', 'subject brief inlined');
+
+      const ghost = items.find(i => i.id === 'ctx-ghost')!;
+      t.equal(ghost.context.records['ghost-id'], null, 'missing record → null brief, key kept');
+
+      const plain = await fetchAuthed(`${ctx.url}/suggestions`);
+      t.notOk(
+        'context' in ((plain.body as {items: object[]}).items[0] ?? {}),
+        'no expand → no context key'
+      );
+      const bad = await fetchAuthed(`${ctx.url}/suggestions?expand=bogus`);
+      t.equal(bad.status, 400, 'unknown expand is a 400');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} finalizes agent "auto" sentinels server-side', async t => {
   const {root, cleanup} = setup();
   try {
