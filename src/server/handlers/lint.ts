@@ -209,7 +209,7 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
       .prepare(
         `SELECT s.id, s.kind, s.subject_id
              FROM suggestions s
-            WHERE s.status = 'pending'
+            WHERE s.status IN ('pending', 'claimed')
               AND s.subject_id IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1 FROM records r WHERE r.record_id = s.subject_id

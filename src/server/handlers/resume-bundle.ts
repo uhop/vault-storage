@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {incrementalReindex} from '../../maintenance/incremental-reindex.ts';
+import {revertExpiredClaims} from '../../records/claims.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {computeLintReport, type LintReport} from './lint.ts';
 import {sendError, sendJson} from '../responses.ts';
@@ -95,6 +96,7 @@ export const resumeBundleHandler =
     }
     const {total, enriched, unenriched} = fullLint.coverage.enrichment;
 
+    revertExpiredClaims(db);
     const suggestionRows = db
       .prepare(
         `SELECT kind, COUNT(*) AS n FROM suggestions WHERE status = 'pending' GROUP BY kind ORDER BY n DESC`

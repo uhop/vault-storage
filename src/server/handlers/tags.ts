@@ -206,7 +206,7 @@ const linkBackfillAndAutoAccept = (
     .prepare(
       `SELECT payload FROM suggestions
         WHERE kind = 'new_tag'
-          AND status = 'pending'
+          AND status IN ('pending', 'claimed')
           AND json_extract(payload, '$.tag') = ?`
     )
     .all(pendingTag) as Array<{payload: string}>;

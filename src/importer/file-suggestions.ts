@@ -271,11 +271,13 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     } else {
       identityClause = matchClause(spec.identity);
     }
+    // 'claimed' is unresolved-but-reserved (schema 0015) — it blocks and
+    // settles exactly like 'pending' everywhere in this module.
     const blockingClause =
       spec.blocking === 'pending-only'
-        ? ` AND status = 'pending'`
+        ? ` AND status IN ('pending', 'claimed')`
         : spec.blocking === 'pending-or-snoozed-reject'
-          ? ` AND (status = 'pending' OR (status = 'rejected' AND resolved_at >= ?))`
+          ? ` AND (status IN ('pending', 'claimed') OR (status = 'rejected' AND resolved_at >= ?))`
           : '';
     this.#findExisting = db.prepare(
       `SELECT id FROM suggestions
@@ -336,13 +338,14 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       entries.map(e => e[0]),
       keys =>
         `UPDATE suggestions
-            SET status = 'accepted', resolved_at = ?, resolved_by = ?
-          WHERE kind = '${this.#kind}' AND status = 'pending' AND ${matchClause(keys)}`
+            SET status = 'accepted', resolved_at = ?, resolved_by = ?,
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+          WHERE kind = '${this.#kind}' AND status IN ('pending', 'claimed') AND ${matchClause(keys)}`
     );
     return Number(stmt.run(now, resolvedBy, ...entries.map(e => e[1])).changes);
   }
 
-  /** Pending suggestions matching `match`, with payloads parsed. */
+  /** Unresolved (pending or claimed) suggestions matching `match`, with payloads parsed. */
   pending(match: Record<string, string>): Array<{id: string; payload: KindPayloads[K]}> {
     const entries = Object.entries(match);
     const stmt = this.#statement(
@@ -350,7 +353,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       entries.map(e => e[0]),
       keys =>
         `SELECT id, payload FROM suggestions
-          WHERE kind = '${this.#kind}' AND status = 'pending' AND ${matchClause(keys)}`
+          WHERE kind = '${this.#kind}' AND status IN ('pending', 'claimed') AND ${matchClause(keys)}`
     );
     const rows = stmt.all(...entries.map(e => e[1])) as Array<{id: string; payload: string}>;
     return rows.map(r => ({id: r.id, payload: JSON.parse(r.payload) as KindPayloads[K]}));
@@ -362,7 +365,10 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       'accept-by-id',
       [],
       () =>
-        `UPDATE suggestions SET status = 'accepted', resolved_at = ?, resolved_by = ? WHERE id = ?`
+        `UPDATE suggestions
+            SET status = 'accepted', resolved_at = ?, resolved_by = ?,
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+          WHERE id = ?`
     );
     return stmt.run(now, resolvedBy, id).changes > 0;
   }

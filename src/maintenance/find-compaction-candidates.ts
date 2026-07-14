@@ -224,7 +224,7 @@ export const findCompactionCandidates = (
   const pending = db
     .prepare(
       `SELECT json_extract(payload, '$.folder_path') AS folder_path FROM suggestions
-        WHERE kind = 'compaction_candidate' AND status = 'pending'`
+        WHERE kind = 'compaction_candidate' AND status IN ('pending', 'claimed')`
     )
     .all() as Array<{folder_path: string}>;
   for (const row of pending) {

@@ -83,7 +83,9 @@ const collectStats = (db: DatabaseSync): Stats => {
     )
     .all() as unknown[] as OutboundLeader[];
   const fan = top[0]?.count ?? 0;
-  const ps = db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`).get() as {
+  const ps = db
+    .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status IN ('pending', 'claimed')`)
+    .get() as {
     n: number;
   };
   return {

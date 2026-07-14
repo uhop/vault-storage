@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import type {Embedder} from '../../embeddings/types.ts';
+import {revertExpiredClaims} from '../../records/claims.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -17,6 +18,7 @@ export const systemStatusHandler =
     const vecVersion = (db.prepare('SELECT vec_version() AS v').get() as {v: string}).v;
     const recordCount = (db.prepare('SELECT COUNT(*) AS n FROM records').get() as {n: number}).n;
     const edgeCount = (db.prepare('SELECT COUNT(*) AS n FROM edges').get() as {n: number}).n;
+    revertExpiredClaims(db);
     const pendingSuggestions = (
       db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`).get() as {
         n: number;

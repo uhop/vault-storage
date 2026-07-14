@@ -116,10 +116,13 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
     db
       .prepare(
         `UPDATE suggestions
-            SET status      = 'accepted',
-                resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                resolved_by = 'record-deleted-backfill'
-          WHERE status      = 'pending'
+            SET status        = 'accepted',
+                resolved_at   = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                resolved_by   = 'record-deleted-backfill',
+                claimed_by    = NULL,
+                claimed_at    = NULL,
+                claim_expires = NULL
+          WHERE status IN ('pending', 'claimed')
             AND subject_id IS NOT NULL
             AND NOT EXISTS (
               SELECT 1 FROM records r WHERE r.record_id = suggestions.subject_id

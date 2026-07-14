@@ -44,11 +44,13 @@ import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
 import {
   acceptSuggestionHandler,
+  claimSuggestionsHandler,
   createSuggestionHandler,
   getSuggestionHandler,
   listSuggestionsHandler,
   rejectSuggestionHandler,
   reopenSuggestionHandler,
+  resolveBatchSuggestionsHandler,
   summarySuggestionsHandler
 } from './handlers/suggestions.ts';
 import {commitHandler} from './handlers/commit.ts';
@@ -154,6 +156,11 @@ export const buildRouter = (opts: BuildOptions): Router => {
   // `/summary` registered before `/{id}` so the literal path wins over the
   // wildcard match (router currently uses registration-order precedence).
   router.get('/suggestions/summary', summarySuggestionsHandler(suggestionsDeps));
+  router.post('/suggestions/claim', claimSuggestionsHandler(suggestionsDeps));
+  router.post(
+    '/suggestions/resolve-batch',
+    resolveBatchSuggestionsHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, records})
+  );
   router.get('/suggestions/{id}', getSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/accept', acceptSuggestionHandler(suggestionsDeps));
   router.post('/suggestions/{id}/reject', rejectSuggestionHandler(suggestionsDeps));
