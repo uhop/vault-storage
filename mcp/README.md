@@ -47,9 +47,12 @@ Thirty-one tools mapping to the REST surface, grouped by purpose:
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
 - **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
   per-item record briefs + tag taxonomy info), `vault_read_suggestion`,
-  `vault_suggestions_summary`, `vault_accept_suggestion`,
-  `vault_reject_suggestion`, `vault_reopen_suggestion`,
-  `vault_create_suggestion`
+  `vault_suggestions_summary`, `vault_claim_suggestions` (reserve a batch
+  for one triage session: holder + TTL, lazy expiry),
+  `vault_accept_suggestion`, `vault_reject_suggestion`,
+  `vault_resolve_suggestions_batch` (≤ 100 decisions per call, mechanical
+  tag/edge side effects applied server-side), `vault_reopen_suggestion`
+  (also the explicit claim release), `vault_create_suggestion`
 - **Queue items** — `vault_queue_top`, `vault_queue_by_section`,
   `vault_queue_by_priority`, `vault_queue_by_project`,
   `vault_queue_project_archive`, `vault_queue_reindex`

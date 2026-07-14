@@ -2,7 +2,7 @@
 
 An AI-agent-first persistent knowledge base. Markdown files are the source of truth; a SQLite + `sqlite-vec` index sits next to them and provides fast lookup, semantic search, and typed-edge traversal for AI agents.
 
-**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue), MCP adapter (31 tools / 3 resources), file-watcher with auto-reindex, edge GC, auto-commit, Docker packaging. The Obsidian cutover machinery (`/sync/from-obsidian`, mount plumbing) was retired 2026-06-11 after the migration completed; the one-time `migrate` CLI command remains for vault-tree imports. Not yet: suggestions review surface, decay/maintenance jobs.
+**Status:** v0.x, in active development. Working: importer, embedder, REST server (full path-based vault surface + insight reads + suggestions queue), MCP adapter (33 tools / 3 resources), file-watcher with auto-reindex, edge GC, auto-commit, Docker packaging. The Obsidian cutover machinery (`/sync/from-obsidian`, mount plumbing) was retired 2026-06-11 after the migration completed; the one-time `migrate` CLI command remains for vault-tree imports. Not yet: suggestions review surface, decay/maintenance jobs.
 
 ## Architecture
 
@@ -121,7 +121,7 @@ All endpoints require `Authorization: Bearer <token>`.
 | POST   | `/suggestions/claim`            | Atomically reserve a batch of pending suggestions for one triage session (concurrent-sweep coordination). Body: `{kind, holder, limit?, ttl_seconds?}` (limit ≤ 100, TTL 60s–6h, default 30 min); oldest first; `?expand=context` inlines the same triage context as `GET /suggestions`. Claimed rows leave the pending pool and only a resolver whose `resolved_by` matches the holder can settle them (409 `claimed_by_other` otherwise); expired claims lazily revert to pending on the next suggestions touch, so a crashed holder costs at most the TTL. `POST /suggestions/{id}/reopen` on a claimed row is the explicit release. Returns `{kind, holder, claimed, claim_expires, remaining_pending, items}`.                                                                                                                                                                                                                                                                                                                 |
 | POST   | `/suggestions/resolve-batch`    | Resolve up to 100 suggestions in one call, applying the **mechanical** side effects server-side: `tag_suggestion` accept realizes the tag on the record's FM (settles as `tag-realized` when the tag is in the taxonomy), reject strips the candidate from `agent.tags_suggested`; `edge_type` accept requires `edge_type` (typed value — "cites is correct" is a reject) and pins the FM `edges:` override (settles as `fm-override`). Judgment-bearing kinds (`new_tag` minting, `duplicate` merging) resolve status-only. Body: `{resolved_by?, items: [{id, decision: "accept" \| "reject", edge_type?}]}`; `resolved_by` doubles as the claim holder. Always 200 — per-item failures land in `results[].error` with `accepted`/`rejected`/`failed` counts; one bad item never aborts the batch.                                                                                                                                                                                                                                |
 
-The table above is a selection. The full surface also covers search (`POST /search/simple`), edges (`/sections/{id}/neighborhood`, `/backlinks`, `/similar`), tags (`GET /tags`, `GET /tags/{tag}` — taxonomy row with description/aliases/count, `GET /tags/{tag}/records`, `POST /tags/taxonomy`, `POST /tags/aliases`), the suggestions review queue (`?expand=context` inlines per-item record briefs + tag info for triage; per-id `accept`/`reject`/`reopen` plus the batch claim/resolve pair above), queue-item slices (`/queue/*`), and maintenance ops (`POST /maintenance/*`); the MCP adapter mirrors it as 31 tools.
+The table above is a selection. The full surface also covers search (`POST /search/simple`), edges (`/sections/{id}/neighborhood`, `/backlinks`, `/similar`), tags (`GET /tags`, `GET /tags/{tag}` — taxonomy row with description/aliases/count, `GET /tags/{tag}/records`, `POST /tags/taxonomy`, `POST /tags/aliases`), the suggestions review queue (`?expand=context` inlines per-item record briefs + tag info for triage; per-id `accept`/`reject`/`reopen` plus the batch claim/resolve pair above), queue-item slices (`/queue/*`), and maintenance ops (`POST /maintenance/*`); the MCP adapter mirrors it as 33 tools.
 
 ### CLI subcommands
 
@@ -153,7 +153,7 @@ session:
   the REST API directly through the `bin/vault-curl` wrapper. Backup +
   install instructions in [`skills/README.md`](skills/README.md).
 - **MCP adapter** — the `mcp/` sub-package exposes the REST surface to Claude
-  Code as 31 tools and 3 resources with closed-enum input schemas. Published
+  Code as 33 tools and 3 resources with closed-enum input schemas. Published
   to npm as [`@uhop/vault-storage-mcp`](https://www.npmjs.com/package/@uhop/vault-storage-mcp) —
   run it with `npx -y @uhop/vault-storage-mcp@latest` (full config in
   [`mcp/README.md`](mcp/README.md)). See `.mcp.json.example` for

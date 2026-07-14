@@ -52,7 +52,7 @@ const SUGGESTION_KIND = z.enum([
   'agent_enrichment_stale'
 ]);
 
-const SUGGESTION_STATUS = z.enum(['pending', 'accepted', 'rejected']);
+const SUGGESTION_STATUS = z.enum(['pending', 'claimed', 'accepted', 'rejected']);
 
 const json = value => ({
   content: [{type: 'text', text: JSON.stringify(value, null, 2)}]
@@ -411,10 +411,31 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_claim_suggestions',
+    {
+      description:
+        'Atomically reserve a batch of pending suggestions of one kind for this triage session (oldest first). Claimed items leave the pending pool; resolving them requires resolved_by = holder until the TTL lapses (expired claims lazily revert to pending, so a crashed holder costs at most the TTL). De-conflicts concurrent same-kind triage agents and overlapping sweeps. Release a claimed item early with vault_reopen_suggestion. `expand: "context"` inlines the same per-item triage context as vault_list_suggestions.',
+      inputSchema: {
+        kind: SUGGESTION_KIND,
+        holder: z
+          .string()
+          .min(1)
+          .describe('Claim owner label; pass the same value as resolved_by when resolving'),
+        limit: z.number().int().min(1).max(100).optional().default(100),
+        ttl_seconds: z.number().int().min(60).max(21600).optional().default(1800),
+        expand: z.enum(['context']).optional()
+      }
+    },
+    wrap(async ({kind, holder, limit, ttl_seconds, expand}) =>
+      client.postJson('/suggestions/claim', {kind, holder, limit, ttl_seconds}, {expand})
+    )
+  );
+
+  mcp.registerTool(
     'vault_accept_suggestion',
     {
       description:
-        'Mark a pending suggestion as accepted. The decision is recorded; downstream side-effects (e.g. promoting cites→typed) are handled by separate workflows.',
+        'Mark a pending (or own-claimed) suggestion as accepted. The decision is recorded; downstream side-effects (e.g. promoting cites→typed) are handled by separate workflows — or server-side via vault_resolve_suggestions_batch. On a claimed row, resolved_by must equal the claim holder (409 claimed_by_other otherwise).',
       inputSchema: {
         id: z.string().min(1),
         resolved_by: z.string().optional()
@@ -431,7 +452,8 @@ export const registerTools = (mcp, client) => {
   mcp.registerTool(
     'vault_reject_suggestion',
     {
-      description: 'Mark a pending suggestion as rejected.',
+      description:
+        'Mark a pending (or own-claimed) suggestion as rejected. On a claimed row, resolved_by must equal the claim holder (409 claimed_by_other otherwise).',
       inputSchema: {
         id: z.string().min(1),
         resolved_by: z.string().optional()
@@ -446,10 +468,36 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_resolve_suggestions_batch',
+    {
+      description:
+        'Resolve up to 100 suggestions in one call, with mechanical side effects applied server-side: a tag_suggestion accept realizes the tag on the record FM (settles as tag-realized when the tag is in the taxonomy), a reject strips the candidate from agent.tags_suggested; an edge_type accept requires edge_type (a typed value — "cites is correct" is a reject) and pins the FM edges: override (settles as fm-override). Judgment-bearing kinds (new_tag minting, duplicate merges) resolve status-only. resolved_by doubles as the claim holder for claimed items. Always 200: per-item failures land in results[].error (already_resolved, claimed_by_other, …) and never abort the batch.',
+      inputSchema: {
+        resolved_by: z.string().optional(),
+        items: z
+          .array(
+            z.object({
+              id: z.string().min(1),
+              decision: z.enum(['accept', 'reject']),
+              edge_type: EDGE_TYPE.optional().describe(
+                'Required for edge_type accepts; must not be "cites"'
+              )
+            })
+          )
+          .min(1)
+          .max(100)
+      }
+    },
+    wrap(async ({resolved_by, items}) =>
+      client.postJson('/suggestions/resolve-batch', resolved_by ? {resolved_by, items} : {items})
+    )
+  );
+
+  mcp.registerTool(
     'vault_reopen_suggestion',
     {
       description:
-        'Move an accepted/rejected suggestion back to pending and clear resolved_at/resolved_by. Escape hatch for misclicks. 409 when already pending.',
+        'Move an accepted, rejected, or claimed suggestion back to pending, clearing resolution and claim fields. Escape hatch for misclicks; on a claimed row it is the explicit claim release. 409 when already pending.',
       inputSchema: {id: z.string().min(1)}
     },
     wrap(async ({id}) =>
