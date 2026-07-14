@@ -162,11 +162,14 @@ export const getVaultHandler =
       if (existsSync(folderAbs) && statSync(folderAbs).isDirectory()) {
         const composed = composeFolder(folderAbs);
         if (composed !== null) {
-          // Composed documents are virtual (no single on-disk file), so this
-          // ETag is informational — a conditional PUT against the composed
-          // path 412s by design.
+          // Weak ETag: the document is virtual (no single on-disk file), so
+          // If-Match's strong comparison can never succeed against it — a
+          // conditional PUT 412s by design. W/ + the explicit header let
+          // round-trip clients (vault-put) detect the case instead of
+          // misreading the 412 as a concurrency conflict (2026-07-14).
           sendText(ctx.res, 200, 'text/markdown; charset=utf-8', composed, {
-            ETag: `"${documentEtag(composed)}"`
+            ETag: `W/"${documentEtag(composed)}"`,
+            'X-Vault-Composed': 'true'
           });
           return;
         }
@@ -220,6 +223,39 @@ export const putVaultHandler =
     if (!path.endsWith('.md')) {
       sendError(ctx.res, 400, 'invalid_path', 'only .md files are supported');
       return;
+    }
+
+    // Guard writes that target a composed view rather than a file. Both
+    // branches exist because of the 2026-07-14 incident: conditional PUTs
+    // against a composed path 412'd with a message that read as a concurrency
+    // conflict, and the unconditional-PUT "workaround" then materialized flat
+    // files that shadowed the atomized folders.
+    const absTarget = safePathOrError(deps.vaultDataPath, path, ctx.res);
+    if (absTarget === null) return;
+    if (!existsSync(absTarget) || !statSync(absTarget).isFile()) {
+      const folder = path.slice(0, -'.md'.length);
+      if (existsSync(join(absTarget.slice(0, -'.md'.length), '_about.md'))) {
+        if (typeof ctx.req.headers['if-match'] === 'string') {
+          sendError(
+            ctx.res,
+            412,
+            'precondition_failed',
+            `no file exists at ${path} — it is composed on demand from the atomized folder ${folder}/, and conditional writes cannot create files. Edit the folder's pieces instead.`,
+            {composed: true, folder: `${folder}/`}
+          );
+          return;
+        }
+        if (ctx.query['shadow'] !== 'allow') {
+          sendError(
+            ctx.res,
+            409,
+            'shadow_conflict',
+            `creating ${path} would shadow the atomized folder ${folder}/ — GET would stop composing the folder and serve this file instead. Write pieces into the folder, or pass ?shadow=allow to create the file deliberately.`,
+            {folder: `${folder}/`}
+          );
+          return;
+        }
+      }
     }
 
     let rawBody: string;

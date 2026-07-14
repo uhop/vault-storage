@@ -85,6 +85,7 @@ const fetchAuthed = async (
   raw: string;
   contentType: string | null;
   etag: string | null;
+  composed: string | null;
 }> => {
   const headers = new Headers(init.headers ?? {});
   headers.set('Authorization', `Bearer ${TEST_TOKEN}`);
@@ -96,7 +97,14 @@ const fetchAuthed = async (
     if (ct?.includes('application/json')) body = JSON.parse(raw);
     else body = raw;
   }
-  return {status: res.status, body, raw, contentType: ct, etag: res.headers.get('etag')};
+  return {
+    status: res.status,
+    body,
+    raw,
+    contentType: ct,
+    etag: res.headers.get('etag'),
+    composed: res.headers.get('x-vault-composed')
+  };
 };
 
 const seed = (root: string): void => {
@@ -286,6 +294,83 @@ test('GET /vault/{atomized.md} composes the folder back into one file', async t 
       t.ok(md.includes('## Item two'), 'piece 2 heading');
       t.ok(md.includes('Second item body.'), 'piece 2 body');
       t.ok(md.indexOf('Item one') < md.indexOf('Item two'), 'pieces ordered by sequence_key');
+      t.ok(r.etag?.startsWith('W/"'), 'composed response carries a weak ETag');
+      t.equal(r.composed, 'true', 'composed response marked with X-Vault-Composed');
+
+      const file = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      t.ok(file.etag?.startsWith('"'), 'file response keeps a strong ETag');
+      t.equal(file.composed, null, 'file response has no X-Vault-Composed');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{atomized.md} with If-Match 412s naming the composed folder', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const got = await fetchAuthed(`${ctx.url}/vault/projects/demo/queue.md`);
+      const put = await fetchAuthed(`${ctx.url}/vault/projects/demo/queue.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'If-Match': got.etag!},
+        body: JSON.stringify({frontmatter: {title: 'Demo queue'}, body: 'flattened'})
+      });
+      t.equal(put.status, 412, 'conditional PUT against a composed view → 412');
+      const err = put.body as {code: string; error: string; details: Record<string, unknown>};
+      t.equal(err.code, 'precondition_failed', 'code');
+      t.matchString(err.error, /composed on demand/, 'message names the real cause');
+      t.match(err.details, {composed: true, folder: 'projects/demo/queue/'}, 'details');
+      t.ok(!existsSync(join(root, 'projects/demo/queue.md')), 'nothing written');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /vault/{atomized.md} create 409s as shadow_conflict; ?shadow=allow overrides', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const payload = JSON.stringify({frontmatter: {title: 'Demo queue'}, body: 'flattened'});
+      const put = await fetchAuthed(`${ctx.url}/vault/projects/demo/queue.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: payload
+      });
+      t.equal(put.status, 409, 'unconditional create over an atomized folder → 409');
+      const err = put.body as {code: string; details: Record<string, unknown>};
+      t.equal(err.code, 'shadow_conflict', 'code');
+      t.match(err.details, {folder: 'projects/demo/queue/'}, 'details name the folder');
+      t.ok(!existsSync(join(root, 'projects/demo/queue.md')), 'nothing written');
+
+      const forced = await fetchAuthed(`${ctx.url}/vault/projects/demo/queue.md?shadow=allow`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: payload
+      });
+      t.equal(forced.status, 204, '?shadow=allow creates the file deliberately');
+      t.ok(existsSync(join(root, 'projects/demo/queue.md')), 'file written');
+
+      // The file now exists, so plain updates no longer trip the guard.
+      const update = await fetchAuthed(`${ctx.url}/vault/projects/demo/queue.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: payload
+      });
+      t.equal(update.status, 204, 'update of an existing file next to the folder → 204');
+
+      const got = await fetchAuthed(`${ctx.url}/vault/projects/demo/queue.md`);
+      t.ok(got.etag?.startsWith('"'), 'shadowing file now serves with a strong ETag');
+      t.equal(got.composed, null, 'no longer composed');
     } finally {
       await teardown(ctx);
     }
