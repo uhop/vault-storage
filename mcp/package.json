@@ -1,6 +1,6 @@
 {
   "name": "@uhop/vault-storage-mcp",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "MCP adapter for vault-storage. Exposes the REST API as MCP tools/resources for Claude Code.",
   "type": "module",
   "bin": {
