@@ -215,12 +215,35 @@ export const parseWriteRequest = (
  *   (`---\n…\n---`): the caller almost certainly appended the original
  *   file's full content to a new FM block — this exact failure mode wiped
  *   15 files on 2026-05-01 (a sub-agent's PUT-helper bug).
+ * - Body must not be a serialized JS `null`/`undefined` literal: a writer
+ *   interpolating a missing value wiped the 59 KB stream-chain decisions
+ *   note on 2026-06-18. Removing a document is DELETE, never a null write.
+ * - Top-level frontmatter values must not be `null` — same wipe class
+ *   (`agent: null`); omit the key instead.
  * - Auto-managed keys (`record_id`, `content_hash`, …) are rejected.
  * - Closed-enum fields (`status`, `type`, `priority`): canonical values
  *   and known aliases pass; anything else 400s so authoring typos surface
  *   at the boundary rather than silently coercing to a default.
  */
 export const validateWritePayload = (frontmatter: Record<string, unknown>, body: string): void => {
+  const strippedBody = body.trim();
+  if (strippedBody === 'null' || strippedBody === 'undefined') {
+    throw new WriterError(
+      `body is the literal string "${strippedBody}" — a serialized JS ${strippedBody}, not a document. To remove a document use DELETE; otherwise resend with the real body.`,
+      'null_body',
+      400
+    );
+  }
+
+  const nullKeys = Object.keys(frontmatter).filter(key => frontmatter[key] === null);
+  if (nullKeys.length > 0) {
+    throw new WriterError(
+      `frontmatter values must not be null (${nullKeys.join(', ')}) — omit the key instead`,
+      'null_frontmatter_value',
+      400
+    );
+  }
+
   if (looksLikeAnotherFmBlock(body)) {
     throw new WriterError(
       'request body begins with another frontmatter-style block (`---\\n…\\n---`) — almost certainly a malformed PUT (the caller likely appended the original file to a new FM block, which would silently destroy the body). Construct the PUT body as `---\\n<merged FM>\\n---\\n<body>` with a single FM block.',

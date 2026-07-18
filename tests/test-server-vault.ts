@@ -439,6 +439,53 @@ test('PUT /vault/{path} replaces an existing file and preserves created', async 
   }
 });
 
+test('PUT /vault/{path} rejects serialized-null overwrites (null body / null frontmatter values)', async t => {
+  // Guard for the 2026-06-18 wipe: a writer interpolating a missing value
+  // overwrote a 59 KB note with the literal string "null". Removal is
+  // DELETE, never a null write.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const nullBody = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'null'})
+      });
+      t.equal(nullBody.status, 400, '400 on literal-"null" body');
+      t.equal((nullBody.body as {code: string}).code, 'null_body', 'code=null_body');
+
+      const nullFm = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha', agent: null}, body: 'Real body.'})
+      });
+      t.equal(nullFm.status, 400, '400 on null frontmatter value');
+      t.equal(
+        (nullFm.body as {code: string}).code,
+        'null_frontmatter_value',
+        'code=null_frontmatter_value'
+      );
+
+      const mdNull = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: ['---', 'title: Alpha', '---', 'null', ''].join('\n')
+      });
+      t.equal(mdNull.status, 400, '400 on markdown-path literal-"null" body');
+      t.equal((mdNull.body as {code: string}).code, 'null_body', 'markdown path shares the guard');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('Alpha topic body.'), 'on-disk body untouched by all three');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} syncs tags from frontmatter', async t => {
   const {root, cleanup} = setupVault();
   try {
