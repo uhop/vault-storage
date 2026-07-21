@@ -60,6 +60,18 @@ const PRE_PATTERNS: Pattern[] = [
   {type: 'derived-from', re: /\bextending\s+$/i},
   {type: 'derived-from', re: /\bfollows? from\s+$/i},
   {type: 'derived-from', re: /\binformed by\s+$/i},
+  // Forward forms: the target is derived from the source → flip, exactly as
+  // the passive "superseded by" rows above do. Without these a note that
+  // records where its own material went ("Generalized to [[X]]") files a bare
+  // cites, and the relation is only recoverable from the other end.
+  {type: 'derived-from', inverse: true, re: /\bgeneraliz(?:ed|es|ing)\s+(?:in)?to\s+$/i},
+  {
+    type: 'derived-from',
+    inverse: true,
+    re: /\b(?:elaborated|expanded|developed)\s+(?:in|into)\s+$/i
+  },
+  {type: 'derived-from', inverse: true, re: /\b(?:feeds|fed)\s+into\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\bwritten up (?:in|as)\s+$/i},
 
   {type: 'caused-by', re: /\bcaused by\s+$/i},
   {type: 'caused-by', re: /\b(?:triggered|provoked) by\s+$/i},

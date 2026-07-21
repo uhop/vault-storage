@@ -112,6 +112,45 @@ test('"extends" → derived-from edge', t => {
   t.notOk(out[0]?.inverse, 'active form, no inverse');
 });
 
+test('"generalized to" → derived-from edge with inverse direction', t => {
+  // Forward form: the target is derived from the source → edge target→source.
+  const out = classifyBodyLinks('Generalized to [[topics/some-pattern]]; the rest is detail.');
+  t.equal(out[0]?.type, 'derived-from');
+  t.equal(out[0]?.inverse, true, 'inverse direction set');
+});
+
+test('"generalized into" and "generalizing to" also flip', t => {
+  for (const body of [
+    'Generalized into [[topics/some-pattern]].',
+    'Generalizing to [[topics/some-pattern]].'
+  ]) {
+    const out = classifyBodyLinks(body);
+    t.equal(out[0]?.type, 'derived-from', body);
+    t.equal(out[0]?.inverse, true, body);
+  }
+});
+
+test('"elaborated in" / "fed into" / "written up in" → inverse derived-from', t => {
+  for (const body of [
+    'The argument is elaborated in [[design/full-writeup]].',
+    'Those measurements fed into [[design/full-writeup]].',
+    'Written up in [[design/full-writeup]].'
+  ]) {
+    const out = classifyBodyLinks(body);
+    t.equal(out[0]?.type, 'derived-from', body);
+    t.equal(out[0]?.inverse, true, body);
+  }
+});
+
+test('forward and active derived-from cues stay distinguishable', t => {
+  const active = classifyBodyLinks('This is derived from [[source-note]].');
+  const forward = classifyBodyLinks('This was generalized to [[source-note]].');
+  t.equal(active[0]?.type, 'derived-from');
+  t.notOk(active[0]?.inverse, 'active form points source→target');
+  t.equal(forward[0]?.type, 'derived-from');
+  t.equal(forward[0]?.inverse, true, 'forward form points target→source');
+});
+
 test('"extending" → derived-from edge', t => {
   const out = classifyBodyLinks('Extending [[parent-pattern]] with one extra step.');
   t.equal(out[0]?.type, 'derived-from');
