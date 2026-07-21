@@ -393,6 +393,49 @@ test('PUT /sections/{id} allows body with thematic-break `---` (single, no closi
   }
 });
 
+test('PUT /sections/{id} rejects a frontmatter block that did not parse', async t => {
+  // Each of these opens with a delimiter the author meant as frontmatter, but
+  // `parseFrontmatter` recognizes none of them. Writing as-is would keep the
+  // stored frontmatter and bury the author's block in the body — silently
+  // reverting the keys they just edited (the 2026-07-21 `ready` reports).
+  const cases: [string, string][] = [
+    ['leading BOM', '﻿---\ntitle: Alpha\nready: true\n---\n\nBody.\n'],
+    ['leading blank line', '\n---\ntitle: Alpha\nready: true\n---\n\nBody.\n'],
+    ['leading space', ' ---\ntitle: Alpha\nready: true\n---\n\nBody.\n'],
+    ['CR-only line endings', '---\rtitle: Alpha\rready: true\r---\r\rBody.\r'],
+    ['unterminated block', '---\ntitle: Alpha\nready: true\n\nBody.\n'],
+    ['em-dash fence', '—-\ntitle: Alpha\nready: true\n---\n\nBody.\n'],
+    ['no line breaks at all', '---title: Alpha ready: true --- Body.']
+  ];
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      for (const [name, md] of cases) {
+        const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'text/markdown'},
+          body: md
+        });
+        t.equal(put.status, 400, `${name}: 400 bad request`);
+        t.equal(
+          (put.body as {code: string}).code,
+          'unparsed_frontmatter',
+          `${name}: code=unparsed_frontmatter`
+        );
+      }
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('Alpha original body.'), 'on-disk body untouched by any rejection');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /sections/{id} accepts created/updated round-trip; indexer overrides', async t => {
   const {root, cleanup} = setupVault();
   try {

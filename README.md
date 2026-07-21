@@ -247,11 +247,31 @@ synchronization layer; the DB is per-machine derivative state."
 ## Tests
 
 ```bash
-npm test         # tape-six suite
-npm run ts-check # tsc --noEmit
+npm test                   # tape-six suite (node)
+npm run test:browser       # UI component tests, headless Chromium
+npm run test:browser:all   # …across Chromium, Firefox, and WebKit
+npm run ts-check           # tsc --noEmit
 ```
 
-Currently 425+ asserts across ~200 tests covering importer, classifier, server, migration, and atomization paths.
+Currently 2,000+ asserts across ~700 tests covering importer, classifier, server, migration,
+atomization, and UI-component paths.
+
+Node tests are `tests/test-*.ts`; browser tests are `tests/test-*.js`, discovered via the
+`tape6.cli` / `tape6.browser` config globs so each runner sees only its own environment.
+The browser suite runs through `tape-six-playwright`; Firefox and WebKit need
+`npx playwright install firefox webkit` once.
+
+> **Runner note:** the suite runs under `tape6 --flags F`, not `FO`. The fail-once (`O`)
+> early-exit masks failures under the parallel runner — a red assert prints `failed: 0` and
+> exits `0`, with the aborted workers' tests reported as skipped. Dropping `O` keeps
+> parallelism and reports every failure. (tape-six bug; revisit `FO` once fixed.)
+
+### Editor probe
+
+`/ui/editor-probe.html` mounts the real `<vault-editor>` next to a live dump of its
+`value`, DOM nodes, and `innerHTML`, plus a verdict on whether the content would still
+parse as frontmatter. It exists because contenteditable line-break handling differs per
+engine — use it to check a browser before trusting the editor in it.
 
 ## Design summary
 

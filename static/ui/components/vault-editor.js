@@ -7,12 +7,32 @@
 // host page's CSS (theme vars, layout, the data-view show/hide rules) all work
 // without a shadow boundary — and cross-boundary selection is a known pain.
 //
-// Content is kept a flat run of text + '\n' (Enter and paste are normalized to
-// plain text), so a character offset maps straight to a DOM Range.
+// Enter and paste are normalized to plain text, but engines still represent a
+// line break differently in the DOM (Firefox a '\n' text node, Chromium/WebKit
+// a <div> boundary), so `_segments()` — not a raw text walk — is the one place
+// that turns the DOM into text + offsets.
 
 const HL_ALL = 'vault-find';
 const HL_CUR = 'vault-find-current';
 const supportsHighlight = typeof Highlight !== 'undefined' && !!(window.CSS && CSS.highlights);
+
+const BLOCK_TAGS = new Set([
+  'DIV',
+  'P',
+  'LI',
+  'UL',
+  'OL',
+  'PRE',
+  'BLOCKQUOTE',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6'
+]);
+
+const indexOf = (parent, child) => Array.prototype.indexOf.call(parent.childNodes, child);
 
 class VaultEditor extends HTMLElement {
   connectedCallback() {
@@ -29,13 +49,21 @@ class VaultEditor extends HTMLElement {
     this.setAttribute('aria-multiline', 'true');
     if (!this.hasAttribute('spellcheck')) this.setAttribute('spellcheck', 'true');
 
-    // execCommand('insertText') is deprecated but is the one call that still
-    // inserts text while preserving the native undo stack (direct DOM mutation
-    // loses it). Used to keep Enter/paste as plain '\n' text, no <br>/<div>.
+    // execCommand('insertText') is deprecated but is the one call that inserts
+    // text while preserving the native undo stack (direct DOM mutation loses it).
+    // WebKit re-dispatches beforeinput as insertLineBreak for the '\n' inserted
+    // here and performs the actual insertion as that nested event's default
+    // action, so the re-entrant pass must fall through untouched — guarding it
+    // (return before insert) drops the break; preventing its default drops it too.
     this.addEventListener('beforeinput', e => {
-      if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') {
-        e.preventDefault();
+      if (e.inputType !== 'insertParagraph' && e.inputType !== 'insertLineBreak') return;
+      if (this._inserting) return;
+      e.preventDefault();
+      this._inserting = true;
+      try {
         document.execCommand('insertText', false, '\n');
+      } finally {
+        this._inserting = false;
       }
     });
     this.addEventListener('paste', e => {
@@ -49,10 +77,9 @@ class VaultEditor extends HTMLElement {
 
   // --- textarea-compatible API -------------------------------------------
   get value() {
-    let s = '';
-    const w = document.createTreeWalker(this, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) s += n.data;
-    return s;
+    return this._segments()
+      .map(s => s.text)
+      .join('');
   }
 
   set value(v) {
@@ -130,6 +157,44 @@ class VaultEditor extends HTMLElement {
     this.classList.toggle('empty', this.value.length === 0);
   }
 
+  // Engines disagree on what Enter leaves in the DOM: Firefox inserts a literal
+  // '\n' text character, Chromium and WebKit wrap each line in a <div> (an empty
+  // line being <div><br></div>) even under contenteditable=plaintext-only. A
+  // text-node-only walk therefore drops every line break on 2 of the 3 engines —
+  // which silently merged paragraphs and un-parsed frontmatter on save. One walk
+  // produces the text and the offset map together so `value` and the
+  // selection/highlight offsets can never disagree about where a break sits.
+  _segments() {
+    const segments = [];
+    let length = 0;
+    let started = false;
+    const push = (text, node, anchor) => {
+      segments.push({text, node, anchor, base: length});
+      length += text.length;
+    };
+    const walk = el => {
+      for (const n of el.childNodes) {
+        if (n.nodeType === Node.TEXT_NODE) {
+          push(n.data, n, null);
+          started = true;
+        } else if (n.nodeName === 'BR') {
+          // A <br> closing its parent is the filler that makes an empty block
+          // visible, not a break of its own — counting it would double-space.
+          if (n.nextSibling) push('\n', null, {node: el, offset: indexOf(el, n) + 1});
+          started = true;
+        } else if (BLOCK_TAGS.has(n.nodeName)) {
+          if (started) push('\n', null, {node: n, offset: 0});
+          started = true;
+          walk(n);
+        } else {
+          walk(n);
+        }
+      }
+    };
+    walk(this);
+    return segments;
+  }
+
   _sel() {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || !this.contains(sel.anchorNode)) return {start: 0, end: 0};
@@ -140,32 +205,35 @@ class VaultEditor extends HTMLElement {
   }
 
   _point(offset) {
-    const w = document.createTreeWalker(this, NodeFilter.SHOW_TEXT);
-    let acc = 0;
     let last = null;
-    for (let n = w.nextNode(); n; n = w.nextNode()) {
-      last = n;
-      if (acc + n.data.length >= offset) return {node: n, offset: offset - acc};
-      acc += n.data.length;
+    for (const s of this._segments()) {
+      if (!s.node) {
+        if (offset < s.base + s.text.length) return s.anchor;
+        continue;
+      }
+      if (offset <= s.base + s.text.length) {
+        return {node: s.node, offset: Math.max(0, offset - s.base)};
+      }
+      last = s;
     }
-    return last ? {node: last, offset: last.data.length} : {node: this, offset: 0};
+    return last ? {node: last.node, offset: last.node.data.length} : {node: this, offset: 0};
   }
 
   _offsetOf(node, nodeOffset) {
+    const segments = this._segments();
     if (node === this) {
-      let acc = 0;
-      for (let i = 0; i < nodeOffset && i < this.childNodes.length; i++) {
-        acc += (this.childNodes[i].textContent || '').length;
+      const child = this.childNodes[nodeOffset];
+      if (!child) return segments.reduce((n, s) => n + s.text.length, 0);
+      for (const s of segments) {
+        const owner = s.node ?? s.anchor.node;
+        if (owner === child || child.contains(owner)) return s.base;
       }
-      return acc;
+      return segments.reduce((n, s) => n + s.text.length, 0);
     }
-    let acc = 0;
-    const w = document.createTreeWalker(this, NodeFilter.SHOW_TEXT);
-    for (let n = w.nextNode(); n; n = w.nextNode()) {
-      if (n === node) return acc + nodeOffset;
-      acc += n.data.length;
+    for (const s of segments) {
+      if (s.node === node) return s.base + nodeOffset;
     }
-    return acc;
+    return segments.reduce((n, s) => n + s.text.length, 0);
   }
 
   _range(start, end) {

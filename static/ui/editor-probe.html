@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vault-editor probe</title>
+    <link rel="icon" href="/ui/favicon.svg" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fff;
+        --fg: #222;
+        --muted: #666;
+        --line: #d0d0d0;
+        --ok: #1a7f37;
+        --bad: #cf222e;
+        --code-bg: #f6f6f6;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16181c;
+          --fg: #e6e6e6;
+          --muted: #9aa0a6;
+          --line: #333;
+          --ok: #3fb950;
+          --bad: #f85149;
+          --code-bg: #1e2126;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 1rem;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      h1 {
+        font-size: 1.1rem;
+        margin: 0 0 0.25rem;
+      }
+      p.lede {
+        margin: 0 0 1rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      section {
+        margin-bottom: 1rem;
+      }
+      h2 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        margin: 0 0 0.35rem;
+      }
+      vault-editor {
+        display: block;
+        min-height: 9rem;
+        padding: 0.6rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          13px/1.55 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        outline: none;
+      }
+      vault-editor:focus {
+        border-color: #4a90d9;
+      }
+      pre {
+        margin: 0;
+        padding: 0.6rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--code-bg);
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        max-height: 22rem;
+        overflow: auto;
+      }
+      .verdict {
+        font-weight: 600;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      .row {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+      }
+      button {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.35rem 0.7rem;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--code-bg);
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button:active {
+        transform: translateY(1px);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>vault-editor probe</h1>
+    <p class="lede">
+      Type in the box — especially Enter for new paragraphs, and edit the
+      <code>ready:</code> line. Everything below updates live. Hit <em>Copy report</em> and paste
+      the result back.
+    </p>
+
+    <div class="row">
+      <button id="reset">Reset to sample note</button>
+      <button id="clear">Clear</button>
+      <button id="copy">Copy report</button>
+    </div>
+
+    <section>
+      <h2>Editor</h2>
+      <vault-editor id="ed" spellcheck="false"></vault-editor>
+    </section>
+
+    <section>
+      <h2>Verdict</h2>
+      <pre id="verdict"></pre>
+    </section>
+
+    <section>
+      <h2>value (what a save would PUT)</h2>
+      <pre id="value"></pre>
+    </section>
+
+    <section>
+      <h2>DOM child nodes</h2>
+      <pre id="nodes"></pre>
+    </section>
+
+    <section>
+      <h2>innerHTML</h2>
+      <pre id="html"></pre>
+    </section>
+
+    <section>
+      <h2>Environment</h2>
+      <pre id="env"></pre>
+    </section>
+
+    <script type="module">
+      import './components/vault-editor.js';
+
+      const SAMPLE = `---
+title: Probe note
+tags: ["bug"]
+ready: true
+---
+
+First paragraph.
+
+Second paragraph.
+`;
+
+      // Mirrors the server's own frontmatter split (src/markdown/frontmatter.ts),
+      // so a mismatch here is exactly what a save would hit.
+      const FRONTMATTER_BLOCK = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+      const $ = id => document.getElementById(id);
+      const ed = $('ed');
+
+      const describe = node =>
+        node.nodeType === Node.TEXT_NODE
+          ? `TEXT ${JSON.stringify(node.data)}`
+          : node.nodeName === 'BR'
+            ? 'BR'
+            : `<${node.nodeName.toLowerCase()}> ${JSON.stringify(node.textContent)}`;
+
+      const nodeLines = (parent, depth = 0) => {
+        const out = [];
+        for (const n of parent.childNodes) {
+          out.push('  '.repeat(depth) + describe(n));
+          if (n.nodeType === Node.ELEMENT_NODE && n.nodeName !== 'BR') {
+            out.push(...nodeLines(n, depth + 1));
+          }
+        }
+        return out;
+      };
+
+      const verdictOf = value => {
+        const lines = [];
+        const breaks = (value.match(/\n/g) || []).length;
+        lines.push(`newlines in value: ${breaks}`);
+
+        const match = FRONTMATTER_BLOCK.exec(value);
+        if (match) {
+          lines.push('frontmatter: PARSES ✓');
+          const ready = /^ready:[ \t]*(.+)$/m.exec(match[1]);
+          lines.push(`  ready: ${ready ? ready[1].trim() : '(absent)'}`);
+        } else if (/^[\s﻿]*[-‐-―]{2,}/.test(value)) {
+          lines.push('frontmatter: DOES NOT PARSE ✗');
+          lines.push('  the document opens with a delimiter but no frontmatter was recognized —');
+          lines.push('  a save would keep the stored frontmatter and bury this block in the body');
+        } else {
+          lines.push('frontmatter: none (document does not open with a delimiter)');
+        }
+
+        if (breaks === 0 && value.length > 40) {
+          lines.push('line breaks: ALL LOST ✗ — paragraphs would be glued together on save');
+        }
+        return lines.join('\n');
+      };
+
+      const refresh = () => {
+        const value = ed.value;
+        $('value').textContent = JSON.stringify(value, null, 0);
+        $('nodes').textContent = nodeLines(ed).join('\n') || '(empty)';
+        $('html').textContent = ed.innerHTML || '(empty)';
+        const verdict = verdictOf(value);
+        $('verdict').textContent = verdict;
+        $('verdict').className = verdict.includes('✗') ? 'bad verdict' : 'ok verdict';
+      };
+
+      $('env').textContent = [
+        `userAgent: ${navigator.userAgent}`,
+        `platform: ${navigator.platform}`,
+        `contenteditable mode: ${ed.getAttribute('contenteditable')}`,
+        `CSS.highlights: ${!!(window.CSS && CSS.highlights)}`
+      ].join('\n');
+
+      $('reset').addEventListener('click', () => {
+        ed.value = SAMPLE;
+        refresh();
+        ed.focus();
+      });
+      $('clear').addEventListener('click', () => {
+        ed.value = '';
+        refresh();
+        ed.focus();
+      });
+      $('copy').addEventListener('click', async () => {
+        const report = [
+          '## vault-editor probe report',
+          '',
+          '### Environment',
+          $('env').textContent,
+          '',
+          '### Verdict',
+          $('verdict').textContent,
+          '',
+          '### value',
+          $('value').textContent,
+          '',
+          '### DOM child nodes',
+          $('nodes').textContent,
+          '',
+          '### innerHTML',
+          $('html').textContent
+        ].join('\n');
+        try {
+          await navigator.clipboard.writeText(report);
+          $('copy').textContent = 'Copied ✓';
+        } catch {
+          $('copy').textContent = 'Copy failed — select the panels manually';
+        }
+        setTimeout(() => ($('copy').textContent = 'Copy report'), 2000);
+      });
+
+      ed.addEventListener('input', refresh);
+      ed.addEventListener('keyup', refresh);
+      ed.addEventListener('mouseup', refresh);
+      ed.value = SAMPLE;
+      refresh();
+    </script>
+  </body>
+</html>

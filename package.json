@@ -24,7 +24,9 @@
     "node": ">=26"
   },
   "scripts": {
-    "test": "tape6 --flags FO 'tests/test-*.ts'",
+    "test": "tape6 --flags F",
+    "test:browser": "tape6-playwright --start-server --flags FO",
+    "test:browser:all": "tape6-playwright --start-server --browsers all --flags FO",
     "start": "node src/index.ts serve",
     "import": "node src/index.ts import",
     "eval": "node eval/embedding-quality.ts",
@@ -42,7 +44,22 @@
     "@types/node": "^26.1.1",
     "prettier": "^3.9.5",
     "tape-six": "^1.14.0",
+    "tape-six-playwright": "^1.2.2",
     "typescript": "^7.0.2"
+  },
+  "tape6": {
+    "cli": [
+      "/tests/test-*.ts"
+    ],
+    "browser": [
+      "/tests/test-*.js"
+    ],
+    "importmap": {
+      "imports": {
+        "tape-six": "/node_modules/tape-six/index.js",
+        "tape-six/": "/node_modules/tape-six/src/"
+      }
+    }
   },
   "github": "https://github.com/uhop/vault-storage",
   "repository": {

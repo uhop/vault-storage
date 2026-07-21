@@ -81,13 +81,23 @@ const validatePriority = (value: unknown): string | null => {
  * start is allowed (no closing `---` line nearby).
  */
 const looksLikeAnotherFmBlock = (body: string): boolean => {
-  if (!body.startsWith('---\n')) return false;
-  const lines = body.split('\n');
+  if (!/^---\r?\n/.test(body)) return false;
+  const lines = body.split(/\r?\n/);
   for (let i = 1; i < Math.min(lines.length, 51); i++) {
     if (lines[i] === '---') return true;
   }
   return false;
 };
+
+/**
+ * A leading fence that looks like the author meant to open with frontmatter:
+ * two-plus dashes (ASCII `-` or the ‐-― range iOS autocorrect substitutes),
+ * after only optional whitespace/BOM. `writeSplitRecordToDisk` pairs a match
+ * here with a failed frontmatter parse to reject writes that would resurrect
+ * stored frontmatter — unterminated blocks, BOM/blank-line/space-prefixed
+ * fences, CR-only endings, and en/em-dash fences all parse as no frontmatter.
+ */
+const DELIMITER_OPENING = /^[\s﻿]*[-‐-―]{2,}/;
 
 export class WriterError extends Error {
   readonly code: string;
@@ -154,6 +164,15 @@ export interface WriteSplitOptions {
   /** Raw `If-Match` header value — see {@link WriteOptions.ifMatch}. */
   ifMatch?: string;
   now?: string;
+  /**
+   * Set by the markdown path when the request opened with a frontmatter
+   * delimiter that `parseFrontmatter` could not parse (`frontmatter` came back
+   * empty). The writer rejects such a request only if the stored document
+   * actually has frontmatter that the empty request would resurrect — see
+   * {@link DELIMITER_OPENING}. The JSON path never sets it: an explicit empty
+   * `frontmatter` object there is a deliberate caller choice, not a parse miss.
+   */
+  openingDelimiterUnparsed?: boolean;
 }
 
 export type ParsedWriteRequest =
@@ -341,6 +360,8 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     body: requestBody,
     vaultDataPath,
     existing,
+    openingDelimiterUnparsed:
+      Object.keys(requestFm).length === 0 && DELIMITER_OPENING.test(requestMarkdown),
     ...(opts.ifMatch !== undefined ? {ifMatch: opts.ifMatch} : {}),
     ...(opts.now !== undefined ? {now: opts.now} : {})
   });
@@ -413,6 +434,20 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
       priority: existing.priority,
       created: existing.created
     };
+  }
+
+  // The request opened with a frontmatter delimiter that did not parse, and the
+  // stored document has frontmatter of its own — the merge below would keep the
+  // stored keys verbatim and nest the author's edited block into the body,
+  // silently reverting what they just changed (the 2026-07-21 `ready` reports).
+  // A new or genuinely frontmatter-less document has nothing to resurrect, so it
+  // is left to write as-is.
+  if (opts.openingDelimiterUnparsed && Object.keys(existingFm).length > 0) {
+    throw new WriterError(
+      'document opens with a frontmatter delimiter that did not parse as frontmatter, and this path already has frontmatter that would be silently kept while your block is buried in the body. Check that the block is closed by a `---` line, that nothing (BOM, blank line, spaces) precedes the opening `---`, that line endings are LF or CRLF, and that the dashes are ASCII hyphens rather than en/em dashes.',
+      'unparsed_frontmatter',
+      400
+    );
   }
 
   const merged: Record<string, unknown> = {...existingFm, ...sanitizedRequestFm};

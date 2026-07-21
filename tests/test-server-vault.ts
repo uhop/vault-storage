@@ -413,6 +413,32 @@ test('PUT /vault/{path} creates a new file', async t => {
   }
 });
 
+test('PUT /vault/{path} allows a delimiter-opening body when no stored frontmatter is at risk', async t => {
+  // The unparsed-frontmatter guard fires only when the merge would resurrect
+  // stored frontmatter. A brand-new path has none, so a body that opens with a
+  // `---` thematic break (frontmatter parses empty) must still be accepted.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const md = '---\n\nJust a horizontal rule then prose, no frontmatter.\n';
+      const put = await fetchAuthed(`${ctx.url}/vault/topics/hr-opening.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 204, '204 no content — not rejected');
+      const onDisk = readFileSync(join(root, 'topics/hr-opening.md'), 'utf8');
+      t.ok(onDisk.includes('Just a horizontal rule'), 'body written to disk');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} replaces an existing file and preserves created', async t => {
   const {root, cleanup} = setupVault();
   try {
