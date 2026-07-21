@@ -2,6 +2,7 @@ import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
 import {contentHash} from '../util/hash.ts';
+import {normalizeTag} from '../migration/tags.ts';
 import {
   PRIORITY_ALIASES,
   RECORD_STATUSES,
@@ -98,6 +99,30 @@ const looksLikeAnotherFmBlock = (body: string): boolean => {
  * fences, CR-only endings, and en/em-dash fences all parse as no frontmatter.
  */
 const DELIMITER_OPENING = /^[\s﻿]*[-‐-―]{2,}/;
+
+/**
+ * Normalize a frontmatter `tags` value to valid tag ids at write time, so the
+ * markdown source of truth matches the derived index instead of carrying raw
+ * bytes. A tag is a closed-vocabulary id, not free prose; `normalizeTag` is its
+ * canonical shape (lowercase kebab, `[a-z0-9-]` only), which also strips the
+ * curly quotes iOS autocorrect substitutes into YAML — `["blog"]` → `blog`,
+ * not a `"blog"` tag with the quotes baked in. Non-array values are left alone
+ * (the importer ignores them); order is preserved, empties and dupes dropped.
+ * Syntactic only — plural/alias canonicalization stays in the DB layer.
+ */
+const sanitizeTags = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const tag = normalizeTag(entry);
+    if (tag.length === 0 || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+};
 
 export class WriterError extends Error {
   readonly code: string;
@@ -455,6 +480,7 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   if (!('created' in merged)) {
     merged['created'] = existing ? existing.created.slice(0, 10) : now.slice(0, 10);
   }
+  if ('tags' in merged) merged['tags'] = sanitizeTags(merged['tags']);
 
   // Agent-block finalization: `"auto"` sentinels let the writer stamp
   // derived_from_hash (sha256 of the body it is writing — the one value the

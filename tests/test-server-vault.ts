@@ -6,6 +6,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import {parseFrontmatter} from '../src/markdown/frontmatter.ts';
 import {importVault} from '../src/importer/import.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer, type ServerHandle} from '../src/server/server.ts';
@@ -560,6 +561,65 @@ test('PUT /vault/{path} syncs tags from frontmatter', async t => {
   }
 });
 
+test('PUT /vault/{path} normalizes curly-quoted tags into valid ids (iPad autocorrect)', async t => {
+  // iOS autocorrect substitutes straight quotes with curly ones inside the FM
+  // field, so `tags: ["blog"]` arrives with U+201C/U+201D baked into each value.
+  // The writer must clean them at the source (markdown = source of truth), not
+  // just in the derived index, so a re-read never re-parses the junk.
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db.exec(`
+        INSERT INTO tags_taxonomy (tag, description, added) VALUES
+          ('blog', null, '2026-04-29'),
+          ('bug', null, '2026-04-29');
+      `);
+
+      const md = [
+        '---',
+        'title: Alpha v4',
+        'tags: [“blog”, “bug”, “blog”]',
+        '---',
+        'body',
+        ''
+      ].join('\n');
+      const put = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: md
+      });
+      t.equal(put.status, 204, '204 no content');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.notOk(/[“”‘’]/.test(onDisk), 'no curly quotes survive in the stored markdown');
+      t.ok(/tags:/.test(onDisk), 'tags key still present');
+
+      const served = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      const reparsed = parseFrontmatter(served.body as string).data as {tags: string[]};
+      t.deepEqual(reparsed.tags, ['blog', 'bug'], 're-read yields clean, deduped tag ids');
+
+      const list = await fetchAuthed(
+        `${ctx.url}/sections?file_path=${encodeURIComponent('topics/alpha.md')}`
+      );
+      const id = (list.body as {items: Array<{record_id: string}>}).items[0]!.record_id;
+      const rows = ctx.db
+        .prepare('SELECT tag FROM tags WHERE record_id = ? ORDER BY tag')
+        .all(id) as Array<{tag: string}>;
+      t.deepEqual(
+        rows.map(r => r.tag),
+        ['blog', 'bug'],
+        'index carries the clean tags too'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} rejects path traversal', async t => {
   const {root, cleanup} = setupVault();
   try {
@@ -736,8 +796,8 @@ test('PUT /vault/{path} JSON: writes colon-space scalars without YAML quoting he
       const tags = reFm['tags'] as string[] | undefined;
       t.deepEqual(
         tags,
-        ['design', '@user-leading-special'],
-        'leading-special-char tag survives YAML round-trip'
+        ['design', 'user-leading-special'],
+        'tags are normalized to valid ids at write (leading `@` stripped, matching the index)'
       );
     } finally {
       await teardown(ctx);
