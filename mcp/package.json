@@ -26,7 +26,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "tape-six": "^1.14.0"
+    "tape-six": "^1.16.1"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.5"
   },
   "keywords": [
     "mcp",
