@@ -24,7 +24,7 @@
     "node": ">=26"
   },
   "scripts": {
-    "test": "tape6 --flags F",
+    "test": "tape6 --flags FO",
     "test:browser": "tape6-playwright --start-server --flags FO",
     "test:browser:all": "tape6-playwright --start-server --browsers all --flags FO",
     "start": "node src/index.ts serve",
@@ -42,8 +42,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "prettier": "^3.9.5",
-    "tape-six": "^1.14.0",
+    "prettier": "^3.9.6",
+    "tape-six": "^1.16.1",
     "tape-six-playwright": "^1.2.2",
     "typescript": "^7.0.2"
   },
