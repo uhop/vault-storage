@@ -1714,3 +1714,41 @@ test('PUT /vault/{path} If-Match variants: bare tag, wildcard, markdown form, cr
     cleanup();
   }
 });
+
+test('PUT /vault/{path} "__unset__" removes a key — the /vault ingest ready-flag shape', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const setup = await fetchAuthed(`${ctx.url}/vault/raw/inbox-note.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Inbox note', ready: true},
+          body: 'Raw material.\n'
+        })
+      });
+      t.equal(setup.status, 204, 'create with ready: true');
+
+      // The ingest archival step: mark processed, remove the ready flag.
+      const put = await fetchAuthed(`${ctx.url}/vault/raw/inbox-note.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {ready: '__unset__', processed: true},
+          body: 'Raw material.\n'
+        })
+      });
+      t.equal(put.status, 204, '204 no content');
+      const onDisk = readFileSync(join(root, 'raw/inbox-note.md'), 'utf8');
+      t.notOk(onDisk.includes('ready:'), 'ready removed');
+      t.ok(onDisk.includes('processed: true'), 'processed set in the same write');
+      t.ok(onDisk.includes('title: Inbox note'), 'unmentioned keys survive');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

@@ -35,6 +35,39 @@ export const AUTO_MANAGED_KEYS: ReadonlySet<string> = new Set([
  */
 export const INDEXER_OVERRIDE_KEYS: ReadonlySet<string> = new Set(['created', 'updated']);
 
+/**
+ * Reserved FM value that deletes its key from the stored frontmatter. The
+ * write merge is union-only (top-level request keys over stored keys — the
+ * concurrent-writer contract), so omitting a key never removes it, and bare
+ * `null` is rejected as the serialized-JS wipe class. `key: "__unset__"` is
+ * the one way to say "remove this key". Top-level only: nested objects and
+ * arrays are replaced wholesale, so a nested occurrence is a caller bug and
+ * 400s (`nested_unset_sentinel`) rather than landing on disk as a literal
+ * string. Unsetting an absent key is an idempotent no-op; `created`/`updated`
+ * stay indexer-owned (the sentinel there is dropped like any other value).
+ */
+export const FM_UNSET_SENTINEL = '__unset__';
+
+/** Depth-first search for the unset sentinel below top level; returns the
+ *  offending path or null. */
+const findNestedUnsetSentinel = (value: unknown, path: string): string | null => {
+  if (value === FM_UNSET_SENTINEL) return path;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; ++i) {
+      const hit = findNestedUnsetSentinel(value[i], `${path}[${i}]`);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      const hit = findNestedUnsetSentinel(v, `${path}.${k}`);
+      if (hit) return hit;
+    }
+  }
+  return null;
+};
+
 const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 const TYPE_SET: ReadonlySet<string> = new Set(RECORD_TYPES);
 const STATUS_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(STATUS_ALIASES));
@@ -263,11 +296,16 @@ export const parseWriteRequest = (
  *   interpolating a missing value wiped the 59 KB stream-chain decisions
  *   note on 2026-06-18. Removing a document is DELETE, never a null write.
  * - Top-level frontmatter values must not be `null` — same wipe class
- *   (`agent: null`); omit the key instead.
+ *   (`agent: null`); omit the key instead. Key *removal* is the
+ *   {@link FM_UNSET_SENTINEL} (`"__unset__"`), valid at top level only.
+ * - The unset sentinel below top level is rejected — nested values are
+ *   replaced wholesale, so it would be stored as a literal string.
  * - Auto-managed keys (`record_id`, `content_hash`, …) are rejected.
  * - Closed-enum fields (`status`, `type`, `priority`): canonical values
  *   and known aliases pass; anything else 400s so authoring typos surface
- *   at the boundary rather than silently coercing to a default.
+ *   at the boundary rather than silently coercing to a default. The unset
+ *   sentinel is exempt — it deletes the key, reverting to the indexer
+ *   default.
  */
 export const validateWritePayload = (frontmatter: Record<string, unknown>, body: string): void => {
   const strippedBody = body.trim();
@@ -282,10 +320,22 @@ export const validateWritePayload = (frontmatter: Record<string, unknown>, body:
   const nullKeys = Object.keys(frontmatter).filter(key => frontmatter[key] === null);
   if (nullKeys.length > 0) {
     throw new WriterError(
-      `frontmatter values must not be null (${nullKeys.join(', ')}) — omit the key instead`,
+      `frontmatter values must not be null (${nullKeys.join(', ')}) — omit the key to keep the stored value, or set it to "${FM_UNSET_SENTINEL}" to remove it`,
       'null_frontmatter_value',
       400
     );
+  }
+
+  for (const [key, value] of Object.entries(frontmatter)) {
+    if (value === FM_UNSET_SENTINEL) continue; // top-level unset — the removal mechanism
+    const hit = findNestedUnsetSentinel(value, key);
+    if (hit) {
+      throw new WriterError(
+        `frontmatter contains the "${FM_UNSET_SENTINEL}" unset sentinel below top level (${hit}) — nested values are replaced wholesale, so omit the key from the enclosing object instead (array membership: PATCH /sections/{id}/fm)`,
+        'nested_unset_sentinel',
+        400
+      );
+    }
   }
 
   if (looksLikeAnotherFmBlock(body)) {
@@ -305,16 +355,18 @@ export const validateWritePayload = (frontmatter: Record<string, unknown>, body:
     );
   }
 
+  const enumInput = (key: string): unknown =>
+    frontmatter[key] === FM_UNSET_SENTINEL ? undefined : frontmatter[key];
   const statusErr = validateClosedEnum(
     'status',
-    frontmatter['status'],
+    enumInput('status'),
     STATUS_SET,
     STATUS_ALIAS_KEYS
   );
   if (statusErr) throw new WriterError(statusErr, 'invalid_enum_value', 400);
-  const typeErr = validateClosedEnum('type', frontmatter['type'], TYPE_SET, new Set());
+  const typeErr = validateClosedEnum('type', enumInput('type'), TYPE_SET, new Set());
   if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);
-  const priorityErr = validatePriority(frontmatter['priority']);
+  const priorityErr = validatePriority(enumInput('priority'));
   if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
 };
 
@@ -353,7 +405,9 @@ export const ensureSafePath = (vaultRoot: string, filePath: string): string => {
  * Frontmatter merge precedence (highest first): the request's user-authored
  * keys, then on-disk frontmatter, then the existing record's fields, then
  * defaults. `updated` is always force-stamped to `now`. `created` is preserved
- * from disk/record, or stamped at first write.
+ * from disk/record, or stamped at first write. The merge is union-only, so
+ * omitting a key keeps the stored value; a request value of
+ * {@link FM_UNSET_SENTINEL} deletes the key instead.
  */
 export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
   const {filePath, existing, requestMarkdown, vaultDataPath} = opts;
@@ -444,8 +498,11 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   const requestBody = body;
 
   const sanitizedRequestFm: Record<string, unknown> = {};
+  const unsetKeys: string[] = [];
   for (const [k, v] of Object.entries(requestFm)) {
-    if (!INDEXER_OVERRIDE_KEYS.has(k)) sanitizedRequestFm[k] = v;
+    if (INDEXER_OVERRIDE_KEYS.has(k)) continue;
+    if (v === FM_UNSET_SENTINEL) unsetKeys.push(k);
+    else sanitizedRequestFm[k] = v;
   }
 
   let existingFm: Record<string, unknown> = {};
@@ -476,6 +533,7 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   }
 
   const merged: Record<string, unknown> = {...existingFm, ...sanitizedRequestFm};
+  for (const k of unsetKeys) delete merged[k];
   merged['updated'] = now.slice(0, 10);
   if (!('created' in merged)) {
     merged['created'] = existing ? existing.created.slice(0, 10) : now.slice(0, 10);

@@ -577,3 +577,185 @@ test('PUT /sections/{id} honors If-Match (fresh 204, stale 412)', async t => {
     cleanup();
   }
 });
+
+test('PUT /sections/{id} JSON: "__unset__" removes a top-level FM key, idempotently', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const put1 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {ready: true}, body: 'Body.\n'})
+      });
+      t.equal(put1.status, 204, 'setup PUT 204');
+      t.ok(readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('ready: true'), 'key set');
+
+      const put2 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {ready: '__unset__'}, body: 'Body.\n'})
+      });
+      t.equal(put2.status, 204, 'unset PUT 204');
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.notOk(onDisk.includes('ready:'), 'key removed from stored frontmatter');
+      t.notOk(onDisk.includes('__unset__'), 'sentinel itself not stored');
+      t.ok(onDisk.includes('title: Alpha'), 'untouched keys survive the merge');
+
+      // Unsetting an absent key is an idempotent no-op.
+      const put3 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {ready: '__unset__'}, body: 'Body.\n'})
+      });
+      t.equal(put3.status, 204, 'repeat unset 204');
+      t.notOk(
+        readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('ready:'),
+        'key still absent'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} markdown: `key: __unset__` in FM removes the key', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: ['---', 'title: Alpha', 'priority: __unset__', '---', 'Body.', ''].join('\n')
+      });
+      t.equal(put.status, 204, '204 no content');
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.notOk(onDisk.includes('priority:'), 'priority removed from stored frontmatter');
+      t.ok(onDisk.includes('title: Alpha'), 'other keys intact');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} unsetting a closed-enum key reverts to the indexer default', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const put1 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {status: 'draft'}, body: 'Body.\n'})
+      });
+      t.equal(put1.status, 204, 'setup PUT 204');
+
+      const put2 = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {status: '__unset__'}, body: 'Body.\n'})
+      });
+      t.equal(put2.status, 204, 'unset passes the enum validator');
+      t.notOk(
+        readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('status:'),
+        'status removed from stored frontmatter'
+      );
+      const get = await fetchAuthed(`${ctx.url}/sections/${id}`);
+      t.equal((get.body as {status: string}).status, 'active', 'DB reverts to the default');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} rejects the unset sentinel below top level', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const nested = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {extra: {note: '__unset__'}}, body: 'Body.\n'})
+      });
+      t.equal(nested.status, 400, 'nested object sentinel → 400');
+      t.equal(
+        (nested.body as {code: string}).code,
+        'nested_unset_sentinel',
+        'code=nested_unset_sentinel'
+      );
+
+      const inArray = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {related: ['__unset__']}, body: 'Body.\n'})
+      });
+      t.equal(inArray.status, 400, 'array-element sentinel → 400');
+      t.equal(
+        (inArray.body as {code: string}).code,
+        'nested_unset_sentinel',
+        'code=nested_unset_sentinel'
+      );
+      t.ok(
+        readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('Alpha original body.'),
+        'nothing was written'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('PUT /sections/{id} unset sentinel on protected keys: auto-managed 400, indexer-owned dropped', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const autoManaged = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {record_id: '__unset__'}, body: 'Body.\n'})
+      });
+      t.equal(autoManaged.status, 400, 'auto-managed key stays rejected');
+      t.equal(
+        (autoManaged.body as {code: string}).code,
+        'frontmatter_auto_managed',
+        'code=frontmatter_auto_managed'
+      );
+
+      const indexerOwned = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {created: '__unset__'}, body: 'Body.\n'})
+      });
+      t.equal(indexerOwned.status, 204, 'indexer-owned key → dropped, not an error');
+      t.ok(
+        readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('created: 2026-04-01'),
+        'created preserved by the indexer override'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

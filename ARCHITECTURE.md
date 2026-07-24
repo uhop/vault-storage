@@ -64,7 +64,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5).
 - **`commit.ts`**, **`resolve.ts`**, **`static.ts`** — explicit git commit; wikilink resolution; UI file serving.
 
-Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit loop with backoff and stale-lock recovery), **`watcher.ts`** (debounced `fs.watch` → incremental import/delete/embed), **`writer.ts`** (the disk-write + FM-validation core: auto-managed keys, closed-enum validation, ETag), **`snapshot.ts`** (`VACUUM INTO` gzip snapshots for Tier-2 backup). Support: `env.ts`, `auth.ts` (constant-time bearer check), `body.ts`, `query.ts`, `responses.ts`, `serialize.ts`, `resolver-cache.ts`, `memory-reporter.ts`.
+Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit loop with backoff and stale-lock recovery), **`watcher.ts`** (debounced `fs.watch` → incremental import/delete/embed), **`writer.ts`** (the disk-write + FM-validation core: auto-managed keys, closed-enum validation, the `"__unset__"` key-removal sentinel over the union-only FM merge, ETag), **`snapshot.ts`** (`VACUUM INTO` gzip snapshots for Tier-2 backup). Support: `env.ts`, `auth.ts` (constant-time bearer check), `body.ts`, `query.ts`, `responses.ts`, `serialize.ts`, `resolver-cache.ts`, `memory-reporter.ts`.
 
 ## Other modules
 
