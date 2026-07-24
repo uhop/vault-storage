@@ -140,7 +140,7 @@ export class QueueItemsRepository {
 
     this.#refreshPlacement = db.prepare(
       `UPDATE queue_items
-         SET priority = ?, position = ?, source_line = ?
+         SET priority = ?, position = ?, source_line = ?, blocked_by = ?
        WHERE id = ?`
     );
 
@@ -267,12 +267,18 @@ export class QueueItemsRepository {
           continue;
         }
 
+        // blocked_by rides the refresh path even though refs live in the
+        // body: a PARSER upgrade can extract new refs from an unchanged
+        // body (hash equal), and the 2026-07-23 deploy proved it — rows
+        // synced pre-deploy kept stale '[]' through a full reindex.
+        const nextRefs = JSON.stringify(it.blocked_by);
         const placementChanged =
           prior.priority !== it.priority ||
           prior.position !== it.position ||
-          prior.source_line !== it.source_line;
+          prior.source_line !== it.source_line ||
+          prior.blocked_by !== nextRefs;
         if (placementChanged) {
-          this.#refreshPlacement.run(it.priority, it.position, it.source_line, prior.id);
+          this.#refreshPlacement.run(it.priority, it.position, it.source_line, nextRefs, prior.id);
           ++result.refreshed;
         }
       }

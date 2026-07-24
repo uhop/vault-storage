@@ -360,3 +360,31 @@ test('two slices share the same project (queue.md + queue-archive.md)', t => {
   t.equal(repo.listArchiveByProject('demo').length, 1, 'archive slice untouched');
   db.close();
 });
+
+test('applyParsed — parser-upgrade re-extraction: refs refresh on an unchanged body', t => {
+  // The 2026-07-23 deploy scenario: a row synced by a pre-blocked_by parser
+  // has the marker in its body (hash current) but blocked_by = '[]'. The
+  // upgraded parser re-extracts refs from the identical body; the hash-equal
+  // refresh path must write them.
+  const {db, repo} = setup();
+  const src =
+    FM + ['## Backlog', '', '- **Dependent.** waits', '  - blocked-by: The blocker.'].join('\n');
+  const parsed = parseQueueFile('demo', 'projects/demo/queue.md', src);
+  t.deepEqual(parsed[0]?.blocked_by, ['The blocker.'], 'new parser extracts the ref');
+
+  const oldParserView = parsed.map(it => ({...it, blocked_by: []}));
+  repo.applyParsed('demo', 'projects/demo/queue.md', oldParserView, '2026-07-23T10:00:00Z');
+  t.deepEqual(
+    repo.listOpenByProject('demo')[0]?.blocked_by,
+    [],
+    'pre-upgrade row stored without refs'
+  );
+
+  const result = repo.applyParsed('demo', 'projects/demo/queue.md', parsed, '2026-07-23T11:00:00Z');
+  t.equal(result.refreshed, 1, 'hash-equal row refreshed, not updated');
+  t.equal(result.updated, 0, 'body untouched');
+  const row = repo.listOpenByProject('demo')[0];
+  t.deepEqual(row?.blocked_by, ['The blocker.'], 'refs materialized');
+  t.equal(row?.updated_at, '2026-07-23T10:00:00Z', 'updated_at not churned by the refresh');
+  db.close();
+});
