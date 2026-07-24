@@ -1752,3 +1752,183 @@ test('PUT /vault/{path} "__unset__" removes a key — the /vault ingest ready-fl
     cleanup();
   }
 });
+
+test('POST /vault/edit — append collapses trailing whitespace, FM verbatim, updated stamped', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const res = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'append',
+          text: '## Addendum\n\nAppended text.\n'
+        })
+      });
+      t.equal(res.status, 200, '200 with result');
+      t.ok((res.body as {etag: string}).etag, 'new etag returned');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(
+        onDisk.includes('Alpha topic body.\n## Addendum\n\nAppended text.'),
+        'fragment joined after a single newline'
+      );
+      t.ok(onDisk.includes('title: Alpha'), 'frontmatter preserved');
+      t.ok(onDisk.includes('created: 2026-04-01'), 'created preserved');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/edit — replace asserts: single hit works, miss and ambiguity are loud 409s', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const ok = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'Alpha topic body.',
+          to: 'Rewritten body. $& $$ backref bait.'
+        })
+      });
+      t.equal(ok.status, 200);
+      t.equal((ok.body as {replaced: number}).replaced, 1, 'replaced count returned');
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.ok(onDisk.includes('Rewritten body. $& $$ backref bait.'), '$-patterns land literally');
+
+      const miss = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'no such text',
+          to: 'x'
+        })
+      });
+      t.equal(miss.status, 409, 'missing target → 409, not a silent no-op');
+      t.equal((miss.body as {code: string}).code, 'replace_assert_failed');
+      t.equal(
+        (miss.body as {details: {occurrences: number}}).details.occurrences,
+        0,
+        'count carried'
+      );
+
+      const seedAmbiguous = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'append',
+          text: 'dupe token\ndupe token\n'
+        })
+      });
+      t.equal(seedAmbiguous.status, 200);
+      const ambiguous = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'dupe token',
+          to: 'x'
+        })
+      });
+      t.equal(ambiguous.status, 409, 'ambiguous without all → 409');
+      t.equal(
+        (ambiguous.body as {details: {occurrences: number}}).details.occurrences,
+        2,
+        'occurrence count named'
+      );
+
+      const all = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'dupe token',
+          to: 'resolved token',
+          all: true
+        })
+      });
+      t.equal(all.status, 200);
+      t.equal((all.body as {replaced: number}).replaced, 2, 'all replaces every occurrence');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/edit — guards: 404 no-create, composed 409, null-wipe, validation', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    mkdirSync(join(root, 'topics/atom'), {recursive: true});
+    writeFileSync(
+      join(root, 'topics/atom/_about.md'),
+      ['---', 'title: Atom', '---', 'About.', ''].join('\n')
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const missing = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: 'topics/nope.md', op: 'append', text: 'x'})
+      });
+      t.equal(missing.status, 404, 'edit never creates');
+
+      const composed = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: 'topics/atom.md', op: 'append', text: 'x'})
+      });
+      t.equal(composed.status, 409, 'composed view refused');
+      t.equal((composed.body as {code: string}).code, 'composed_view');
+
+      const nullWipe = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'Alpha topic body.',
+          to: 'null'
+        })
+      });
+      t.equal(nullWipe.status, 400, 'edit that produces a null body hits the wipe guard');
+      t.equal((nullWipe.body as {code: string}).code, 'null_body');
+
+      const badOp = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: 'topics/alpha.md', op: 'prepend', text: 'x'})
+      });
+      t.equal(badOp.status, 400, 'unknown op rejected');
+
+      const traversal = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: '../outside.md', op: 'append', text: 'x'})
+      });
+      t.equal(traversal.status, 400, 'path traversal rejected');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

@@ -395,6 +395,189 @@ export const putVaultHandler =
     sendNoContent(ctx.res, {ETag: `"${etag}"`});
   };
 
+interface EditBody {
+  path?: unknown;
+  op?: unknown;
+  text?: unknown;
+  from?: unknown;
+  to?: unknown;
+  all?: unknown;
+}
+
+/**
+ * POST /vault/edit — atomic server-side body edit: the read-modify-write
+ * primitive that retires the client-side GET → transform → ETag'd-PUT
+ * ceremony for running-file updates (queue item moves, archive ship
+ * reports, decisions sections). Request body, one op per call:
+ *
+ *   {path, op: "append", text}
+ *   {path, op: "replace", from, to, all?}
+ *
+ * Semantics mirror claude-config's `vault-put` exactly (the established
+ * client idiom this replaces): append collapses trailing whitespace to a
+ * single newline before the fragment; replace is ASSERTED — an absent
+ * `from` is a 409, an ambiguous one without `all: true` is a 409 carrying
+ * the count — never a silent no-op (the curly-vs-straight-apostrophe bug
+ * class). Frontmatter rides verbatim from disk through the standard write
+ * path (`updated` re-stamped; enrichment staleness filed downstream); FM
+ * changes stay on PUT / PATCH. Editing requires an existing on-disk file —
+ * 404 otherwise, with a composed atomized view pointed at its pieces. No
+ * If-Match: the server holds the document, so the RMW is atomic within the
+ * single-threaded process — that is the point of the primitive. Returns
+ * 200 `{path, etag, replaced?}`.
+ */
+export const editVaultHandler =
+  (deps: VaultDeps): Handler =>
+  async ctx => {
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendError(ctx.res, 400, 'bad_request', 'body must be JSON');
+      return;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      sendError(ctx.res, 400, 'bad_request', 'body must be an object: {path, op, ...}');
+      return;
+    }
+    const req = parsed as EditBody;
+
+    const path = typeof req.path === 'string' ? req.path : '';
+    if (path.length === 0) {
+      sendError(ctx.res, 400, 'invalid_path', 'path is required');
+      return;
+    }
+    if (!path.endsWith('.md')) {
+      sendError(ctx.res, 400, 'invalid_path', 'only .md files are supported');
+      return;
+    }
+    if (req.op !== 'append' && req.op !== 'replace') {
+      sendError(ctx.res, 400, 'bad_request', 'op must be "append" or "replace"');
+      return;
+    }
+    if (req.op === 'append' && (typeof req.text !== 'string' || req.text.length === 0)) {
+      sendError(ctx.res, 400, 'bad_request', 'append requires a non-empty string `text`');
+      return;
+    }
+    if (req.op === 'replace') {
+      if (typeof req.from !== 'string' || req.from.length === 0) {
+        sendError(ctx.res, 400, 'bad_request', 'replace requires a non-empty string `from`');
+        return;
+      }
+      if (typeof req.to !== 'string') {
+        sendError(ctx.res, 400, 'bad_request', 'replace requires a string `to`');
+        return;
+      }
+      if (req.all !== undefined && typeof req.all !== 'boolean') {
+        sendError(ctx.res, 400, 'bad_request', '`all` must be a boolean');
+        return;
+      }
+    }
+
+    const abs = safePathOrError(deps.vaultDataPath, path, ctx.res);
+    if (abs === null) return;
+    if (!existsSync(abs) || !statSync(abs).isFile()) {
+      const folder = path.slice(0, -'.md'.length);
+      if (existsSync(join(abs.slice(0, -'.md'.length), '_about.md'))) {
+        sendError(
+          ctx.res,
+          409,
+          'composed_view',
+          `no file exists at ${path} — it is composed on demand from the atomized folder ${folder}/. Edit the folder's pieces instead.`,
+          {composed: true, folder: `${folder}/`}
+        );
+        return;
+      }
+      sendError(ctx.res, 404, 'not_found', `no file at ${path} — edit cannot create documents`);
+      return;
+    }
+
+    const {data: onDiskFm, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+
+    let edited: string;
+    let replaced: number | undefined;
+    if (req.op === 'append') {
+      edited = body.replace(/\s*$/, '\n') + (req.text as string);
+    } else {
+      const from = req.from as string;
+      const count = body.split(from).length - 1;
+      if (count === 0) {
+        sendError(
+          ctx.res,
+          409,
+          'replace_assert_failed',
+          `replace target not found in ${path}:\n${from.slice(0, 200)}`,
+          {occurrences: 0}
+        );
+        return;
+      }
+      if (count > 1 && req.all !== true) {
+        sendError(
+          ctx.res,
+          409,
+          'replace_assert_failed',
+          `replace target occurs ${count} times in ${path} — pass all: true to replace every occurrence:\n${from.slice(0, 200)}`,
+          {occurrences: count}
+        );
+        return;
+      }
+      const to = req.to as string;
+      // Function replacer: a string replacement would interpret $-patterns.
+      edited = req.all === true ? body.split(from).join(to) : body.replace(from, () => to);
+      replaced = req.all === true ? count : 1;
+    }
+
+    // FM rides verbatim, minus null-valued keys: YAML empty values parse to
+    // null, which the writer's wipe-guard rejects in *request* position — but
+    // the merge restores them from the on-disk FM unchanged, so dropping them
+    // here preserves the document exactly.
+    const requestFm: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(onDiskFm)) {
+      if (value !== null) requestFm[key] = value;
+    }
+
+    const {records} = deps;
+    const existing = records.getByPath(path);
+    let etag: string;
+    try {
+      const result = writeSplitRecordToDisk({
+        filePath: path,
+        existing,
+        frontmatter: requestFm,
+        body: edited,
+        vaultDataPath: deps.vaultDataPath
+      });
+      etag = result.etag;
+    } catch (err) {
+      if (err instanceof WriterError) {
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
+        return;
+      }
+      throw err;
+    }
+
+    const {recordId} = importFile(records, path, abs, undefined, {
+      tags: new TagsImporter(deps.db),
+      agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
+      tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
+      archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
+    });
+    buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
+
+    sendJson(ctx.res, 200, {
+      path,
+      etag,
+      ...(replaced !== undefined ? {replaced} : {})
+    });
+  };
+
 /** DELETE /vault/{path} — remove a file from disk and DB. */
 export const deleteVaultHandler =
   (deps: VaultDeps): Handler =>

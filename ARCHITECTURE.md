@@ -54,7 +54,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 
 - **`records.ts`** — `GET /sections` (list/filter/paginate), record reads, FM PATCH, tag membership endpoints.
 - **`records-write.ts`** — `PUT /sections/{id}`: write to disk at the record's path, re-import inline.
-- **`vault.ts`** — path-addressed content API: `GET/PUT/DELETE /vault/{path}`, folder listing, `POST /vault/move|supersede|propose`.
+- **`vault.ts`** — path-addressed content API: `GET/PUT/DELETE /vault/{path}`, folder listing, `POST /vault/edit` (atomic append / asserted-replace body edits), `POST /vault/move|supersede|propose`.
 - **`search.ts`** — `POST /search/simple`: FTS5 bm25 + title boost (lexical) blended with chunk-KNN (semantic).
 - **`similar.ts`**, **`edges.ts`** — nearest-neighbour records; typed-edge neighborhood (depth ≤ 5) + backlinks.
 - **`suggestions.ts`** — the agent review queue: list/summary/accept/reject/reopen.

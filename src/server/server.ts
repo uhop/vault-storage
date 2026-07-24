@@ -69,6 +69,7 @@ import {
 } from './handlers/tags.ts';
 import {
   deleteVaultHandler,
+  editVaultHandler,
   getVaultHandler,
   getVaultRootHandler,
   moveVaultHandler,
@@ -183,6 +184,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/vault/{path}', getVaultHandler(vaultDeps));
   router.put('/vault/{path}', putVaultHandler(vaultDeps));
   router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
+  router.post('/vault/edit', editVaultHandler(vaultDeps));
   router.post('/vault/move', moveVaultHandler(vaultDeps));
   router.post('/vault/supersede', supersedeVaultHandler(vaultDeps));
   router.post('/vault/propose', proposeVaultHandler(vaultDeps));
