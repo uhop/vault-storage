@@ -732,3 +732,41 @@ test('GET /sections/{unknown-id} returns 404', async t => {
     cleanup();
   }
 });
+
+test('GET /sections rejects unknown query params; `path` aliases `file_path`', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedVault(root);
+    const {db, handle, url} = await startTestServer(root);
+    try {
+      // The 2026-07-20 incident shape: a plausible wrong filter name must be
+      // a loud 400, never an unfiltered 200 that reads as a narrow result.
+      const typo = await authedFetch(`${url}/sections?paht=topics/alpha.md`);
+      t.equal(typo.status, 400, 'typo`d filter → 400');
+      t.ok((typo.body as {error: string}).error.includes('paht'), 'offender named');
+
+      const target = await authedFetch(`${url}/sections?file_prefix=topics/&limit=1`);
+      const filePath = (target.body as {items: Array<{file_path: string}>}).items[0]!.file_path;
+
+      const alias = await authedFetch(`${url}/sections?path=${encodeURIComponent(filePath)}`);
+      t.equal(alias.status, 200, 'path alias accepted');
+      const env = alias.body as {items: Array<{file_path: string}>; total: number};
+      t.equal(env.total, 1, 'alias filters to one record');
+      t.equal(env.items[0]?.file_path, filePath, 'the right record');
+
+      const agree = await authedFetch(
+        `${url}/sections?path=${encodeURIComponent(filePath)}&file_path=${encodeURIComponent(filePath)}`
+      );
+      t.equal(agree.status, 200, 'both spellings with the same value pass');
+
+      const conflict = await authedFetch(
+        `${url}/sections?path=${encodeURIComponent(filePath)}&file_path=topics/other.md`
+      );
+      t.equal(conflict.status, 400, 'divergent path vs file_path → 400');
+    } finally {
+      await teardown(db, handle);
+    }
+  } finally {
+    cleanup();
+  }
+});

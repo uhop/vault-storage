@@ -8,7 +8,7 @@ import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {RECORD_COLUMNS, RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
 import {readBodyText} from '../body.ts';
-import {parsePagination, splitCsv} from '../query.ts';
+import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -767,9 +767,48 @@ const parseSort = (raw: string | undefined): {clause: string; error?: string} =>
   return {clause: `ORDER BY ${column} ${desc ? 'DESC' : 'ASC'}`};
 };
 
+// Every parameter GET /sections understands. A key outside this set is a
+// 400 naming the offender — the 2026-07-20 incident: a typo'd `?path=`
+// filter was silently dropped, the unfiltered list came back 200, and the
+// caller's `.items[0]` write landed on an arbitrary record.
+const LIST_PARAMS: ReadonlySet<string> = new Set([
+  'type',
+  'status',
+  'record_ids',
+  'file_path',
+  'path',
+  'file_prefix',
+  'tag',
+  'priority_min',
+  'priority_max',
+  'updated_since',
+  'sort',
+  'exclude',
+  'offset',
+  'limit'
+]);
+
 export const listRecordsHandler =
   ({db}: {db: DatabaseSync}): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, LIST_PARAMS)) return;
+    // `path` is an accepted alias of `file_path` — the rest of the API says
+    // "path" (`/vault/{path}`, wikilinks), which made the typo'd filter the
+    // trap's bait. Divergent values for both spellings are a 400.
+    const pathAlias = ctx.query['path'];
+    if (pathAlias !== undefined) {
+      const canonical = ctx.query['file_path'];
+      if (canonical !== undefined && canonical !== pathAlias) {
+        sendError(
+          ctx.res,
+          400,
+          'bad_request',
+          '`path` and `file_path` given with different values — `path` is an alias; send one'
+        );
+        return;
+      }
+      ctx.query['file_path'] = pathAlias;
+    }
     const filters = parseListFilters(ctx.query);
     if (typeof filters === 'string') {
       sendError(ctx.res, 400, 'bad_request', filters);
