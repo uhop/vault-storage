@@ -143,6 +143,15 @@ type MatchKey = string;
 interface FilerSpec {
   /** Idempotency key — `file()` skips when a blocking row matches these values. */
   identity: readonly MatchKey[];
+  /**
+   * Alternative identity that ALSO blocks. Exists because record ids drift
+   * under delete+recreate while the semantic identity (a path-addressed
+   * link) survives: the 2026-07-12 dupe was a target recreated during a
+   * consolidation — the old pending row kept its dangling `to_record`
+   * (the 0009 cascade fires on `subject_id`, the FROM side), and the new
+   * resolution's fresh id sailed past the id-based identity.
+   */
+  altIdentity?: readonly MatchKey[];
   /** The identity is an unordered pair; either orientation matches. */
   symmetric?: boolean;
   blocking: BlockingScope;
@@ -160,6 +169,7 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
    */
   edge_type: {
     identity: ['from_record', 'to_record'],
+    altIdentity: ['from_record', 'to_path'],
     blocking: 'all-statuses',
     subject: 'from_record'
   },
@@ -271,6 +281,9 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     } else {
       identityClause = matchClause(spec.identity);
     }
+    if (spec.altIdentity) {
+      identityClause = `(${identityClause} OR (${matchClause(spec.altIdentity)}))`;
+    }
     // 'claimed' is unresolved-but-reserved (schema 0015) — it blocks and
     // settles exactly like 'pending' everywhere in this module.
     const blockingClause =
@@ -316,7 +329,10 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     const identity = spec.identity.map(k => (k === 'subject' ? subject : (fields[k] ?? null)));
     const params: SQLInputValue[] = spec.symmetric
       ? [identity[0] ?? null, identity[1] ?? null, identity[1] ?? null, identity[0] ?? null]
-      : identity;
+      : [...identity];
+    if (spec.altIdentity) {
+      params.push(...spec.altIdentity.map(k => (k === 'subject' ? subject : (fields[k] ?? null))));
+    }
     if (spec.blocking === 'pending-or-snoozed-reject') {
       params.push(snoozeCutoff(now, opts.snoozeDays ?? DEFAULT_SNOOZE_DAYS));
     }
@@ -398,6 +414,50 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
  * would miss it and the suggestion would never clear. Returns the count
  * promoted (`resolved_by='tag-realized'`).
  */
+/**
+ * Rewrite the payload path fields of unresolved (pending/claimed)
+ * suggestions that reference `recordId` after the record moved to
+ * `newPath`. Payload paths are captured at filing time; a later
+ * `/vault/move` (or supersede's archive step) strands them, and a review
+ * skill writing to the stale path resurrects a ghost record there (the
+ * 2026-07-12 `projects/chezmoi/stack.md` incident). Resolved rows keep
+ * their filing-time paths — they are audit history, not live routing.
+ * Returns the number of rows rewritten.
+ */
+export const repathPendingSuggestions = (
+  db: DatabaseSync,
+  recordId: string,
+  newPath: string
+): number => {
+  const rewrites: Array<{kinds: readonly SuggestionKind[]; idField: string; pathField: string}> = [
+    {
+      kinds: ['new_tag', 'tag_suggestion', 'archive_candidate', 'agent_enrichment_stale'],
+      idField: 'record_id',
+      pathField: 'file_path'
+    },
+    {kinds: ['edge_type'], idField: 'from_record', pathField: 'from_path'},
+    {kinds: ['edge_type'], idField: 'to_record', pathField: 'to_path'},
+    {kinds: ['duplicate'], idField: 'a_record', pathField: 'a_path'},
+    {kinds: ['duplicate'], idField: 'b_record', pathField: 'b_path'}
+  ];
+  let changed = 0;
+  for (const {kinds, idField, pathField} of rewrites) {
+    const kindList = kinds.map(k => `'${k}'`).join(', ');
+    changed += Number(
+      db
+        .prepare(
+          `UPDATE suggestions
+              SET payload = json_set(payload, '$.${pathField}', ?)
+            WHERE kind IN (${kindList})
+              AND status IN ('pending', 'claimed')
+              AND json_extract(payload, '$.${idField}') = ?`
+        )
+        .run(newPath, recordId).changes
+    );
+  }
+  return changed;
+};
+
 export const acceptRealizedTagSuggestions = (
   filer: SuggestionFiler<'tag_suggestion'>,
   recordId: string,

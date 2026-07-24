@@ -13,7 +13,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {buildEdges} from '../../importer/build-edges.ts';
-import {SuggestionFiler} from '../../importer/file-suggestions.ts';
+import {repathPendingSuggestions, SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import {proposeNearest} from '../../maintenance/propose.ts';
@@ -697,6 +697,9 @@ export const moveVaultHandler =
     // DB update — preserves record_id, and therefore every reference to it
     // (edges, tags, suggestions, embeddings, agent block).
     records.updateFilePath(existing.recordId, toPath);
+    // Unresolved suggestions carry filing-time paths; strand them and a
+    // review skill writing to the old path resurrects a ghost record there.
+    repathPendingSuggestions(deps.db, existing.recordId, toPath);
     deps.resolverCache.invalidate();
 
     sendNoContent(ctx.res);
@@ -842,6 +845,7 @@ export const supersedeVaultHandler =
     mkdirSync(dirname(archiveAbs), {recursive: true});
     renameSync(oldAbs, archiveAbs);
     records.updateFilePath(oldRecord.recordId, archivePath);
+    repathPendingSuggestions(deps.db, oldRecord.recordId, archivePath);
 
     // 2. Stamp the archived note `status: superseded` (FM merge keeps the
     //    rest) and re-import it.
