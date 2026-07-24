@@ -35,6 +35,8 @@ export interface QueueItemRow {
   source_file: string;
   source_line: number;
   body_hash: string;
+  /** Raw `blocked-by:` refs parsed from the body; resolved at query time (ready.ts). */
+  blocked_by: string[];
   created_at: string;
   updated_at: string;
 }
@@ -53,9 +55,19 @@ interface DbRow {
   source_file: string;
   source_line: number;
   body_hash: string;
+  blocked_by: string;
   created_at: string;
   updated_at: string;
 }
+
+const parseBlockedBy = (raw: string): string[] => {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+};
 
 const rowFromDb = (row: DbRow): QueueItemRow => ({
   id: row.id,
@@ -71,6 +83,7 @@ const rowFromDb = (row: DbRow): QueueItemRow => ({
   source_file: row.source_file,
   source_line: row.source_line,
   body_hash: row.body_hash,
+  blocked_by: parseBlockedBy(row.blocked_by),
   created_at: row.created_at,
   updated_at: row.updated_at
 });
@@ -113,15 +126,15 @@ export class QueueItemsRepository {
       `INSERT INTO queue_items (
          id, project, section, priority, position, title, title_norm, body,
          closed_at, close_reason, source_file, source_line, body_hash,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         blocked_by, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     this.#updateBody = db.prepare(
       `UPDATE queue_items
          SET priority = ?, position = ?, title = ?, body = ?,
              closed_at = ?, close_reason = ?, source_line = ?,
-             body_hash = ?, updated_at = ?
+             body_hash = ?, blocked_by = ?, updated_at = ?
        WHERE id = ?`
     );
 
@@ -228,6 +241,7 @@ export class QueueItemsRepository {
             it.source_file,
             it.source_line,
             it.body_hash,
+            JSON.stringify(it.blocked_by),
             now,
             now
           );
@@ -245,6 +259,7 @@ export class QueueItemsRepository {
             it.close_reason,
             it.source_line,
             it.body_hash,
+            JSON.stringify(it.blocked_by),
             now,
             prior.id
           );

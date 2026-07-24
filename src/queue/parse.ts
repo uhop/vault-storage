@@ -40,6 +40,12 @@ export interface ParsedQueueItem {
   source_line: number;
   /** sha256(title + '\0' + body), hex. */
   body_hash: string;
+  /**
+   * Raw refs from `blocked-by:` marker lines in the item body, in order of
+   * appearance. Refs are normalized-title substrings (optionally
+   * `<project>/`-prefixed), resolved at query time — see `ready.ts`.
+   */
+  blocked_by: string[];
 }
 
 const SECTION_HEADINGS: Record<string, Exclude<QueueSection, 'archive'>> = {
@@ -61,6 +67,13 @@ const CHECKBOX_PREFIX_RE = /^\[[ xX~]\]\s+/;
 // first true `**` close.
 const BOLD_PREFIX_RE = /^\*\*((?:[^*]|\*(?!\*))+?)\*\*\s*(.*)$/;
 const ARCHIVE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+// A `blocked-by:` marker line inside an item body: optional sub-bullet
+// marker, the key, then `;`-separated refs (titles legitimately contain
+// commas, so `;` is the list separator). Detection runs on the MASKED line —
+// a backticked mention (`` `blocked-by:` ``) blanks out and never matches —
+// while refs are cut from the raw line so backticked spans inside a ref
+// survive verbatim.
+const BLOCKED_BY_RE = /^\s*(?:[-*+]\s+)?blocked-by:\s*(.+?)\s*$/i;
 
 const CLOSE_REASON_RULES: Array<{re: RegExp; reason: CloseReason}> = [
   {re: /\bshipped\b|\bpublished\b|\breleased\b/i, reason: 'shipped'},
@@ -94,6 +107,7 @@ const hashBody = (title: string, body: string): string =>
 interface PendingItem {
   startLine: number; // 1-based, in the full original content
   rawLines: string[]; // original (un-masked) lines, including the bullet line
+  maskedLines: string[]; // code-masked twins, index-aligned with rawLines
 }
 
 interface ParseState {
@@ -139,6 +153,25 @@ const flushItem = (state: ParseState, project: string, sourceFile: string): void
     .join('\n')
     .replace(/\s+$/, '');
 
+  // Marker lines are continuation lines only (index ≥ 1): the bullet line
+  // carries the title, and an anchored match there would double-read a
+  // degenerate no-bold item as its own blocker ref.
+  const blockedBy: string[] = [];
+  const seenRefs = new Set<string>();
+  for (let i = 1; i < pending.rawLines.length; ++i) {
+    if (!BLOCKED_BY_RE.test(pending.maskedLines[i] ?? '')) continue;
+    const raw = BLOCKED_BY_RE.exec(pending.rawLines[i] ?? '');
+    if (!raw) continue;
+    for (const piece of (raw[1] ?? '').split(';')) {
+      const ref = piece.trim();
+      if (ref.length === 0) continue;
+      const key = normalizeTitle(ref);
+      if (seenRefs.has(key)) continue;
+      seenRefs.add(key);
+      blockedBy.push(ref);
+    }
+  }
+
   const key = positionKey(state.section, state.priority, state.closedAt);
   const nextPos = (state.positions.get(key) ?? 0) + 1;
   state.positions.set(key, nextPos);
@@ -156,7 +189,8 @@ const flushItem = (state: ParseState, project: string, sourceFile: string): void
     close_reason: isArchive ? inferCloseReason(body) : null,
     source_file: sourceFile,
     source_line: pending.startLine,
-    body_hash: hashBody(title, body)
+    body_hash: hashBody(title, body),
+    blocked_by: blockedBy
   });
 };
 
@@ -248,13 +282,16 @@ export const parseQueueFile = (
     if (/^[-*+]\s/.test(maskedLine)) {
       flushItem(state, project, sourceFile);
       if (state.section !== null) {
-        state.pending = {startLine: lineNumber, rawLines: [rawLine]};
+        state.pending = {startLine: lineNumber, rawLines: [rawLine], maskedLines: [maskedLine]};
       }
       continue;
     }
 
     // Continuation line — only consumed when we're inside an item.
-    if (state.pending) state.pending.rawLines.push(rawLine);
+    if (state.pending) {
+      state.pending.rawLines.push(rawLine);
+      state.pending.maskedLines.push(maskedLine);
+    }
   }
 
   flushItem(state, project, sourceFile);

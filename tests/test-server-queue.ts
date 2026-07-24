@@ -341,3 +341,101 @@ test('Unauthenticated requests are rejected', async t => {
     t.equal(status, 401);
   });
 });
+
+const seedBlockedFleet = (db: ReturnType<typeof openDatabase>, root: string): void => {
+  const repo = new QueueItemsRepository(db);
+  writeQueueFile(
+    root,
+    'charlie',
+    'queue.md',
+    FM +
+      [
+        '## Backlog',
+        '',
+        '- **C-free.** nothing in the way',
+        '- **C-blocked.** waits on the free one',
+        '  - blocked-by: C-free.',
+        '- **C-done-dep.** blocker already shipped',
+        '  - blocked-by: C-shipped.',
+        '- **C-typo.** ref points nowhere',
+        '  - blocked-by: nonexistent thing'
+      ].join('\n')
+  );
+  writeQueueFile(
+    root,
+    'charlie',
+    'queue-archive.md',
+    FM + ['## 2026-07-01', '', '- **C-shipped.** shipped in commit xyz'].join('\n')
+  );
+  writeQueueFile(
+    root,
+    'delta',
+    'queue.md',
+    FM +
+      ['## Backlog', '', '- **D-cross.** waits on charlie', '  - blocked-by: charlie/C-free.'].join(
+        '\n'
+      )
+  );
+  syncQueueFile(repo, 'projects/charlie/queue.md', root, '2026-07-23T12:00:00Z');
+  syncQueueFile(repo, 'projects/charlie/queue-archive.md', root, '2026-07-23T12:00:00Z');
+  syncQueueFile(repo, 'projects/delta/queue.md', root, '2026-07-23T12:00:00Z');
+};
+
+test('GET /queue/ready — unblocked backlog only; closed blockers release', async t => {
+  await withServer(seedBlockedFleet, async url => {
+    const {status, body} = await fetchJson(`${url}/queue/ready`, {headers: authHeader});
+    t.equal(status, 200);
+    const payload = body as {count: number; items: Array<{title: string; blocked_by: string[]}>};
+    t.deepEqual(
+      payload.items.map(it => it.title),
+      ['C-free.', 'C-done-dep.'],
+      'open blocker and unresolved ref block; archived blocker releases'
+    );
+    t.deepEqual(payload.items[1]?.blocked_by, ['C-shipped.'], 'raw refs surface on items');
+  });
+});
+
+test('GET /queue/ready?project= — scoped; cross-project blockage respected', async t => {
+  await withServer(seedBlockedFleet, async url => {
+    const {status, body} = await fetchJson(`${url}/queue/ready?project=delta`, {
+      headers: authHeader
+    });
+    t.equal(status, 200);
+    const payload = body as {project: string; count: number};
+    t.equal(payload.project, 'delta');
+    t.equal(payload.count, 0, 'D-cross. is blocked by an open item in charlie');
+  });
+});
+
+test('GET /queue/blocked — per-ref detail with states and targets', async t => {
+  await withServer(seedBlockedFleet, async url => {
+    const {status, body} = await fetchJson(`${url}/queue/blocked`, {headers: authHeader});
+    t.equal(status, 200);
+    const payload = body as {
+      count: number;
+      items: Array<{
+        title: string;
+        in_cycle: boolean;
+        blockers: Array<{ref: string; state: string; target?: {project: string; title: string}}>;
+      }>;
+    };
+    const byTitle = new Map(payload.items.map(it => [it.title, it]));
+    t.deepEqual([...byTitle.keys()].sort(), ['C-blocked.', 'C-typo.', 'D-cross.']);
+    t.equal(byTitle.get('C-blocked.')?.blockers[0]?.state, 'open');
+    t.equal(byTitle.get('C-typo.')?.blockers[0]?.state, 'unresolved');
+    const cross = byTitle.get('D-cross.')?.blockers[0];
+    t.equal(cross?.state, 'open');
+    t.equal(cross?.target?.project, 'charlie');
+    t.equal(byTitle.get('C-blocked.')?.in_cycle, false);
+  });
+});
+
+test('GET /queue/ready — unknown query parameter is a loud 400', async t => {
+  await withServer(seedBlockedFleet, async url => {
+    const {status, body} = await fetchJson(`${url}/queue/ready?projct=delta`, {
+      headers: authHeader
+    });
+    t.equal(status, 400, 'typo`d filter fails instead of returning the fleet view');
+    t.ok((body as {error: string}).error.includes('projct'), 'offender named');
+  });
+});

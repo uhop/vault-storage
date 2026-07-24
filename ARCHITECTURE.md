@@ -60,7 +60,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`suggestions.ts`** — the agent review queue: list/summary/accept/reject/reopen.
 - **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds.
 - **`maintenance.ts`** — `POST /maintenance/*`: scans (duplicates, compaction, retention, upgrade signals), cleanups, embed-pending, incremental reindex, snapshots, raw inbox.
-- **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project).
+- **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project) plus the dependency views (`/queue/ready`, `/queue/blocked`) over query-time `blocked-by:` resolution.
 - **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5).
 - **`commit.ts`**, **`resolve.ts`**, **`static.ts`** — explicit git commit; wikilink resolution; UI file serving.
 
@@ -69,7 +69,7 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 ## Other modules
 
 - **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring.
-- **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows; watcher glue + full reindex.
+- **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows (including `blocked-by:` refs); query-time blocker resolution + ready/blocked/cycle computation (`ready.ts`); watcher glue + full reindex.
 - **`src/maintenance/`** — the find-\* scans, lint cleanups, incremental reindex, run-all bundle, scan scheduler, search-before-write propose, raw-inbox classification, doc-vec backfill.
 - **`src/markdown/`** — YAML frontmatter parse/serialize; wikilink extraction with code-region masking.
 - **`src/migration/`** — one-time Obsidian → vault-storage transform: enum remaps, tag canonicalization, frontmatter backfill, oversized-file atomization, taxonomy seeding.
@@ -81,7 +81,7 @@ Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to n
 
 - **`src/index.js`** — entry: env (`VAULT_API_URL`, `VAULT_API_TOKEN`), `McpServer` over stdio, tool + resource registration.
 - **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization.
-- **`src/tools.js`** — 33 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums.
+- **`src/tools.js`** — 35 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums.
 - **`src/resources.js`** — 3 read-only resources: `vault://status`, `vault://suggestions/pending`, `vault://taxonomy/tags`.
 
 ## static/ UI

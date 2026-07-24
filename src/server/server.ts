@@ -34,9 +34,11 @@ import {
 } from './handlers/maintenance.ts';
 import {
   queueArchiveByProjectHandler,
+  queueBlockedHandler,
   queueByPriorityHandler,
   queueByProjectHandler,
   queueBySectionHandler,
+  queueReadyHandler,
   queueTopHandler,
   reindexQueuesHandler
 } from './handlers/queue.ts';
@@ -247,6 +249,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
   // /queue/top before /queue/projects/{name} and /queue/by-* — registration
   // order is precedence in this router.
   router.get('/queue/top', queueTopHandler({db: opts.db}));
+  router.get('/queue/ready', queueReadyHandler({db: opts.db}));
+  router.get('/queue/blocked', queueBlockedHandler({db: opts.db}));
   router.get('/queue/by-section/{section}', queueBySectionHandler({db: opts.db}));
   router.get('/queue/by-priority/{n}', queueByPriorityHandler({db: opts.db}));
   router.get('/queue/projects/{name}/archive', queueArchiveByProjectHandler({db: opts.db}));

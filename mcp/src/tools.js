@@ -628,6 +628,30 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_queue_ready',
+    {
+      description:
+        'Backlog items whose blocked-by refs (if any) all resolve to archived items — the "claimable next" view, ordered (priority DESC, project, position). Fleet-wide by default; pass project to scope. Active (already started) and Watching (upstream-gated) are excluded. Unresolved/ambiguous refs BLOCK conservatively — check vault_queue_blocked for the detail. Use case: "what can I start right now?"',
+      inputSchema: {
+        project: z.string().min(1).optional().describe('Project slug to scope to, e.g. "node-re2"')
+      }
+    },
+    wrap(async ({project}) => client.getJson('/queue/ready', {project}))
+  );
+
+  mcp.registerTool(
+    'vault_queue_blocked',
+    {
+      description:
+        'Open queue items with at least one blocking blocked-by ref, each with per-ref resolution detail (state: open | unresolved | ambiguous, plus the resolved target) and an in_cycle flag for mutually-blocked items that can never self-release. The complementary view to vault_queue_ready; unresolved/ambiguous states usually mean a typo\'d ref or a blocker that was renamed. Use case: "what is stuck, and on what exactly?"',
+      inputSchema: {
+        project: z.string().min(1).optional().describe('Project slug to scope to, e.g. "node-re2"')
+      }
+    },
+    wrap(async ({project}) => client.getJson('/queue/blocked', {project}))
+  );
+
+  mcp.registerTool(
     'vault_queue_project_archive',
     {
       description:

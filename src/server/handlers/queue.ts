@@ -6,10 +6,11 @@
 // after the migration lands or when the watcher missed an event.
 
 import type {DatabaseSync} from 'node:sqlite';
+import {blockedView, readyView, type BlockerReport} from '../../queue/ready.ts';
 import {QueueItemsRepository, type QueueItemRow} from '../../queue/repo.ts';
 import {reindexAllQueues} from '../../queue/sync.ts';
 import {sendError, sendJson} from '../responses.ts';
-import type {Handler} from '../router.ts';
+import type {Handler, RequestContext} from '../router.ts';
 
 interface QueueDeps {
   db: DatabaseSync;
@@ -34,9 +35,28 @@ const toApi = (row: QueueItemRow): Record<string, unknown> => ({
   source_file: row.source_file,
   source_line: row.source_line,
   body_hash: row.body_hash,
+  blocked_by: row.blocked_by,
   created_at: row.created_at,
   updated_at: row.updated_at
 });
+
+/**
+ * Reject query keys outside `allowed` with a 400 naming the offender — a
+ * typo'd filter must fail loud, not fall through to an unfiltered answer
+ * (the `GET /sections` `?path=` incident, applied from birth here).
+ * Returns true when the query is clean.
+ */
+const rejectUnknownParams = (ctx: RequestContext, allowed: ReadonlySet<string>): boolean => {
+  const unknown = Object.keys(ctx.query).filter(k => !allowed.has(k));
+  if (unknown.length === 0) return true;
+  sendError(
+    ctx.res,
+    400,
+    'bad_request',
+    `unknown query parameter(s): ${unknown.join(', ')} — supported: ${[...allowed].sort().join(', ') || '(none)'}`
+  );
+  return false;
+};
 
 const parsePositiveInt = (raw: string | undefined, fallback: number): number | null => {
   if (raw === undefined) return fallback;
@@ -151,6 +171,69 @@ export const queueArchiveByProjectHandler =
     const repo = new QueueItemsRepository(deps.db);
     const items = repo.listArchiveByProject(project).map(toApi);
     sendJson(ctx.res, 200, {project, count: items.length, items});
+  };
+
+const blockerReportToApi = (report: BlockerReport): Record<string, unknown> => ({
+  ...toApi(report.item),
+  blockers: report.blockers.map(b => ({
+    ref: b.ref,
+    state: b.state,
+    ...(b.target ? {target: b.target} : {}),
+    ...(b.matches !== undefined ? {matches: b.matches} : {})
+  })),
+  in_cycle: report.inCycle
+});
+
+/**
+ * GET /queue/ready[?project=<name>]
+ *
+ * Backlog items whose `blocked-by:` refs (if any) all resolve to archived
+ * items — the "claimable next" view, ordered `(priority DESC, project,
+ * position)`. Active is already started and Watching is upstream-gated, so
+ * neither appears. Unresolved and ambiguous refs BLOCK (they surface in
+ * `/queue/blocked` with detail); refs resolve at query time against the
+ * whole table, so cross-project blockers and archive closure are always
+ * current. Unknown query parameters are a 400, not a silent no-op.
+ */
+export const queueReadyHandler =
+  (deps: QueueDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['project']))) return;
+    const project = ctx.query['project'];
+    const repo = new QueueItemsRepository(deps.db);
+    const universe = repo.listAll();
+    const candidates = project ? universe.filter(row => row.project === project) : universe;
+    const items = readyView(candidates, universe).map(toApi);
+    sendJson(ctx.res, 200, {
+      ...(project ? {project} : {}),
+      count: items.length,
+      items
+    });
+  };
+
+/**
+ * GET /queue/blocked[?project=<name>]
+ *
+ * Open items (any open section) with at least one blocking ref, each with
+ * per-ref resolution detail (`state`: open | unresolved | ambiguous, plus
+ * the resolved target when there is one) and an `in_cycle` flag — mutually
+ * blocked items can never self-release, so cycles are surfaced as data
+ * bugs. The complementary view to `/queue/ready`.
+ */
+export const queueBlockedHandler =
+  (deps: QueueDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['project']))) return;
+    const project = ctx.query['project'];
+    const repo = new QueueItemsRepository(deps.db);
+    const universe = repo.listAll();
+    const candidates = project ? universe.filter(row => row.project === project) : universe;
+    const items = blockedView(candidates, universe).map(blockerReportToApi);
+    sendJson(ctx.res, 200, {
+      ...(project ? {project} : {}),
+      count: items.length,
+      items
+    });
   };
 
 /**

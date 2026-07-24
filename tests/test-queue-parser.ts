@@ -416,3 +416,93 @@ test('parseQueueFile — title_norm stable under cosmetic edits', t => {
     'whitespace + en-dash cosmetic variants normalize to the same key'
   );
 });
+
+test('parseQueueFile — blocked-by markers', async t => {
+  await t.test('sub-bullet marker: refs split on `;`, order kept', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Dependent.** Needs two things first.',
+        '  - blocked-by: first thing; second, with a comma',
+        '- **Free.** No blockers.'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(items[0]?.blocked_by, ['first thing', 'second, with a comma']);
+    t.deepEqual(items[1]?.blocked_by, []);
+  });
+
+  await t.test('multiple marker lines accumulate; normalized dupes dropped', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Dependent.** Body.',
+        '  * blocked-by: Alpha',
+        '  Some prose in between.',
+        '  * Blocked-By: beta;  ALPHA',
+        ''
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(items[0]?.blocked_by, ['Alpha', 'beta']);
+  });
+
+  await t.test('plain continuation line works; key is case-insensitive', t => {
+    const src =
+      FM + ['## Backlog', '', '- **Dependent.** Body.', '  BLOCKED-BY: the blocker'].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(items[0]?.blocked_by, ['the blocker']);
+  });
+
+  await t.test('backticked mention is documentation, not a marker', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Docs item.** Explains the `blocked-by: x` syntax.',
+        '  - `blocked-by: not-a-ref` is how you write it',
+        ''
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(items[0]?.blocked_by, []);
+  });
+
+  await t.test('marker inside a fenced code block is ignored', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Example item.** With a fence:',
+        '  ```markdown',
+        '  blocked-by: inside-fence',
+        '  ```',
+        '  Trailing prose.'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(items[0]?.blocked_by, []);
+  });
+
+  await t.test('backticked spans inside a real ref survive verbatim', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Dependent.** Body.',
+        '  - blocked-by: `POST /vault/append` primitive; other/cross ref'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(items[0]?.blocked_by, ['`POST /vault/append` primitive', 'other/cross ref']);
+  });
+
+  await t.test('marker lines stay part of the body verbatim', t => {
+    const src =
+      FM + ['## Backlog', '', '- **Dependent.** Body.', '  - blocked-by: some ref'].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.ok(items[0]?.body.includes('blocked-by: some ref'));
+  });
+});
