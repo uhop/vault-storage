@@ -1,3 +1,25 @@
+import {sendError} from './responses.ts';
+import type {RequestContext} from './router.ts';
+
+/**
+ * Reject query keys outside `allowed` with a 400 naming the offender — a
+ * typo'd filter must fail loud, not fall through to an unfiltered answer
+ * (the `GET /sections` `?path=` incident). Returns true when the query is
+ * clean. New endpoints adopt this from birth; retrofitting the older
+ * surface is the open `GET /sections` queue item.
+ */
+export const rejectUnknownParams = (ctx: RequestContext, allowed: ReadonlySet<string>): boolean => {
+  const unknown = Object.keys(ctx.query).filter(k => !allowed.has(k));
+  if (unknown.length === 0) return true;
+  sendError(
+    ctx.res,
+    400,
+    'bad_request',
+    `unknown query parameter(s): ${unknown.join(', ')} — supported: ${[...allowed].sort().join(', ') || '(none)'}`
+  );
+  return false;
+};
+
 export interface PaginationOpts {
   /** Hard cap server-side; clamps without erroring per api-surface § Pagination. */
   maxLimit?: number;

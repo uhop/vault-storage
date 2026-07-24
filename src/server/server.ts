@@ -57,7 +57,7 @@ import {
 } from './handlers/suggestions.ts';
 import {commitHandler} from './handlers/commit.ts';
 import {lintHandler} from './handlers/lint.ts';
-import {resumeBundleHandler} from './handlers/resume-bundle.ts';
+import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {resolveHandler} from './handlers/resolve.ts';
 import {releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
 import {
@@ -127,6 +127,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post(
     '/system/resume-bundle',
     resumeBundleHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
+  );
+  router.get(
+    '/system/resume-brief',
+    resumeBriefHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
   );
   router.get('/sections', listRecordsHandler({db: opts.db}));
   router.get('/sections/{id}/neighborhood', neighborhoodHandler({records, edges}));

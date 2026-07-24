@@ -1,8 +1,11 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {incrementalReindex} from '../../maintenance/incremental-reindex.ts';
+import {blockedView, readyView} from '../../queue/ready.ts';
+import {QueueItemsRepository} from '../../queue/repo.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {computeLintReport, type LintReport} from './lint.ts';
+import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -36,6 +39,87 @@ const extractSection = (body: string, title: string): string | null => {
 
 const emptySection = (text: string | null): boolean =>
   text === null || text.length === 0 || text === '(empty)';
+
+/**
+ * GET /system/resume-brief?project=<name>
+ *
+ * The token-tiered sibling of the resume bundle, sized for SessionStart-hook
+ * injection (the `bd prime` pattern): a few hundred bytes that answer
+ * "should this session run a full `/vault resume`?" — never a substitute for
+ * it. Strictly read-only (no reindex, no claim reverts — GET semantics), no
+ * bodies, no summaries: titles, counts, and dates only. Fields: lint ok +
+ * issue count, pending-suggestion total, agent-workflow flags (Active
+ * present? clarify pending), the project's Active item titles + ready /
+ * blocked counts (backed by the 0016 `blocked-by:` views), a feedback.md
+ * pointer (exists + updated — the hook says "fetch it", it never inlines
+ * it), and the latest session log's title + date. Unknown query params 400.
+ */
+export const resumeBriefHandler =
+  (deps: ResumeBundleDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['project']))) return;
+    const project = ctx.query['project'];
+    if (project !== undefined && !PROJECT_NAME_RE.test(project)) {
+      sendError(ctx.res, 400, 'bad_request', 'project must be a kebab-case name');
+      return;
+    }
+
+    const {db, records} = deps;
+    const lint = computeLintReport(db);
+
+    const pendingRow = db
+      .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`)
+      .get() as {n: number};
+
+    const workflowQueue = records.getByPath(WORKFLOW_QUEUE_PATH);
+    const activeRaw = workflowQueue ? extractSection(workflowQueue.body, 'Active') : null;
+    const clarifyQueue = records.getByPath(CLARIFY_QUEUE_PATH);
+    const clarifyPending = clarifyQueue
+      ? ((extractSection(clarifyQueue.body, 'Pending') ?? '').match(/^### Q-/gm)?.length ?? 0)
+      : null;
+
+    const logRow = db
+      .prepare(
+        `SELECT file_path, title, updated FROM records
+          WHERE type = 'log'
+            AND file_path NOT LIKE 'archive/%'
+            AND file_path NOT LIKE '%/archive/%'
+          ORDER BY COALESCE(modified_at, updated) DESC, file_path DESC
+          LIMIT 1`
+      )
+      .get() as {file_path: string; title: string | null; updated: string} | undefined;
+
+    let projectBlock: Record<string, unknown> | null = null;
+    if (project !== undefined) {
+      const queueRepo = new QueueItemsRepository(db);
+      const universe = queueRepo.listAll();
+      const mine = universe.filter(row => row.project === project);
+      const feedback = records.getByPath(`projects/${project}/feedback.md`);
+      projectBlock = {
+        name: project,
+        queue: {
+          active: mine.filter(row => row.section === 'active').map(row => row.title),
+          backlog: mine.filter(row => row.section === 'backlog').length,
+          ready: readyView(mine, universe).length,
+          blocked: blockedView(mine, universe).length
+        },
+        feedback: feedback ? {updated: feedback.updated} : null
+      };
+    }
+
+    sendJson(ctx.res, 200, {
+      lint: {ok: lint.ok, total_issues: lint.total_issues},
+      suggestions_pending: pendingRow.n,
+      workflow: {
+        active: !emptySection(activeRaw),
+        clarify_pending: clarifyPending
+      },
+      latest_log: logRow
+        ? {file_path: logRow.file_path, title: logRow.title, updated: logRow.updated}
+        : null,
+      project: projectBlock
+    });
+  };
 
 /**
  * POST /system/resume-bundle?project=<name>&logs=<n>

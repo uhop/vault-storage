@@ -9,8 +9,9 @@ import type {DatabaseSync} from 'node:sqlite';
 import {blockedView, readyView, type BlockerReport} from '../../queue/ready.ts';
 import {QueueItemsRepository, type QueueItemRow} from '../../queue/repo.ts';
 import {reindexAllQueues} from '../../queue/sync.ts';
+import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
-import type {Handler, RequestContext} from '../router.ts';
+import type {Handler} from '../router.ts';
 
 interface QueueDeps {
   db: DatabaseSync;
@@ -39,24 +40,6 @@ const toApi = (row: QueueItemRow): Record<string, unknown> => ({
   created_at: row.created_at,
   updated_at: row.updated_at
 });
-
-/**
- * Reject query keys outside `allowed` with a 400 naming the offender — a
- * typo'd filter must fail loud, not fall through to an unfiltered answer
- * (the `GET /sections` `?path=` incident, applied from birth here).
- * Returns true when the query is clean.
- */
-const rejectUnknownParams = (ctx: RequestContext, allowed: ReadonlySet<string>): boolean => {
-  const unknown = Object.keys(ctx.query).filter(k => !allowed.has(k));
-  if (unknown.length === 0) return true;
-  sendError(
-    ctx.res,
-    400,
-    'bad_request',
-    `unknown query parameter(s): ${unknown.join(', ')} — supported: ${[...allowed].sort().join(', ') || '(none)'}`
-  );
-  return false;
-};
 
 const parsePositiveInt = (raw: string | undefined, fallback: number): number | null => {
   if (raw === undefined) return fallback;

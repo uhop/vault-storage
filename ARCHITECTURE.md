@@ -61,7 +61,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds.
 - **`maintenance.ts`** — `POST /maintenance/*`: scans (duplicates, compaction, retention, upgrade signals), cleanups, embed-pending, incremental reindex, snapshots, raw inbox.
 - **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project) plus the dependency views (`/queue/ready`, `/queue/blocked`) over query-time `blocked-by:` resolution.
-- **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5).
+- **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5). `resume-bundle.ts` adds the one-shot `/vault resume` bundle (POST, embedded reindex) and its read-only brief tier (`GET /system/resume-brief`) for SessionStart-hook injection.
 - **`commit.ts`**, **`resolve.ts`**, **`static.ts`** — explicit git commit; wikilink resolution; UI file serving.
 
 Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit loop with backoff and stale-lock recovery), **`watcher.ts`** (debounced `fs.watch` → incremental import/delete/embed), **`writer.ts`** (the disk-write + FM-validation core: auto-managed keys, closed-enum validation, the `"__unset__"` key-removal sentinel over the union-only FM merge, ETag), **`snapshot.ts`** (`VACUUM INTO` gzip snapshots for Tier-2 backup). Support: `env.ts`, `auth.ts` (constant-time bearer check), `body.ts`, `query.ts`, `responses.ts`, `serialize.ts`, `resolver-cache.ts`, `memory-reporter.ts`.
