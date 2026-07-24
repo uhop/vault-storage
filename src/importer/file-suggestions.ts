@@ -50,6 +50,13 @@ export interface NewTagSuggestionPayload {
   tag: string;
   record_id: string;
   file_path: string;
+  /**
+   * How the unknown tag surfaced: absent/'fm' — it is ON the record's FM
+   * `tags:` and the taxonomy trigger rejected it (reject may strip it);
+   * 'proposed' — an agent suggested it (`agent.tags_suggested`) and it is
+   * NOT on FM, so there is nothing to strip on reject.
+   */
+  origin?: 'fm' | 'proposed';
 }
 
 export interface TagSuggestionPayload {

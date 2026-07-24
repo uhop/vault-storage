@@ -240,6 +240,16 @@ export const importFile = (
         seen.add(tag);
         if (!realized.has(tag)) {
           options.tagSuggestion.file({tag, record_id: recordId, file_path: relativePath}, now);
+          // An out-of-taxonomy suggested tag also files a companion new_tag
+          // (origin: proposed) so the taxonomy question has a queue to live
+          // in — without it the tag_suggestion is a two-queue deadlock:
+          // unacceptable (taxonomy-first) and unroutable (the only new_tag
+          // path watched FM `tags:`). Unconditional on the filing result
+          // above so a pre-companion pending gets its companion on the next
+          // reimport; the (tag, record) identity dedupes repeats.
+          if (!tags.isKnown(tag)) {
+            tags.fileProposedTag(tag, recordId, relativePath, now);
+          }
         }
       }
     }

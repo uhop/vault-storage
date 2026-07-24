@@ -23,6 +23,7 @@ export class TagsImporter {
   readonly #insertTag: StatementSync;
   readonly #lookupAlias: StatementSync;
   readonly #selectForRecord: StatementSync;
+  readonly #inTaxonomy: StatementSync;
   readonly #filer: SuggestionFiler<'new_tag'>;
 
   constructor(db: DatabaseSync) {
@@ -30,7 +31,30 @@ export class TagsImporter {
     this.#insertTag = db.prepare('INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
     this.#lookupAlias = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?');
     this.#selectForRecord = db.prepare('SELECT tag FROM tags WHERE record_id = ?');
+    this.#inTaxonomy = db.prepare('SELECT 1 FROM tags_taxonomy WHERE tag = ?');
     this.#filer = new SuggestionFiler(db, 'new_tag');
+  }
+
+  /** True when `tag` (already alias-resolved) is a canonical taxonomy entry. */
+  isKnown(tag: string): boolean {
+    return this.#inTaxonomy.get(tag) !== undefined;
+  }
+
+  /**
+   * File a `new_tag` for a tag an agent PROPOSED (`agent.tags_suggested`)
+   * that is neither canonical nor aliased. Without this, an out-of-taxonomy
+   * `tag_suggestion` was a two-queue deadlock (observed 2026-07-20, the
+   * `blindspot` stuck floor): it could not be accepted (taxonomy-first) and
+   * nothing routed the taxonomy question to `new_tag` — the only filer sat
+   * behind FM `tags:` sync. `origin: 'proposed'` tells triage there is no FM
+   * tag to strip on reject. Same (tag, record) identity as FM-origin
+   * filings, so the two paths dedupe against each other.
+   */
+  fileProposedTag(tag: string, recordId: string, filePath: string, now: string): boolean {
+    return this.#filer.file(
+      {tag, record_id: recordId, file_path: filePath, origin: 'proposed'},
+      now
+    );
   }
 
   /**

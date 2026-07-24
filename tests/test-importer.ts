@@ -917,3 +917,57 @@ test('walker skips .git and .obsidian directories', t => {
     cleanup();
   }
 });
+
+test('out-of-taxonomy suggested tag files a companion new_tag (origin: proposed)', t => {
+  // The 2026-07-20 `blindspot` deadlock: a tag_suggestion naming a tag that
+  // is neither canonical nor aliased could not be accepted (taxonomy-first)
+  // and nothing routed the taxonomy question to new_tag. The companion
+  // filing gives it the queue it needs; the sweep's new_tag-before-
+  // tag_suggestion ordering then dissolves the deadlock.
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(
+      root,
+      'topics/x.md',
+      [
+        '---',
+        'title: X',
+        'tags: [design]',
+        'agent:',
+        '  summary: "a note"',
+        '  tags_suggested: [research, blindspot]',
+        '---',
+        'body',
+        ''
+      ].join('\n')
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    seedTagsTaxonomy(db);
+    importVault(db, root);
+
+    const newTags = db
+      .prepare(
+        `SELECT json_extract(payload, '$.tag') AS tag,
+                json_extract(payload, '$.origin') AS origin,
+                status
+           FROM suggestions
+          WHERE kind = 'new_tag'`
+      )
+      .all() as Array<{tag: string; origin: string | null; status: string}>;
+    t.equal(newTags.length, 1, 'exactly one companion new_tag');
+    t.equal(newTags[0]?.tag, 'blindspot', 'for the out-of-taxonomy tag only');
+    t.equal(newTags[0]?.origin, 'proposed', 'origin marks it as not-on-FM');
+    t.equal(newTags[0]?.status, 'pending', 'pending for triage');
+    t.equal(pendingTagSuggestionCount(db), 2, 'both tag_suggestions still filed');
+
+    importVault(db, root);
+    const after = db
+      .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'new_tag'`)
+      .get() as {n: number};
+    t.equal(after.n, 1, 're-import does not duplicate the companion');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
