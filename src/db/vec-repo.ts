@@ -200,16 +200,46 @@ export class RecordVecRepository {
   }
 
   /**
-   * Top-k records similar to `recordId`, computed across all of that record's
+   * Top-k records similar to `recordId`, computed across that record's
    * chunks. Aggregates by min-distance and excludes the source record itself.
    * Returns empty when the record has no chunks (not yet embedded).
+   *
+   * Query chunks are capped at `maxScans` (default 16), sampled evenly across
+   * the record with the first and last always kept. Each query chunk costs a
+   * full synchronous vec0 KNN scan, and everything here blocks the server's
+   * event loop — uncapped, a 200 KB running file (hundreds of chunks) took
+   * 17–40 s per call, serialized every other request behind it, and pushed
+   * queued sockets past Node's headersTimeout into ECONNRESET (the 2026-07-23
+   * enrich-sweep failure). Sampling trades a little recall on huge records'
+   * middle sections for a hard cost bound.
    */
-  nearestToRecord(recordId: string, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
-    const chunks = this.getChunks(recordId);
-    if (chunks.length === 0) return [];
+  nearestToRecord(
+    recordId: string,
+    k: number,
+    opts: {chunkK?: number; maxScans?: number} = {}
+  ): NearestHit[] {
+    const allChunks = this.getChunks(recordId);
+    if (allChunks.length === 0) return [];
+
+    const maxScans = Math.max(1, opts.maxScans ?? 16);
+    let chunks = allChunks;
+    if (allChunks.length > maxScans) {
+      chunks = [];
+      const step = maxScans > 1 ? (allChunks.length - 1) / (maxScans - 1) : 0;
+      let last = -1;
+      for (let i = 0; i < maxScans; ++i) {
+        const index = Math.round(i * step);
+        if (index === last) continue;
+        last = index;
+        chunks.push(allChunks[index]!);
+      }
+    }
 
     const best = new Map<string, number>();
-    const chunkK = opts.chunkK ?? Math.max(k * 5, 20);
+    // Over-fetch by the record's own chunk count: the KNN's top rows can be
+    // entirely the record's own chunks (a repetitive running file), and the
+    // self-skip below would then starve real neighbours out of the window.
+    const chunkK = (opts.chunkK ?? Math.max(k * 5, 20)) + allChunks.length;
     for (const vec of chunks) {
       const rows = this.#nearestChunks.all(toBlob(vec), chunkK) as unknown[] as {
         record_id: string;

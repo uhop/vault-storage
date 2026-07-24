@@ -142,3 +142,58 @@ test('nearest returns closest record (best chunk) ordered by distance', async t 
     fx.db.close();
   }
 });
+
+test('nearestToRecord caps query-chunk scans, keeping first and last chunks', async t => {
+  const fx = setup();
+  try {
+    // Neighbour records, one per distinct token.
+    const tokens = ['head', 'tail', 'middle', 'noise'];
+    const neighbourIds = new Map<string, string>();
+    for (const token of tokens) {
+      const id = uuidv7();
+      fx.records.insert(makeRecord(id, `topics/${token}.md`, token));
+      fx.vecs.setChunks(id, `hash-${token}`, [await fx.embedder.embed(token)]);
+      neighbourIds.set(token, id);
+    }
+
+    // A big record: 50 chunks, first matches "head", last matches "tail",
+    // everything between matches "middle".
+    const bigId = uuidv7();
+    fx.records.insert(makeRecord(bigId, 'topics/big.md', 'big'));
+    const middle = await fx.embedder.embed('middle');
+    const chunks = [await fx.embedder.embed('head')];
+    for (let i = 0; i < 48; ++i) chunks.push(middle);
+    chunks.push(await fx.embedder.embed('tail'));
+    fx.vecs.setChunks(bigId, 'hash-big', chunks);
+
+    await t.test('capped run still surfaces first- and last-chunk matches', t => {
+      const hits = fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8});
+      const byId = new Map(hits.map(h => [h.recordId, h.distance]));
+      t.ok((byId.get(neighbourIds.get('head')!) ?? 1) < 1e-3, 'head neighbour found');
+      t.ok((byId.get(neighbourIds.get('tail')!) ?? 1) < 1e-3, 'tail neighbour found');
+      t.ok((byId.get(neighbourIds.get('middle')!) ?? 1) < 1e-3, 'middle neighbour found');
+      t.notOk(byId.has(bigId), 'source record excluded');
+    });
+
+    await t.test('maxScans=1 degrades to the first chunk only', t => {
+      const hits = fx.vecs.nearestToRecord(bigId, 4, {maxScans: 1});
+      const byId = new Map(hits.map(h => [h.recordId, h.distance]));
+      t.ok((byId.get(neighbourIds.get('head')!) ?? 1) < 1e-3, 'head neighbour found');
+      t.ok(
+        (byId.get(neighbourIds.get('tail')!) ?? 1) >= 1e-3 || !byId.has(neighbourIds.get('tail')!),
+        'tail chunk not scanned'
+      );
+    });
+
+    await t.test('records at or under the cap are unaffected', t => {
+      const smallId = uuidv7();
+      fx.records.insert(makeRecord(smallId, 'topics/small.md', 'small'));
+      fx.vecs.setChunks(smallId, 'hash-small', chunks.slice(0, 3));
+      const capped = fx.vecs.nearestToRecord(smallId, 4, {maxScans: 16});
+      const uncapped = fx.vecs.nearestToRecord(smallId, 4, {maxScans: 1000});
+      t.deepEqual(capped, uncapped, 'identical results under the cap');
+    });
+  } finally {
+    fx.db.close();
+  }
+});

@@ -358,6 +358,15 @@ const handleRequest =
 export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
   const router = buildRouter(opts);
   const server = createServer(handleRequest(router, opts.env));
+  // The DB is synchronous, so heavy handlers block the event loop and every
+  // queued request waits out the full backlog before its headers are even
+  // parsed. Node's default headersTimeout (60 s) then destroys queued
+  // sockets mid-burst — the client sees ECONNRESET (the 2026-07-23
+  // enrich-sweep failure). Single-user LAN service: slow-loris hardening is
+  // not the constraint here, surviving its own sync bursts is.
+  server.headersTimeout = 180_000;
+  server.requestTimeout = 300_000;
+  server.keepAliveTimeout = 65_000;
 
   return new Promise((resolveListening, reject) => {
     server.once('error', reject);
