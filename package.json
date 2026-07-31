@@ -37,13 +37,13 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "sqlite-vec": "^0.1.9",
-    "time-queues": "^1.4.0",
+    "time-queues": "^1.5.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "prettier": "^3.9.6",
-    "tape-six": "^1.16.1",
+    "tape-six": "^1.16.2",
     "tape-six-playwright": "^1.2.2",
     "typescript": "^7.0.2"
   },
