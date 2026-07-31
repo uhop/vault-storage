@@ -783,12 +783,18 @@
             title: `${k.agent_enrichment_stale} stale enrichment blocks`,
             why: `Run <code>/vault-enrich-all</code> with the stale list to refresh derived summaries.`
           });
-        if (k.inefficiency_detected || k.infrastructure_upgrade)
+        for (const {kind, payload: p} of details?.reports ?? []) {
+          const fmt = p.signal === 'db_bytes_high' ? fmtBytes : fmtCount;
+          const hub = Array.isArray(p.top) ? p.top[0] : null;
+          const subject = hub?.file_path
+            ? ` Hub: <a href="/ui/note.html?path=${encodeURIComponent(hub.file_path)}"><code>${esc(hub.file_path)}</code></a>.`
+            : '';
           recs.push({
-            title: `Backend-shape signals filed`,
-            why: `Inspect via <code>GET /suggestions?kind=infrastructure_upgrade</code>. Reports-only — your call.`,
-            level: k.infrastructure_upgrade ? 'warn' : ''
+            title: `${kind === 'infrastructure_upgrade' ? 'Upgrade' : 'Inefficiency'} signal: ${esc(String(p.signal ?? '?'))} at ${fmt(p.current ?? 0)} (threshold ${fmt(p.threshold ?? 0)})`,
+            why: `${esc(String(p.recommendation ?? ''))}${subject} Triage via <code>/vault sweep</code> — resolving acknowledges this level (re-fires at +25%).`,
+            level: kind === 'infrastructure_upgrade' ? 'warn' : ''
           });
+        }
         return recs;
       }
 
@@ -983,7 +989,22 @@
             );
             compactFolders = (r.items ?? []).map(s => s.payload ?? {});
           }
-          setRecs('suggestions', recommendFromSuggestions(summary, {compactFolders, rawInbox}));
+          const reportKinds = ['inefficiency_detected', 'infrastructure_upgrade'].filter(
+            kind => summary.by_kind?.[kind]
+          );
+          const reports = (
+            await Promise.all(
+              reportKinds.map(kind =>
+                apiJson(`/suggestions?kind=${kind}&status=pending&limit=20`).then(r =>
+                  (r.items ?? []).map(s => ({kind, payload: s.payload ?? {}}))
+                )
+              )
+            )
+          ).flat();
+          setRecs(
+            'suggestions',
+            recommendFromSuggestions(summary, {compactFolders, rawInbox, reports})
+          );
         })();
 
         // Lint chain — slow (~8s). Updates its own stat slot and rec tiles
