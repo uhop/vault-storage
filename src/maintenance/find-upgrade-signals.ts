@@ -21,6 +21,12 @@
 //                                     traverse expensively)
 //   pending_backlog        5_000     (review queue piled up; tooling
 //                                     pressure, not engine pressure)
+//   hysteresis_factor        1.25    (resolving acknowledges the observed
+//                                     level; the signal re-files only when
+//                                     the metric reaches ack × factor, so a
+//                                     by-design condition stays quiet after
+//                                     one triage. The ack survives
+//                                     remediation dips by design.)
 
 import type {DatabaseSync} from 'node:sqlite';
 import {SuggestionFiler} from '../importer/file-suggestions.ts';
@@ -30,7 +36,8 @@ export const DEFAULT_THRESHOLDS = {
   recordCountMigrate: 100_000,
   dbBytes: 1024 * 1024 * 1024, // 1 GiB
   maxOutboundEdges: 200,
-  pendingBacklog: 5_000
+  pendingBacklog: 5_000,
+  hysteresisFactor: 1.25
 };
 
 export interface UpgradeSignalsOptions {
@@ -42,6 +49,8 @@ export interface UpgradeSignalsOptions {
 export interface UpgradeSignalsSummary {
   scanned: string[];
   tripped: string[];
+  /** Tripped but not filed — resolved at a level the metric hasn't outgrown. */
+  suppressed: string[];
   filed: number;
   durationMs: number;
   /** Snapshot of the values measured this pass. */
@@ -177,8 +186,11 @@ const evaluate = (
  * Inspect the live DB and file `inefficiency_detected` /
  * `infrastructure_upgrade` suggestions for any tripped signal.
  * Idempotent: a pending suggestion for the same `(kind, signal)` blocks
- * re-filing. Resolving (accept / reject) lets the next scan re-fire if
- * the signal is still active.
+ * re-filing. Resolving (accept / reject) acknowledges the observed level:
+ * the same signal re-files only once the metric reaches
+ * `acknowledged × hysteresisFactor`, so a permanent by-design condition
+ * (a deliberate hub just over the fanout threshold) stays quiet after one
+ * triage instead of re-firing every scan.
  */
 export const findUpgradeSignals = (
   db: DatabaseSync,
@@ -196,8 +208,23 @@ export const findUpgradeSignals = (
   const stats = collectStats(db);
   const {scanned, tripped} = evaluate(stats, thresholds);
 
+  const lastAcknowledged = db.prepare(
+    `SELECT json_extract(payload, '$.current') AS current
+       FROM suggestions
+      WHERE kind = ? AND json_extract(payload, '$.signal') = ?
+        AND status IN ('accepted', 'rejected')
+      ORDER BY resolved_at DESC
+      LIMIT 1`
+  );
+
   let filed = 0;
+  const suppressed: string[] = [];
   for (const t of tripped) {
+    const ack = lastAcknowledged.get(t.kind, t.name) as {current: number | null} | undefined;
+    if (typeof ack?.current === 'number' && t.current < ack.current * thresholds.hysteresisFactor) {
+      suppressed.push(t.name);
+      continue;
+    }
     if (
       filers[t.kind].file(
         {
@@ -218,6 +245,7 @@ export const findUpgradeSignals = (
   return {
     scanned,
     tripped: tripped.map(t => t.name),
+    suppressed,
     filed,
     durationMs: Math.round(performance.now() - start),
     observed: {

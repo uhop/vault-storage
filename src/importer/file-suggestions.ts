@@ -239,7 +239,8 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
    * Filed by the time-to-upgrade evaluator when a backend-shape signal trips:
    * tune-and-stay remediation (VACUUM, prune, raise an index limit). The same
    * signal never re-files while one is pending; resolving (accept / reject)
-   * lets the next scan re-fire if the signal still trips.
+   * acknowledges the observed level — the evaluator re-files only when the
+   * metric outgrows it (hysteresis in find-upgrade-signals.ts).
    */
   inefficiency_detected: {identity: ['signal'], blocking: 'pending-only', subject: null},
   /**

@@ -179,3 +179,42 @@ test('findUpgradeSignals: payload captures current/threshold/recommendation', t 
     db.close();
   }
 });
+
+test('findUpgradeSignals: resolution acknowledges the level (hysteresis)', t => {
+  const db = setup();
+  try {
+    seedRecords(db, 100);
+    const opts = {thresholds: {recordCountHigh: 50, recordCountMigrate: 1000}};
+    t.equal(findUpgradeSignals(db, opts).filed, 1);
+    db.prepare(
+      `UPDATE suggestions SET status = 'rejected', resolved_at = '2026-07-31T00:00:00Z', resolved_by = 'test'
+        WHERE kind = 'inefficiency_detected'`
+    ).run();
+
+    const suppressedRun = findUpgradeSignals(db, opts);
+    t.equal(suppressedRun.filed, 0, 'same level after resolve: no re-file');
+    t.deepEqual(suppressedRun.suppressed, ['record_count_high']);
+    t.deepEqual(suppressedRun.tripped, ['record_count_high'], 'still reported as tripped');
+
+    // 100 acknowledged → re-fires exactly at 100 × 1.25 = 125.
+    const insert = db.prepare(
+      `INSERT INTO records (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+       VALUES (?, ?, 'permanent', 'b', ?, '', '2026-04-01', '2026-04-01')`
+    );
+    for (let i = 0; i < 25; ++i) insert.run(`x${i}`, `topics/x${i}.md`, `hx${i}`);
+    const grown = findUpgradeSignals(db, opts);
+    t.equal(grown.filed, 1, 're-files once the metric reaches the acknowledged level × factor');
+    t.deepEqual(grown.suppressed, []);
+
+    // Accepted resolutions acknowledge the same way as rejects.
+    db.prepare(
+      `UPDATE suggestions SET status = 'accepted', resolved_at = '2026-07-31T01:00:00Z', resolved_by = 'test'
+        WHERE kind = 'inefficiency_detected' AND status = 'pending'`
+    ).run();
+    const afterAccept = findUpgradeSignals(db, opts);
+    t.equal(afterAccept.filed, 0);
+    t.deepEqual(afterAccept.suppressed, ['record_count_high']);
+  } finally {
+    db.close();
+  }
+});
