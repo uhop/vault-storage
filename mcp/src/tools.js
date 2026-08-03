@@ -316,13 +316,88 @@ export const registerTools = (mcp, client) => {
   mcp.registerTool(
     'vault_delete_file',
     {
-      description: 'Delete a file at a vault-relative path. Cascades to the DB row + edges + tags.',
+      description:
+        'Delete a file at a vault-relative path. Cascades to the DB row + edges + tags. Reserve this for junk with no history value: a note being retired *in favour of other content* should go through vault_supersede, which archives it with its record_id (and therefore its edges, embeddings, and suggestions) intact.',
       inputSchema: {path: z.string().min(1)}
     },
     wrap(async ({path}) => {
       await client.deletePath(`/vault/${path}`);
       return {ok: true, path};
     })
+  );
+
+  // ── lifecycle: supersede, move, propose ───────────────────────────────────
+  mcp.registerTool(
+    'vault_supersede',
+    {
+      description:
+        'Replace a note with a successor, archiving the predecessor instead of destroying it — the correct write whenever content *replaces* a note rather than evolving it. Never DELETE-then-write for this: the old note moves to <dir>/archive/<YYYY>/<name> with its record_id intact, so its edges, embeddings, and pending suggestions all survive, and it is stamped status: superseded. new_path defaults to old_path (supersede-in-place), which means inbound wikilinks resolve to the replacement. The successor gets a `> Supersedes [[<archived-path>]].` footer appended automatically to back the typed supersedes edge — do not write your own. Validation-first: a rejected request (bad frontmatter, occupied new_path or archive slot) mutates nothing. Routine edits to an existing note stay on vault_replace / vault_write_file. Returns {old: {path, record_id}, new: {path, record_id, etag}} where old.path is the archive location.',
+      inputSchema: {
+        old_path: z.string().min(1).describe('Note being superseded; must end with .md'),
+        new_path: z
+          .string()
+          .optional()
+          .describe('Successor path; defaults to old_path (supersede-in-place)'),
+        frontmatter: z
+          .record(z.unknown())
+          .describe("The successor's frontmatter as a JSON object; the server serializes the YAML"),
+        body: z.string().describe("The successor's markdown body (no leading FM block)")
+      }
+    },
+    wrap(async ({old_path, new_path, frontmatter, body}) =>
+      client.postJson('/vault/supersede', {
+        old_path,
+        ...(new_path ? {new_path} : {}),
+        frontmatter,
+        body
+      })
+    )
+  );
+
+  mcp.registerTool(
+    'vault_move',
+    {
+      description:
+        'Rename a file, preserving its record_id — and with it every edge, tag, embedding, and pending suggestion derived from the record. Use this rather than delete-then-write for any relocation (archiving a raw note after ingest, filing a piece under archive/<YYYY>/): a fresh record_id would make the edge classifier refile every inbound wikilink as a new suggestion. Both paths must be vault-relative .md. Returns 204 with no body. 404 if the source is missing, 409 if the destination is occupied on disk or in the record table.',
+      inputSchema: {
+        from: z.string().min(1).describe('Source vault-relative .md path'),
+        to: z.string().min(1).describe('Destination vault-relative .md path')
+      }
+    },
+    wrap(async ({from, to}) => {
+      await client.postJson('/vault/move', {from, to});
+      return {ok: true, from, to};
+    })
+  );
+
+  mcp.registerTool(
+    'vault_propose',
+    {
+      description:
+        'Search-before-write: embed a proposed body and return the nearest existing records, so a new note can be checked against what the vault already covers before it is written. Read-only — no write side effects. Pass `path` when rewriting an existing note and the record there is excluded from the results (without it a small edit self-matches at distance ~0 and crowds out the real neighbours). Returns {candidates: [{record_id, file_path, distance, agent_summary}], proposed_chunks, candidates_screened, durationMs}, sorted by ascending distance — under ~0.10 usually means "extend that note instead of minting a near-duplicate", and if the new note would replace it outright, use vault_supersede. The enforcing counterpart is a PUT with ?check=true, which blocks the write instead of reporting.',
+      inputSchema: {
+        body: z.string().min(1).describe('Proposed note body to score against the vault'),
+        path: z
+          .string()
+          .optional()
+          .describe('Target path; the record there (if any) is excluded from results'),
+        agent_summary: z
+          .string()
+          .optional()
+          .describe('Proposed agent.summary; decorates the embedding as at ingest'),
+        k: z.number().int().min(1).optional().describe('Candidates to return (default 10)'),
+        prefilter_max_distance: z.number().optional().describe('Screening cutoff')
+      }
+    },
+    wrap(async ({body, path, agent_summary, k, prefilter_max_distance}) =>
+      client.postJson('/vault/propose', {
+        body,
+        ...(path ? {path} : {}),
+        ...(agent_summary ? {agent_summary} : {}),
+        ...(k !== undefined ? {k} : {}),
+        ...(prefilter_max_distance !== undefined ? {prefilter_max_distance} : {})
+      })
+    )
   );
 
   mcp.registerTool(
@@ -634,7 +709,7 @@ export const registerTools = (mcp, client) => {
     'vault_resume_bundle',
     {
       description:
-        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes — feedback with full body, the rest as summaries + sizes)}. Replaces the separate reindex/lint/summary/queue/log reads. Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those.',
+        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes — feedback with full body, the rest as summaries + sizes)}. Replaces the separate reindex/lint/summary/queue/log reads. Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those. Project files other than feedback arrive as summary + body_bytes; name them in project_bodies to get their bodies instead of paying a vault_read_file round-trip each.',
       inputSchema: {
         project: z
           .string()
@@ -647,12 +722,76 @@ export const registerTools = (mcp, client) => {
           .min(0)
           .max(20)
           .optional()
-          .describe('Recent session logs to include (default 3)')
+          .describe('Recent session logs to include (default 3)'),
+        project_bodies: z
+          .array(z.enum(['feedback', 'queue', 'decisions', 'learnings', 'stack']))
+          .optional()
+          .describe(
+            'Project files to deliver with full bodies rather than summaries. feedback is always included. Use for /vault learn, whose dedup pass needs learnings/decisions verbatim.'
+          )
       }
     },
-    wrap(async ({project, logs}) =>
-      client.postJson('/system/resume-bundle', undefined, {project, logs})
+    wrap(async ({project, logs, project_bodies}) =>
+      client.postJson('/system/resume-bundle', undefined, {
+        project,
+        logs,
+        project_bodies: csv(project_bodies)
+      })
     )
+  );
+
+  // ── maintenance ───────────────────────────────────────────────────────────
+  // The ops surface /vault sweep and /vault ingest run on. Each is a POST
+  // that mutates derived state (embeddings, suggestions, the index) but never
+  // the markdown source of truth — except raw-inbox, which is a read.
+  mcp.registerTool(
+    'vault_raw_inbox',
+    {
+      description:
+        'Inspect the `raw/` quick-capture inbox: top-level notes split into `ready` (frontmatter `ready: true`, ripe for /vault ingest) and `drafts` (no flag — the user is still iterating, so leave them alone). Returns {ready: [{path, title, updated}], drafts: [...]}. `_about.md` and the archive/ subfolder are excluded. Read-only. This is the entry point of the ingest workflow: process only `ready`, one note end-to-end at a time.',
+      inputSchema: {}
+    },
+    wrap(async () => client.getJson('/maintenance/raw-inbox'))
+  );
+
+  mcp.registerTool(
+    'vault_cleanup_lint',
+    {
+      description:
+        'Auto-fix the deterministic vault_lint categories: orphan_embeddings, orphan_vec_rows, orphan_doc_embeddings, orphan_suggestions, and future-dated created/updated stamps (clamped). Touches derived state only — no markdown is rewritten and nothing recoverable is lost. Returns {totalFixed, fixed: {<category>: {…counts}}, needsReview, durationMs}; `needsReview` counts the lint findings that have no safe auto-fix and still need a human, so a 200 with a non-empty needsReview is not an all-clear.',
+      inputSchema: {}
+    },
+    wrap(async () => client.postJson('/maintenance/cleanup-lint'))
+  );
+
+  mcp.registerTool(
+    'vault_embed_pending',
+    {
+      description:
+        "Embed every record whose chunks are missing or whose content_hash has drifted — the fix for vault_lint's records_without_embeddings and embedding_hash_drift. Returns {embedded, upToDate, total, chunksWritten, docVecsWritten, durationMs}. Concurrent calls coalesce onto a single in-flight pass, so it is safe to fire more than once. Can run for seconds-to-minutes on a cold embedder (the ONNX pipeline reloads if it was released), unlike the microsecond cleanup ops.",
+      inputSchema: {}
+    },
+    wrap(async () => client.postJson('/maintenance/embed-pending'))
+  );
+
+  mcp.registerTool(
+    'vault_incremental_reindex',
+    {
+      description:
+        'Catch the index up to the vault-data working tree by diffing from the last indexed commit — the call to make after a `git pull` on a multi-machine setup, where another host wrote notes this server never witnessed. The watcher already handles local edits, so this is a no-op (a few ms) when nothing changed. Returns {fromCommit, toCommit, changedFiles, imported, deleted, renamed, fellBack, durationMs}; `fellBack: true` means the diff range was unusable (history loss or first run) and a full reindex ran instead — worth surfacing rather than swallowing. vault_resume_bundle already runs this first, so calling both is redundant.',
+      inputSchema: {}
+    },
+    wrap(async () => client.postJson('/maintenance/incremental-reindex'))
+  );
+
+  mcp.registerTool(
+    'vault_run_scans',
+    {
+      description:
+        'Run all four maintenance scans in one pass — duplicates, compaction candidates, retention candidates, and upgrade signals — filing their findings as pending suggestions for later triage. Returns {duplicates, compaction, retention, upgrade, durationMs}, each a per-scan summary of what was filed. Files suggestions; resolves nothing. This is the producer for the review queue that vault_list_suggestions reads and vault_resolve_suggestions_batch drains.',
+      inputSchema: {}
+    },
+    wrap(async () => client.postJson('/maintenance/run-all'))
   );
 
   // ── queue items ───────────────────────────────────────────────────────────

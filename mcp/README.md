@@ -35,7 +35,7 @@ was started with (e.g., the one in your `.env`).
 
 ## Tools
 
-Thirty-eight tools mapping to the REST surface, grouped by purpose:
+Forty-six tools mapping to the REST surface, grouped by purpose:
 
 - **Search & list** — `vault_search`, `vault_list_pieces` (filters incl.
   alias-aware `tag`), `vault_list_folder`
@@ -55,6 +55,16 @@ Thirty-eight tools mapping to the REST surface, grouped by purpose:
   else wrote in between, otherwise `412` with the current tag to retry
   against. Empty and literal-`"null"` bodies are refused server-side —
   removal is `vault_delete_file`.
+- **Lifecycle** — `vault_supersede` (replace a note, archiving the
+  predecessor with its `record_id` — and therefore its edges, embeddings,
+  and suggestions — intact), `vault_move` (rename, same id preservation),
+  `vault_propose` (search-before-write: score a draft against existing
+  notes before minting a near-duplicate)
+- **Maintenance** — `vault_raw_inbox` (the `raw/` ready/drafts split that
+  starts `/vault ingest`), `vault_cleanup_lint`, `vault_embed_pending`,
+  `vault_incremental_reindex` (catch up after a `git pull` from another
+  machine), `vault_run_scans` (all four suggestion-filing scans in one
+  pass)
 - **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
 - **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
@@ -68,13 +78,19 @@ Thirty-eight tools mapping to the REST surface, grouped by purpose:
 - **Queue items** — `vault_queue_top`, `vault_queue_ready`, `vault_queue_blocked`,
   `vault_queue_by_section`, `vault_queue_by_priority`, `vault_queue_by_project`,
   `vault_queue_project_archive`, `vault_queue_reindex`
-- **System** — `vault_status`, `vault_lint`, `vault_resume_bundle` (one-shot
-  session-start bundle: reindex + lint + suggestions + workflow + log
-  summaries + project notes)
+- **System** — `vault_status`, `vault_lint` (integrity checks plus the
+  `coverage.enrichment` block and its `unenriched_records` worklist),
+  `vault_resume_bundle` (one-shot session-start bundle: reindex + lint +
+  suggestions + workflow + log summaries + project notes; `project_bodies`
+  opts named project files into full-body delivery)
 
 Tool input schemas inline closed-enum lists (record types, statuses, edge
 types, suggestion kinds) so the agent learns the canonical surface at
-discovery time.
+discovery time, and every description names the response shape it returns
+— including conditional keys (`requested` on an alias lookup) and which of
+the three list shapes it uses: the paginated `{items, offset, limit, total}`
+envelope (page by `items.length`; the server caps `limit` at 100), the flat
+`{count, items}` queue slices, or a genuinely unpaginated read.
 
 ## Resources
 
