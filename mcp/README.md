@@ -35,14 +35,26 @@ was started with (e.g., the one in your `.env`).
 
 ## Tools
 
-Thirty-one tools mapping to the REST surface, grouped by purpose:
+Thirty-eight tools mapping to the REST surface, grouped by purpose:
 
 - **Search & list** — `vault_search`, `vault_list_pieces` (filters incl.
   alias-aware `tag`), `vault_list_folder`
 - **Read** — `vault_read_piece`, `vault_read_meta`, `vault_read_file`
-- **Write** — `vault_write_file`, `vault_update_piece`, `vault_delete_file`
-  (writes accept `agent.derived_from_hash: "auto"` — the server stamps the
-  body hash + `derived_at`)
+  (`include_etag: true` returns `{path, etag, composed, content}` — the
+  tag a conditional write needs, and the composed-folder flag)
+- **Narrow write** — `vault_append`, `vault_replace` (asserted: a missing
+  or ambiguous target is a 409, never a silent no-op), `vault_patch_fm`
+  (add/remove one frontmatter array member). All three are atomic
+  server-side ops whose blast radius is the thing being changed, so they
+  cannot lose the rest of the document. Prefer them over whole-document
+  writes.
+- **Whole-document write** — `vault_write_file`, `vault_update_piece`,
+  `vault_delete_file`. Both writers accept `agent.derived_from_hash:
+"auto"` (the server stamps the body hash + `derived_at`) and an optional
+  `expected_etag`, sent as `If-Match`: the write lands only if nobody
+  else wrote in between, otherwise `412` with the current tag to retry
+  against. Empty and literal-`"null"` bodies are refused server-side —
+  removal is `vault_delete_file`.
 - **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
 - **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
@@ -80,6 +92,12 @@ payload `{error, code, status, details}`. Common codes:
 - `auth_failed` — `VAULT_API_TOKEN` missing or wrong
 - `not_found` — record/file/tag/suggestion absent
 - `conflict` — already-resolved suggestion, etc.
+- `replace_assert_failed` — `vault_replace` target missing, or ambiguous
+  without `all` (`details.occurrences` carries the count)
+- `precondition_failed` — `expected_etag` is stale;
+  `details.current_etag` is what to re-read and retry against
+- `empty_body` / `null_body` — the write would leave the document with no
+  content; use `vault_delete_file` to remove one
 - `network` — server unreachable
 - `bad_request`, `validation_failed`, `internal`
 

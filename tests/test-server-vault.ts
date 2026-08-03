@@ -513,6 +513,102 @@ test('PUT /vault/{path} rejects serialized-null overwrites (null body / null fro
   }
 });
 
+test('PUT /vault/{path} rejects an empty body, exempting an already-empty document', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    writeFileSync(
+      join(root, 'topics/stub.md'),
+      ['---', 'title: Stub', 'created: 2026-04-01', '---', ''].join('\n'),
+      'utf8'
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const emptyJson = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: ''})
+      });
+      t.equal(emptyJson.status, 400, '400 on empty body');
+      t.equal((emptyJson.body as {code: string}).code, 'empty_body', 'code=empty_body');
+
+      const whitespace = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: '   \n\n  '})
+      });
+      t.equal(whitespace.status, 400, 'whitespace-only body is empty too');
+
+      const mdEmpty = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: ['---', 'title: Alpha', '---', ''].join('\n')
+      });
+      t.equal(mdEmpty.status, 400, 'markdown path shares the guard');
+
+      t.ok(
+        readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('Alpha topic body.'),
+        'on-disk body untouched by all three'
+      );
+
+      // The exemption: a document whose stored body is already empty stays
+      // writable, so an FM-only op on a degenerate record is never bricked.
+      const stub = await fetchAuthed(`${ctx.url}/vault/topics/stub.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Stub', tags: ['alpha']}, body: ''})
+      });
+      t.equal(stub.status, 204, 'already-empty document accepts an empty body');
+      t.ok(
+        readFileSync(join(root, 'topics/stub.md'), 'utf8').includes('title: Stub'),
+        'stub frontmatter written'
+      );
+
+      // A create still has no stored body to be exempted by.
+      const create = await fetchAuthed(`${ctx.url}/vault/topics/fresh.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Fresh'}, body: ''})
+      });
+      t.equal(create.status, 400, 'creating an empty document is rejected');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/edit refuses a replace that would empty the body', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const res = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'Alpha topic body.',
+          to: ''
+        })
+      });
+      t.equal(res.status, 400, '400 rather than a silent wipe');
+      t.equal((res.body as {code: string}).code, 'empty_body', 'code=empty_body');
+      t.ok(
+        readFileSync(join(root, 'topics/alpha.md'), 'utf8').includes('Alpha topic body.'),
+        'body untouched'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} syncs tags from frontmatter', async t => {
   const {root, cleanup} = setupVault();
   try {

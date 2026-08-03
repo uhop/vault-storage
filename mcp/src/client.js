@@ -15,6 +15,15 @@ export class VaultClientError extends Error {
 
 const stripTrailingSlash = s => (s.endsWith('/') ? s.slice(0, -1) : s);
 
+/** Fallback codes for responses whose body carried no `code` of its own. */
+const STATUS_CODES = {
+  401: 'auth_failed',
+  404: 'not_found',
+  409: 'conflict',
+  412: 'precondition_failed',
+  422: 'validation_failed'
+};
+
 export class VaultClient {
   #apiUrl;
   #apiToken;
@@ -50,13 +59,38 @@ export class VaultClient {
     return res.text();
   }
 
-  async putJson(path, body) {
+  /**
+   * `getText` plus the concurrency metadata a conditional write needs: the
+   * `ETag` to send back as `If-Match`, and `composed` for the atomized-folder
+   * view, whose weak tag can never satisfy If-Match's strong comparison.
+   */
+  async getTextWithMeta(path, query = {}) {
+    const res = await this.#request('GET', this.url(path, query));
+    if (!res.ok) await this.#throwFromResponse(res);
+    const etag = res.headers.get('etag');
+    return {
+      text: await res.text(),
+      etag,
+      composed: res.headers.get('x-vault-composed') === 'true' || Boolean(etag?.startsWith('W/'))
+    };
+  }
+
+  async putJson(path, body, {ifMatch} = {}) {
     const res = await this.#request('PUT', this.url(path), {
+      body: JSON.stringify(body),
+      contentType: 'application/json',
+      ...(ifMatch ? {headers: {'If-Match': ifMatch}} : {})
+    });
+    if (!res.ok && res.status !== 204) await this.#throwFromResponse(res);
+    return {etag: res.headers.get('etag')};
+  }
+
+  async patchJson(path, body) {
+    const res = await this.#request('PATCH', this.url(path), {
       body: JSON.stringify(body),
       contentType: 'application/json'
     });
-    if (res.status === 204) return;
-    if (!res.ok) await this.#throwFromResponse(res);
+    return this.#parseJson(res);
   }
 
   async deletePath(path) {
@@ -77,7 +111,8 @@ export class VaultClient {
 
   async #request(method, url, init = {}) {
     const headers = {
-      Authorization: `Bearer ${this.#apiToken}`
+      Authorization: `Bearer ${this.#apiToken}`,
+      ...init.headers
     };
     if (init.contentType) headers['Content-Type'] = init.contentType;
     try {
@@ -127,10 +162,8 @@ export class VaultClient {
   }
 
   #defaultCode(status) {
-    if (status === 401) return 'auth_failed';
-    if (status === 404) return 'not_found';
-    if (status === 409) return 'conflict';
-    if (status === 422) return 'validation_failed';
+    const known = STATUS_CODES[status];
+    if (known) return known;
     if (status >= 500) return 'internal';
     if (status >= 400) return 'bad_request';
     return 'unknown';

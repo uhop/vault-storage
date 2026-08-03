@@ -295,6 +295,13 @@ export const parseWriteRequest = (
  * - Body must not be a serialized JS `null`/`undefined` literal: a writer
  *   interpolating a missing value wiped the 59 KB stream-chain decisions
  *   note on 2026-06-18. Removing a document is DELETE, never a null write.
+ * - Body must not be empty — the same wipe class one step further along
+ *   (the interpolated value was `''` rather than the string `"null"`). The
+ *   sole exemption is a document whose *stored* body is already empty, so
+ *   an FM-only op (tag add, `related:` patch, suggestion effect) that
+ *   round-trips the stored body cannot be bricked by a degenerate record
+ *   it never intended to touch. `storedBody` is what makes that call;
+ *   omitting it means "assume non-empty", which rejects.
  * - Top-level frontmatter values must not be `null` — same wipe class
  *   (`agent: null`); omit the key instead. Key *removal* is the
  *   {@link FM_UNSET_SENTINEL} (`"__unset__"`), valid at top level only.
@@ -307,12 +314,24 @@ export const parseWriteRequest = (
  *   sentinel is exempt — it deletes the key, reverting to the indexer
  *   default.
  */
-export const validateWritePayload = (frontmatter: Record<string, unknown>, body: string): void => {
+export const validateWritePayload = (
+  frontmatter: Record<string, unknown>,
+  body: string,
+  storedBody?: string
+): void => {
   const strippedBody = body.trim();
   if (strippedBody === 'null' || strippedBody === 'undefined') {
     throw new WriterError(
       `body is the literal string "${strippedBody}" — a serialized JS ${strippedBody}, not a document. To remove a document use DELETE; otherwise resend with the real body.`,
       'null_body',
+      400
+    );
+  }
+
+  if (strippedBody.length === 0 && (storedBody === undefined || storedBody.trim().length > 0)) {
+    throw new WriterError(
+      'body is empty — a document with no body is not a write. To remove a document use DELETE; to change only frontmatter use PATCH /sections/{record_id}/fm, which never touches the body.',
+      'empty_body',
       400
     );
   }
@@ -492,7 +511,20 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
     }
   }
 
-  validateWritePayload(frontmatter, body);
+  // Stored body for the empty-body exemption. A stored document whose YAML
+  // does not parse falls back to the raw bytes: non-empty, so the write is
+  // held to the normal rule rather than exempted. Deliberately its own parse
+  // — reusing it for `existingFm` below would swallow the throw that a
+  // corrupt stored document is supposed to raise.
+  let storedBody: string | undefined;
+  if (onDisk !== null) {
+    try {
+      storedBody = parseFrontmatter(onDisk).body;
+    } catch {
+      storedBody = onDisk;
+    }
+  }
+  validateWritePayload(frontmatter, body, storedBody);
 
   const requestFm = frontmatter;
   const requestBody = body;

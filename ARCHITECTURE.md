@@ -80,8 +80,8 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to npm as `@uhop/vault-storage-mcp` (`mcp-*` tags mark releases; run via `npx`):
 
 - **`src/index.js`** — entry: env (`VAULT_API_URL`, `VAULT_API_TOKEN`), `McpServer` over stdio, tool + resource registration.
-- **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization.
-- **`src/tools.js`** — 35 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums.
+- **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization, `If-Match` / `ETag` pass-through.
+- **`src/tools.js`** — 38 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums. Writes split by blast radius: `vault_append` / `vault_replace` / `vault_patch_fm` change only what they name (atomic server-side ops), while `vault_write_file` / `vault_update_piece` replace a whole document and take an optional `expected_etag`.
 - **`src/resources.js`** — 3 read-only resources: `vault://status`, `vault://suggestions/pending`, `vault://taxonomy/tags`.
 
 ## static/ UI

@@ -187,18 +187,23 @@ export const registerTools = (mcp, client) => {
     'vault_update_piece',
     {
       description:
-        'Replace a record via /sections/{id} PUT with `frontmatter` (JSON object) + `body` (markdown text). The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected.',
+        'Replace a whole record via /sections/{id} PUT with `frontmatter` (JSON object) + `body` (markdown text). Same whole-document scope and the same alternatives as vault_write_file — vault_patch_fm for one frontmatter array, vault_append / vault_replace for body edits. The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected; an empty or literal-"null" body is rejected. expected_etag makes the write conditional (412 on conflict); chain it from a previous write\'s returned etag. Returns the new etag.',
       inputSchema: {
         record_id: z.string().min(1),
         frontmatter: z
           .record(z.unknown())
           .describe('Frontmatter as a JSON object. The server handles YAML serialization.'),
-        body: z.string().describe('Markdown body (no leading FM block).')
+        body: z.string().describe('Markdown body (no leading FM block).'),
+        expected_etag: z.string().optional().describe('Sent as If-Match (412 on conflict)')
       }
     },
-    wrap(async ({record_id, frontmatter, body}) => {
-      await client.putJson(`/sections/${encodeURIComponent(record_id)}`, {frontmatter, body});
-      return {ok: true, record_id};
+    wrap(async ({record_id, frontmatter, body, expected_etag}) => {
+      const {etag} = await client.putJson(
+        `/sections/${encodeURIComponent(record_id)}`,
+        {frontmatter, body},
+        expected_etag ? {ifMatch: expected_etag} : {}
+      );
+      return {ok: true, record_id, etag};
     })
   );
 
@@ -207,29 +212,104 @@ export const registerTools = (mcp, client) => {
     'vault_read_file',
     {
       description:
-        'Read a file by vault-relative path. Returns the markdown source. For atomized folders, the path can be the original `<stem>.md` and the server composes pieces back into one document.',
-      inputSchema: {path: z.string().min(1)}
+        'Read a file by vault-relative path. Returns the markdown source. For atomized folders, the path can be the original `<stem>.md` and the server composes pieces back into one document. Set include_etag to get {path, etag, composed, content} instead — the etag is what vault_write_file takes as expected_etag, and composed=true marks a folder view that has no single file behind it and must be edited through its pieces.',
+      inputSchema: {
+        path: z.string().min(1),
+        include_etag: z
+          .boolean()
+          .optional()
+          .describe('Return a JSON envelope with the etag instead of bare markdown')
+      }
     },
-    wrap(async ({path}) => client.getText(`/vault/${path}`))
+    wrap(async ({path, include_etag}) => {
+      if (!include_etag) return client.getText(`/vault/${path}`);
+      const {text, etag, composed} = await client.getTextWithMeta(`/vault/${path}`);
+      return {path, etag, composed, content: text};
+    })
   );
 
   mcp.registerTool(
     'vault_write_file',
     {
       description:
-        'Create or replace a file at a vault-relative path with `frontmatter` (JSON object) + `body` (markdown text). The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected.',
+        'Create or REPLACE a whole file at a vault-relative path with `frontmatter` (JSON object) + `body` (markdown text). Whole-document scope: the body you send becomes the entire body and the frontmatter you send is merged over the stored one, so this is the wrong tool for a partial change — use vault_append / vault_replace for body edits and vault_patch_fm for one frontmatter key, all of which are atomic and cannot lose the rest of the document. Reach for this when authoring a new note or genuinely rewriting one. The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected; an empty or literal-"null" body is rejected (removal is vault_delete_file). Pass expected_etag from a vault_read_file{include_etag} to make the write conditional: it lands only if nobody else wrote in between, otherwise 412 with the current etag. Returns the new etag for chaining.',
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         frontmatter: z
           .record(z.unknown())
           .describe('Frontmatter as a JSON object. The server handles YAML serialization.'),
-        body: z.string().describe('Markdown body (no leading FM block).')
+        body: z.string().describe('Markdown body (no leading FM block).'),
+        expected_etag: z
+          .string()
+          .optional()
+          .describe('ETag from vault_read_file{include_etag}; sent as If-Match (412 on conflict)')
       }
     },
-    wrap(async ({path, frontmatter, body}) => {
-      await client.putJson(`/vault/${path}`, {frontmatter, body});
-      return {ok: true, path};
+    wrap(async ({path, frontmatter, body, expected_etag}) => {
+      const {etag} = await client.putJson(
+        `/vault/${path}`,
+        {frontmatter, body},
+        expected_etag ? {ifMatch: expected_etag} : {}
+      );
+      return {ok: true, path, etag};
     })
+  );
+
+  // The narrow-blast-radius write path. `vault_write_file` replaces a whole
+  // document, so a bug in the caller costs the whole document; these three
+  // change only what they name, server-side and atomically, and cannot lose
+  // the rest. Prefer them.
+  mcp.registerTool(
+    'vault_append',
+    {
+      description:
+        'Append text to the end of a document body, server-side and atomically — no read-modify-write, so a concurrent writer cannot be clobbered. Frontmatter rides through untouched (`updated` is re-stamped). The document must already exist (404 otherwise); an atomized folder composed at `<stem>.md` is a 409 pointing at its pieces. Prefer this over vault_write_file whenever you are adding to a document rather than replacing it.',
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        text: z.string().min(1).describe('Fragment to append; joined after a single newline')
+      }
+    },
+    wrap(async ({path, text}) => client.postJson('/vault/edit', {path, op: 'append', text}))
+  );
+
+  mcp.registerTool(
+    'vault_replace',
+    {
+      description:
+        'Replace a string in a document body, server-side and atomically. ASSERTED: an absent `from` is a 409 and an ambiguous one is a 409 carrying the occurrence count — never a silent no-op, which is what makes this safe to fire blind (the curly-vs-straight-apostrophe bug class). Pass all=true to replace every occurrence deliberately. Frontmatter rides through untouched. Prefer this over vault_write_file for targeted body edits.',
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        from: z.string().min(1).describe('Exact text to find; must occur exactly once unless all'),
+        to: z.string().describe('Replacement text; empty string deletes the match'),
+        all: z.boolean().optional().describe('Replace every occurrence instead of asserting one')
+      }
+    },
+    wrap(async ({path, from, to, all}) =>
+      client.postJson('/vault/edit', {path, op: 'replace', from, to, ...(all ? {all} : {})})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_patch_fm',
+    {
+      description:
+        'Add or remove members of a frontmatter array (`/related`, `/tags`, `/agent/tags_suggested`, …) on one record, server-side and atomically. The body is never round-tripped, so this cannot clobber the document — the right tool for "add one related: entry", which would otherwise mean rewriting the whole note. Value-based set semantics: add appends unless a structurally-equal member exists, remove drops every equal member, both idempotent. Paths are JSON Pointers addressing the array itself, not an element. All-or-nothing: nothing is written unless every op validates, and a no-op request skips the write entirely. Returns {changed, results: [{op, path, changed, array}]} with each resulting array, so no re-read is needed.',
+      inputSchema: {
+        record_id: z.string().min(1).describe('Record id (not a path) — from vault_list_pieces'),
+        ops: z
+          .array(
+            z.object({
+              op: z.enum(['add', 'remove']),
+              path: z.string().min(1).describe('JSON Pointer to the array, e.g. "/related"'),
+              value: z.unknown().describe('Member value, e.g. "[[topics/foo]]"')
+            })
+          )
+          .min(1)
+      }
+    },
+    wrap(async ({record_id, ops}) =>
+      client.patchJson(`/sections/${encodeURIComponent(record_id)}/fm`, {ops})
+    )
   );
 
   mcp.registerTool(
