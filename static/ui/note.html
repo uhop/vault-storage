@@ -652,18 +652,7 @@
       <div id="theme-toggle"></div>
       <button id="settings" title="Settings">⚙</button>
     </header>
-    <div class="toolbar">
-      <span class="path" id="path">new — unsaved</span>
-      <span class="pill" id="status">idle</span>
-      <span class="modes" role="group" aria-label="View mode">
-        <button data-mode="edit" aria-pressed="false" title="Edit only">edit</button>
-        <button data-mode="split" aria-pressed="false" title="Editor + preview side-by-side">
-          split
-        </button>
-        <button data-mode="preview" aria-pressed="false" title="Rendered preview only">
-          preview
-        </button>
-      </span>
+    <vault-toolbar class="toolbar" id="toolbar">
       <button id="save">Save</button>
       <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
       <button id="outline" title="Outline (jump to heading)">Outline</button>
@@ -671,7 +660,7 @@
       <button id="recent" hidden>Recent</button>
       <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
       <button id="del" class="danger" hidden>Delete</button>
-    </div>
+    </vault-toolbar>
     <div class="err" id="err" hidden></div>
     <main>
       <div id="find-bar" class="find-bar" hidden role="search" aria-label="Find and replace">
@@ -796,6 +785,7 @@
     <script type="module">
       import '/ui/components/vault-markdown.js';
       import '/ui/components/vault-editor.js';
+      import '/ui/components/vault-toolbar.js';
       import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
 
       const DRAFT_PREFIX = 'vault.draft.';
@@ -833,12 +823,9 @@ ready: false
         lastSavedAt: null
       };
 
-      // status pill -----------------------------------------------------
-      const setStatus = (kind, label) => {
-        const el = $('#status');
-        el.className = 'pill ' + kind;
-        el.innerHTML = kind === 'saving' ? '<span class="spinner"></span> saving…' : esc(label);
-      };
+      // toolbar (path label + status pill + view modes) ------------------
+      const toolbar = $('#toolbar');
+      const setStatus = (kind, label) => toolbar.setStatus(kind, label);
 
       const fmtTime = d => {
         const p = n => String(n).padStart(2, '0');
@@ -873,7 +860,7 @@ ready: false
       }
 
       async function loadExisting(path) {
-        $('#path').textContent = path;
+        toolbar.path = path;
         $('#del').hidden = false;
         $('#editor').disabled = true;
         setStatus('saving', 'loading…');
@@ -905,7 +892,7 @@ ready: false
       }
 
       function initCapture() {
-        $('#path').textContent = 'new — unsaved';
+        toolbar.path = 'new — unsaved';
         $('#del').hidden = true;
         $('#recent').hidden = false;
         const draft = loadDraft();
@@ -1199,9 +1186,7 @@ ready: false
         viewMode = mode;
         localStorage.setItem(VIEW_KEY, mode);
         document.body.dataset.view = mode;
-        $$('.modes button').forEach(btn => {
-          btn.setAttribute('aria-pressed', btn.dataset.mode === mode ? 'true' : 'false');
-        });
+        toolbar.mode = mode;
         if (mode !== 'edit') schedulePreview();
       };
 
@@ -1257,7 +1242,7 @@ ready: false
           // now keys by the freshly-assigned path.
           localStorage.removeItem(DRAFT_PREFIX + 'new');
           dropDraft();
-          $('#path').textContent = state.path;
+          toolbar.path = state.path;
           $('#del').hidden = false;
           $('#recent').hidden = true;
           // Update URL so refresh stays on this note.
@@ -1390,9 +1375,7 @@ ready: false
       });
 
       // View-mode toggle (Edit / Split / Preview).
-      $$('.modes button').forEach(btn => {
-        btn.addEventListener('click', () => setViewMode(btn.dataset.mode));
-      });
+      toolbar.addEventListener('mode-change', e => setViewMode(e.detail.mode));
       setViewMode(viewMode);
 
       // Mobile insert-row -----------------------------------------------
