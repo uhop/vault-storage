@@ -1507,13 +1507,26 @@ test('PUT /vault/{path}?check=true blocks naked write near a seeded record', asy
       t.equal(r.status, 409, '409 conflict');
       const body = r.body as {
         code: string;
-        candidates: {file_path: string; distance: number}[];
+        candidates: {
+          file_path: string;
+          distance: number;
+          bare_distance: number;
+          summary_corrected: boolean;
+        }[];
         threshold: number;
       };
       t.equal(body.code, 'dedup_conflict', 'dedup_conflict code');
       t.equal(body.threshold, 0.1, 'default threshold 0.1');
       t.ok(body.candidates.length >= 1, 'candidates present');
       t.equal(body.candidates[0]?.file_path, 'topics/vector-store.md', 'seeded record cited');
+      // The seed carries no `agent.summary`, so its chunks were never decorated
+      // and the bare distance is already the symmetric one — no re-embed.
+      t.equal(body.candidates[0]?.summary_corrected, false, 'no correction needed');
+      t.equal(
+        body.candidates[0]?.bare_distance,
+        body.candidates[0]?.distance,
+        'bare and reported distances coincide for an undecorated record'
+      );
     } finally {
       await teardown(ctx);
     }

@@ -102,6 +102,82 @@ const minPairwiseChunkDistance = (
 };
 
 /**
+ * Widest decoration shift worth re-scoring. Stored chunks carry the record's
+ * `agent.summary` as a HyDE prefix (chunker.ts); a proposal arrives bare, so
+ * every distance against a summarized record is inflated. Measured across
+ * eight live topic notes scored against their own verbatim bodies, the shift
+ * ran 0.048–0.113 — hence 0.15, comfortably past the observed worst case. A
+ * candidate further than `threshold + this` cannot be pulled under the
+ * threshold by removing the shift, so it never needs the extra embed.
+ */
+const DECORATION_SLACK = 0.15;
+
+export interface DuplicateBlocker extends ProposeCandidate {
+  /** Distance before the decoration correction — what the bare scan reported. */
+  bareDistance: number;
+  /** True when the symmetric re-embed ran; false when the record has no summary to cancel. */
+  corrected: boolean;
+}
+
+/**
+ * Records that duplicate `body` closely enough to block a write.
+ *
+ * Straight distance comparison is asymmetric and unreliable here: stored
+ * chunks are decorated with their record's `agent.summary`, a freshly authored
+ * body has none, and the resulting inflation varies by summary (0.048–0.113
+ * measured), straddling the 0.10 gate default — so a verbatim copy of one note
+ * is caught while a verbatim copy of another slips through.
+ *
+ * Decorating the proposal with its *own* summary does not fix it: the summary's
+ * content dominates, so a different-but-plausible summary scores the true twin
+ * *worse* than sending nothing (0.1022 vs 0.1130) and can rank an unrelated
+ * note first. What does work is decorating the proposal with the *candidate's*
+ * summary — the identical prefix then cancels on both sides and a verbatim body
+ * scores 0.0000. That costs one embed per candidate, so it runs only on the
+ * shortlist the bare scan already ranked (rank-1 self-recall was 8/8, which is
+ * what makes a shortlist safe) and only within {@link DECORATION_SLACK}.
+ */
+export const findDuplicateBlockers = async (
+  db: DatabaseSync,
+  embedder: Embedder,
+  body: string,
+  options: {threshold: number; excludeRecordId?: string; k?: number}
+): Promise<DuplicateBlocker[]> => {
+  const {threshold, excludeRecordId} = options;
+  const bare = await proposeNearest(db, embedder, body, null, {
+    k: options.k ?? 10,
+    maxDistance: threshold + DECORATION_SLACK,
+    ...(excludeRecordId !== undefined ? {excludeRecordId} : {})
+  });
+  if (bare.candidates.length === 0) return [];
+
+  const chunkVecs = new RecordVecRepository(db);
+  const allChunks = chunkVecs.getAllChunks();
+  const blockers: DuplicateBlocker[] = [];
+  for (const c of bare.candidates) {
+    // No summary on the record means its chunks are undecorated already, so
+    // the bare distance is the symmetric one — nothing to cancel.
+    if (c.agentSummary === null) {
+      if (c.distance <= threshold) {
+        blockers.push({...c, bareDistance: c.distance, corrected: false});
+      }
+      continue;
+    }
+    const chunks = allChunks.get(c.recordId);
+    if (!chunks || chunks.length === 0) continue;
+    const vecs = (await embedder.embedBatch(chunkBody(body, {summary: c.agentSummary}))).filter(
+      isAllFinite
+    );
+    if (vecs.length === 0) continue;
+    const distance = minPairwiseChunkDistance(vecs, chunks);
+    if (!Number.isFinite(distance) || distance > threshold) continue;
+    blockers.push({...c, distance, bareDistance: c.distance, corrected: true});
+  }
+  blockers.sort((a, b) => a.distance - b.distance);
+  return blockers;
+};
+
+/**
  * Embed the proposed body and return its top-K nearest existing records by
  * min chunk cosine. Returns candidates sorted by ascending distance —
  * caller decides what threshold means "too close to write" for their use

@@ -6,8 +6,9 @@ import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import type {Embedder} from '../src/embeddings/types.ts';
 import {importVault} from '../src/importer/import.ts';
-import {proposeNearest} from '../src/maintenance/propose.ts';
+import {findDuplicateBlockers, proposeNearest} from '../src/maintenance/propose.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 
 const writeMd = (root: string, relativePath: string, content: string): void => {
@@ -146,6 +147,150 @@ test('proposeNearest does not special-case a whitespace-only body', async t => {
     t.ok(
       r.candidates.every(c => c.distance > 0.5),
       'every "match" is far away — garbage in, garbage out'
+    );
+  } finally {
+    teardown(fx);
+  }
+});
+
+// --- findDuplicateBlockers: the summary-decoration correction ------------
+
+// FakeEmbedder cannot exercise this. It hashes the whole string, so prepending
+// a summary moves the vector to a near-orthogonal one — a decoration shift of
+// ~1.0, where the real BGE shift measured 0.048–0.113. A bag-of-words embedder
+// reproduces the property that matters: a shared body dominates the vector and
+// a prefix perturbs it by an amount proportional to the prefix's weight.
+class BagOfWordsEmbedder implements Embedder {
+  // 384 to match the vec0 column width the schema fixes for embeddings.
+  readonly dim = 384;
+  readonly modelName = 'bag-of-words-test';
+  readonly retained = false;
+
+  async embed(text: string): Promise<Float32Array> {
+    return this.#vec(text);
+  }
+  async embedBatch(texts: string[]): Promise<Float32Array[]> {
+    return texts.map(t => this.#vec(t));
+  }
+  async releaseRetained(): Promise<void> {}
+
+  #vec(text: string): Float32Array {
+    const vec = new Float32Array(this.dim);
+    for (const word of text.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (!word) continue;
+      let h = 2166136261;
+      for (let i = 0; i < word.length; ++i) {
+        h ^= word.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      vec[(h >>> 0) % this.dim]! += 1;
+    }
+    let norm = 0;
+    for (const x of vec) norm += x * x;
+    norm = Math.sqrt(norm);
+    if (norm > 0) for (let i = 0; i < this.dim; ++i) vec[i]! /= norm;
+    return vec;
+  }
+}
+
+// Sized so the decoration shift lands above the 0.10 gate default but inside
+// DECORATION_SLACK — the band where the uncorrected gate misses a verbatim copy
+// and the corrected one catches it. Each test asserts that precondition, so a
+// fixture that drifts out of the band fails loudly instead of passing vacuously.
+const DEC_BODY =
+  'Pattern for handling retry storms via careful queue management. ' +
+  'The consumer drains steadily once the window exceeds the interval and the workers settle. '.repeat(
+    2
+  );
+const DEC_SUMMARY =
+  'Retry storms tamed by exponential backoff with jitter sized above the retry interval, drained predictably. '.repeat(
+    2
+  );
+const DEC_OTHER =
+  'Tomato cultivation in raised beds depends on mulch composition and drip irrigation tubing diameter. '.repeat(
+    4
+  );
+const DEC_UNRELATED =
+  'Glacier terminus retreat measured by photogrammetry across successive melt seasons in coastal fjords. '.repeat(
+    4
+  );
+
+const decSetup = async () => {
+  const root = mkdtempSync(join(tmpdir(), 'propose-dedup-'));
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  writeMd(
+    root,
+    'topics/decorated.md',
+    `---\ntitle: Decorated\ntype: permanent\nagent:\n  summary: "${DEC_SUMMARY.trim()}"\n---\n${DEC_BODY}\n`
+  );
+  writeMd(root, 'topics/plain.md', `---\ntitle: Plain\ntype: permanent\n---\n${DEC_OTHER}\n`);
+  importVault(db, root);
+  const embedder = new BagOfWordsEmbedder();
+  await embedPending(db, embedder);
+  return {root, db, embedder};
+};
+
+test('findDuplicateBlockers catches a verbatim copy of a summarized note', async t => {
+  const fx = await decSetup();
+  try {
+    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_BODY, {threshold: 0.1});
+    t.equal(blockers.length, 1, 'the decorated note blocks the write');
+
+    const b = blockers[0]!;
+    t.equal(b.filePath, 'topics/decorated.md', 'the right record');
+    t.ok(b.corrected, 'the symmetric re-embed ran');
+    // The precondition — without the correction this copy would have slipped.
+    t.ok(b.bareDistance > 0.1, `bare distance ${b.bareDistance.toFixed(4)} misses the gate`);
+    t.ok(b.distance < 1e-6, `corrected distance ${b.distance.toFixed(4)} is ~0`);
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('findDuplicateBlockers does not invent blockers for unrelated content', async t => {
+  const fx = await decSetup();
+  try {
+    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_UNRELATED, {
+      threshold: 0.1
+    });
+    t.deepEqual(
+      blockers.map(b => b.filePath),
+      [],
+      'nothing within the threshold'
+    );
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('findDuplicateBlockers skips the re-embed when a record has no summary', async t => {
+  const fx = await decSetup();
+  try {
+    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_OTHER, {threshold: 0.1});
+    t.equal(blockers.length, 1, 'the undecorated note still blocks');
+
+    const b = blockers[0]!;
+    t.equal(b.filePath, 'topics/plain.md', 'the right record');
+    t.notOk(b.corrected, 'no correction needed — its chunks were never decorated');
+    t.equal(b.bareDistance, b.distance, 'bare and corrected distances coincide');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('findDuplicateBlockers respects excludeRecordId on an in-place rewrite', async t => {
+  const fx = await decSetup();
+  try {
+    const rec = new RecordsRepository(fx.db).getByPath('topics/decorated.md');
+    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_BODY, {
+      threshold: 0.1,
+      excludeRecordId: rec!.recordId
+    });
+    t.deepEqual(
+      blockers.map(b => b.filePath),
+      [],
+      'a note does not block a rewrite of itself'
     );
   } finally {
     teardown(fx);

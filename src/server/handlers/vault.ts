@@ -16,7 +16,7 @@ import {buildEdges} from '../../importer/build-edges.ts';
 import {repathPendingSuggestions, SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
-import {proposeNearest} from '../../maintenance/propose.ts';
+import {findDuplicateBlockers, proposeNearest} from '../../maintenance/propose.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import type {ResolverCache} from '../resolver-cache.ts';
@@ -202,11 +202,15 @@ const extractAgentSummary = (frontmatter: Record<string, unknown>): string | nul
  * PUT /vault/{path} — create or replace a file.
  *
  * `?check=true` opts into the search-before-write dedup gate: the
- * proposed body is embedded and scored against existing records via
- * the same metric as `find-duplicates`. Any candidate whose distance
- * is `≤ check_threshold` (default 0.10) blocks the write with a 409
- * carrying the offending candidates. Without the query param, behavior
- * is unchanged — naked PUT remains the existing contract.
+ * proposed body is scored against existing records by
+ * {@link findDuplicateBlockers}, and any candidate within
+ * `check_threshold` (default 0.10) blocks the write with a 409 carrying
+ * the offending candidates. Each reports `bare_distance` alongside
+ * `distance` and a `summary_corrected` flag, since the two differ
+ * whenever the candidate carries an `agent.summary` — see
+ * findDuplicateBlockers for why comparing a bare body against decorated
+ * chunks needs the second pass. Without the query param, behavior is
+ * unchanged — naked PUT remains the existing contract.
  *
  * `X-Vault-Dedup: skip` short-circuits the check when the caller has
  * already run /vault/propose and made an explicit decision; useful so
@@ -328,12 +332,14 @@ export const putVaultHandler =
         summaryForCheck = extractAgentSummary(fm.data);
       }
 
-      const result = await proposeNearest(deps.db, deps.embedder, bodyForCheck, summaryForCheck, {
-        excludeRecordId: existing?.recordId,
-        k: 10,
-        maxDistance: threshold
+      // `summaryForCheck` is deliberately unused for the comparison: the gate
+      // asks whether this *body* is already stored, and the symmetric pass
+      // decorates the proposal with each candidate's summary, not its own.
+      void summaryForCheck;
+      const tooClose = await findDuplicateBlockers(deps.db, deps.embedder, bodyForCheck, {
+        threshold,
+        ...(existing?.recordId !== undefined ? {excludeRecordId: existing.recordId} : {})
       });
-      const tooClose = result.candidates;
       if (tooClose.length > 0) {
         sendJson(ctx.res, 409, {
           error: 'dedup_conflict',
@@ -344,6 +350,8 @@ export const putVaultHandler =
             record_id: c.recordId,
             file_path: c.filePath,
             distance: c.distance,
+            bare_distance: c.bareDistance,
+            summary_corrected: c.corrected,
             agent_summary: c.agentSummary
           }))
         });
