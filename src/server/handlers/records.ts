@@ -415,7 +415,9 @@ const deepEqual = (a: unknown, b: unknown): boolean => {
     return Array.isArray(b) && a.length === b.length && a.every((v, i) => deepEqual(v, b[i]));
   }
   if (typeof a === 'object') {
-    if (Array.isArray(b) || typeof b !== 'object') return false;
+    // `typeof b !== 'object'` is dead here: line 413 guarantees
+    // typeof a === typeof b, and this branch fixes it at 'object'.
+    if (Array.isArray(b)) return false;
     const ka = Object.keys(a as Record<string, unknown>);
     const kb = Object.keys(b as Record<string, unknown>);
     return (
