@@ -34,6 +34,11 @@ export const parseFrontmatter = (source: string): Frontmatter => {
  */
 export const serializeFrontmatter = (fm: Frontmatter): string => {
   if (Object.keys(fm.data).length === 0) return fm.body;
-  const yamlText = yaml.stringify(fm.data, {lineWidth: 0}).replace(/\s+$/, '');
+  // blockQuote: false — a keep-chomped block scalar (`|+`) makes trailing
+  // newlines *content*, which both the trim below and FRONTMATTER_BLOCK's
+  // `\n---` delimiter would eat (measured 2026-08-04: "x\n\n" → "x\n",
+  // "\n" → ""); quoted scalars always end at a non-whitespace character,
+  // so stripping exactly the one structural newline is lossless.
+  const yamlText = yaml.stringify(fm.data, {lineWidth: 0, blockQuote: false}).replace(/\n$/, '');
   return `---\n${yamlText}\n---\n${fm.body}`;
 };
