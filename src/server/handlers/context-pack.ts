@@ -28,6 +28,7 @@ const LEXICAL_POOL = 20;
 // legs' incomparable score scales, no tuning surface.
 const RRF_K = 60;
 const GRAPH_CAP = 20;
+const MIN_CHUNK_CHARS = 40;
 
 interface Candidate {
   record: VaultRecord;
@@ -83,9 +84,11 @@ const bestSegmentByTerms = (segments: string[], terms: string[]): number => {
  *
  * Chunk text is reproduced via `chunkBody(body, {summary: null})` — the bare
  * segmentation the stored vectors index (minus the HyDE summary prefix), so
- * `chunk_index` is meaningful against the embedding tables. The pack is
- * byte-budgeted: lowest-ranked chunks are dropped until the serialized
- * response fits `max_bytes`, and the drop count is reported — never silent.
+ * `chunk_index` is meaningful against the embedding tables. The whole
+ * serialized response is byte-budgeted, chunks-first: the neighborhood trims
+ * before any chunk drops, then lowest-ranked chunks go, all reported —
+ * never silent. Inbound neighborhood entries are the backlinks (deduped,
+ * direction-tagged); `inbound_total` carries the backlink degree.
  */
 export const contextPackHandler =
   (deps: ContextPackDeps): Handler =>
@@ -202,7 +205,9 @@ export const contextPackHandler =
       // last embed pass) — clamp rather than 500 or silently skip.
       if (index >= segments.length) index = segments.length - 1;
       const text = segments[index] ?? '';
-      if (text.length === 0) continue;
+      // Degenerate segments carry no context and still win near-flat semantic
+      // ties (a bare `(empty)` section scored 0.63 in the first dogfood).
+      if (text.trim().length < MIN_CHUNK_CHARS) continue;
       const sources: string[] = [];
       if (c.semanticScore !== undefined) sources.push('semantic');
       if (c.lexicalScore !== undefined) sources.push('lexical');
@@ -219,22 +224,31 @@ export const contextPackHandler =
     }
 
     let graph: Record<string, unknown> | null = null;
+    let neighborhood: Record<string, unknown>[] = [];
     if (graphRoot) {
       const root = graphRoot;
       const outbound = edges.listOutbound(root.recordId);
       const inbound = edges.listInbound(root.recordId);
 
+      // One deduped entry per neighbor record; its edges carry type +
+      // direction, so inbound entries ARE the backlinks — no separate array
+      // (the first dogfood paid ~2× graph bytes for the duplication, and a
+      // record with N inbound edge types appeared N times).
       const neighbors = new Map<
         string,
-        {entry: ReturnType<typeof summaryEntry>; edges: {type: string; direction: string}[]}
+        {
+          entry: ReturnType<typeof summaryEntry>;
+          edges: {type: string; direction: string}[];
+          firstSeen: 'outbound' | 'inbound';
+        }
       >();
-      const addNeighbor = (otherId: string, type: string, direction: string): void => {
+      const addNeighbor = (otherId: string, type: string, direction: 'outbound' | 'inbound') => {
         if (otherId === root.recordId) return;
         let n = neighbors.get(otherId);
         if (!n) {
           const record = records.getById(otherId);
           if (!record) return;
-          n = {entry: summaryEntry(record), edges: []};
+          n = {entry: summaryEntry(record), edges: [], firstSeen: direction};
           neighbors.set(otherId, n);
         }
         n.edges.push({type, direction});
@@ -242,21 +256,25 @@ export const contextPackHandler =
       for (const e of outbound) addNeighbor(e.toId, e.type, 'outbound');
       for (const e of inbound) addNeighbor(e.fromId, e.type, 'inbound');
 
-      const neighborhood = [...neighbors.values()]
+      // Interleave outbound- and inbound-discovered entries before capping so
+      // a hub root shows both directions instead of 20 outbound entries.
+      const all = [...neighbors.values()];
+      const out = all.filter(n => n.firstSeen === 'outbound');
+      const inn = all.filter(n => n.firstSeen === 'inbound');
+      const interleaved: typeof all = [];
+      for (let i = 0; i < Math.max(out.length, inn.length); ++i) {
+        if (i < out.length) interleaved.push(out[i]!);
+        if (i < inn.length) interleaved.push(inn[i]!);
+      }
+      neighborhood = interleaved
         .slice(0, GRAPH_CAP)
-        .map(n => ({...n.entry, edges: n.edges}));
-
-      const backlinks = inbound.slice(0, GRAPH_CAP).flatMap(e => {
-        const record = records.getById(e.fromId);
-        return record ? [{...summaryEntry(record), edge_type: e.type}] : [];
-      });
+        .map(n => ({...n.entry, edges: n.edges}) as Record<string, unknown>);
 
       graph = {
         root: summaryEntry(root),
         neighborhood,
         neighborhood_total: neighbors.size,
-        backlinks,
-        backlinks_total: inbound.length
+        inbound_total: inbound.length
       };
     }
 
@@ -266,12 +284,23 @@ export const contextPackHandler =
       graph,
       budget: {max_bytes: maxBytes, used_bytes: 0, chunks_dropped: 0}
     };
+    // Chunks-first budgeting (the first dogfood's headline defect: a
+    // hub-rooted graph was budget-exempt, evicted every chunk, and still
+    // pushed the pack past its own budget). The whole serialized response
+    // counts; the neighborhood — supporting context — trims before a single
+    // chunk drops, both visible: neighborhood_total stays the true count,
+    // chunks_dropped reports the rest.
     let dropped = 0;
-    let used = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+    const size = (): number => Buffer.byteLength(JSON.stringify(payload), 'utf8');
+    let used = size();
+    while (used > maxBytes && neighborhood.length > 0) {
+      neighborhood.pop();
+      used = size();
+    }
     while (used > maxBytes && chunks.length > 0) {
       chunks.pop();
       ++dropped;
-      used = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+      used = size();
     }
     payload.budget.used_bytes = used;
     payload.budget.chunks_dropped = dropped;

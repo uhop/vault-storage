@@ -132,7 +132,7 @@ const seed = (root: string): void => {
       '  summary: Gamma is the neighbor note.',
       '  derived_from_hash: irrelevant',
       '---',
-      'Gamma neighbor note body.'
+      'Gamma neighbor note body, long enough to clear the degenerate-segment floor.'
     ].join('\n')
   );
 };
@@ -159,8 +159,7 @@ interface Pack {
       edges: Array<{type: string; direction: string}>;
     }>;
     neighborhood_total: number;
-    backlinks: Array<{record_id: string; edge_type: string}>;
-    backlinks_total: number;
+    inbound_total: number;
   } | null;
   budget: {max_bytes: number; used_bytes: number; chunks_dropped: number};
 }
@@ -212,24 +211,47 @@ test('POST /context-pack — query mode packs chunks, graph, and budget', async 
         [{type: 'cites', direction: 'inbound'}],
         'typed edge with direction'
       );
-      t.equal(pack.graph?.backlinks_total, 1, 'one backlink');
-      t.equal(pack.graph?.backlinks[0]?.record_id, gammaId, 'gamma cites alpha');
-      t.equal(pack.graph?.backlinks[0]?.edge_type, 'cites', 'backlink edge type surfaced');
+      t.equal(
+        pack.graph?.inbound_total,
+        1,
+        'inbound degree surfaced (backlinks are the inbound neighborhood entries)'
+      );
 
       t.equal(pack.budget.max_bytes, 32 * 1024, 'default budget');
       t.equal(pack.budget.chunks_dropped, 0, 'small pack drops nothing');
       t.ok(pack.budget.used_bytes > 0 && pack.budget.used_bytes <= 32 * 1024, 'usage reported');
+
+      // Chunks-first budgeting: a budget that cannot hold the full pack trims
+      // the neighborhood before it touches a single chunk.
+      const mid = await fetchAuthed(
+        `${ctx.url}/context-pack?query=${encodeURIComponent(ALPHA_BODY)}&max_bytes=${pack.budget.used_bytes - 50}`,
+        {method: 'POST'}
+      );
+      const midPack = mid.body as Pack;
+      t.equal(midPack.budget.chunks_dropped, 0, 'graph trims before any chunk drops');
+      t.equal(midPack.chunks.length, pack.chunks.length, 'chunks survive intact');
+      t.ok(
+        (midPack.graph?.neighborhood.length ?? 0) < (pack.graph?.neighborhood.length ?? 0),
+        'neighborhood shortened under budget pressure'
+      );
+      t.equal(
+        midPack.graph?.neighborhood_total,
+        pack.graph?.neighborhood_total,
+        'true neighbor count still reported'
+      );
+      t.ok(midPack.budget.used_bytes <= midPack.budget.max_bytes, 'pack honors its own budget');
 
       const tight = await fetchAuthed(
         `${ctx.url}/context-pack?query=${encodeURIComponent(ALPHA_BODY)}&max_bytes=700`,
         {method: 'POST'}
       );
       const tightPack = tight.body as Pack;
-      t.ok(tightPack.budget.chunks_dropped >= 1, 'tight budget drops lowest-ranked chunks');
+      t.ok(tightPack.budget.chunks_dropped >= 1, 'tight budget then drops lowest-ranked chunks');
       t.ok(
         tightPack.chunks.length < pack.chunks.length,
         'dropped chunks are gone from the response'
       );
+      t.equal(tightPack.graph?.neighborhood.length, 0, 'graph fully trimmed first');
     } finally {
       await teardown(ctx);
     }
@@ -297,6 +319,42 @@ test('POST /context-pack — record_id mode anchors on the record', async t => {
       for (const c of pack.chunks) {
         t.deepEqual(c.sources, ['semantic'], 'record mode is semantic-only');
       }
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /context-pack — degenerate segments never become chunks', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seed(root);
+    // Under the 40-char floor — the `(empty)` section-stub class that won a
+    // near-flat semantic tie in the first dogfood.
+    writeMd(
+      root,
+      'topics/stub.md',
+      ['---', 'title: Stub', 'created: 2026-08-01', 'updated: 2026-08-01', '---', '(empty)'].join(
+        '\n'
+      )
+    );
+    const ctx = await startTestServer(root);
+    try {
+      // Byte-identical query: the stub is the semantic top hit by construction.
+      const r = await fetchAuthed(
+        `${ctx.url}/context-pack?query=${encodeURIComponent('(empty)')}`,
+        {
+          method: 'POST'
+        }
+      );
+      t.equal(r.status, 200, '200 ok');
+      const pack = r.body as Pack;
+      t.notOk(
+        pack.chunks.some(c => c.file_path === 'topics/stub.md'),
+        'the degenerate segment is skipped despite being the nearest vector'
+      );
     } finally {
       await teardown(ctx);
     }

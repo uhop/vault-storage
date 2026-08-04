@@ -63,7 +63,7 @@ const REQUIRED_MENTIONS = {
     'chunk_index',
     'sources',
     'neighborhood_total',
-    'backlinks_total',
+    'inbound_total',
     'max_bytes',
     'used_bytes',
     'chunks_dropped'

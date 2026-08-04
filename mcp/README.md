@@ -38,10 +38,10 @@ was started with (e.g., the one in your `.env`).
 Forty-seven tools mapping to the REST surface, grouped by purpose:
 
 - **Search & list** — `vault_search`, `vault_context_pack` (one prepared
-  RAG pack — hybrid top-K chunks + 1-hop graph summaries + backlinks,
-  byte-budgeted with reported drops — replacing the
-  search → similar → neighborhood → read chains), `vault_list_pieces`
-  (filters incl. alias-aware `tag`), `vault_list_folder`
+  RAG pack — hybrid top-K chunks + a deduped 1-hop graph whose inbound
+  entries are the backlinks, byte-budgeted chunks-first with every trim
+  reported — replacing the search → similar → neighborhood → read chains),
+  `vault_list_pieces` (filters incl. alias-aware `tag`), `vault_list_folder`
 - **Read** — `vault_read_piece`, `vault_read_meta`, `vault_read_file`
   (`include_etag: true` returns `{path, etag, composed, content}` — the
   tag a conditional write needs, and the composed-folder flag)

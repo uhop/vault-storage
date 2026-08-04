@@ -19,7 +19,8 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
 
 - Run via `npx -y @uhop/vault-storage-mcp@latest`; env: `VAULT_API_URL`, `VAULT_API_TOKEN`.
 - Tool groups: search & list (incl. `vault_context_pack` — one byte-budgeted
-  RAG pack: hybrid top-K chunks + 1-hop graph summaries + backlinks), read,
+  RAG pack: hybrid top-K chunks + a deduped 1-hop graph whose inbound
+  entries are the backlinks), read,
   narrow writes (`vault_append` / `vault_replace` / `vault_patch_fm` —
   asserted, atomic, small blast radius), whole-document writes (optional
   `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /

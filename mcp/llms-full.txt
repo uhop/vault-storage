@@ -56,12 +56,16 @@ Search & list:
 - vault_context_pack — one prepared RAG pack anchored by exactly one of
   `query` (hybrid: lexical FTS + semantic chunk-KNN, fused by reciprocal
   rank) or `record_id` (nearest chunks). Returns {anchor, chunks, graph,
-  budget}; chunk text is the bare body segment the stored vectors index; the
-  graph block carries the 1-hop typed neighborhood as agent.summary lines
-  plus backlinks, capped at 20 each with true totals. Byte-budgeted (default
-  32 KiB): lowest-ranked chunks drop until it fits, reported in
-  budget.chunks_dropped — never silent. Replaces the search → similar →
-  neighborhood → read chains.
+  budget}; chunk text is the bare body segment the stored vectors index
+  (degenerate segments skipped); the graph block carries the deduped 1-hop
+  typed neighborhood as agent.summary lines — each entry with its typed
+  edges + directions, inbound entries doubling as the backlinks
+  (inbound_total = backlink degree), capped at 20 with the true total.
+  The whole response is byte-budgeted chunks-first (default 32 KiB): the
+  neighborhood trims before any chunk drops, then lowest-ranked chunks go,
+  reported in budget.chunks_dropped and the neighborhood_total-vs-length
+  gap — never silent. Replaces the search → similar → neighborhood → read
+  chains.
 - vault_list_pieces — filtered record listing (type, status, alias-aware tag,
   path prefix, updated_since…); paginated envelope.
 - vault_list_folder — folder listing; unpaginated.
