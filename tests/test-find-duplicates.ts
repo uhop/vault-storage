@@ -633,3 +633,53 @@ test('findDuplicates skips dated and structural series by default', async t => {
     teardown(fx);
   }
 });
+
+test('pair damping: two dated files are a series, not duplicates', async t => {
+  const fx = await setup();
+  try {
+    const shared =
+      'Reflect run over six sessions: two signals flagged, one false positive, workflow proposals filed. '.repeat(
+        3
+      );
+    // Dated reports under one directory — the class that produced 24 of 25
+    // filed pairs on a live run once the prefilter stopped hiding them.
+    writeMd(
+      fx.root,
+      'projects/p/reports/2026-06-13-nuke.md',
+      `---\ntitle: R1\ntype: research\n---\n${shared}\n`
+    );
+    writeMd(
+      fx.root,
+      'projects/p/reports/2026-07-02-nuke.md',
+      `---\ntitle: R2\ntype: research\n---\n${shared}\n`
+    );
+    // A dated report against an *undated* note stays eligible — that pairing is
+    // the interesting one, and is where vault-lint's record-level skip and this
+    // pair-level rule deliberately differ.
+    writeMd(
+      fx.root,
+      'topics/reflect-pattern.md',
+      `---\ntitle: T\ntype: permanent\n---\n${shared}\n`
+    );
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+
+    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    t.equal(summary.pairsExcludedBy.dated_series, 1, 'the two dated reports are damped');
+    t.equal(summary.filed, 2, 'each report still pairs with the undated topic note');
+
+    const rows = fx.db
+      .prepare(`SELECT payload FROM suggestions WHERE kind = 'duplicate'`)
+      .all() as Array<{payload: string}>;
+    const pairs = rows.map(r => {
+      const p = JSON.parse(r.payload) as {a_path: string; b_path: string};
+      return [p.a_path, p.b_path].sort().join(' | ');
+    });
+    t.notOk(
+      pairs.some(p => !p.includes('topics/reflect-pattern.md')),
+      'every filed pair involves the undated note'
+    );
+  } finally {
+    teardown(fx);
+  }
+});

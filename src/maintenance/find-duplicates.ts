@@ -67,7 +67,7 @@
 // `npm publish`) pushed structurally-similar files under the threshold
 // without the pairs being duplicate *concepts*. A second data point
 // (2026-05-14, chezmoi `decisions.md` vs `learnings.md` at 0.099)
-// confirmed reproducibility. Three pair rules run between the prefilter
+// confirmed reproducibility. Four pair rules run between the prefilter
 // and the chunk-level confirmation (see `pairExclusionReason`):
 //   - `type_mismatch` — structural lifecycle types (`project`, `log`,
 //     `queue-item`, `state`, `meta`, `index`) only pair with themselves;
@@ -84,6 +84,10 @@
 //   - `summary_template` — two `_summary-*.md` compaction slices share
 //     the template and adjacent date ranges; the compactor owns them and
 //     merging is never the review outcome.
+//   - `dated_series` (2026-08-03) — the general case the previous rule is
+//     one instance of: two basenames both carrying `YYYY-MM-DD` are a time
+//     sequence. A dated file against an *undated* one still pairs, which is
+//     where this deliberately differs from vault-lint's record-level skip.
 
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
@@ -176,7 +180,11 @@ const isProjectStructureFile = (filePath: string): boolean => {
   return segments.length >= 4 && (segments[2] === 'queue' || segments[2] === 'queue-archive');
 };
 
-export type PairExclusionReason = 'type_mismatch' | 'project_structure' | 'summary_template';
+export type PairExclusionReason =
+  'type_mismatch' | 'project_structure' | 'summary_template' | 'dated_series';
+
+/** `YYYY-MM-DD` anywhere in a basename — the mark of a dated series member. */
+const DATED_BASENAME_RE = /\d{4}-\d{2}-\d{2}/;
 
 /**
  * Pair-level damping: returns why a candidate pair is ineligible for a
@@ -194,6 +202,24 @@ export const pairExclusionReason = (a: VaultRecord, b: VaultRecord): PairExclusi
     basenameOf(b.filePath).startsWith('_summary-')
   ) {
     return 'summary_template';
+  }
+  // Two dated files are a time sequence, not merge candidates — the general
+  // case the `_summary-` rule above is one instance of. vault-lint has carried
+  // this since its DUPLICATES check shipped ("a date in the title means a
+  // dated series (reports, dated queries)"); find-duplicates did not, and a
+  // prefilter tight enough to hide the consequence kept it invisible until
+  // 2026-08-03, when a bounded live run returned 24 of 25 pairs from
+  // `agent-workflow/reports/YYYY-MM-DD-nuke.md`.
+  //
+  // Deliberately a *pair* rule, where vault-lint skips the record outright:
+  // a dated note against an undated one is the interesting case, not noise.
+  // The same run's one surviving pair was exactly that — a dated report and
+  // the topic note compiled out of it, at distance 0.041.
+  if (
+    DATED_BASENAME_RE.test(basenameOf(a.filePath)) &&
+    DATED_BASENAME_RE.test(basenameOf(b.filePath))
+  ) {
+    return 'dated_series';
   }
   return null;
 };
@@ -349,7 +375,12 @@ export const findDuplicates = (
     skippedByPath: 0,
     candidatePairs: 0,
     pairsExcluded: 0,
-    pairsExcludedBy: {type_mismatch: 0, project_structure: 0, summary_template: 0},
+    pairsExcludedBy: {
+      type_mismatch: 0,
+      project_structure: 0,
+      summary_template: 0,
+      dated_series: 0
+    },
     pairsFound: 0,
     filed: 0,
     durationMs: 0
