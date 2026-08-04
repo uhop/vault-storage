@@ -759,3 +759,37 @@ test('PUT /sections/{id} unset sentinel on protected keys: auto-managed 400, ind
     cleanup();
   }
 });
+
+// `validatePriority` was three conjuncts until 2026-08-03 —
+// `typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value)`.
+// The first two are entailed by the third, so it collapsed to `Number.isInteger`.
+// These pin the inputs the dropped conjuncts nominally guarded. They arrive via
+// YAML, not JSON: `.inf`/`.nan` have no JSON spelling.
+test('PUT /sections/{id} rejects non-integer numeric priorities', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      for (const [label, yaml] of [
+        ['fractional', '1.5'],
+        ['infinity', '.inf'],
+        ['negative infinity', '-.inf'],
+        ['not-a-number', '.nan']
+      ] as const) {
+        const md = ['---', 'title: Alpha', `priority: ${yaml}`, '---', 'body', ''].join('\n');
+        const put = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'text/markdown'},
+          body: md
+        });
+        t.equal(put.status, 400, `${label} priority rejected`);
+      }
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

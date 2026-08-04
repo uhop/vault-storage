@@ -98,7 +98,9 @@ const validateClosedEnum = (
 
 const validatePriority = (value: unknown): string | null => {
   if (value === undefined || value === null) return null;
-  if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value)) return null;
+  // Number.isInteger already entails both dropped conjuncts: it is false for
+  // every non-number and for Infinity/NaN.
+  if (Number.isInteger(value)) return null;
   if (typeof value === 'string' && PRIORITY_ALIAS_KEYS.has(value)) return null;
   if (typeof value === 'string') {
     return `unknown priority alias '${value}' — expected an integer or one of: ${[...PRIORITY_ALIAS_KEYS].sort().join(', ')}`;

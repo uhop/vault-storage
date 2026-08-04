@@ -506,3 +506,105 @@ test('parseQueueFile — blocked-by markers', async t => {
     t.ok(items[0]?.body.includes('blocked-by: some ref'));
   });
 });
+
+test('parseQueueFile — an unrecognized heading ends the item, it does not join it', async t => {
+  await t.test('a non-Priority H3 and its prose stay out of the preceding body', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Item one.** Body of item one.',
+        '',
+        '### Some unrecognized H3',
+        '',
+        'Prose belonging to the H3 section.',
+        '',
+        '- **Item two.** Body of item two.'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items.length, 2, 'both bullets are items');
+    // Before 2026-08-03 the heading fell through to the continuation branch
+    // and item one's body swallowed it plus everything under it — content
+    // reattributed to the wrong item, and its body_hash churning whenever
+    // that unrelated section was edited.
+    t.equal(items[0]?.body, 'Body of item one.', 'item one keeps only its own body');
+    t.equal(items[1]?.body, 'Body of item two.', 'item two is unaffected');
+  });
+
+  await t.test('`### Priority N` still sets priority — it is matched before the catch-all', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Normal.** Body.',
+        '',
+        '### Priority -1',
+        '',
+        '- **Low.** Low body.'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(
+      items.map(i => [i.title, i.priority]),
+      [
+        ['Normal.', 0],
+        ['Low.', -1]
+      ],
+      'the priority heading is consumed, not treated as a plain heading'
+    );
+  });
+
+  await t.test('an H2 after an item still switches section', t => {
+    const src =
+      FM +
+      ['## Backlog', '', '- **Item.** Body.', '', '## Watching', '', '- **Watched.** W.'].join(
+        '\n'
+      );
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(
+      items.map(i => [i.title, i.section]),
+      [
+        ['Item.', 'backlog'],
+        ['Watched.', 'watching']
+      ]
+    );
+  });
+
+  await t.test('a heading inside a fenced block is masked and stays in the body', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- **Item.** Body.',
+        '',
+        '  ```md',
+        '  ### Not a heading — it is a code sample',
+        '  ```'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items.length, 1, 'still one item');
+    t.ok(
+      items[0]?.body.includes('### Not a heading'),
+      'the fenced sample rides along in the body verbatim'
+    );
+  });
+
+  await t.test('an unrecognized heading in an archive file also ends the item', t => {
+    const src =
+      FM +
+      [
+        '## 2026-08-03',
+        '',
+        '- **Shipped thing.** It shipped.',
+        '',
+        '#### Stray subheading',
+        '',
+        'Notes under the subheading.'
+      ].join('\n');
+    const items = parseQueueFile('demo', ARCHIVE_PATH, src);
+    t.equal(items.length, 1);
+    t.equal(items[0]?.body, 'It shipped.', 'archive items are bounded the same way');
+  });
+});

@@ -56,6 +56,14 @@ const SECTION_HEADINGS: Record<string, Exclude<QueueSection, 'archive'>> = {
 
 const PRIORITY_HEADING_RE = /^###\s+Priority\s+([+-]?\d+)\s*$/;
 const H2_RE = /^##\s+(.+?)\s*$/;
+// Any ATX heading the branches above did not consume. A heading is a block
+// boundary, never item continuation — without this, an unrecognized `###`
+// fell through to the continuation branch and was absorbed, together with
+// every line under it, into the preceding item's body: content reattributed
+// to the wrong item and its body_hash churning on edits it never made
+// (measured 2026-08-03 across 15 queue files). Unknown H2 already had this
+// handling via `handleQueueHeading`; the asymmetry was the bug.
+const ANY_HEADING_RE = /^#{1,6}\s/;
 const TOP_BULLET_RE = /^[-*+]\s+(.*)$/;
 // Legacy checkbox marker, dropped per the 2026-05-13 convention rewrite but
 // still present in many projects' queue files. Parser strips it so a
@@ -276,6 +284,13 @@ export const parseQueueFile = (
         }
         continue;
       }
+    }
+
+    // Section/priority headings are handled above; anything else that is
+    // still a heading ends the current item without changing the section.
+    if (ANY_HEADING_RE.test(maskedLine)) {
+      flushItem(state, project, sourceFile);
+      continue;
     }
 
     // Top-level bullet (no leading whitespace).
