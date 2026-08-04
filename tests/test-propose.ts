@@ -206,12 +206,24 @@ const DEC_SUMMARY =
   'Retry storms tamed by exponential backoff with jitter sized above the retry interval, drained predictably. '.repeat(
     2
   );
+// Partially overlapping with DEC_BODY on purpose: it has to land *inside* the
+// shortlist band (bare ≈ 0.22 against its decorated chunks) so the correction
+// actually runs on it, while its true body distance (≈ 0.19) stays well clear
+// of the 0.10 threshold. A wholly disjoint decoy sits outside the shortlist and
+// proves nothing.
+const DEC_DECOY =
+  'The consumer drains steadily once the window exceeds the interval and the workers settle. '.repeat(
+    3
+  ) +
+  'Glacier terminus retreat measured by photogrammetry across successive melt seasons in coastal fjords. '.repeat(
+    3
+  );
 const DEC_OTHER =
-  'Tomato cultivation in raised beds depends on mulch composition and drip irrigation tubing diameter. '.repeat(
+  'Glacier terminus retreat measured by photogrammetry across successive melt seasons in coastal fjords. '.repeat(
     4
   );
-const DEC_UNRELATED =
-  'Glacier terminus retreat measured by photogrammetry across successive melt seasons in coastal fjords. '.repeat(
+const DEC_NOVEL =
+  'Tomato cultivation in raised beds depends on mulch composition and drip irrigation tubing diameter. '.repeat(
     4
   );
 
@@ -224,6 +236,16 @@ const decSetup = async () => {
     'topics/decorated.md',
     `---\ntitle: Decorated\ntype: permanent\nagent:\n  summary: "${DEC_SUMMARY.trim()}"\n---\n${DEC_BODY}\n`
   );
+  // A second *summarized* record with unrelated content. Without it the
+  // false-positive mode is untestable — and that is exactly the gap that let a
+  // wrong correction (decorating the proposal with the candidate's summary,
+  // where the shared prefix dominates instead of cancelling) pass this suite
+  // and then block nearly every write against the live vault.
+  writeMd(
+    root,
+    'topics/decorated-unrelated.md',
+    `---\ntitle: Decorated unrelated\ntype: permanent\nagent:\n  summary: "${DEC_SUMMARY.trim()}"\n---\n${DEC_DECOY}\n`
+  );
   writeMd(root, 'topics/plain.md', `---\ntitle: Plain\ntype: permanent\n---\n${DEC_OTHER}\n`);
   importVault(db, root);
   const embedder = new BagOfWordsEmbedder();
@@ -235,11 +257,11 @@ test('findDuplicateBlockers catches a verbatim copy of a summarized note', async
   const fx = await decSetup();
   try {
     const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_BODY, {threshold: 0.1});
-    t.equal(blockers.length, 1, 'the decorated note blocks the write');
+    t.equal(blockers.length, 1, 'exactly one blocker — the decorated twin, nothing else');
 
     const b = blockers[0]!;
     t.equal(b.filePath, 'topics/decorated.md', 'the right record');
-    t.ok(b.corrected, 'the symmetric re-embed ran');
+    t.ok(b.corrected, 'the stored side was re-embedded undecorated');
     // The precondition — without the correction this copy would have slipped.
     t.ok(b.bareDistance > 0.1, `bare distance ${b.bareDistance.toFixed(4)} misses the gate`);
     t.ok(b.distance < 1e-6, `corrected distance ${b.distance.toFixed(4)} is ~0`);
@@ -248,10 +270,31 @@ test('findDuplicateBlockers catches a verbatim copy of a summarized note', async
   }
 });
 
+// The regression for the shared-prefix domination bug: a summarized record with
+// unrelated content sits inside the shortlist (so the correction really does
+// run on it) and must still not block.
+test('findDuplicateBlockers does not block on a summarized but unrelated note', async t => {
+  const fx = await decSetup();
+  try {
+    const shortlist = await proposeNearest(fx.db, fx.embedder, DEC_BODY, null, {maxDistance: 0.25});
+    const decoy = shortlist.candidates.find(c => c.filePath === 'topics/decorated-unrelated.md');
+    t.ok(decoy, 'the unrelated summarized note is inside the shortlist band');
+    t.ok(decoy!.distance > 0.1, `and above the gate at ${decoy!.distance.toFixed(4)}`);
+
+    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_BODY, {threshold: 0.1});
+    t.notOk(
+      blockers.some(b => b.filePath === 'topics/decorated-unrelated.md'),
+      'sharing a summary prefix does not make it a duplicate'
+    );
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('findDuplicateBlockers does not invent blockers for unrelated content', async t => {
   const fx = await decSetup();
   try {
-    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_UNRELATED, {
+    const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_NOVEL, {
       threshold: 0.1
     });
     t.deepEqual(
