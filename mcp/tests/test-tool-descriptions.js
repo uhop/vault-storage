@@ -58,6 +58,16 @@ const REQUIRED_MENTIONS = {
     'bundle_budget',
     'headings'
   ],
+  vault_context_pack: [
+    'chunks',
+    'chunk_index',
+    'sources',
+    'neighborhood_total',
+    'backlinks_total',
+    'max_bytes',
+    'used_bytes',
+    'chunks_dropped'
+  ],
   vault_supersede: ['record_id', 'etag', 'archive', 'new_path'],
   vault_move: ['record_id', '204'],
   vault_propose: ['candidates', 'distance', 'proposed_chunks', 'candidates_screened'],

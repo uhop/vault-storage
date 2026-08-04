@@ -171,6 +171,19 @@ test('vault_raw_inbox is a GET and passes the ready/drafts split through', async
   t.equal(payload.drafts.length, 1, 'drafts surfaced separately, not merged into ready');
 });
 
+test('vault_context_pack maps to POST /context-pack with query params', async t => {
+  const {call, getCaptured} = setup();
+
+  await call('vault_context_pack', {query: 'fox vault', k: 4});
+  t.equal(getCaptured().init.method, 'POST');
+  const url = getCaptured().url;
+  t.ok(url.startsWith('http://test/context-pack?'), 'endpoint path');
+  t.ok(url.includes('query=fox+vault') || url.includes('query=fox%20vault'), 'query encoded');
+  t.ok(url.includes('k=4'), 'k forwarded');
+  t.ok(!url.includes('record_id'), 'unused anchor omitted');
+  t.ok(!url.includes('max_bytes'), 'unset budget omitted, server default rules');
+});
+
 test('vault_resume_bundle serialises project_bodies as CSV', async t => {
   const {call, getCaptured} = setup();
 

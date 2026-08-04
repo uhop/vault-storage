@@ -50,8 +50,12 @@ const findMatches = (haystack: string, needle: string): MatchSpan[] => {
 // they tokenize to nothing and would make a zero-token phrase.
 const HAS_TOKEN = /[\p{L}\p{N}]/u;
 
+/** Free-text query → searchable terms (pure-punctuation terms dropped). */
+export const queryTerms = (query: string): string[] =>
+  query.split(/\s+/).filter(t => t.length > 0 && HAS_TOKEN.test(t));
+
 const buildMatch = (query: string): {match: string; terms: string[]} | null => {
-  const terms = query.split(/\s+/).filter(t => t.length > 0 && HAS_TOKEN.test(t));
+  const terms = queryTerms(query);
   if (terms.length === 0) return null;
   const match = terms.map(t => `"${t.replace(/"/g, '""')}"*`).join(' ');
   return {match, terms};
@@ -68,7 +72,7 @@ interface FtsRow {
 // title match always outranks a body-only one regardless of corpus stats.
 const TITLE_BOOST = 1;
 
-const lexicalSearch = (db: DatabaseSync, query: string, limit: number): SearchHit[] => {
+export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): SearchHit[] => {
   const built = buildMatch(query);
   if (!built) return [];
 

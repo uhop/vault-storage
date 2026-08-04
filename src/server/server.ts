@@ -3,6 +3,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {checkBearer} from './auth.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
+import {contextPackHandler} from './handlers/context-pack.ts';
 import {backlinksHandler, neighborhoodHandler} from './handlers/edges.ts';
 import {
   deleteRecordTagHandler,
@@ -132,6 +133,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get(
     '/system/resume-brief',
     resumeBriefHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
+  );
+  router.post(
+    '/context-pack',
+    contextPackHandler({db: opts.db, records, edges, embedder: opts.embedder})
   );
   router.get('/sections', listRecordsHandler({db: opts.db}));
   router.get('/sections/{id}/neighborhood', neighborhoodHandler({records, edges}));

@@ -4,6 +4,8 @@ export interface NearestHit {
   recordId: string;
   /** Cosine distance of the record's BEST chunk. 0 = identical, 2 = opposite. */
   distance: number;
+  /** Index of that best chunk — resolves to text via `chunkBody(body, {summary: null})[chunkIndex]`. */
+  chunkIndex: number;
 }
 
 const toBlob = (vec: Float32Array): Uint8Array =>
@@ -60,7 +62,7 @@ export class RecordVecRepository {
     // The KNN runs first in a subquery so the MATCH + k constraints apply
     // cleanly; the join is a B-tree point lookup per hit.
     this.#nearestChunks = db.prepare(
-      `SELECT c.record_id AS record_id, k.distance AS distance
+      `SELECT c.record_id AS record_id, c.chunk_index AS chunk_index, k.distance AS distance
          FROM (SELECT chunk_id, distance
                  FROM record_vec
                 WHERE embedding MATCH ?
@@ -186,15 +188,18 @@ export class RecordVecRepository {
     const chunkK = opts.chunkK ?? Math.max(k * 5, 20);
     const rows = this.#nearestChunks.all(toBlob(query), chunkK) as unknown[] as {
       record_id: string;
+      chunk_index: number;
       distance: number;
     }[];
-    const best = new Map<string, number>();
+    const best = new Map<string, {distance: number; chunkIndex: number}>();
     for (const r of rows) {
       const cur = best.get(r.record_id);
-      if (cur === undefined || r.distance < cur) best.set(r.record_id, r.distance);
+      if (cur === undefined || r.distance < cur.distance) {
+        best.set(r.record_id, {distance: r.distance, chunkIndex: r.chunk_index});
+      }
     }
     return [...best.entries()]
-      .map(([recordId, distance]) => ({recordId, distance}))
+      .map(([recordId, b]) => ({recordId, distance: b.distance, chunkIndex: b.chunkIndex}))
       .sort((a, b) => a.distance - b.distance)
       .slice(0, k);
   }
@@ -235,7 +240,7 @@ export class RecordVecRepository {
       }
     }
 
-    const best = new Map<string, number>();
+    const best = new Map<string, {distance: number; chunkIndex: number}>();
     // Over-fetch by the record's own chunk count: the KNN's top rows can be
     // entirely the record's own chunks (a repetitive running file), and the
     // self-skip below would then starve real neighbours out of the window.
@@ -243,16 +248,19 @@ export class RecordVecRepository {
     for (const vec of chunks) {
       const rows = this.#nearestChunks.all(toBlob(vec), chunkK) as unknown[] as {
         record_id: string;
+        chunk_index: number;
         distance: number;
       }[];
       for (const r of rows) {
         if (r.record_id === recordId) continue;
         const cur = best.get(r.record_id);
-        if (cur === undefined || r.distance < cur) best.set(r.record_id, r.distance);
+        if (cur === undefined || r.distance < cur.distance) {
+          best.set(r.record_id, {distance: r.distance, chunkIndex: r.chunk_index});
+        }
       }
     }
     return [...best.entries()]
-      .map(([rid, distance]) => ({recordId: rid, distance}))
+      .map(([rid, b]) => ({recordId: rid, distance: b.distance, chunkIndex: b.chunkIndex}))
       .sort((a, b) => a.distance - b.distance)
       .slice(0, k);
   }
