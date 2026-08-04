@@ -22,13 +22,34 @@
 //     entirely to chunk-level — correct metric, wrong latency.
 //   - Chunk-level alone is precise but ~270 K vec queries on the live
 //     vault. ~100 s.
-//   - Combine: doc-level as a coarse *exclusion* filter (centroid >
-//     prefilterMaxDistance ⇒ no chunk pair can be close — the centroids
-//     bound the chunk-pair distance from below by the triangle
-//     inequality with margin set to the prefilter threshold).
-//     Chunk-level confirms only the survivors at the precise
-//     `maxDistance`. Centroid smear can no longer pick false positives
-//     because chunk-level always has the final say.
+//   - Combine: doc-level as a coarse *exclusion* filter, chunk-level
+//     confirming only the survivors at the precise `maxDistance`. Centroid
+//     smear can no longer pick false *positives*, because chunk-level always
+//     has the final say.
+//
+// **The prefilter is a heuristic, not a bound — corrected 2026-08-03.** This
+// comment used to claim the centroids "bound the chunk-pair distance from
+// below by the triangle inequality". They do not. The triangle inequality
+// gives `min‖aᵢ−bⱼ‖ ≥ ‖c_a−c_b‖ − r_a − r_b`, where `r` is a document's
+// chunk spread around its own centroid; dropping the radii is only valid
+// when they are zero. Mean-pooling smears, so two documents sharing a
+// near-identical section can sit arbitrarily far apart at centroid level —
+// exactly the case a duplicate scan wants. Restoring the radii would make it
+// sound and useless: chunk spread within a document is on the order of the
+// whole space, so `r_a + r_b` swamps any usable threshold and nothing gets
+// pruned. So the prefilter stays a heuristic with a **known false-negative
+// class**, and "no duplicates found" means "none among the pairs the
+// centroid ranking surfaced", not "none exist".
+//
+// Two consequences worth keeping in view. The threshold is now derived from
+// `maxDistance` rather than hardcoded, which removes the smearing-independent
+// misses the old flat 0.30 produced (measured: `topics/periodic-task-
+// scheduling` ↔ a dotfiles decision note, both single-chunk, chunk cosine
+// 0.094 ≤ the 0.10 ceiling, centroid L2 0.4336 > 0.30 — dropped with no
+// smearing involved). And `perRecord`, not the distance threshold, is what
+// actually bounds phase-2 cost and therefore recall: each outer record keeps
+// only its `perRecord` nearest centroids, so a true near-chunk pair whose
+// centroids rank below that cut is still missed.
 //
 // Pairwise chunk-min is computed in JS over already-loaded float arrays
 // (cosine = 1 - dot since vectors are L2-normalized at write time). For
@@ -166,11 +187,26 @@ export interface FindDuplicatesOptions {
   /**
    * Cosine distance ceiling for the **doc-level prefilter** phase. Pairs
    * whose mean-pool centroid distance > prefilterMaxDistance are excluded
-   * before any chunk-level work. Default 0.30 — wide enough that any pair
-   * whose chunks have meaningful overlap will pass through, narrow enough
-   * to drop the obvious-orthogonal mass that dominates at scale. Set
-   * higher if you suspect a pair with very long heterogeneous content
-   * is being missed; set lower for faster but less-thorough scans.
+   * before any chunk-level work.
+   *
+   * **This is an L2 distance, not a cosine one** — the docstring said cosine
+   * until 2026-08-03 while the implementation always compared L2², so a
+   * caller who set `0.1` meaning "cosine 0.1" was really asking for cosine
+   * 0.005.
+   *
+   * Defaults to `sqrt(2 * maxDistance)`, the exact L2 twin of the
+   * chunk-level threshold for unit vectors (L2² = 2·cosine). That makes the
+   * prefilter **lossless for single-chunk documents**, where the mean-pool
+   * centroid *is* the chunk, so phase 1 can no longer exclude a pair phase 2
+   * would have filed. It stays a heuristic for multi-chunk documents — see
+   * the header on why the centroid gives no lower bound. The old default was
+   * a flat 0.30 (cosine 0.045), tighter than `maxDistance`'s own 0.10, which
+   * dropped pairs with no smearing involved at all.
+   *
+   * Raise it if you suspect misses on long heterogeneous notes; the cost of
+   * doing so is small, because phase-2 work is bounded by `perRecord`, not by
+   * this threshold — widening changes *which* candidates fill each record's
+   * slots, not how many.
    */
   prefilterMaxDistance?: number;
   /**
@@ -265,7 +301,9 @@ export const findDuplicates = (
   options: FindDuplicatesOptions = {}
 ): FindDuplicatesSummary => {
   const maxDistance = options.maxDistance ?? 0.1;
-  const prefilterMaxDistance = options.prefilterMaxDistance ?? 0.3;
+  // Derived, not a constant: the L2 twin of maxDistance (L2² = 2·cosine on
+  // unit vectors), so phase 1 can never cut tighter than phase 2 accepts.
+  const prefilterMaxDistance = options.prefilterMaxDistance ?? Math.sqrt(2 * maxDistance);
   const perRecord = options.perRecord ?? 20;
   const limit = options.limit;
   const minBodyLength = options.minBodyLength ?? 200;
@@ -316,11 +354,11 @@ export const findDuplicates = (
   // `distance_metric` returns **L2 distance** (not cosine — verified
   // empirically 2026-05-04 against the live DB). We compute L2² here for
   // speed (no sqrt in the hot loop) and compare against
-  // `prefilterMaxDistance²` to match sqlite-vec's filtering exactly. The
-  // default 0.30 threshold is L2; for L2-normalized vectors this
-  // corresponds to a cosine distance of ~0.045, tighter than the
-  // docstring's "cosine" wording suggests. The value has been tuned
-  // empirically against the live corpus and is preserved as-is.
+  // `prefilterMaxDistance²` to match sqlite-vec's filtering exactly.
+  // `prefilterMaxDistance` is therefore in L2 units; the default derives it
+  // from `maxDistance` (cosine) via L2² = 2·cosine, so the two phases are
+  // finally expressed on the same scale. The old flat 0.30 was cosine 0.045
+  // — three times tighter than the 0.10 it was gating.
   const allDocVecs = docVecs.getAllDocVecs();
   const prefilterL2Sq = prefilterMaxDistance * prefilterMaxDistance;
 

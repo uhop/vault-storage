@@ -6,6 +6,7 @@ import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import type {Embedder} from '../src/embeddings/types.ts';
 import {importVault} from '../src/importer/import.ts';
 import {findDuplicates} from '../src/maintenance/find-duplicates.ts';
 
@@ -466,4 +467,103 @@ test('pair damping: non-role project files still pair normally', async t => {
   } finally {
     teardown(fx);
   }
+});
+
+// --- prefilter / chunk-threshold alignment -------------------------------
+
+// FakeEmbedder produces only ~0 or ~1 distances, so it cannot express a pair
+// that sits *between* the prefilter and the chunk threshold — which is the
+// whole subject here. This bag-of-words embedder can: shared vocabulary
+// dominates, and the private tail moves the pair a tunable amount. A twin
+// lives in test-propose.ts; kept local because importing one test file from
+// another would make tape6 run it twice.
+class BagOfWordsEmbedder implements Embedder {
+  readonly dim = 384;
+  readonly modelName = 'bag-of-words-test';
+  readonly retained = false;
+
+  async embed(text: string): Promise<Float32Array> {
+    return this.#vec(text);
+  }
+  async embedBatch(texts: string[]): Promise<Float32Array[]> {
+    return texts.map(t => this.#vec(t));
+  }
+  async releaseRetained(): Promise<void> {}
+
+  #vec(text: string): Float32Array {
+    const vec = new Float32Array(this.dim);
+    for (const word of text.toLowerCase().split(/[^a-z0-9]+/)) {
+      if (!word) continue;
+      let h = 2166136261;
+      for (let i = 0; i < word.length; ++i) {
+        h ^= word.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      vec[(h >>> 0) % this.dim]! += 1;
+    }
+    let norm = 0;
+    for (const x of vec) norm += x * x;
+    norm = Math.sqrt(norm);
+    if (norm > 0) for (let i = 0; i < this.dim; ++i) vec[i]! /= norm;
+    return vec;
+  }
+}
+
+// Both bodies stay under the chunker's 1200-char soft target, so each note is
+// a single chunk and its mean-pool centroid *is* that chunk — no smearing, so
+// the pair's centroid distance is exactly its chunk distance. Tuned to chunk
+// cosine ≈ 0.094 (L2 ≈ 0.433): inside the 0.10 chunk ceiling, outside the old
+// flat 0.30 prefilter. Mirrors a real pair measured on the live corpus 2026-08-03
+// (topics/periodic-task-scheduling ↔ a dotfiles decision note, 0.0940 / 0.4336).
+const SCHED_SHARED =
+  'The scheduler runs periodic tasks through a supervised timer with backoff and jitter applied per attempt. ';
+const SCHED_A =
+  SCHED_SHARED.repeat(5) +
+  'Launchd owns this on macOS via a plist descriptor loaded at login. '.repeat(3);
+const SCHED_B =
+  SCHED_SHARED.repeat(5) +
+  'Systemd owns this on Linux via a unit paired with a timer file. '.repeat(3);
+
+const schedFixture = async () => {
+  const root = mkdtempSync(join(tmpdir(), 'find-dups-prefilter-'));
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  writeMd(root, 'topics/sched-a.md', `---\ntitle: Sched A\ntype: permanent\n---\n${SCHED_A}\n`);
+  writeMd(root, 'topics/sched-b.md', `---\ntitle: Sched B\ntype: permanent\n---\n${SCHED_B}\n`);
+  importVault(db, root);
+  await embedPending(db, new BagOfWordsEmbedder());
+  return {root, db};
+};
+
+test('findDuplicates — the prefilter no longer cuts tighter than maxDistance', async t => {
+  await t.test('a pair inside the chunk ceiling is filed under the derived default', async t => {
+    const fx = await schedFixture();
+    try {
+      const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 200});
+      t.equal(summary.scanned, 2, 'both notes scanned');
+      t.equal(summary.pairsFound, 1, 'the pair survives phase 1 and passes phase 2');
+      t.equal(summary.filed, 1, 'and is filed');
+    } finally {
+      teardown(fx);
+    }
+  });
+
+  // The regression witness: before 2026-08-03 the default *was* 0.30, so this
+  // is what the scan used to do to a pair it was configured to want.
+  await t.test('the old flat 0.30 prefilter excluded that same pair', async t => {
+    const fx = await schedFixture();
+    try {
+      const summary = findDuplicates(fx.db, {
+        maxDistance: 0.1,
+        perRecord: 5,
+        minBodyLength: 200,
+        prefilterMaxDistance: 0.3
+      });
+      t.equal(summary.scanned, 2, 'both notes still scanned');
+      t.equal(summary.candidatePairs, 0, 'phase 1 dropped it before any chunk work');
+      t.equal(summary.filed, 0, 'nothing filed, despite phase 2 accepting 0.10');
+    } finally {
+      teardown(fx);
+    }
+  });
 });
