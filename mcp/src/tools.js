@@ -374,7 +374,7 @@ export const registerTools = (mcp, client) => {
     'vault_propose',
     {
       description:
-        'Search-before-write: embed a proposed body and return the nearest existing records, so a new note can be checked against what the vault already covers before it is written. Read-only — no write side effects. Pass `path` when rewriting an existing note and the record there is excluded from the results (without it a small edit self-matches at distance ~0 and crowds out the real neighbours). Returns {candidates: [{record_id, file_path, distance, agent_summary}], proposed_chunks, candidates_screened, durationMs}, sorted by ascending distance — under ~0.10 usually means "extend that note instead of minting a near-duplicate", and if the new note would replace it outright, use vault_supersede. The enforcing counterpart is a PUT with ?check=true, which blocks the write instead of reporting.',
+        'Search-before-write: embed a proposed body and return the nearest existing records, so a new note can be checked against what the vault already covers before it is written. Read-only — no write side effects. Pass `path` when rewriting an existing note and the record there is excluded from the results (without it a small edit self-matches at distance ~0 and crowds out the real neighbours). Returns {candidates: [{record_id, file_path, distance, agent_summary}], proposed_chunks, candidates_screened, max_distance, durationMs}, sorted by ascending distance — under ~0.10 usually means "extend that note instead of minting a near-duplicate", and if the new note would replace it outright, use vault_supersede. `max_distance` caps the returned distance in that same cosine metric and is echoed back (null when uncapped); every record holding chunks is compared, so an empty result means the vault genuinely has no neighbour, not that a screen hid one. The enforcing counterpart is a PUT with ?check=true, which blocks the write instead of reporting.',
       inputSchema: {
         body: z.string().min(1).describe('Proposed note body to score against the vault'),
         path: z
@@ -386,16 +386,20 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe('Proposed agent.summary; decorates the embedding as at ingest'),
         k: z.number().int().min(1).optional().describe('Candidates to return (default 10)'),
-        prefilter_max_distance: z.number().optional().describe('Screening cutoff')
+        max_distance: z
+          .number()
+          .positive()
+          .optional()
+          .describe('Cap on the returned distance, same cosine metric as `distance`')
       }
     },
-    wrap(async ({body, path, agent_summary, k, prefilter_max_distance}) =>
+    wrap(async ({body, path, agent_summary, k, max_distance}) =>
       client.postJson('/vault/propose', {
         body,
         ...(path ? {path} : {}),
         ...(agent_summary ? {agent_summary} : {}),
         ...(k !== undefined ? {k} : {}),
-        ...(prefilter_max_distance !== undefined ? {prefilter_max_distance} : {})
+        ...(max_distance !== undefined ? {max_distance} : {})
       })
     )
   );

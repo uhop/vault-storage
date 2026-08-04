@@ -330,9 +330,10 @@ export const putVaultHandler =
 
       const result = await proposeNearest(deps.db, deps.embedder, bodyForCheck, summaryForCheck, {
         excludeRecordId: existing?.recordId,
-        k: 10
+        k: 10,
+        maxDistance: threshold
       });
-      const tooClose = result.candidates.filter(c => c.distance <= threshold);
+      const tooClose = result.candidates;
       if (tooClose.length > 0) {
         sendJson(ctx.res, 409, {
           error: 'dedup_conflict',
@@ -904,6 +905,7 @@ interface ProposeBody {
   path?: unknown;
   agent_summary?: unknown;
   k?: unknown;
+  max_distance?: unknown;
   prefilter_max_distance?: unknown;
 }
 
@@ -911,9 +913,15 @@ interface ProposeBody {
  * POST /vault/propose
  *
  * Search-before-write surface. Body: `{body, path?, agent_summary?,
- * k?, prefilter_max_distance?}`. Embeds `body` (chunk-level + summary-
- * decorated, same pipeline as ingest) and returns the top-K nearest
- * existing records sorted by min cosine distance over chunk pairs.
+ * k?, max_distance?}`. Embeds `body` (chunk-level + summary-decorated,
+ * same pipeline as ingest) and returns the top-K nearest existing records
+ * sorted by min cosine distance over chunk pairs. `max_distance` is in
+ * that same metric; omit it and `k` alone bounds the result.
+ *
+ * `prefilter_max_distance` (removed 2026-08-03) is rejected rather than
+ * ignored — it named an L2-on-centroid ceiling whose default silently
+ * capped results at 0.125 cosine, so accepting it as a no-op would leave
+ * callers believing a screen was applied. See propose.ts for the removal.
  *
  * When `path` is supplied AND there's already a record at that path,
  * that record is excluded from results — without this, a small FM-only
@@ -921,8 +929,9 @@ interface ProposeBody {
  * neighbours.
  *
  * Returns `{candidates: [{record_id, file_path, distance,
- * agent_summary}], proposed_chunks, candidates_screened, durationMs}`.
- * Read-only — no write side effects.
+ * agent_summary}], proposed_chunks, candidates_screened, max_distance,
+ * durationMs}`; `max_distance` is `null` when uncapped. Read-only — no
+ * write side effects.
  *
  * Pairs with PUT /vault/{path}?check=true (Phase 2) for enforcement;
  * called directly by skills that want to surface neighbours to a
@@ -970,12 +979,27 @@ export const proposeVaultHandler =
       typeof parsed.k === 'number' && Number.isInteger(parsed.k) && parsed.k > 0
         ? parsed.k
         : undefined;
-    const prefilterMaxDistance =
-      typeof parsed.prefilter_max_distance === 'number' &&
-      Number.isFinite(parsed.prefilter_max_distance) &&
-      parsed.prefilter_max_distance > 0
-        ? parsed.prefilter_max_distance
-        : undefined;
+    if (parsed.prefilter_max_distance !== undefined) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'prefilter_max_distance was removed 2026-08-03: it was an L2-on-centroid ceiling, not the cosine metric `distance` reports, and its default silently capped results at 0.125 cosine. Use max_distance, which is in the same metric as `distance`, or omit it and let `k` bound the result.'
+      );
+      return;
+    }
+    if (
+      parsed.max_distance !== undefined &&
+      !(
+        typeof parsed.max_distance === 'number' &&
+        Number.isFinite(parsed.max_distance) &&
+        parsed.max_distance > 0
+      )
+    ) {
+      sendError(ctx.res, 400, 'bad_request', 'max_distance must be a finite positive number');
+      return;
+    }
+    const maxDistance = parsed.max_distance as number | undefined;
 
     let excludeRecordId: string | undefined;
     if (typeof parsed.path === 'string' && parsed.path.length > 0) {
@@ -985,7 +1009,7 @@ export const proposeVaultHandler =
 
     const result = await proposeNearest(deps.db, deps.embedder, parsed.body, agentSummary, {
       k,
-      prefilterMaxDistance,
+      maxDistance,
       excludeRecordId
     });
 
@@ -998,6 +1022,7 @@ export const proposeVaultHandler =
       })),
       proposed_chunks: result.proposedChunks,
       candidates_screened: result.candidatesScreened,
+      max_distance: Number.isFinite(result.maxDistance) ? result.maxDistance : null,
       durationMs: result.durationMs
     });
   };

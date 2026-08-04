@@ -1306,6 +1306,19 @@ const PROPOSE_DISTANT_BODY =
   'overlaps the vector-store body conceptually or lexically; deterministic ' +
   'embedder will produce a wildly different vector.';
 
+// Each clears the chunker's 1200-char soft target alone, so a note built from
+// several embeds as several independent vectors — the geometry a doc-level
+// centroid smears away. See tests/test-propose.ts for the unit-level version.
+const proposeSection = (label: string): string =>
+  `Section ${label}. ` +
+  `Filler sentence number ${label} carrying enough words to push this paragraph past the soft chunk target. `.repeat(
+    14
+  );
+const SECTION_SHARED = proposeSection('S');
+const SECTION_A = proposeSection('A');
+const SECTION_B = proposeSection('B');
+const SECTION_C = proposeSection('C');
+
 const seedForPropose = async (ctx: ServerCtx, root: string): Promise<void> => {
   // Seed a record via PUT, which runs through the writer + indexer +
   // embed-pending pathway end-to-end. Avoids a second separate code path
@@ -1501,6 +1514,120 @@ test('PUT /vault/{path}?check=true blocks naked write near a seeded record', asy
       t.equal(body.threshold, 0.1, 'default threshold 0.1');
       t.ok(body.candidates.length >= 1, 'candidates present');
       t.equal(body.candidates[0]?.file_path, 'topics/vector-store.md', 'seeded record cited');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+// The pre-2026-08-03 gate compared a doc-level centroid, so it only ever
+// caught bodies near-identical to a stored one — exactly the case the test
+// above covers, which is why the hole survived. This is the partial overlap:
+// a new note whose opening section is lifted verbatim from a long existing
+// note, with enough fresh material after it to pull the centroid away.
+test('PUT /vault/{path}?check=true blocks a write that overlaps one section', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const headers = {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/json'};
+      const seeded = await fetch(`${ctx.url}/vault/topics/sectioned.md`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          frontmatter: {title: 'Sectioned', tags: [], type: 'permanent'},
+          body: [SECTION_SHARED, SECTION_A, SECTION_B, SECTION_C].join('\n\n')
+        })
+      });
+      t.equal(seeded.status, 204, 'seed written');
+      const embedded = await fetch(`${ctx.url}/maintenance/embed-pending`, {
+        method: 'POST',
+        headers
+      });
+      t.equal(embedded.status, 200, 'seed embedded');
+
+      const r = await fetchAuthed(`${ctx.url}/vault/topics/borrowed.md?check=true`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Borrowed', tags: [], type: 'permanent'},
+          body: SECTION_SHARED
+        })
+      });
+      t.equal(r.status, 409, '409 conflict on a one-section overlap');
+      const body = r.body as {code: string; candidates: {file_path: string; distance: number}[]};
+      t.equal(body.code, 'dedup_conflict', 'dedup_conflict code');
+      t.equal(body.candidates[0]?.file_path, 'topics/sectioned.md', 'the sectioned note is cited');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose 400 on the removed prefilter_max_distance', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_LONG_BODY, prefilter_max_distance: 0.5})
+      });
+      // Rejected rather than ignored: accepting it as a no-op would leave the
+      // caller believing a screen was applied.
+      t.equal(r.status, 400, '400 rather than a silent no-op');
+      const body = r.body as {code: string; error: string};
+      t.equal(body.code, 'bad_request', 'bad_request code');
+      t.ok(body.error.includes('max_distance'), 'names the replacement parameter');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose max_distance caps and is echoed', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      await seedForPropose(ctx, root);
+
+      const near = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_LONG_BODY, max_distance: 0.5})
+      });
+      t.equal(near.status, 200, '200 with a cap');
+      const nearBody = near.body as {candidates: unknown[]; max_distance: number | null};
+      t.ok(nearBody.candidates.length >= 1, 'the identical seed survives the cap');
+      t.equal(nearBody.max_distance, 0.5, 'applied cap echoed back');
+
+      const far = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_DISTANT_BODY, max_distance: 0.1})
+      });
+      const farBody = far.body as {candidates: unknown[]; candidates_screened: number};
+      t.deepEqual(farBody.candidates, [], 'nothing survives a tight cap on a distant body');
+      t.ok(farBody.candidates_screened >= 1, 'and the emptiness follows a real comparison');
+
+      const uncapped = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_LONG_BODY})
+      });
+      t.equal(
+        (uncapped.body as {max_distance: number | null}).max_distance,
+        null,
+        'uncapped reports null, not Infinity (which JSON cannot carry)'
+      );
     } finally {
       await teardown(ctx);
     }
