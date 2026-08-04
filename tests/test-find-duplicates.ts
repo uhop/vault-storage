@@ -281,9 +281,19 @@ test('findDuplicates skips records under skipPathPrefixes', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    // `skipTypes: []` isolates the path mechanism. Since 2026-08-03 `log` is a
+    // default skip type and `shouldSkip` tests type before path, so with the
+    // defaults these records are excluded one check earlier and the path
+    // prefix never gets a say — real records under `logs/sync/` are all
+    // `type: log`, which makes the prefix defence-in-depth rather than the
+    // thing doing the work.
+    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0, skipTypes: []});
     t.equal(summary.skippedByPath, 2, 'both sync logs skipped by path prefix');
     t.equal(summary.filed, 0);
+
+    const byDefaults = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    t.equal(byDefaults.skippedByType, 2, 'and by type under the defaults');
+    t.equal(byDefaults.filed, 0, 'excluded either way');
   } finally {
     teardown(fx);
   }
@@ -383,7 +393,16 @@ test('pair damping: structural types only pair with themselves (sub-pattern d)',
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    // `skipTypes: []` keeps the log in the scan so the *pair-level* rule is
+    // what excludes it. Under the defaults `log` is skipped a stage earlier
+    // (2026-08-03), which would make this pass for the wrong reason — the
+    // pair would never form at all.
+    const summary = findDuplicates(fx.db, {
+      maxDistance: 0.1,
+      perRecord: 5,
+      minBodyLength: 0,
+      skipTypes: []
+    });
     t.equal(summary.filed, 0, 'nothing filed');
     t.equal(summary.pairsExcludedBy.type_mismatch, 1, 'excluded as type_mismatch');
   } finally {
@@ -409,7 +428,15 @@ test('pair damping: _summary compaction slices are excluded (template rule)', as
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    // Same isolation as the type_mismatch case: `log` is a default skip type
+    // since 2026-08-03, so without this the pair never forms and the template
+    // rule would go untested.
+    const summary = findDuplicates(fx.db, {
+      maxDistance: 0.1,
+      perRecord: 5,
+      minBodyLength: 0,
+      skipTypes: []
+    });
     t.equal(summary.filed, 0, 'nothing filed');
     t.equal(summary.pairsExcludedBy.summary_template, 1, 'excluded as summary_template');
   } finally {
@@ -566,4 +593,43 @@ test('findDuplicates — the prefilter no longer cuts tighter than maxDistance',
       teardown(fx);
     }
   });
+});
+
+test('findDuplicates skips dated and structural series by default', async t => {
+  // The measured case: with a prefilter derived from maxDistance, near-identical
+  // session logs dominated a live scan (25 of 25 filed pairs were log↔log).
+  // `type_mismatch` cannot damp them — logs legitimately pair with logs — so the
+  // exclusion has to be by type, matching vault-lint's TITLE_DUP_SKIP.
+  const fx = await setup();
+  try {
+    const shared =
+      'Shipped the release, bumped the version, regenerated the lockfile, and ran the full matrix. ' +
+      'Dependabot alerts cleared and npm publish completed with two-factor confirmation. '.repeat(
+        3
+      );
+    writeMd(fx.root, 'logs/2026-06-01-a-release.md', `---\ntitle: A\ntype: log\n---\n${shared}\n`);
+    writeMd(fx.root, 'logs/2026-06-02-b-release.md', `---\ntitle: B\ntype: log\n---\n${shared}\n`);
+    writeMd(fx.root, 'topics/x.md', `---\ntitle: X\ntype: permanent\n---\n${shared}\n`);
+    writeMd(fx.root, 'topics/y.md', `---\ntitle: Y\ntype: permanent\n---\n${shared}\n`);
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+
+    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    t.equal(summary.skippedByType, 2, 'both logs skipped by type');
+    t.equal(summary.filed, 1, 'only the knowledge pair is filed');
+
+    const rows = fx.db
+      .prepare(`SELECT payload FROM suggestions WHERE kind = 'duplicate'`)
+      .all() as Array<{payload: string}>;
+    const paths = rows.flatMap(r => {
+      const p = JSON.parse(r.payload) as {a_path: string; b_path: string};
+      return [p.a_path, p.b_path];
+    });
+    t.notOk(
+      paths.some(p => p.startsWith('logs/')),
+      'no log ever appears in a filed pair'
+    );
+  } finally {
+    teardown(fx);
+  }
 });
