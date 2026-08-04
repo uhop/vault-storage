@@ -1,0 +1,165 @@
+# @uhop/vault-storage-mcp — full reference
+
+Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
+personal knowledge base: markdown files are the source of truth, a SQLite +
+sqlite-vec index provides fast lookup, semantic search, and typed-edge
+traversal. The adapter exposes the server's REST API as 47 MCP tools and 3
+read-only resources. It is deliberately stateless — every call forwards to a
+running vault-storage server; guards and validation live server-side so every
+client gets them.
+
+Plain JavaScript (ES modules), Node ≥ 26, stdio transport only (hono/express
+never load at runtime).
+
+## Install and configuration
+
+Claude Code MCP config (`~/.claude/.mcp.json` or per-project `.claude/.mcp.json`):
+
+    {
+      "mcpServers": {
+        "vault": {
+          "command": "npx",
+          "args": ["-y", "@uhop/vault-storage-mcp@latest"],
+          "env": {
+            "VAULT_API_URL": "http://your-host:8123",
+            "VAULT_API_TOKEN": "<bearer-token>"
+          }
+        }
+      }
+    }
+
+The bearer token is the `VAULT_API_TOKEN` the vault-storage server was started
+with.
+
+## Response-shape contract
+
+Every tool description names the response shape it returns, including
+conditional keys (absent unless their case is hit — their absence is not
+evidence of anything) and which of the three list shapes it uses:
+
+- paginated envelope `{items, offset, limit, total}` — page by `items.length`,
+  never by the limit you asked for; the server caps `limit` at 100 and echoes
+  what it used;
+- flat `{count, items}` queue slices — unpaginated; a short result means raise
+  the limit, not fetch a second page;
+- genuinely unpaginated reads — everything arrives at once.
+
+Input schemas inline closed-enum lists (record types, statuses, edge types,
+suggestion kinds) so the canonical vocabulary is visible at discovery time.
+
+## Tools (47)
+
+Search & list:
+
+- vault_search — lexical (FTS5, default) or semantic (mode=semantic) search;
+  [{filename, score, matches}].
+- vault_context_pack — one prepared RAG pack anchored by exactly one of
+  `query` (hybrid: lexical FTS + semantic chunk-KNN, fused by reciprocal
+  rank) or `record_id` (nearest chunks). Returns {anchor, chunks, graph,
+  budget}; chunk text is the bare body segment the stored vectors index; the
+  graph block carries the 1-hop typed neighborhood as agent.summary lines
+  plus backlinks, capped at 20 each with true totals. Byte-budgeted (default
+  32 KiB): lowest-ranked chunks drop until it fits, reported in
+  budget.chunks_dropped — never silent. Replaces the search → similar →
+  neighborhood → read chains.
+- vault_list_pieces — filtered record listing (type, status, alias-aware tag,
+  path prefix, updated_since…); paginated envelope.
+- vault_list_folder — folder listing; unpaginated.
+
+Read:
+
+- vault_read_file — markdown by vault path; composes atomized folders;
+  include_etag returns {path, etag, composed, content} for conditional writes.
+- vault_read_piece — one record by id.
+- vault_read_meta — the indexed record row minus body (not arbitrary FM keys).
+
+Narrow writes (atomic server-side ops; prefer these over whole-document writes):
+
+- vault_append — append to a body.
+- vault_replace — asserted string replace (absent target 409s, ambiguous
+  without all=true 409s with the count — never a silent no-op).
+- vault_patch_fm — add/remove one frontmatter array member (related:, tags:…);
+  echoes the resulting array.
+
+Whole-document writes:
+
+- vault_write_file / vault_update_piece — create or replace; optional
+  expected_etag sent as If-Match (412 with details.current_etag on conflict);
+  agent.derived_from_hash: "auto" is finalized server-side. Empty and
+  literal-"null" bodies are refused by the server.
+- vault_delete_file — removal (a note replaced by other content should be
+  superseded instead).
+
+Lifecycle:
+
+- vault_supersede — replace a note, archiving the predecessor with its
+  record_id (edges, embeddings, suggestions survive); successor gets a typed
+  supersedes footer.
+- vault_move — rename preserving record_id.
+- vault_propose — search-before-write: score a draft against existing notes.
+
+Maintenance:
+
+- vault_raw_inbox — raw/ ready vs drafts split (the /vault ingest entry).
+- vault_cleanup_lint — delete orphan embeddings and other auto-fixables.
+- vault_embed_pending — embed records with missing/drifted vectors.
+- vault_incremental_reindex — catch up after a git pull from another machine.
+- vault_run_scans — all four suggestion-filing scans in one pass.
+
+Tags:
+
+- vault_list_tags — taxonomy listing; paginated envelope.
+- vault_tag_info — one taxonomy row (requested appears on alias lookups).
+- vault_records_by_tag — records carrying a tag (alias-aware; alias_for +
+  requested on alias hits); paginated envelope.
+
+Graph insight:
+
+- vault_neighborhood — BFS layers + typed edges around a record (depth ≤ 5).
+- vault_similar — embedding nearest neighbours; distance and score run in
+  opposite directions (score = 1 - distance/2).
+- vault_backlinks — inbound typed edges; paginated envelope.
+
+Review queue:
+
+- vault_list_suggestions (expand: "context" inlines per-item record briefs),
+  vault_read_suggestion, vault_suggestions_summary — pending counts by kind.
+- vault_claim_suggestions — reserve a batch under a holder with a TTL;
+  vault_reopen_suggestion doubles as the explicit claim release.
+- vault_accept_suggestion / vault_reject_suggestion — single decisions.
+- vault_resolve_suggestions_batch — ≤ 100 decisions; mechanical tag/edge side
+  effects applied server-side; per-item failures in results[].error.
+- vault_create_suggestion — file a new suggestion.
+
+Queue-item slices (flat {count, items}):
+
+- vault_queue_top, vault_queue_ready, vault_queue_blocked,
+  vault_queue_by_section, vault_queue_by_priority, vault_queue_by_project,
+  vault_queue_project_archive; vault_queue_reindex rebuilds the derivative
+  table after a multi-machine pull.
+
+System:
+
+- vault_status — indexer/DB state, embedder and memory blocks.
+- vault_lint — integrity checks (nine categories) plus coverage.enrichment
+  with the unenriched_records worklist; coverage never flips ok.
+- vault_resume_bundle — one-shot session-start bundle (reindex + lint digest +
+  suggestions + workflow + log summaries + project notes). The feedback body
+  ships by default only while the whole bundle fits the server's 32 KiB
+  budget; above it feedback arrives as summary + body_bytes + a headings
+  index with body_omitted: {reason: "bundle_budget", budget_bytes}; naming
+  files in project_bodies bypasses the budget.
+
+## Resources
+
+- vault://status — indexer state, schema version, counts
+- vault://suggestions/pending — bulk pending review items
+- vault://taxonomy/tags — managed tag taxonomy with counts
+
+## Errors
+
+Server errors surface as MCP tool errors (isError: true) with a JSON payload
+{error, code, status, details}. Common codes: auth_failed, not_found,
+conflict, replace_assert_failed (details.occurrences), precondition_failed
+(details.current_etag), empty_body / null_body, network, bad_request,
+validation_failed, internal.

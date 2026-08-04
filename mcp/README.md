@@ -120,13 +120,29 @@ payload `{error, code, status, details}`. Common codes:
 - `network` — server unreachable
 - `bad_request`, `validation_failed`, `internal`
 
+## Release notes
+
+- 0.3.0 — new `vault_context_pack` tool (47 tools): one prepared RAG pack —
+  hybrid top-K chunks, 1-hop graph summaries, backlinks — byte-budgeted with
+  reported drops; `vault_resume_bundle` documents the server's budget-gated
+  feedback body; `llms.txt` / `llms-full.txt` ship in the tarball.
+- 0.2.0 — every tool description audited against live response shapes: the
+  three list shapes named explicitly, conditional keys documented, wrong
+  claims fixed; description-pin tests added.
+- 0.1.0 — parity with the REST surface (46 tools): narrow writes
+  (`vault_append` / `vault_replace` / `vault_patch_fm`), conditional
+  whole-document writes (`expected_etag`), lifecycle
+  (`vault_supersede` / `vault_move` / `vault_propose`), maintenance ops.
+- 0.0.x — initial reads-mostly surface.
+
 ## Development
 
 ```bash
 npm install
-npm run ts-check
 npm test
 ```
 
 Tests use a fake `fetch` to exercise client behaviour; smoke tests verify
-tool/resource registration.
+tool/resource registration, and description-pin tests hold tool descriptions
+to the real response shapes. Plain JavaScript — there is no type-check step
+in this sub-package.

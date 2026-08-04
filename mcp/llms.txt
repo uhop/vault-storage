@@ -1,0 +1,33 @@
+# @uhop/vault-storage-mcp
+
+> Thin MCP (Model Context Protocol) adapter for vault-storage — an
+> AI-agent-first personal knowledge base (markdown source of truth + SQLite +
+> sqlite-vec index). Exposes the REST API as 47 MCP tools and 3 read-only
+> resources for Claude Code and any other MCP client. Holds no vault state:
+> every call forwards to a running vault-storage server identified by
+> `VAULT_API_URL`, authenticated with the `VAULT_API_TOKEN` bearer token.
+
+Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
+
+## Docs
+
+- [README.md](https://github.com/uhop/vault-storage/blob/main/mcp/README.md): install, configuration, tool groups, error codes
+- [llms-full.txt](https://github.com/uhop/vault-storage/blob/main/mcp/llms-full.txt): full tool inventory and the response-shape contract
+- [vault-storage](https://github.com/uhop/vault-storage): the server this adapter fronts (REST surface, data model, deployment)
+
+## Key facts
+
+- Run via `npx -y @uhop/vault-storage-mcp@latest`; env: `VAULT_API_URL`, `VAULT_API_TOKEN`.
+- Tool groups: search & list (incl. `vault_context_pack` — one byte-budgeted
+  RAG pack: hybrid top-K chunks + 1-hop graph summaries + backlinks), read,
+  narrow writes (`vault_append` / `vault_replace` / `vault_patch_fm` —
+  asserted, atomic, small blast radius), whole-document writes (optional
+  `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
+  `vault_move` / `vault_propose`), maintenance, tags, graph insight, the
+  suggestions review queue (claim / resolve batches), queue-item slices, and
+  system reads (`vault_status`, `vault_lint`, `vault_resume_bundle`).
+- Every tool description names the response shape it returns, including which
+  of the three list shapes it uses: the paginated `{items, offset, limit,
+  total}` envelope (page by `items.length`; the server caps `limit` at 100),
+  the flat `{count, items}` queue slices, or a genuinely unpaginated read.
+- Server errors surface as MCP tool errors with `{error, code, status, details}`.
