@@ -608,3 +608,49 @@ test('parseQueueFile — an unrecognized heading ends the item, it does not join
     t.equal(items[0]?.body, 'It shipped.', 'archive items are bounded the same way');
   });
 });
+
+test('parseQueueFile — inner emphasis flush against the bold close', async t => {
+  await t.test('the title keeps its closing asterisk; no stray `*` leaks into the body', t => {
+    const src =
+      FM +
+      [
+        '## Backlog',
+        '',
+        '- [ ] **`semanticLowerBound` cost floor counts essential variables, not minimum atom *occurrences*** Filed from the 2026-08-03 sweep.'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items.length, 1);
+    // Before 2026-08-04 the close consumed the run's first two stars — the
+    // title truncated to `…*occurrences` and the body began with a stray `*`.
+    t.equal(
+      items[0]?.title,
+      '`semanticLowerBound` cost floor counts essential variables, not minimum atom *occurrences*'
+    );
+    t.equal(items[0]?.body, 'Filed from the 2026-08-03 sweep.');
+  });
+
+  await t.test('emphasis and inline code both nested in one bold title', t => {
+    const src =
+      FM + ['## Backlog', '', '- **Fix *foo* and `bar` via *baz*** Body here.'].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items[0]?.title, 'Fix *foo* and `bar` via *baz*');
+    t.equal(items[0]?.body, 'Body here.');
+  });
+
+  await t.test('title-only line ending in a 3-star run', t => {
+    const src = FM + ['## Backlog', '', '- **All *done***'].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items[0]?.title, 'All *done*');
+    t.equal(items[0]?.body, '');
+  });
+
+  await t.test('closing `**` straight into punctuation still parses', t => {
+    // 19 live titles shaped `**Title**: body` in the 2026-08-04 fleet survey —
+    // the fix must not demand whitespace after the close.
+    const src =
+      FM + ['## Backlog', '', '- **Deps**: tape-six `^1.16`, prettier `^3.9`.'].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.equal(items[0]?.title, 'Deps');
+    t.equal(items[0]?.body, ': tape-six `^1.16`, prettier `^3.9`.');
+  });
+});

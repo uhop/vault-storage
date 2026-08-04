@@ -72,8 +72,13 @@ const CHECKBOX_PREFIX_RE = /^\[[ xX~]\]\s+/;
 // Permits single `*` inside the bold prefix (italics, glob patterns like
 // `/queue/*`, `*.md`) by accepting any char that isn't `*`, OR a `*` not
 // followed by another `*`. The lazy quantifier ensures we still stop at the
-// first true `**` close.
-const BOLD_PREFIX_RE = /^\*\*((?:[^*]|\*(?!\*))+?)\*\*\s*(.*)$/;
+// first true `**` close. The optional trailing `\*` hands the title the
+// first star of a `***` run — an inner emphasis closing flush against the
+// bold close (`…atom *occurrences***`) otherwise loses its `*` to the close
+// and leaks a stray `*` into the body (measured 2026-08-04). Don't require
+// whitespace after the close: `**Title**: body` closes straight into
+// punctuation — 19 live titles in the 2026-08-04 fleet survey.
+const BOLD_PREFIX_RE = /^\*\*((?:[^*]|\*(?!\*))+?\*?)\*\*\s*(.*)$/;
 const ARCHIVE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 // A `blocked-by:` marker line inside an item body: optional sub-bullet
 // marker, the key, then `;`-separated refs (titles legitimately contain
