@@ -122,6 +122,13 @@ payload `{error, code, status, details}`. Common codes:
 
 ## Release notes
 
+- 0.3.1 — `vault_context_pack` description corrected to the server's revised
+  graph shape: the separate `backlinks` array is gone (inbound neighborhood
+  entries are the backlinks; `inbound_total` carries the degree), the whole
+  response is byte-budgeted chunks-first (neighborhood trims before any chunk
+  drops), and degenerate segments are skipped. Docs only — the adapter is a
+  pass-through, so 0.3.0 works against the new server but overstates the
+  graph block.
 - 0.3.0 — new `vault_context_pack` tool (47 tools): one prepared RAG pack —
   hybrid top-K chunks, 1-hop graph summaries, backlinks — byte-budgeted with
   reported drops; `vault_resume_bundle` documents the server's budget-gated
