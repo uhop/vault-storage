@@ -790,7 +790,7 @@ test('POST /system/resume-bundle packages session-start state in one call', asyn
       );
       const files = (withBodies.body as typeof bundle).project.files;
       t.ok('body' in (files['queue'] ?? {}), 'project_bodies opts queue into full-body delivery');
-      t.ok('body' in (files['feedback'] ?? {}), 'feedback body always included');
+      t.ok('body' in (files['feedback'] ?? {}), 'feedback body still ships while the bundle fits');
 
       const bad = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=Bad_Name`, {
         method: 'POST'
@@ -801,6 +801,98 @@ test('POST /system/resume-bundle packages session-start state in one call', asyn
         {method: 'POST'}
       );
       t.equal(badBodies.status, 400, 'unknown project_bodies name is a 400');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /system/resume-bundle bounds the default feedback body', async t => {
+  const {root, cleanup} = setup();
+  try {
+    // Well past the 32 KiB whole-bundle budget on its own, with headings on
+    // both sides of a fenced block whose fake heading must NOT be indexed.
+    const bigFeedback = [
+      '## Commit policy',
+      '',
+      'Rule text.',
+      '',
+      '```bash',
+      '## not a heading — code sample',
+      '```',
+      '',
+      '## Testing rules',
+      '',
+      'filler '.repeat(6000),
+      ''
+    ].join('\n');
+    writeMd(
+      root,
+      'projects/bigproj/feedback.md',
+      ['---', 'title: bigproj feedback', 'created: 2026-08-04', 'updated: 2026-08-04', '---'].join(
+        '\n'
+      ) +
+        '\n' +
+        bigFeedback
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=bigproj&logs=0`, {
+        method: 'POST'
+      });
+      t.equal(r.status, 200, '200 ok');
+      const feedback = (
+        r.body as {
+          project: {
+            files: Record<
+              string,
+              {
+                body?: string;
+                body_bytes: number;
+                body_omitted?: {reason: string; budget_bytes: number};
+                headings?: string[];
+              }
+            >;
+          };
+        }
+      ).project.files['feedback'];
+      t.ok(feedback, 'feedback entry present');
+      t.notOk('body' in (feedback ?? {}), 'over-budget feedback body omitted');
+      t.equal(feedback?.body_omitted?.reason, 'bundle_budget', 'omission carries its reason');
+      t.equal(feedback?.body_omitted?.budget_bytes, 32 * 1024, 'and the budget it enforces');
+      t.equal(
+        feedback?.body_bytes,
+        Buffer.byteLength(bigFeedback, 'utf8'),
+        'body_bytes still reports the full size'
+      );
+      t.deepEqual(
+        feedback?.headings,
+        ['## Commit policy', '## Testing rules'],
+        'heading index present; fenced fake heading masked out'
+      );
+      const total = Buffer.byteLength(JSON.stringify(r.body), 'utf8');
+      t.ok(total <= 32 * 1024, `indexed bundle stays inside the budget (${total} bytes)`);
+
+      const forced = await fetchAuthed(
+        `${ctx.url}/system/resume-bundle?project=bigproj&logs=0&project_bodies=feedback`,
+        {method: 'POST'}
+      );
+      const forcedFeedback = (
+        forced.body as typeof r.body as {
+          project: {files: Record<string, {body?: string; body_omitted?: unknown}>};
+        }
+      ).project.files['feedback'];
+      t.equal(
+        forcedFeedback?.body,
+        bigFeedback,
+        'project_bodies=feedback overrides the budget with the verbatim body'
+      );
+      t.notOk(
+        'body_omitted' in (forcedFeedback ?? {}),
+        'no omission marker on an explicit delivery'
+      );
     } finally {
       await teardown(ctx);
     }

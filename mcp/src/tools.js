@@ -713,7 +713,7 @@ export const registerTools = (mcp, client) => {
     'vault_resume_bundle',
     {
       description:
-        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes — feedback with full body, the rest as summaries + sizes)}. Replaces the separate reindex/lint/summary/queue/log reads. Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those. Project files other than feedback arrive as summary + body_bytes; name them in project_bodies to get their bodies instead of paying a vault_read_file round-trip each.',
+        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes as summary + body_bytes, plus full bodies for the files named in project_bodies)}. Replaces the separate reindex/lint/summary/queue/log reads. The feedback body is included by default only while the whole bundle fits the server’s 32 KiB budget — past it feedback instead carries body_omitted: {reason: "bundle_budget", budget_bytes} plus headings (a fence-masked section index) so the rules stay discoverable; fetch the body with vault_read_file, or force it here by naming feedback in project_bodies (explicit asks bypass the budget). Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those.',
       inputSchema: {
         project: z
           .string()
@@ -731,7 +731,7 @@ export const registerTools = (mcp, client) => {
           .array(z.enum(['feedback', 'queue', 'decisions', 'learnings', 'stack']))
           .optional()
           .describe(
-            'Project files to deliver with full bodies rather than summaries. feedback is always included. Use for /vault learn, whose dedup pass needs learnings/decisions verbatim.'
+            'Project files to deliver with full bodies rather than summaries, bypassing the bundle budget — include feedback when its body must arrive verbatim. Use for /vault learn, whose dedup pass needs feedback/learnings/decisions verbatim.'
           )
       }
     },

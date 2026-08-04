@@ -50,7 +50,14 @@ const REQUIRED_MENTIONS = {
   vault_claim_suggestions: ['claimed', 'remaining_pending', 'claim_expires'],
   vault_resolve_suggestions_batch: ['accepted', 'rejected', 'failed', 'results'],
   vault_queue_reindex: ['filesProcessed', 'staleSlicesDropped', 'errors', 'durationMs'],
-  vault_resume_bundle: ['coverage_enrichment', 'project_bodies', 'body_bytes'],
+  vault_resume_bundle: [
+    'coverage_enrichment',
+    'project_bodies',
+    'body_bytes',
+    'body_omitted',
+    'bundle_budget',
+    'headings'
+  ],
   vault_supersede: ['record_id', 'etag', 'archive', 'new_path'],
   vault_move: ['record_id', '204'],
   vault_propose: ['candidates', 'distance', 'proposed_chunks', 'candidates_screened'],

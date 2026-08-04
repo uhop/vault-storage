@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {incrementalReindex} from '../../maintenance/incremental-reindex.ts';
+import {maskCodeRegions} from '../../markdown/wikilinks.ts';
 import {blockedView, readyView} from '../../queue/ready.ts';
 import {QueueItemsRepository} from '../../queue/repo.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
@@ -18,15 +19,40 @@ interface ResumeBundleDeps {
 const WORKFLOW_QUEUE_PATH = 'projects/agent-workflow/queue.md';
 const CLARIFY_QUEUE_PATH = 'projects/agent-workflow/clarify-queue.md';
 
-// feedback.md ships its full body: it is the read path for fleet-shared
-// working rules and must land in the session verbatim. The rest ship
-// summaries + sizes; the agent fetches bodies only when it needs them.
+// feedback.md — the read path for fleet-shared working rules — ships its
+// body by default, but only while the whole bundle stays inside
+// BUNDLE_BUDGET_BYTES: it is the one body a caller receives without naming
+// it, and a mature feedback.md overflowed the MCP result channel on every
+// session start (2026-08-04, blog at 46.5 KB even after a −35% compaction —
+// no consumer-side editing keeps it bounded). Over budget it degrades to
+// summary + body_bytes + a heading index; `project_bodies=feedback` forces
+// the body regardless. The rest ship summaries + sizes; the agent fetches
+// bodies only when it needs them.
 const PROJECT_FILES = ['feedback', 'queue', 'decisions', 'learnings', 'stack'] as const;
+
+// Observed MCP-result rejections bracket the harness ceiling just under
+// ~50 KB of dense markdown (a 50.7 KB bundle and a 52 KB read both
+// rejected, 2026-08-04); 32 KiB leaves headroom for JSON escaping and
+// token-density variance. Explicit `project_bodies` asks are honored past
+// the budget — the caller opted in, and an oversized result spills to a
+// file on the client instead of failing the flow.
+const BUNDLE_BUDGET_BYTES = 32 * 1024;
 
 const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 const DEFAULT_LOGS = 3;
 const MAX_LOGS = 20;
+
+/** Raw ATX heading lines, fence-masked so code samples don't count. */
+const headingIndex = (body: string): string[] => {
+  const rawLines = body.split('\n');
+  const maskedLines = maskCodeRegions(body).split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < maskedLines.length; ++i) {
+    if (/^#{1,6}\s/.test(maskedLines[i] ?? '')) out.push((rawLines[i] ?? '').trim());
+  }
+  return out;
+};
 
 /** Body of `## <title>` up to the next `## ` heading; null when absent. */
 const extractSection = (body: string, title: string): string | null => {
@@ -150,10 +176,11 @@ export const resumeBundleHandler =
       }
       logsLimit = n;
     }
-    // `project_bodies` opts additional project files into full-body delivery
-    // (wrap prep needs learnings/decisions verbatim for dedup); feedback.md
-    // always ships its body — it is the fleet-feedback read path.
-    const projectBodies = new Set<string>(['feedback']);
+    // `project_bodies` opts named project files into full-body delivery
+    // regardless of size (wrap prep needs feedback/learnings/decisions
+    // verbatim for dedup); the feedback body is otherwise included by
+    // default, gated by BUNDLE_BUDGET_BYTES below.
+    const explicitBodies = new Set<string>();
     const bodiesRaw = ctx.query['project_bodies'];
     if (bodiesRaw !== undefined) {
       for (const name of bodiesRaw.split(',').filter(s => s.length > 0)) {
@@ -166,7 +193,7 @@ export const resumeBundleHandler =
           );
           return;
         }
-        projectBodies.add(name);
+        explicitBodies.add(name);
       }
     }
 
@@ -222,6 +249,8 @@ export const resumeBundleHandler =
           }[]);
 
     let projectBlock: Record<string, unknown> | null = null;
+    let feedbackEntry: Record<string, unknown> | null = null;
+    let feedbackBody: string | null = null;
     if (project !== undefined) {
       const files: Record<string, unknown> = {};
       let found = false;
@@ -232,18 +261,23 @@ export const resumeBundleHandler =
           continue;
         }
         found = true;
-        files[name] = {
+        const entry: Record<string, unknown> = {
           file_path: record.filePath,
           updated: record.updated,
           summary: record.agentSummary,
           body_bytes: Buffer.byteLength(record.body, 'utf8'),
-          ...(projectBodies.has(name) ? {body: record.body} : {})
+          ...(explicitBodies.has(name) ? {body: record.body} : {})
         };
+        if (name === 'feedback' && !explicitBodies.has(name)) {
+          feedbackEntry = entry;
+          feedbackBody = record.body;
+        }
+        files[name] = entry;
       }
       projectBlock = {name: project, found, files};
     }
 
-    sendJson(ctx.res, 200, {
+    const payload = {
       reindex,
       lint: {
         ok: fullLint.ok,
@@ -263,5 +297,22 @@ export const resumeBundleHandler =
         summary: r.agent_summary
       })),
       project: projectBlock
-    });
+    };
+
+    // Budget decision last: only now is the rest of the bundle measurable.
+    if (feedbackEntry && feedbackBody !== null) {
+      const used = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+      const bodyCost = Buffer.byteLength(JSON.stringify(feedbackBody), 'utf8');
+      if (used + bodyCost <= BUNDLE_BUDGET_BYTES) {
+        feedbackEntry['body'] = feedbackBody;
+      } else {
+        feedbackEntry['body_omitted'] = {
+          reason: 'bundle_budget',
+          budget_bytes: BUNDLE_BUDGET_BYTES
+        };
+        feedbackEntry['headings'] = headingIndex(feedbackBody);
+      }
+    }
+
+    sendJson(ctx.res, 200, payload);
   };

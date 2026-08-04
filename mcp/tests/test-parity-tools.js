@@ -177,7 +177,7 @@ test('vault_resume_bundle serialises project_bodies as CSV', async t => {
   await call('vault_resume_bundle', {project: 'vault-storage', logs: 3});
   t.ok(
     !getCaptured().url.includes('project_bodies'),
-    'omitted entirely when not asked for, so the server keeps its feedback-only default'
+    'omitted entirely when not asked for, so the server keeps its budget-gated feedback default'
   );
 
   await call('vault_resume_bundle', {
