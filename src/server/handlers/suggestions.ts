@@ -223,10 +223,8 @@ export const listSuggestionsHandler =
       where.push(`kind IN (${kinds.map(() => '?').join(',')})`);
       bindings.push(...kinds);
     }
-    if (statuses.length > 0) {
-      where.push(`status IN (${statuses.map(() => '?').join(',')})`);
-      bindings.push(...statuses);
-    }
+    where.push(`status IN (${statuses.map(() => '?').join(',')})`);
+    bindings.push(...statuses);
     if (subjectId !== undefined && subjectId.length > 0) {
       where.push('subject_id = ?');
       bindings.push(subjectId);
