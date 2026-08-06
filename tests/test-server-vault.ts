@@ -1225,6 +1225,18 @@ test('POST /vault/move 400 on invalid paths', async t => {
         body: 'not json'
       });
       t.equal(r4.status, 400, 'invalid JSON rejected');
+
+      // Trailing slash gets the slash diagnostic, not the generic .md one
+      // (the slash guard sat below the .md check and was unreachable there —
+      // a slash-ending path can never end '.md')
+      const r5 = await fetchAuthed(`${ctx.url}/vault/move`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: 'topics/alpha.md', to: 'topics/folder/'})
+      });
+      t.equal(r5.status, 400, 'trailing-slash destination rejected');
+      const r5body = r5.body as {error?: string};
+      t.ok(r5body.error?.includes('slash'), 'diagnostic names the trailing slash');
     } finally {
       await teardown(ctx);
     }

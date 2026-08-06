@@ -661,12 +661,14 @@ export const moveVaultHandler =
       sendError(ctx.res, 400, 'invalid_path', 'both `from` and `to` must be strings');
       return;
     }
-    if (!fromPath.endsWith('.md') || !toPath.endsWith('.md')) {
-      sendError(ctx.res, 400, 'invalid_path', 'both paths must end with .md');
-      return;
-    }
+    // Must precede the .md check: a trailing-slash path can never end '.md',
+    // so below it this guard is unreachable (oracle-certified dead 2026-08-05).
     if (fromPath.endsWith('/') || toPath.endsWith('/')) {
       sendError(ctx.res, 400, 'invalid_path', 'paths must not end with a slash');
+      return;
+    }
+    if (!fromPath.endsWith('.md') || !toPath.endsWith('.md')) {
+      sendError(ctx.res, 400, 'invalid_path', 'both paths must end with .md');
       return;
     }
     if (fromPath === toPath) {
