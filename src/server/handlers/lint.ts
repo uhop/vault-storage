@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -367,5 +368,7 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
 
 export const lintHandler =
   (deps: LintDeps): Handler =>
-  ctx =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     sendJson(ctx.res, 200, computeLintReport(deps.db));
+  };

@@ -1,4 +1,5 @@
 import type {ResolverCache} from '../resolver-cache.ts';
+import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -26,6 +27,7 @@ interface ResolveDeps {
 export const resolveHandler =
   (deps: ResolveDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['wikilink']))) return;
     const link = ctx.query['wikilink'];
     if (typeof link !== 'string' || link.trim().length === 0) {
       sendError(ctx.res, 400, 'invalid_request', 'wikilink query param is required and non-empty');

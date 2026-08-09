@@ -5,6 +5,7 @@ import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
+import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendNoContent} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -26,6 +27,7 @@ interface WriteDeps {
 export const putRecordHandler =
   (deps: WriteDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');

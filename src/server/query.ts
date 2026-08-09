@@ -6,7 +6,7 @@ import type {RequestContext} from './router.ts';
  * typo'd filter must fail loud, not fall through to an unfiltered answer
  * (the `GET /sections` `?path=` incident). Returns true when the query is
  * clean. New endpoints adopt this from birth. An endpoint that reads no
- * query params passes an empty set rather than skipping the call.
+ * query params passes {@link NO_QUERY_PARAMS} rather than skipping the call.
  */
 export const rejectUnknownParams = (ctx: RequestContext, allowed: ReadonlySet<string>): boolean => {
   const unknown = Object.keys(ctx.query).filter(k => !allowed.has(k));
@@ -19,6 +19,9 @@ export const rejectUnknownParams = (ctx: RequestContext, allowed: ReadonlySet<st
   );
   return false;
 };
+
+/** Allowed-set for an endpoint that reads no query parameters at all. */
+export const NO_QUERY_PARAMS: ReadonlySet<string> = new Set();
 
 export interface PaginationOpts {
   /** Hard cap server-side; clamps without erroring per api-surface § Pagination. */

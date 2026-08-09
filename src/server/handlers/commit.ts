@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../../maintenance/incremental-reindex.ts';
 import {getCurrentHead, isGitRepo, runGit} from '../../util/git.ts';
+import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -56,6 +57,7 @@ const SUBJECT_MAX = 200;
 export const commitHandler =
   (deps: CommitDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const start = Date.now();
 
     if (!isGitRepo(deps.vaultDataPath)) {

@@ -2,7 +2,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
-import {parsePagination, rejectUnknownParams} from '../query.ts';
+import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -243,6 +243,7 @@ const linkBackfillAndAutoAccept = (
 export const addTaxonomyHandler =
   (deps: TagsDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
@@ -319,6 +320,7 @@ export const addTaxonomyHandler =
 export const addAliasHandler =
   (deps: TagsDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);

@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordVecRepository} from '../../db/vec-repo.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
+import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -18,6 +19,7 @@ interface SimilarDeps {
 export const similarHandler =
   (deps: SimilarDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['k']))) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');

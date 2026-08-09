@@ -13,6 +13,7 @@ import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {listFolder} from '../../maintenance/folder-listing.ts';
 import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import type {Embedder} from '../../embeddings/types.ts';
+import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {snapshotDb} from '../snapshot.ts';
 import {readBodyText} from '../body.ts';
 import type {ResolverCache} from '../resolver-cache.ts';
@@ -60,6 +61,10 @@ const parsePositiveInt = (raw: string | undefined, fallback: number): number | n
 export const findDuplicatesHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (
+      !rejectUnknownParams(ctx, new Set(['limit', 'max_distance', 'min_body_length', 'per_record']))
+    )
+      return;
     const maxDistance = parsePositiveFloat(ctx.query['max_distance'], 0.1);
     if (maxDistance === null) {
       sendError(ctx.res, 400, 'bad_request', 'max_distance must be a non-negative number');
@@ -105,6 +110,7 @@ export const findDuplicatesHandler =
 export const findCompactionCandidatesHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['min_piece_count']))) return;
     const minPieceCount = parsePositiveInt(ctx.query['min_piece_count'], 30);
     if (minPieceCount === null) {
       sendError(ctx.res, 400, 'bad_request', 'min_piece_count must be a positive integer');
@@ -128,6 +134,7 @@ export const findCompactionCandidatesHandler =
 export const findRetentionCandidatesHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const summary = findRetentionCandidates(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
@@ -161,6 +168,7 @@ export const findRetentionCandidatesHandler =
 export const findUpgradeSignalsHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const summary = findUpgradeSignals(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
@@ -185,6 +193,7 @@ export const findUpgradeSignalsHandler =
 export const incrementalReindexHandler =
   (deps: SnapshotDeps & {resolverCache: ResolverCache}): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['full']))) return;
     if (ctx.query['full'] === 'true') clearLastIndexedCommit(deps.db);
     try {
       const summary = await incrementalReindex(deps.db, deps.vaultDataPath);
@@ -221,6 +230,7 @@ export const incrementalReindexHandler =
 export const runAllScansHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     sendJson(ctx.res, 200, runAllScans(deps.db));
   };
 
@@ -244,6 +254,7 @@ export const runAllScansHandler =
 export const cleanupLintHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const summary = cleanupLint(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
@@ -273,6 +284,7 @@ interface CleanupTagAliasesBody {
 export const cleanupTagAliasesHandler =
   (deps: MaintenanceDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
@@ -331,6 +343,7 @@ let embedInFlight: Promise<EmbedSummary> | null = null;
 export const embedPendingHandler =
   (deps: EmbedDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     if (!embedInFlight) {
       embedInFlight = embedPending(deps.db, deps.embedder).finally(() => {
         embedInFlight = null;
@@ -353,6 +366,7 @@ export const embedPendingHandler =
 export const rawInboxHandler =
   (deps: SnapshotDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const summary = scanRawInbox(deps.vaultDataPath);
     sendJson(ctx.res, 200, summary);
     void ctx;
@@ -369,6 +383,7 @@ export const rawInboxHandler =
 export const folderListingHandler =
   (deps: MaintenanceDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['path']))) return;
     const path = ctx.query['path'] ?? '';
     const listing = listFolder(deps.db, path);
     sendJson(ctx.res, 200, listing);
@@ -386,6 +401,7 @@ export const folderListingHandler =
 export const snapshotDownloadHandler =
   (deps: SnapshotDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['name']))) return;
     const name = ctx.query['name'];
     if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
       sendError(ctx.res, 400, 'bad_request', 'name must be a bare filename under .snapshots/');
@@ -414,6 +430,7 @@ export const snapshotDownloadHandler =
 export const snapshotHandler =
   (deps: SnapshotDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['path']))) return;
     const defaultPath = join(deps.vaultDataPath, '.snapshots', 'vault.sqlite.gz');
     const path = ctx.query['path'] ? join(deps.vaultDataPath, ctx.query['path']) : defaultPath;
     try {
@@ -444,6 +461,7 @@ export const snapshotHandler =
 export const snapshotListHandler =
   (deps: SnapshotDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const dir = join(deps.vaultDataPath, '.snapshots');
     let entries;
     try {
@@ -478,6 +496,7 @@ export const snapshotListHandler =
 export const snapshotDeleteHandler =
   (deps: SnapshotDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['name']))) return;
     const name = ctx.query['name'];
     if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
       sendError(ctx.res, 400, 'bad_request', 'name must be a bare filename under .snapshots/');

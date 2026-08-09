@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import type {Embedder} from '../../embeddings/types.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
+import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -14,6 +15,7 @@ export interface SystemDeps {
 export const systemStatusHandler =
   (deps: SystemDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const {db, schemaVersion, vaultDataPath, embedder} = deps;
     const vecVersion = (db.prepare('SELECT vec_version() AS v').get() as {v: string}).v;
     const recordCount = (db.prepare('SELECT COUNT(*) AS n FROM records').get() as {n: number}).n;
@@ -70,6 +72,7 @@ export interface ReleaseEmbedderDeps {
 export const releaseEmbedderHandler =
   (deps: ReleaseEmbedderDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const retainedBefore = deps.embedder.retained;
     const memBefore = process.memoryUsage();
     const start = performance.now();

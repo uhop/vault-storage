@@ -9,7 +9,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {blockedView, readyView, type BlockerReport} from '../../queue/ready.ts';
 import {QueueItemsRepository, type QueueItemRow} from '../../queue/repo.ts';
 import {reindexAllQueues} from '../../queue/sync.ts';
-import {rejectUnknownParams} from '../query.ts';
+import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -67,6 +67,7 @@ const parseSignedInt = (raw: string | undefined): number | null => {
 export const queueTopHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['limit']))) return;
     const limit = parsePositiveInt(ctx.query['limit'], 20);
     if (limit === null) {
       sendError(ctx.res, 400, 'bad_request', 'limit must be a positive integer');
@@ -87,6 +88,7 @@ export const queueTopHandler =
 export const queueBySectionHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const section = ctx.params['section'];
     if (section !== 'active' && section !== 'backlog' && section !== 'watching') {
       sendError(ctx.res, 400, 'bad_request', 'section must be one of: active, backlog, watching');
@@ -106,6 +108,7 @@ export const queueBySectionHandler =
 export const queueByPriorityHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const priority = parseSignedInt(ctx.params['n']);
     if (priority === null) {
       sendError(ctx.res, 400, 'bad_request', 'priority must be a signed integer');
@@ -126,6 +129,7 @@ export const queueByPriorityHandler =
 export const queueByProjectHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const project = ctx.params['name'];
     if (!project) {
       sendError(ctx.res, 400, 'bad_request', 'missing project name');
@@ -146,6 +150,7 @@ export const queueByProjectHandler =
 export const queueArchiveByProjectHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const project = ctx.params['name'];
     if (!project) {
       sendError(ctx.res, 400, 'bad_request', 'missing project name');
@@ -234,6 +239,7 @@ export const queueBlockedHandler =
 export const reindexQueuesHandler =
   (deps: ReindexDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const repo = new QueueItemsRepository(deps.db);
     const summary = reindexAllQueues(repo, deps.vaultDataPath);
     sendJson(ctx.res, 200, summary);

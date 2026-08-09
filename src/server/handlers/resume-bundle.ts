@@ -161,6 +161,7 @@ export const resumeBriefHandler =
 export const resumeBundleHandler =
   (deps: ResumeBundleDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['project', 'logs', 'project_bodies']))) return;
     const project = ctx.query['project'];
     if (project !== undefined && !PROJECT_NAME_RE.test(project)) {
       sendError(ctx.res, 400, 'bad_request', 'project must be a kebab-case name');

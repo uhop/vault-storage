@@ -8,7 +8,7 @@ import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {RECORD_COLUMNS, RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
 import {readBodyText} from '../body.ts';
-import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
+import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -85,6 +85,7 @@ const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 export const getRecordHandler =
   (deps: {records: RecordsRepository}): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
@@ -108,6 +109,7 @@ export const getRecordHandler =
 export const getRecordMetaHandler =
   (deps: {records: RecordsRepository}): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
@@ -234,6 +236,7 @@ const persistTags = (
 export const getRecordTagsHandler =
   (deps: FmHandlerDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const row = resolveRecord(deps, ctx.params['id'], ctx.res);
     if (!row) return;
     const abs = resolveAbsPath(deps, row.file_path, ctx.res);
@@ -259,6 +262,7 @@ export const getRecordTagsHandler =
 export const postRecordTagHandler =
   (deps: FmHandlerDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const row = resolveRecord(deps, ctx.params['id'], ctx.res);
     if (!row) return;
     let raw: string;
@@ -321,6 +325,7 @@ export const postRecordTagHandler =
 export const deleteRecordTagHandler =
   (deps: FmHandlerDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const row = resolveRecord(deps, ctx.params['id'], ctx.res);
     if (!row) return;
     const tag = ctx.params['tag'];
@@ -353,6 +358,7 @@ export const deleteRecordTagHandler =
 export const getRecordFmHandler =
   (deps: FmHandlerDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
@@ -541,6 +547,7 @@ const applyFmMembershipOp = (fm: Record<string, unknown>, op: FmPatchOp): FmPatc
 export const patchRecordFmHandler =
   (deps: FmHandlerDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const row = resolveRecord(deps, ctx.params['id'], ctx.res);
     if (!row) return;
 

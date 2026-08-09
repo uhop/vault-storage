@@ -3,7 +3,7 @@ import {revertExpiredClaims} from '../../records/claims.ts';
 import {EDGE_TYPES} from '../../records/types.ts';
 import {uuidv7} from '../../util/uuid.ts';
 import {readBodyText} from '../body.ts';
-import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
+import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {
@@ -407,6 +407,7 @@ const flipStatus = (
 const makeResolveHandler =
   (deps: SuggestionsDeps, target: 'accepted' | 'rejected'): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
@@ -483,6 +484,7 @@ interface CreateBody {
 export const createSuggestionHandler =
   (deps: SuggestionsDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
@@ -562,6 +564,7 @@ export const createSuggestionHandler =
 export const reopenSuggestionHandler =
   (deps: SuggestionsDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
@@ -791,6 +794,7 @@ const payloadString = (payload: Record<string, unknown>, key: string): string | 
 export const resolveBatchSuggestionsHandler =
   (deps: EffectDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
