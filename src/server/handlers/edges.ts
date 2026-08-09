@@ -1,7 +1,7 @@
 import type {EdgesRepository} from '../../records/edges.ts';
 import {EDGE_TYPES, type Edge, type EdgeType} from '../../records/types.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
-import {parsePagination, splitCsv} from '../query.ts';
+import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -42,6 +42,8 @@ const filterByType = (edges: Edge[], types: EdgeType[]): Edge[] =>
 export const neighborhoodHandler =
   (deps: EdgesDeps): Handler =>
   ctx => {
+    // Precedes bumpLastReferenced: a rejected request must not leave a trace.
+    if (!rejectUnknownParams(ctx, new Set(['depth', 'via', 'direction']))) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
@@ -159,6 +161,7 @@ const dedupeEdges = (edges: Edge[]): Edge[] => {
 export const backlinksHandler =
   (deps: EdgesDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['type', 'offset', 'limit']))) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');

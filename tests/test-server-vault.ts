@@ -2180,3 +2180,107 @@ test('POST /vault/edit — guards: 404 no-create, composed 409, null-wipe, valid
     cleanup();
   }
 });
+
+test('unknown query parameters are a loud 400 across the vault surface', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const rejects = async (
+        path: string,
+        init: RequestInit,
+        offender: string,
+        message: string
+      ): Promise<void> => {
+        const r = await fetchAuthed(`${ctx.url}${path}`, init);
+        t.equal(r.status, 400, message);
+        t.ok((r.body as {error: string}).error.includes(offender), `${offender} named`);
+      };
+
+      await t.test('reads', async () => {
+        await rejects('/vault/topics/alpha.md?raw=true', {}, 'raw', 'file read takes no params');
+        await rejects('/vault/?depth=2', {}, 'depth', 'root listing takes no params');
+      });
+
+      await t.test('writes', async () => {
+        await rejects(
+          '/vault/topics/new.md?chek=true',
+          {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({frontmatter: {title: 'New'}, body: 'New body.'})
+          },
+          'chek',
+          'typo`d check no longer leaves the dedup gate silently disarmed'
+        );
+        await rejects(
+          '/vault/topics/alpha.md?check=true&check_treshold=0.3',
+          {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Rewritten.'})
+          },
+          'check_treshold',
+          'typo`d threshold fails instead of silently using the default'
+        );
+        await rejects(
+          '/vault/topics/alpha.md?shadwo=allow',
+          {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Rewritten.'})
+          },
+          'shadwo',
+          'typo`d shadow fails instead of silently keeping the guard armed'
+        );
+        await rejects(
+          '/vault/topics/alpha.md?force=true',
+          {method: 'DELETE'},
+          'force',
+          'delete takes no params'
+        );
+      });
+
+      await t.test('body-driven posts', async () => {
+        const json = (body: unknown): RequestInit => ({
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        await rejects(
+          '/vault/edit?all=true',
+          json({path: 'topics/alpha.md', op: 'append', text: 'x'}),
+          'all',
+          '`all` belongs in the body, not the query'
+        );
+        await rejects(
+          '/vault/move?overwrite=true',
+          json({from: 'topics/alpha.md', to: 'topics/moved.md'}),
+          'overwrite',
+          'move takes no params'
+        );
+        await rejects(
+          '/vault/supersede?archive=false',
+          json({old_path: 'topics/alpha.md', frontmatter: {title: 'A'}, body: 'b'}),
+          'archive',
+          'supersede takes no params'
+        );
+        await rejects(
+          '/vault/propose?k=5',
+          json({body: 'some text'}),
+          'k',
+          'propose takes no params'
+        );
+      });
+
+      const stillThere = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+      t.equal(stillThere.status, 200, 'every rejected write left the document untouched');
+      t.ok((stillThere.body as string).includes('Alpha topic body.'), 'original body intact');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

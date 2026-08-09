@@ -3,7 +3,7 @@ import {revertExpiredClaims} from '../../records/claims.ts';
 import {EDGE_TYPES} from '../../records/types.ts';
 import {uuidv7} from '../../util/uuid.ts';
 import {readBodyText} from '../body.ts';
-import {parsePagination, splitCsv} from '../query.ts';
+import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {
@@ -192,6 +192,14 @@ const attachContext = (db: DatabaseSync, items: Array<Record<string, unknown>>):
 export const listSuggestionsHandler =
   (deps: SuggestionsDeps): Handler =>
   ctx => {
+    if (
+      !rejectUnknownParams(
+        ctx,
+        new Set(['kind', 'status', 'subject_id', 'expand', 'offset', 'limit'])
+      )
+    ) {
+      return;
+    }
     const expand = ctx.query['expand'];
     if (expand !== undefined && expand !== 'context') {
       sendError(ctx.res, 400, 'bad_request', `unknown expand: ${expand} (expected: context)`);
@@ -269,6 +277,7 @@ export const listSuggestionsHandler =
 export const summarySuggestionsHandler =
   (deps: SuggestionsDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['status']))) return;
     const statusesRaw = splitCsv(ctx.query['status']);
     const statuses = statusesRaw.length > 0 ? statusesRaw : ['pending'];
     for (const s of statuses) {
@@ -307,6 +316,9 @@ export const summarySuggestionsHandler =
 export const getSuggestionHandler =
   (deps: SuggestionsDeps): Handler =>
   ctx => {
+    // Empty set: `expand=context` works on the list and claim siblings but not
+    // here, so accepting it silently would return an unexpanded item.
+    if (!rejectUnknownParams(ctx, new Set())) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
@@ -620,6 +632,7 @@ const intField = (
 export const claimSuggestionsHandler =
   (deps: SuggestionsDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['expand']))) return;
     const expand = ctx.query['expand'];
     if (expand !== undefined && expand !== 'context') {
       sendError(ctx.res, 400, 'bad_request', `unknown expand: ${expand} (expected: context)`);

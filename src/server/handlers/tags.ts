@@ -2,7 +2,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
-import {parsePagination} from '../query.ts';
+import {parsePagination, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -25,6 +25,7 @@ const ALIAS_RE = /^[^A-Z]+$/; // schema enforces lowercase only; permissive othe
 export const listTagsHandler =
   (deps: TagsDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['prefix', 'offset', 'limit']))) return;
     const {offset, limit} = parsePagination(ctx.query);
     const prefix = ctx.query['prefix'];
 
@@ -70,6 +71,8 @@ export const listTagsHandler =
 export const tagInfoHandler =
   (deps: TagsDeps): Handler =>
   ctx => {
+    // Empty set, not an oversight: this endpoint reads no query params.
+    if (!rejectUnknownParams(ctx, new Set())) return;
     const tag = ctx.params['tag'];
     if (!tag) {
       sendError(ctx.res, 400, 'bad_request', 'missing tag');
@@ -116,6 +119,7 @@ export const tagInfoHandler =
 export const recordsByTagHandler =
   (deps: TagsDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['offset', 'limit']))) return;
     const tag = ctx.params['tag'];
     if (!tag) {
       sendError(ctx.res, 400, 'bad_request', 'missing tag');

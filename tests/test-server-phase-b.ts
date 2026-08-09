@@ -1642,3 +1642,62 @@ test('POST /tags/aliases returns 404 if canonical missing', async t => {
     cleanup();
   }
 });
+
+test('unknown query parameters are a loud 400 on the graph, tag, and suggestion reads', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      seedTags(ctx.db, [{recordId: alphaId, tag: 'docker'}]);
+
+      const rejects = async (path: string, offender: string, message: string): Promise<void> => {
+        const r = await fetchAuthed(`${ctx.url}${path}`);
+        t.equal(r.status, 400, message);
+        t.ok((r.body as {error: string}).error.includes(offender), `${offender} named`);
+      };
+
+      await t.test('graph reads', async () => {
+        await rejects(
+          `/sections/${alphaId}/neighborhood?dpeth=2`,
+          'dpeth',
+          'typo`d depth fails instead of silently walking depth=1'
+        );
+        await rejects(
+          `/sections/${alphaId}/backlinks?tpye=cites`,
+          'tpye',
+          'typo`d type fails instead of returning every inbound edge'
+        );
+      });
+
+      await t.test('tag reads', async () => {
+        await rejects(
+          '/tags?prefx=doc',
+          'prefx',
+          'typo`d prefix fails instead of listing the whole taxonomy'
+        );
+        await rejects('/tags/docker?expand=context', 'expand', 'no params means none accepted');
+        await rejects('/tags/docker/records?limt=1', 'limt', 'typo`d limit fails');
+      });
+
+      await t.test('suggestion reads', async () => {
+        await rejects(
+          '/suggestions?statsu=accepted',
+          'statsu',
+          'the filed case: typo`d status no longer returns pending items'
+        );
+        await rejects('/suggestions/summary?kind=new_tag', 'kind', 'summary takes status only');
+        await rejects(
+          '/suggestions/does-not-exist?expand=context',
+          'expand',
+          'guard precedes the lookup — 400 on the param, not 404 on the id'
+        );
+      });
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

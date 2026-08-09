@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {RecordVecRepository} from '../../db/vec-repo.ts';
 import type {Embedder} from '../../embeddings/types.ts';
+import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -154,6 +155,7 @@ const semanticSearch = async (
 export const simpleSearchHandler =
   (deps: SearchDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['query', 'mode', 'limit']))) return;
     const query = ctx.query['query'];
     if (!query || query.length === 0) {
       sendError(ctx.res, 400, 'bad_request', 'missing query parameter');

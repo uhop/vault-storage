@@ -433,3 +433,22 @@ test('POST /search/simple/ prefix-matches tokens, not infixes (FTS5 semantics)',
     cleanup();
   }
 });
+
+test('POST /search/simple/ — unknown query parameter is a loud 400', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/search/simple/?query=docker&mdoe=semantic`, {
+        method: 'POST'
+      });
+      t.equal(r.status, 400, 'typo`d mode fails instead of silently searching lexically');
+      t.ok((r.body as {error: string}).error.includes('mdoe'), 'offender named');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

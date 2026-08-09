@@ -5,8 +5,8 @@ import type {RequestContext} from './router.ts';
  * Reject query keys outside `allowed` with a 400 naming the offender — a
  * typo'd filter must fail loud, not fall through to an unfiltered answer
  * (the `GET /sections` `?path=` incident). Returns true when the query is
- * clean. New endpoints adopt this from birth; retrofitting the older
- * surface is the open `GET /sections` queue item.
+ * clean. New endpoints adopt this from birth. An endpoint that reads no
+ * query params passes an empty set rather than skipping the call.
  */
 export const rejectUnknownParams = (ctx: RequestContext, allowed: ReadonlySet<string>): boolean => {
   const unknown = Object.keys(ctx.query).filter(k => !allowed.has(k));

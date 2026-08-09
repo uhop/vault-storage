@@ -19,6 +19,7 @@ import {TagsImporter} from '../../importer/import-tags.ts';
 import {findDuplicateBlockers, proposeNearest} from '../../maintenance/propose.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
+import {rejectUnknownParams} from '../query.ts';
 import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -134,6 +135,8 @@ const listFolder = (vaultRoot: string, relativePath: string, res: ServerResponse
 export const getVaultHandler =
   (deps: VaultDeps): Handler =>
   ctx => {
+    // Precedes bumpLastReferenced: a rejected request must not leave a trace.
+    if (!rejectUnknownParams(ctx, new Set())) return;
     const path = ctx.params['path'] ?? '';
     if (path.endsWith('/')) {
       listFolder(deps.vaultDataPath, path.slice(0, -1), ctx.res);
@@ -183,6 +186,7 @@ export const getVaultHandler =
 export const getVaultRootHandler =
   (deps: VaultDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
     listFolder(deps.vaultDataPath, '', ctx.res);
   };
 
@@ -219,6 +223,9 @@ const extractAgentSummary = (frontmatter: Record<string, unknown>): string | nul
 export const putVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
+    // A typo'd `chek=true` would leave the dedup gate disarmed while the
+    // caller believes it fired, and write the duplicate it was meant to catch.
+    if (!rejectUnknownParams(ctx, new Set(['shadow', 'check', 'check_threshold']))) return;
     const path = ctx.params['path'] ?? '';
     if (path.length === 0 || path.endsWith('/')) {
       sendError(ctx.res, 400, 'invalid_path', 'PUT requires a file path (no trailing slash)');
@@ -438,6 +445,7 @@ interface EditBody {
 export const editVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
@@ -591,6 +599,7 @@ export const editVaultHandler =
 export const deleteVaultHandler =
   (deps: VaultDeps): Handler =>
   ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
     const path = ctx.params['path'] ?? '';
     if (path.length === 0 || path.endsWith('/')) {
       sendError(ctx.res, 400, 'invalid_path', 'DELETE requires a file path (no trailing slash)');
@@ -639,6 +648,7 @@ export const deleteVaultHandler =
 export const moveVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
@@ -752,6 +762,7 @@ interface SupersedeBody {
 export const supersedeVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
@@ -950,6 +961,7 @@ interface ProposeBody {
 export const proposeVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
     let raw: string;
     try {
       raw = await readBodyText(ctx.req);
