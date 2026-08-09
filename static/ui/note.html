@@ -315,9 +315,13 @@
         background: transparent;
         color: var(--muted);
       }
+      /* Underline, never a fill: the group sits on --card, so filling the
+         active button made it blend in and the inactive ones read as raised. */
       .toolbar .modes button[aria-pressed='true'] {
-        background: var(--card);
         color: var(--fg);
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        text-decoration-thickness: 2px;
       }
       .toolbar .modes button + button {
         border-left: 1px solid var(--line);
