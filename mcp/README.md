@@ -35,7 +35,7 @@ was started with (e.g., the one in your `.env`).
 
 ## Tools
 
-Forty-seven tools mapping to the REST surface, grouped by purpose:
+Fifty-three tools mapping to the REST surface, grouped by purpose:
 
 - **Search & list** — `vault_search`, `vault_context_pack` (one prepared
   RAG pack — hybrid top-K chunks + a deduped 1-hop graph whose inbound
@@ -81,6 +81,10 @@ Forty-seven tools mapping to the REST surface, grouped by purpose:
 - **Queue items** — `vault_queue_top`, `vault_queue_ready`, `vault_queue_blocked`,
   `vault_queue_by_section`, `vault_queue_by_priority`, `vault_queue_by_project`,
   `vault_queue_project_archive`, `vault_queue_reindex`
+- **Repo leases** (agent coordination) — `vault_lease_list`, `vault_lease_events`,
+  `vault_lease_claim` (atomic; precedence human > cwd agent > side agent; side
+  claims attest a clean checkout), `vault_lease_renew`, `vault_lease_release`
+  (`force` = operator hatch), `vault_lease_transfer` (atomic handover)
 - **System** — `vault_status`, `vault_lint` (integrity checks plus the
   `coverage.enrichment` block and its `unenriched_records` worklist),
   `vault_resume_bundle` (one-shot session-start bundle: reindex + lint +

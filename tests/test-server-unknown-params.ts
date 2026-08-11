@@ -107,7 +107,13 @@ const ROUTES: Array<[string, string]> = [
   ['GET', '/queue/by-section/Active'],
   ['GET', '/queue/by-priority/1'],
   ['GET', '/queue/projects/demo/archive'],
-  ['GET', '/queue/projects/demo']
+  ['GET', '/queue/projects/demo'],
+  ['GET', '/leases'],
+  ['GET', '/leases/events'],
+  ['POST', '/leases/claim'],
+  ['POST', '/leases/renew'],
+  ['POST', '/leases/release'],
+  ['POST', '/leases/transfer']
 ];
 
 const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => {

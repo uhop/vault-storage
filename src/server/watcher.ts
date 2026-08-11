@@ -61,6 +61,9 @@ const SKIP_PATH_PARTS: ReadonlySet<string> = new Set([
 
 const shouldIgnore = (relativePath: string): boolean => {
   if (!relativePath.endsWith('.md')) return true;
+  // Root-only spool skip, mirroring walk.ts's ROOT_SKIP_DIRS: nested
+  // `x/handoff/` is ordinary content.
+  if (relativePath.startsWith('handoff/')) return true;
   for (const part of relativePath.split('/')) {
     if (SKIP_PATH_PARTS.has(part)) return true;
   }

@@ -81,7 +81,12 @@ const REQUIRED_MENTIONS = {
   vault_patch_fm: ['changed', 'results'],
   vault_read_file: ['etag', 'composed', 'content'],
   vault_write_file: ['expected_etag', 'If-Match'],
-  vault_update_piece: ['expected_etag', 'If-Match']
+  vault_update_piece: ['expected_etag', 'If-Match'],
+  vault_lease_list: ['count', 'items', 'holder_kind', 'attestation', 'expires_at'],
+  vault_lease_events: ['seq', 'event', 'detail', 'preempted', 'transferred'],
+  vault_lease_claim: ['claimed_by_other', 'preempted', 'renewed', 'attestation'],
+  vault_lease_release: ['force', 'released'],
+  vault_lease_transfer: ['to_holder', 'lease']
 };
 
 test('every documented response field appears in its tool description', t => {

@@ -61,6 +61,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds.
 - **`maintenance.ts`** — `POST /maintenance/*`: scans (duplicates, compaction, retention, upgrade signals), cleanups, embed-pending, incremental reindex, snapshots, raw inbox.
 - **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project) plus the dependency views (`/queue/ready`, `/queue/blocked`) over query-time `blocked-by:` resolution.
+- **`leases.ts`** — the repo-lease registry (agent coordination, D21/D23): list/events reads, atomic claim/renew/release/transfer with the human > cwd-agent > side-agent precedence lattice. Coordination state is ephemeral — cleared on every server start.
 - **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5). `resume-bundle.ts` adds the one-shot `/vault resume` bundle (POST, embedded reindex) and its read-only brief tier (`GET /system/resume-brief`) for SessionStart-hook injection.
 - **`commit.ts`**, **`resolve.ts`**, **`static.ts`** — explicit git commit; wikilink resolution; UI file serving.
 
@@ -68,7 +69,7 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 
 ## Other modules
 
-- **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring.
+- **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring; reservation machinery (`claims.ts` for suggestion batches, `leases.ts` for the repo-lease registry).
 - **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows (including `blocked-by:` refs); query-time blocker resolution + ready/blocked/cycle computation (`ready.ts`); watcher glue + full reindex.
 - **`src/maintenance/`** — the find-\* scans, lint cleanups, incremental reindex, run-all bundle, scan scheduler, search-before-write propose, raw-inbox classification, doc-vec backfill.
 - **`src/markdown/`** — YAML frontmatter parse/serialize; wikilink extraction with code-region masking.

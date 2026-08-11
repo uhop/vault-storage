@@ -34,6 +34,23 @@ const setupVault = (): {root: string; cleanup: () => void} => {
   return {root, cleanup: () => rmSync(root, {recursive: true, force: true})};
 };
 
+test('import skips root handoff/ spool but not nested handoff dirs', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'handoff/deep6/open/fix.md', '---\ntitle: Spool prose\n---\nnot a record\n');
+    writeMd(root, 'topics/handoff/note.md', '---\ntitle: Nested\n---\nordinary content\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const records = new RecordsRepository(db);
+    t.equal(records.getByPath('handoff/deep6/open/fix.md'), null, 'root spool not indexed');
+    t.ok(records.getByPath('topics/handoff/note.md'), 'nested handoff/ still indexes');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
 test('importVault loads a small synthetic vault', t => {
   const {root, cleanup} = setupVault();
   try {

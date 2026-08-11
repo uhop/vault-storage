@@ -82,7 +82,16 @@ import {sendError} from './responses.ts';
 import {ResolverCache} from './resolver-cache.ts';
 import {Router, type RequestContext} from './router.ts';
 import {staticHandler} from './handlers/static.ts';
+import {
+  claimLeaseHandler,
+  leaseEventsHandler,
+  listLeasesHandler,
+  releaseLeaseHandler,
+  renewLeaseHandler,
+  transferLeaseHandler
+} from './handlers/leases.ts';
 import {EdgesRepository} from '../records/edges.ts';
+import {LeasesRepository} from '../records/leases.ts';
 import {RecordsRepository} from '../records/repository.ts';
 
 export interface ServerHandle {
@@ -267,6 +276,16 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/queue/projects/{name}/archive', queueArchiveByProjectHandler({db: opts.db}));
   router.get('/queue/projects/{name}', queueByProjectHandler({db: opts.db}));
 
+  // Repo-lease registry (agent-coordination, D21/D23). Resource keys carry
+  // slashes/colons, so the single-lease read is `?resource=` on the list —
+  // one response shape — and every mutation is a JSON POST.
+  router.get('/leases', listLeasesHandler({db: opts.db}));
+  router.get('/leases/events', leaseEventsHandler({db: opts.db}));
+  router.post('/leases/claim', claimLeaseHandler({db: opts.db}));
+  router.post('/leases/renew', renewLeaseHandler({db: opts.db}));
+  router.post('/leases/release', releaseLeaseHandler({db: opts.db}));
+  router.post('/leases/transfer', transferLeaseHandler({db: opts.db}));
+
   if (opts.env.uiStaticPath) {
     const uiHandler = staticHandler({rootDir: opts.env.uiStaticPath, indexFile: 'index.html'});
     router.get('/ui', uiHandler);
@@ -363,6 +382,10 @@ const handleRequest =
   };
 
 export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
+  // Coordination state is a clean slate on every server start (D21):
+  // durability lives in the filesystem; leases die with the process and are
+  // re-claimed in a fair race.
+  new LeasesRepository(opts.db).clearAll();
   const router = buildRouter(opts);
   const server = createServer(handleRequest(router, opts.env));
   // The DB is synchronous, so heavy handlers block the event loop and every

@@ -131,12 +131,14 @@ test('watcher: ignores .vault-storage and non-md files', async t => {
   try {
     writeMd(fx.root, '.vault-storage/internal.md', '---\ntitle: Internal\n---\nx\n');
     writeMd(fx.root, 'topics/note.txt', 'not markdown');
+    writeMd(fx.root, 'handoff/deep6/open/patch-cover.md', '---\ntitle: Spool\n---\nx\n');
     writeMd(fx.root, 'topics/real.md', '---\ntitle: Real\n---\nx\n');
     await sleep(150);
     const summary = await watcher.flush();
-    t.equal(summary.imported, 1, 'only the .md outside .vault-storage');
+    t.equal(summary.imported, 1, 'only the .md outside .vault-storage and handoff/');
     t.ok(fx.records.getByPath('topics/real.md'), 'real imported');
     t.equal(fx.records.getByPath('.vault-storage/internal.md'), null, 'ignored');
+    t.equal(fx.records.getByPath('handoff/deep6/open/patch-cover.md'), null, 'spool ignored');
   } finally {
     watcher.close();
     teardown(fx);

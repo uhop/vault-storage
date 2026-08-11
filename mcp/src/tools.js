@@ -715,6 +715,125 @@ export const registerTools = (mcp, client) => {
     )
   );
 
+  // ── leases (agent coordination) ───────────────────────────────────────────
+  const HOLDER_KIND = z.enum(['agent', 'human']);
+  const LEASE_PRIORITY = z.enum(['cwd', 'side']);
+
+  mcp.registerTool(
+    'vault_lease_list',
+    {
+      description:
+        'List repo leases — who may edit which repo working tree directly (agent-coordination protocol). Returns flat {count, items}, unpaginated (a handful of rows by design); each item {resource, holder, holder_kind, priority, attestation, claimed_at, renewed_at, expires_at}. Pass resource to filter to one lease — same shape, and empty items means "not held" (an answer, not an error). expires_at null = human holder (never expires). Expired leases are lazily dropped on every read, so what you see is current.',
+      inputSchema: {
+        resource: z.string().min(1).optional().describe('e.g. "repo:github.com/uhop/deep6"')
+      }
+    },
+    wrap(async ({resource}) => client.getJson('/leases', {resource}))
+  );
+
+  mcp.registerTool(
+    'vault_lease_events',
+    {
+      description:
+        'The lease event transcript, newest first: flat {count, items}, each {seq, at, resource, event, holder, detail} with event one of claimed | renewed | preempted | expired | released | transferred. detail is a JSON string carrying prior holder on preempt, attestation on claim, force flag on release. Diagnostic projection — cleared on server restart, so absence of history is not absence of activity.',
+      inputSchema: {
+        resource: z.string().min(1).optional(),
+        limit: z.number().int().min(1).max(1000).optional().default(100)
+      }
+    },
+    wrap(async ({resource, limit}) => client.getJson('/leases/events', {resource, limit}))
+  );
+
+  mcp.registerTool(
+    'vault_lease_claim',
+    {
+      description:
+        'Atomically claim (or renew — re-claiming a resource you already hold is a renew, safe to retry) a repo lease. 200 {status: claimed|renewed|preempted, lease}; 409 claimed_by_other with details.current when the holder wins. Preemption lattice: human > cwd agent > side agent — a cwd claim preempts an agent-held side lease, nothing preempts a human. Side claims from outside the repo require the target checkout to be CLEAN (client-side check, D23): pass attestation "clean at <sha>"; if the tree is dirty, do not claim — tell the operator and work in a worktree. Human holders pass kind: "human" and take no priority/ttl (never preempted, never expire). Default TTL 4h; renew on work bursts; verify the lease before mutating the working tree.',
+      inputSchema: {
+        resource: z.string().min(1).describe('e.g. "repo:github.com/uhop/deep6"'),
+        holder: z.string().min(1).describe('Unique holder id, e.g. "<host>/<session>"'),
+        kind: HOLDER_KIND.optional().default('agent'),
+        priority: LEASE_PRIORITY.optional().describe(
+          'cwd = session started in the repo; side otherwise (default)'
+        ),
+        attestation: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Side-claim clean-tree evidence, e.g. "clean at abc1234"'),
+        ttl_seconds: z.number().int().min(60).max(86400).optional()
+      }
+    },
+    wrap(async ({resource, holder, kind, priority, attestation, ttl_seconds}) =>
+      client.postJson('/leases/claim', {
+        resource,
+        holder,
+        ...(kind !== 'agent' ? {kind} : {}),
+        priority,
+        attestation,
+        ttl_seconds
+      })
+    )
+  );
+
+  mcp.registerTool(
+    'vault_lease_renew',
+    {
+      description:
+        'Renew a held lease (holder must match; 409 claimed_by_other with details.current otherwise, 404 lease_not_found when nothing holds the resource — after an expiry, re-claim instead). Returns {status: "ok", lease}.',
+      inputSchema: {
+        resource: z.string().min(1),
+        holder: z.string().min(1),
+        ttl_seconds: z.number().int().min(60).max(86400).optional()
+      }
+    },
+    wrap(async ({resource, holder, ttl_seconds}) =>
+      client.postJson('/leases/renew', {resource, holder, ttl_seconds})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_lease_release',
+    {
+      description:
+        'Release a lease. Holder must match unless force: true — the operator\'s hatch, which releases regardless and logs who it was forced from. Returns {status: "released", resource}; 404 when nothing is held.',
+      inputSchema: {
+        resource: z.string().min(1),
+        holder: z.string().min(1),
+        force: z.boolean().optional()
+      }
+    },
+    wrap(async ({resource, holder, force}) =>
+      client.postJson('/leases/release', {resource, holder, force})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_lease_transfer',
+    {
+      description:
+        'Atomically reassign a held lease to to_holder (current holder only; no release-then-claim snipe window). Transfer to to_kind: "human" is the "please review and commit" case and drops priority/expiry. Returns {status: "ok", lease}.',
+      inputSchema: {
+        resource: z.string().min(1),
+        holder: z.string().min(1).describe('Current holder — must match'),
+        to_holder: z.string().min(1),
+        to_kind: HOLDER_KIND.optional().default('agent'),
+        to_priority: LEASE_PRIORITY.optional().describe('For agent recipients; default side'),
+        ttl_seconds: z.number().int().min(60).max(86400).optional()
+      }
+    },
+    wrap(async ({resource, holder, to_holder, to_kind, to_priority, ttl_seconds}) =>
+      client.postJson('/leases/transfer', {
+        resource,
+        holder,
+        to_holder,
+        ...(to_kind !== 'agent' ? {to_kind} : {}),
+        to_priority,
+        ttl_seconds
+      })
+    )
+  );
+
   // ── system ────────────────────────────────────────────────────────────────
   mcp.registerTool(
     'vault_status',

@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 47 MCP tools and 3
+traversal. The adapter exposes the server's REST API as 53 MCP tools and 3
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.
@@ -47,7 +47,7 @@ evidence of anything) and which of the three list shapes it uses:
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (47)
+## Tools (53)
 
 Search & list:
 
@@ -141,6 +141,17 @@ Queue-item slices (flat {count, items}):
   vault_queue_by_section, vault_queue_by_priority, vault_queue_by_project,
   vault_queue_project_archive; vault_queue_reindex rebuilds the derivative
   table after a multi-machine pull.
+
+Repo leases (agent coordination — who may edit which repo working tree; flat
+{count, items}, ephemeral: cleared on server restart):
+
+- vault_lease_list — current leases; ?resource filters to one, same shape.
+- vault_lease_claim — atomic claim/renew/preempt; 409 claimed_by_other with
+  the current lease. Precedence: human > cwd agent > side agent; side claims
+  attest a clean checkout ("clean at <sha>").
+- vault_lease_renew, vault_lease_release (force = operator hatch),
+  vault_lease_transfer — atomic handover, to_kind "human" for review/commit.
+- vault_lease_events — append-only transcript, newest first.
 
 System:
 
