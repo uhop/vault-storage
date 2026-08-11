@@ -4,6 +4,7 @@ import {maskCodeRegions} from '../../markdown/wikilinks.ts';
 import {blockedView, readyView} from '../../queue/ready.ts';
 import {QueueItemsRepository} from '../../queue/repo.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
+import {HandoffsRepository, type Handoff} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {computeLintReport, type LintReport} from './lint.ts';
 import {rejectUnknownParams} from '../query.ts';
@@ -121,6 +122,17 @@ export const resumeBriefHandler =
       const universe = queueRepo.listAll();
       const mine = universe.filter(row => row.project === project);
       const feedback = records.getByPath(`projects/${project}/feedback.md`);
+      // Read-only view of the handoff inbox (GET semantics — no lazy-expiry
+      // writes): a claimed-but-expired entry already counts as pending,
+      // because that is what the next mutating touch will make it.
+      const pendingHandoffs = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM handoffs
+            WHERE project = ?
+              AND (status IN ('open', 'returned')
+                   OR (status = 'claimed' AND claim_expires < ?))`
+        )
+        .get(project, new Date().toISOString()) as {n: number};
       projectBlock = {
         name: project,
         queue: {
@@ -129,6 +141,7 @@ export const resumeBriefHandler =
           ready: readyView(mine, universe).length,
           blocked: blockedView(mine, universe).length
         },
+        handoffs_pending: pendingHandoffs.n,
         feedback: feedback ? {updated: feedback.updated} : null
       };
     }
@@ -275,7 +288,32 @@ export const resumeBundleHandler =
         }
         files[name] = entry;
       }
-      projectBlock = {name: project, found, files};
+      // The handoff inbox — claiming a repo means inheriting it (design:
+      // agent-coordination § Losing the lead). `open` is what a would-be
+      // owner takes over; `returned` is rework waiting on its submitter.
+      // Bodies stay out (first line only) — a handoff body can be pages.
+      const inboxItem = (h: Handoff): Record<string, unknown> => ({
+        id: h.id,
+        to: h.to,
+        kind: h.kind,
+        status: h.status,
+        from: `${h.from.host}/${h.from.session}`,
+        created: h.created,
+        updated: h.updated,
+        ref: h.ref,
+        body_first_line: h.body.split('\n', 1)[0] ?? ''
+      });
+      const inbox = new HandoffsRepository(db, deps.vaultDataPath).list({project});
+      projectBlock = {
+        name: project,
+        found,
+        files,
+        handoffs: {
+          open: inbox.filter(h => h.status === 'open').map(inboxItem),
+          returned: inbox.filter(h => h.status === 'returned').map(inboxItem),
+          claimed: inbox.filter(h => h.status === 'claimed').length
+        }
+      };
     }
 
     const payload = {

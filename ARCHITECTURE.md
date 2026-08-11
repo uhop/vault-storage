@@ -62,6 +62,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`maintenance.ts`** — `POST /maintenance/*`: scans (duplicates, compaction, retention, upgrade signals), cleanups, embed-pending, incremental reindex, snapshots, raw inbox.
 - **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project) plus the dependency views (`/queue/ready`, `/queue/blocked`) over query-time `blocked-by:` resolution.
 - **`leases.ts`** — the repo-lease registry (agent coordination, D21/D23): list/events reads, atomic claim/renew/release/transfer with the human > cwd-agent > side-agent precedence lattice. Coordination state is ephemeral — cleared on every server start.
+- **`handoffs.ts`** — the handoff queue (agent coordination, leg 2): role-addressed work requests with an idempotent create, claim (lazy expiry), the D23 review-loop resolve (`done`/`rejected` archive into `projects/<project>/handoff-archive.md` and clear the spool entry; `returned` reopens for rework), resubmit, and append-only notes. Unlike leases, handoffs survive restarts: the spool is truth, the table an index (see `src/records/handoff-spool.ts`).
 - **`system.ts`**, **`lint.ts`** — status; integrity checks + enrichment-coverage block (see decisions D4/D5). `resume-bundle.ts` adds the one-shot `/vault resume` bundle (POST, embedded reindex) and its read-only brief tier (`GET /system/resume-brief`) for SessionStart-hook injection.
 - **`commit.ts`**, **`resolve.ts`**, **`static.ts`** — explicit git commit; wikilink resolution; UI file serving.
 
@@ -69,7 +70,7 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 
 ## Other modules
 
-- **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring; reservation machinery (`claims.ts` for suggestion batches, `leases.ts` for the repo-lease registry).
+- **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring; reservation machinery (`claims.ts` for suggestion batches, `leases.ts` for the repo-lease registry); the handoff queue (`handoffs.ts` composing the DB index with `handoff-spool.ts`, the file layer under root `handoff/<project>/<status>/<id>.md` — self-describing sidecars, status transitions as atomic renames, rebuild-by-scan on server start).
 - **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows (including `blocked-by:` refs); query-time blocker resolution + ready/blocked/cycle computation (`ready.ts`); watcher glue + full reindex.
 - **`src/maintenance/`** — the find-\* scans, lint cleanups, incremental reindex, run-all bundle, scan scheduler, search-before-write propose, raw-inbox classification, doc-vec backfill.
 - **`src/markdown/`** — YAML frontmatter parse/serialize; wikilink extraction with code-region masking.
@@ -82,7 +83,7 @@ Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to n
 
 - **`src/index.js`** — entry: env (`VAULT_API_URL`, `VAULT_API_TOKEN`), `McpServer` over stdio, tool + resource registration.
 - **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization, `If-Match` / `ETag` pass-through.
-- **`src/tools.js`** — 46 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums, at parity with the REST surface: reads, writes, lifecycle (`supersede`/`move`/`propose`), and `/maintenance/*`, so the `/vault ingest`, `sweep`, `learn` and `resume` workflows all run MCP-native. Writes split by blast radius: `vault_append` / `vault_replace` / `vault_patch_fm` change only what they name (atomic server-side ops), while `vault_write_file` / `vault_update_piece` replace a whole document and take an optional `expected_etag`.
+- **`src/tools.js`** — 61 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums, at parity with the REST surface: reads, writes, lifecycle (`supersede`/`move`/`propose`), `/maintenance/*`, and the coordination families (`vault_lease_*`, `vault_handoff_*`), so the `/vault ingest`, `sweep`, `learn` and `resume` workflows all run MCP-native. Writes split by blast radius: `vault_append` / `vault_replace` / `vault_patch_fm` change only what they name (atomic server-side ops), while `vault_write_file` / `vault_update_piece` replace a whole document and take an optional `expected_etag`.
 - **`src/resources.js`** — 3 read-only resources: `vault://status`, `vault://suggestions/pending`, `vault://taxonomy/tags`.
 
 ## static/ UI

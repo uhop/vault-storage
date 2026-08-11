@@ -209,6 +209,9 @@
       </form>
       <div id="leases"><div class="empty">loading…</div></div>
 
+      <h2>Open handoffs</h2>
+      <div id="handoffs"><div class="empty">loading…</div></div>
+
       <h2>Recent events</h2>
       <ul class="events" id="events"></ul>
     </main>
@@ -298,6 +301,37 @@
         }
       };
 
+      const renderHandoffs = items => {
+        const inFlight = items.filter(h => ['open', 'claimed', 'returned'].includes(h.status));
+        if (inFlight.length === 0) {
+          $('#handoffs').innerHTML =
+            `<div class="empty">No handoffs in flight. Resolved ones live in each project's handoff-archive.md.</div>`;
+          return;
+        }
+        const rows = inFlight
+          .map(
+            h => `
+          <tr title="${esc(h.body.split('\n', 1)[0])}">
+            <td><code title="${esc(h.id)}">${esc(h.id.slice(-8))}</code></td>
+            <td><code>${esc(h.to)}</code></td>
+            <td>${esc(h.kind)}</td>
+            <td>${esc(h.status)}${h.status === 'claimed' ? ` by ${esc(h.claimed_by)}` : ''}</td>
+            <td>${esc(h.from.host)}/${esc(h.from.session)}</td>
+            <td>${h.ref ? `<code>${esc(h.ref.type)}: ${esc(h.ref.value)}</code>` : '—'}</td>
+            <td title="${esc(h.updated)}">${fmtSince(h.updated)}</td>
+            <td>${h.notes.length > 0 ? h.notes.length : '—'}</td>
+          </tr>`
+          )
+          .join('');
+        $('#handoffs').innerHTML = `
+          <table>
+            <thead><tr>
+              <th>id</th><th>to</th><th>kind</th><th>status</th><th>from</th><th>ref</th><th>touched</th><th>notes</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      };
+
       const renderEvents = items => {
         $('#events').innerHTML =
           items.length === 0
@@ -306,9 +340,9 @@
                 .map(
                   e =>
                     `<li>${esc(e.at.replace('T', ' ').slice(0, 19))} — <b>${esc(e.event)}</b>
-                     <code>${esc(e.resource)}</code>${e.holder ? ` by ${esc(e.holder)}` : ''}${
-                       e.detail ? ` <code>${esc(e.detail)}</code>` : ''
-                     }</li>`
+                     <code>${esc(e.resource ?? e.handoff_id)}</code>${
+                       (e.holder ?? e.actor) ? ` by ${esc(e.holder ?? e.actor)}` : ''
+                     }${e.detail ? ` <code>${esc(e.detail)}</code>` : ''}</li>`
                 )
                 .join('');
       };
@@ -324,12 +358,19 @@
       const refresh = async () => {
         showStatus('');
         try {
-          const [leases, events] = await Promise.all([
+          const [leases, handoffs, leaseEvents, handoffEvents] = await Promise.all([
             apiJson('/leases'),
-            apiJson('/leases/events?limit=50')
+            apiJson('/handoffs'),
+            apiJson('/leases/events?limit=50'),
+            apiJson('/handoffs/events?limit=50')
           ]);
           renderLeases(leases.items);
-          renderEvents(events.items);
+          renderHandoffs(handoffs.items);
+          renderEvents(
+            [...leaseEvents.items, ...handoffEvents.items]
+              .sort((a, b) => (a.at < b.at ? 1 : -1))
+              .slice(0, 50)
+          );
         } catch (e) {
           handleErr(e);
         }

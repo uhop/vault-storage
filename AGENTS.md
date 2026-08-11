@@ -31,7 +31,7 @@ Start with `ARCHITECTURE.md` for the full module map. The coarse shape:
 - **`src/importer/`** — file → record pipeline: frontmatter parse, tag import, wikilink classification, typed-edge build, suggestion filing.
 - **`src/embeddings/`** — BGE (ONNX, local CPU) and fake embedders behind one interface; paragraph-overlapped chunker; embed pass.
 - **`src/db/`** — `node:sqlite` connection (+ `sqlite-vec` extension), numbered schema migrations, vector repos.
-- **`src/records/`**, **`src/queue/`** — record/edge repositories, reservation machinery (suggestion claims, repo leases), and the queue-items derivative synced from `queue.md` files.
+- **`src/records/`**, **`src/queue/`** — record/edge repositories, reservation machinery (suggestion claims, repo leases), the handoff queue (`handoffs.ts` + its spool file layer `handoff-spool.ts` — files under root `handoff/` are truth, the table is rebuilt by scan on server start), and the queue-items derivative synced from `queue.md` files.
 - **`src/maintenance/`** — scans (duplicates, compaction, retention, upgrade signals), lint cleanup, incremental reindex, raw inbox.
 - **`src/migration/`** — one-time Obsidian-vault → vault-storage tree transform (atomization, tag canonicalization, frontmatter backfill).
 - **`mcp/`** — plain-JS MCP adapter over the REST API (own package, tests, published to npm as `@uhop/vault-storage-mcp`).

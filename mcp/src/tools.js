@@ -834,6 +834,148 @@ export const registerTools = (mcp, client) => {
     )
   );
 
+  // ── handoffs (agent coordination, leg 2) ──────────────────────────────────
+  const HANDOFF_KIND = z.enum(['review-branch', 'apply-patch', 'answer-question', 'run-check']);
+  const HANDOFF_STATUS = z.enum(['open', 'claimed', 'done', 'rejected', 'returned']);
+  // `spool` is reserved for the patch-transport leg; the API rejects it today.
+  const HANDOFF_REF_TYPE = z.enum(['worktree', 'branch']);
+  const HANDOFF_REF = z.object({type: HANDOFF_REF_TYPE, value: z.string().min(1)});
+  const HANDOFF_FROM = z.object({
+    host: z.string().min(1),
+    session: z.string().min(1),
+    repo: z.string().min(1).optional().describe('Submitting repo, provenance only')
+  });
+  const HANDOFF_SHAPE =
+    '{id, idempotency_key, project, to, kind, ref: {type, value} | null, from: {host, session, repo}, body, status, created, updated, claimed_by, claimed_at, claim_expires, result, notes: [{author, at, text}]}';
+
+  mcp.registerTool(
+    'vault_handoff_list',
+    {
+      description: `List handoffs — role-addressed cross-agent work requests (agent-coordination protocol). Returns flat {count, items}, unpaginated (a handful of in-flight items by design; resolved handoffs archive into projects/<project>/handoff-archive.md and leave this list on the next server start). Each item ${HANDOFF_SHAPE}. Filter by to (the role, e.g. "repo:github.com/uhop/deep6"), project, status, kind — the repo's lease holder reads status=open as its inbox; a submitter watches status=returned for rework. Expired claims lazily revert to open on every read.`,
+      inputSchema: {
+        to: z.string().min(1).optional().describe('Role filter, e.g. "repo:github.com/uhop/deep6"'),
+        project: z.string().min(1).optional().describe('Vault project name, e.g. "deep6"'),
+        status: HANDOFF_STATUS.optional(),
+        kind: HANDOFF_KIND.optional()
+      }
+    },
+    wrap(async ({to, project, status, kind}) =>
+      client.getJson('/handoffs', {to, project, status, kind})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_handoff_get',
+    {
+      description: `Read one handoff by id — the poller's endpoint: watch status flip to done | rejected | returned. Returns ${HANDOFF_SHAPE}. 404 handoff_not_found only when the record is genuinely gone (resolved handoffs stay readable until the next server restart; after that their record is the project's handoff-archive.md).`,
+      inputSchema: {id: z.string().min(1)}
+    },
+    wrap(async ({id}) => client.getJson(`/handoffs/${encodeURIComponent(id)}`))
+  );
+
+  mcp.registerTool(
+    'vault_handoff_events',
+    {
+      description:
+        'The handoff event transcript, newest first: flat {count, items}, each {seq, at, handoff_id, event, actor, detail} with event one of created | claimed | claim_expired | done | rejected | returned | resubmitted | note. Diagnostic projection — cleared on server restart, so absence of history is not absence of activity (the spool sidecars carry the durable record).',
+      inputSchema: {
+        id: z.string().min(1).optional().describe('Filter to one handoff'),
+        limit: z.number().int().min(1).max(1000).optional().default(100)
+      }
+    },
+    wrap(async ({id, limit}) => client.getJson('/handoffs/events', {id, limit}))
+  );
+
+  mcp.registerTool(
+    'vault_handoff_create',
+    {
+      description: `File a work request addressed to a role, never a session — whoever holds (or later claims) the target repo's lease inherits it. Durable: the spool sidecar handoff/<project>/open/<id>.md survives server restarts. idempotency_key is mandatory — a failed create is ambiguous, and a retry with the same key returns the original ({status: "existing"}) instead of filing twice. Returns {status: "created" | "existing", handoff: ${HANDOFF_SHAPE}}. The submitter keeps its branch/worktree until the handoff resolves — the ref points at it; body says why and what to check.`,
+      inputSchema: {
+        idempotency_key: z.string().min(1).describe('Caller-chosen; retry-safe create'),
+        project: z
+          .string()
+          .min(1)
+          .describe('Vault project name — the spool directory, e.g. "deep6"'),
+        to: z.string().min(1).describe('The role, e.g. "repo:github.com/uhop/deep6"'),
+        kind: HANDOFF_KIND,
+        ref: HANDOFF_REF.optional().describe('Where the work lives; omit for a pure question'),
+        from: HANDOFF_FROM.describe('Provenance only — nothing may key off it'),
+        body: z.string().min(1).describe('Why, and what to check')
+      }
+    },
+    wrap(async ({idempotency_key, project, to, kind, ref, from, body}) =>
+      client.postJson('/handoffs', {idempotency_key, project, to, kind, ref, from, body})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_handoff_claim',
+    {
+      description:
+        'Claim an open handoff for review (open → claimed; re-claim by the same holder renews the TTL). Returns {status: "claimed" | "renewed", handoff}; 404 handoff_not_found; 409 claimed_by_other or not_open, both with details.current. Claims expire lazily (default TTL 30 min) — a dead claimant never wedges the work; resolve before the TTL or renew.',
+      inputSchema: {
+        id: z.string().min(1),
+        holder: z.string().min(1).describe('Unique holder id, e.g. "<host>/<session>"'),
+        ttl_seconds: z.number().int().min(60).max(86400).optional()
+      }
+    },
+    wrap(async ({id, holder, ttl_seconds}) =>
+      client.postJson('/handoffs/claim', {id, holder, ttl_seconds})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_handoff_resolve',
+    {
+      description:
+        'The claimant\'s verdict on a claimed handoff (D23 review loop). resolution: "done" (merged — own any conflicts) | "rejected" | "returned" (rework: reopens the same handoff for its submitter; note is mandatory — it is the critique). done/rejected archive the record into projects/<project>/handoff-archive.md and clear the spool entry; the response then carries archived_to. Returns {status: "ok", handoff, archived_to?}; 404 handoff_not_found; 409 not_claimed or claimed_by_other with details.current.',
+      inputSchema: {
+        id: z.string().min(1),
+        holder: z.string().min(1).describe('Must match the claimant'),
+        resolution: z.enum(['done', 'rejected', 'returned']),
+        result: z
+          .record(z.unknown())
+          .optional()
+          .describe('Machine-readable outcome, done/rejected only'),
+        note: z.string().min(1).optional().describe('Appended to notes; mandatory for returned')
+      }
+    },
+    wrap(async ({id, holder, resolution, result, note}) =>
+      client.postJson('/handoffs/resolve', {id, holder, resolution, result, note})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_handoff_resubmit',
+    {
+      description:
+        'Resubmit a returned handoff after rework (returned → open) — the same record and id, so the review loop converges instead of forking. Optionally update ref (the reworked branch/worktree), body, and from. Returns {status: "ok", handoff}; 404 handoff_not_found; 409 not_returned with details.current.',
+      inputSchema: {
+        id: z.string().min(1),
+        ref: HANDOFF_REF.optional(),
+        from: HANDOFF_FROM.optional(),
+        body: z.string().min(1).optional()
+      }
+    },
+    wrap(async ({id, ref, from, body}) =>
+      client.postJson('/handoffs/resubmit', {id, ref, from, body})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_handoff_note',
+    {
+      description:
+        'Append a note to an in-flight handoff — append-only discussion attached to the work, so "why did we do it this way?" is answered next to the artifact. Returns {status: "ok", handoff} with the grown notes array ([{author, at, text}]); 404 handoff_not_found; 409 handoff_resolved once done/rejected (the archive holds the record then).',
+      inputSchema: {
+        id: z.string().min(1),
+        author: z.string().min(1).describe('e.g. "<host>/<session>" or a human name'),
+        text: z.string().min(1)
+      }
+    },
+    wrap(async ({id, author, text}) => client.postJson('/handoffs/note', {id, author, text}))
+  );
+
   // ── system ────────────────────────────────────────────────────────────────
   mcp.registerTool(
     'vault_status',
@@ -859,7 +1001,7 @@ export const registerTools = (mcp, client) => {
     'vault_resume_bundle',
     {
       description:
-        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes as summary + body_bytes, plus full bodies for the files named in project_bodies)}. Replaces the separate reindex/lint/summary/queue/log reads. The feedback body is included by default only while the whole bundle fits the server’s 32 KiB budget — past it feedback instead carries body_omitted: {reason: "bundle_budget", budget_bytes} plus headings (a fence-masked section index) so the rules stay discoverable; fetch the body with vault_read_file, or force it here by naming feedback in project_bodies (explicit asks bypass the budget). Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those.',
+        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes as summary + body_bytes, plus full bodies for the files named in project_bodies, plus handoffs — the coordination inbox: {open: [...], returned: [...], claimed: n}, items as {id, to, kind, status, from, created, updated, ref, body_first_line}; claiming a repo means inheriting its open list, and returned means your own submission awaits rework — read the full body with vault_handoff_get)}. Replaces the separate reindex/lint/summary/queue/log reads. The feedback body is included by default only while the whole bundle fits the server’s 32 KiB budget — past it feedback instead carries body_omitted: {reason: "bundle_budget", budget_bytes} plus headings (a fence-masked section index) so the rules stay discoverable; fetch the body with vault_read_file, or force it here by naming feedback in project_bodies (explicit asks bypass the budget). Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those.',
       inputSchema: {
         project: z
           .string()

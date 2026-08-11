@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 53 MCP tools and 3
+traversal. The adapter exposes the server's REST API as 61 MCP tools and 3
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.
@@ -47,7 +47,7 @@ evidence of anything) and which of the three list shapes it uses:
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (53)
+## Tools (61)
 
 Search & list:
 
@@ -152,6 +152,25 @@ Repo leases (agent coordination — who may edit which repo working tree; flat
 - vault_lease_renew, vault_lease_release (force = operator hatch),
   vault_lease_transfer — atomic handover, to_kind "human" for review/commit.
 - vault_lease_events — append-only transcript, newest first.
+
+Handoffs (agent coordination — role-addressed cross-agent work requests;
+flat {count, items}; durable in the server-side spool, rebuilt by scan on
+restart; resolved ones archive into projects/<project>/handoff-archive.md):
+
+- vault_handoff_create — idempotency_key mandatory; a retry returns the
+  original ({status: "existing"}). Addressed to a role (to:
+  "repo:<normalized-remote-url>"), never a session; from is provenance only.
+- vault_handoff_list — filters to/project/status/kind; the lease holder's
+  inbox is status=open, a submitter's rework watch is status=returned.
+- vault_handoff_get — the poller's read; watch status flip to
+  done | rejected | returned.
+- vault_handoff_claim — open → claimed; lazy claim expiry (default 30 min).
+- vault_handoff_resolve — done | rejected (archives + clears the spool,
+  returns archived_to) | returned (mandatory critique note; reopens the same
+  record).
+- vault_handoff_resubmit — returned → open after rework, same id.
+- vault_handoff_note — append-only discussion; refused once resolved.
+- vault_handoff_events — transcript, newest first (cleared on restart).
 
 System:
 

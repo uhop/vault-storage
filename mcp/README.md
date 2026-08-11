@@ -85,11 +85,19 @@ Fifty-three tools mapping to the REST surface, grouped by purpose:
   `vault_lease_claim` (atomic; precedence human > cwd agent > side agent; side
   claims attest a clean checkout), `vault_lease_renew`, `vault_lease_release`
   (`force` = operator hatch), `vault_lease_transfer` (atomic handover)
+- **Handoffs** (agent coordination) — `vault_handoff_create` (idempotency key
+  mandatory; role-addressed, never a session), `vault_handoff_list` (the
+  lease holder's inbox is `status=open`), `vault_handoff_get` (the poller's
+  read), `vault_handoff_claim` (lazy claim expiry), `vault_handoff_resolve`
+  (`done`/`rejected` archive into the project's `handoff-archive.md`;
+  `returned` reopens the same record with a mandatory critique note),
+  `vault_handoff_resubmit`, `vault_handoff_note`, `vault_handoff_events`
 - **System** — `vault_status`, `vault_lint` (integrity checks plus the
   `coverage.enrichment` block and its `unenriched_records` worklist),
   `vault_resume_bundle` (one-shot session-start bundle: reindex + lint +
-  suggestions + workflow + log summaries + project notes; `project_bodies`
-  opts named project files into full-body delivery)
+  suggestions + workflow + log summaries + project notes + the project's
+  handoff inbox; `project_bodies` opts named project files into full-body
+  delivery)
 
 Tool input schemas inline closed-enum lists (record types, statuses, edge
 types, suggestion kinds) so the agent learns the canonical surface at

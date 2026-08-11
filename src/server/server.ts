@@ -90,7 +90,20 @@ import {
   renewLeaseHandler,
   transferLeaseHandler
 } from './handlers/leases.ts';
+import {
+  claimHandoffHandler,
+  completeHandoffArchival,
+  createHandoffHandler,
+  getHandoffHandler,
+  handoffEventsHandler,
+  listHandoffsHandler,
+  noteHandoffHandler,
+  resolveHandoffHandler,
+  resubmitHandoffHandler
+} from './handlers/handoffs.ts';
 import {EdgesRepository} from '../records/edges.ts';
+import {ensureSpool} from '../records/handoff-spool.ts';
+import {HandoffsRepository} from '../records/handoffs.ts';
 import {LeasesRepository} from '../records/leases.ts';
 import {RecordsRepository} from '../records/repository.ts';
 
@@ -286,6 +299,20 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/leases/release', releaseLeaseHandler({db: opts.db}));
   router.post('/leases/transfer', transferLeaseHandler({db: opts.db}));
 
+  // Handoff queue (agent-coordination, leg 2): role-addressed work requests
+  // whose truth is the spool, with done/rejected archived into vault-data.
+  // `/handoffs/events` registered before `/handoffs/{id}` — registration
+  // order is precedence in this router.
+  const handoffDeps = {db: opts.db, records, vaultDataPath: opts.env.vaultDataPath};
+  router.get('/handoffs', listHandoffsHandler(handoffDeps));
+  router.get('/handoffs/events', handoffEventsHandler(handoffDeps));
+  router.get('/handoffs/{id}', getHandoffHandler(handoffDeps));
+  router.post('/handoffs', createHandoffHandler(handoffDeps));
+  router.post('/handoffs/claim', claimHandoffHandler(handoffDeps));
+  router.post('/handoffs/resolve', resolveHandoffHandler(handoffDeps));
+  router.post('/handoffs/resubmit', resubmitHandoffHandler(handoffDeps));
+  router.post('/handoffs/note', noteHandoffHandler(handoffDeps));
+
   if (opts.env.uiStaticPath) {
     const uiHandler = staticHandler({rootDir: opts.env.uiStaticPath, indexFile: 'index.html'});
     router.get('/ui', uiHandler);
@@ -386,6 +413,31 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
   // durability lives in the filesystem; leases die with the process and are
   // re-claimed in a fair race.
   new LeasesRepository(opts.db).clearAll();
+  // Handoffs get the same clean slate, then the index is rebuilt from the
+  // spool — files are truth. Entries caught between resolve and archive by a
+  // crash complete their archival here; the append is idempotent by marker.
+  ensureSpool(opts.env.vaultDataPath);
+  const handoffsRepo = new HandoffsRepository(opts.db, opts.env.vaultDataPath);
+  const rebuilt = handoffsRepo.rebuild();
+  if (rebuilt.restored > 0 || rebuilt.skipped.length > 0) {
+    process.stderr.write(
+      `handoffs: ${rebuilt.restored} restored from spool` +
+        (rebuilt.reverted > 0 ? `, ${rebuilt.reverted} expired claims reverted` : '') +
+        (rebuilt.skipped.length > 0 ? `, skipped: ${rebuilt.skipped.join('; ')}` : '') +
+        '\n'
+    );
+  }
+  if (rebuilt.archivalPending.length > 0) {
+    const archivalDeps = {
+      db: opts.db,
+      records: new RecordsRepository(opts.db),
+      vaultDataPath: opts.env.vaultDataPath
+    };
+    for (const pending of rebuilt.archivalPending) {
+      const handoff = handoffsRepo.get(pending.id);
+      if (handoff) completeHandoffArchival(archivalDeps, handoffsRepo, handoff);
+    }
+  }
   const router = buildRouter(opts);
   const server = createServer(handleRequest(router, opts.env));
   // The DB is synchronous, so heavy handlers block the event loop and every

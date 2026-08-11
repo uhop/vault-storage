@@ -86,7 +86,15 @@ const REQUIRED_MENTIONS = {
   vault_lease_events: ['seq', 'event', 'detail', 'preempted', 'transferred'],
   vault_lease_claim: ['claimed_by_other', 'preempted', 'renewed', 'attestation'],
   vault_lease_release: ['force', 'released'],
-  vault_lease_transfer: ['to_holder', 'lease']
+  vault_lease_transfer: ['to_holder', 'lease'],
+  vault_handoff_list: ['count', 'items', 'idempotency_key', 'claim_expires', 'notes', 'result'],
+  vault_handoff_get: ['handoff_not_found', 'status', 'returned'],
+  vault_handoff_events: ['seq', 'handoff_id', 'actor', 'claim_expired', 'resubmitted'],
+  vault_handoff_create: ['idempotency_key', 'existing', 'handoff/', 'ref', 'from'],
+  vault_handoff_claim: ['claimed_by_other', 'not_open', 'renewed', 'TTL'],
+  vault_handoff_resolve: ['returned', 'archived_to', 'not_claimed', 'note'],
+  vault_handoff_resubmit: ['not_returned', 'ref', 'same record'],
+  vault_handoff_note: ['handoff_resolved', 'notes', 'author']
 };
 
 test('every documented response field appears in its tool description', t => {
