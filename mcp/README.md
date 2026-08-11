@@ -121,11 +121,24 @@ payload `{error, code, status, details}`. Common codes:
   `details.current_etag` is what to re-read and retry against
 - `empty_body` / `null_body` — the write would leave the document with no
   content; use `vault_delete_file` to remove one
+- `claimed_by_other` — the suggestion or repo lease is held by another
+  holder (`details.current` carries the current lease on `vault_lease_*`)
+- `lease_not_found` — renew/release/transfer on a resource nothing holds;
+  after an expiry, re-claim instead
 - `network` — server unreachable
 - `bad_request`, `validation_failed`, `internal`
 
 ## Release notes
 
+- 0.4.0 — repo-lease tools for agent coordination (53 tools):
+  `vault_lease_list` / `vault_lease_events` / `vault_lease_claim` /
+  `vault_lease_renew` / `vault_lease_release` / `vault_lease_transfer` —
+  atomic claim with the human > cwd-agent > side-agent precedence lattice,
+  clean-checkout attestation on side claims, operator force-release, atomic
+  transfer; `vault_resolve_suggestions_batch` accepts the `basis-for`
+  declaration alias on `edge_type` accepts (stored as `derived-from` with the
+  edge flipped). Requires vault-storage ≥ 2026-08-10 for the `/leases`
+  endpoints; every other tool is unchanged against older servers.
 - 0.3.1 — `vault_context_pack` description corrected to the server's revised
   graph shape: the separate `backlinks` array is gone (inbound neighborhood
   entries are the backlinks; `inbound_total` carries the degree), the whole
