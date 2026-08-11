@@ -70,6 +70,19 @@ export const EDGE_TYPES = [
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
+/**
+ * Pre-canonicalization aliases for *declared* edge types — FM `edges:` map
+ * values and `edge_type` suggestion accepts. Notation only, never stored:
+ * each normalizes to a canonical type with the edge direction flipped, per
+ * edge-taxonomy's ruling that inverse relations are a direction, not a
+ * second type. `basis-for` declared in A about B lands as B → derived-from → A
+ * (the "generalized / promoted to [[topic]]" idiom, where the origin note
+ * records where its material went).
+ */
+export const EDGE_TYPE_ALIASES: Readonly<Record<string, {type: EdgeType; inverse: true}>> = {
+  'basis-for': {type: 'derived-from', inverse: true}
+};
+
 export interface VaultRecord {
   recordId: string;
   filePath: string;

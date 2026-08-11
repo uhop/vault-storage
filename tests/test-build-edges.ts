@@ -551,6 +551,36 @@ test('frontmatter `edges:` overrides default-cites and skips suggestion-filing',
   }
 });
 
+test('FM `edges:` alias basis-for overrides a default-cites link', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'a.md',
+      ['---', 'title: A', 'edges:', '  b: basis-for', '---', 'A mentions [[b]] vaguely.', ''].join(
+        '\n'
+      )
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+
+    const result = importVault(fx.db, fx.root);
+    t.equal(result.edges.fmOverridesApplied, 1, 'alias override applied');
+    t.equal(result.edges.suggestionsFiled, 0, 'reviewed — no suggestion filed');
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const a = records.getByPath('a.md');
+    const b = records.getByPath('b.md');
+
+    const flipped = edges.listOutbound(b!.recordId).find(e => e.toId === a!.recordId);
+    t.equal(flipped?.type, 'derived-from', 'edge stored target→source as derived-from');
+    const direct = edges.listOutbound(a!.recordId).find(e => e.toId === b!.recordId);
+    t.equal(direct, undefined, 'no source→target edge remains');
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('FM `edges:` with explicit cites prevents suggestion-filing for that pair', async t => {
   const fx = setup();
   try {

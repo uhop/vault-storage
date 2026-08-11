@@ -63,7 +63,8 @@ const PRE_PATTERNS: Pattern[] = [
   // Forward forms: the target is derived from the source → flip, exactly as
   // the passive "superseded by" rows above do. Without these a note that
   // records where its own material went ("Generalized to [[X]]") files a bare
-  // cites, and the relation is only recoverable from the other end.
+  // cites, and the relation is only recoverable from the other end. Verb set
+  // per the 2026-08-09 corpus scan (51 links spread over a dozen verbs).
   {type: 'derived-from', inverse: true, re: /\bgeneraliz(?:ed|es|ing)\s+(?:in)?to\s+$/i},
   {
     type: 'derived-from',
@@ -72,6 +73,12 @@ const PRE_PATTERNS: Pattern[] = [
   },
   {type: 'derived-from', inverse: true, re: /\b(?:feeds|fed)\s+into\s+$/i},
   {type: 'derived-from', inverse: true, re: /\bwritten up (?:in|as)\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\bpromot(?:ed|es|ing)\s+to\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\bcaptured\s+as\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\bextracted\s+(?:to|as)\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\bdistill(?:ed|s)?\s+(?:in)?to\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\blift(?:ed|s)?\s+into\s+$/i},
+  {type: 'derived-from', inverse: true, re: /\bspun\s+(?:out|off)\s+(?:as|into|to)\s+$/i},
 
   {type: 'caused-by', re: /\bcaused by\s+$/i},
   {type: 'caused-by', re: /\b(?:triggered|provoked) by\s+$/i},

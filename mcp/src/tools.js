@@ -37,6 +37,11 @@ const EDGE_TYPE = z.enum([
   'related-to'
 ]);
 
+// EDGE_TYPE plus declaration-only aliases, never stored: `basis-for` lands as
+// derived-from with the edge direction flipped. For edge_type accepts; graph
+// filters stay on EDGE_TYPE (aliases never appear in stored edges).
+const EDGE_TYPE_DECLARED = z.enum([...EDGE_TYPE.options, 'basis-for']);
+
 const SUGGESTION_KIND = z.enum([
   'edge_type',
   'duplicate',
@@ -656,7 +661,7 @@ export const registerTools = (mcp, client) => {
     'vault_resolve_suggestions_batch',
     {
       description:
-        'Resolve up to 100 suggestions in one call, with mechanical side effects applied server-side: a tag_suggestion accept realizes the tag on the record FM (settles as tag-realized when the tag is in the taxonomy), a reject strips the candidate from agent.tags_suggested; an edge_type accept requires edge_type (a typed value — "cites is correct" is a reject) and pins the FM edges: override (settles as fm-override). Judgment-bearing kinds (new_tag minting, duplicate merges) resolve status-only. resolved_by doubles as the claim holder for claimed items. Always 200: per-item failures land in results[].error (already_resolved, claimed_by_other, …) and never abort the batch. Returns {accepted, rejected, failed, results} — check `failed` and the per-item results before treating a 200 as a clean drain; a successful item is {id, status, resolved_by, side_effect?}, a failed one {id, error: {code, message}}.',
+        'Resolve up to 100 suggestions in one call, with mechanical side effects applied server-side: a tag_suggestion accept realizes the tag on the record FM (settles as tag-realized when the tag is in the taxonomy), a reject strips the candidate from agent.tags_suggested; an edge_type accept requires edge_type (a typed value — "cites is correct" is a reject; the alias basis-for declares forward derivation and lands as derived-from with the edge flipped) and pins the FM edges: override (settles as fm-override). Judgment-bearing kinds (new_tag minting, duplicate merges) resolve status-only. resolved_by doubles as the claim holder for claimed items. Always 200: per-item failures land in results[].error (already_resolved, claimed_by_other, …) and never abort the batch. Returns {accepted, rejected, failed, results} — check `failed` and the per-item results before treating a 200 as a clean drain; a successful item is {id, status, resolved_by, side_effect?}, a failed one {id, error: {code, message}}.',
       inputSchema: {
         resolved_by: z.string().optional(),
         items: z
@@ -664,8 +669,8 @@ export const registerTools = (mcp, client) => {
             z.object({
               id: z.string().min(1),
               decision: z.enum(['accept', 'reject']),
-              edge_type: EDGE_TYPE.optional().describe(
-                'Required for edge_type accepts; must not be "cites"'
+              edge_type: EDGE_TYPE_DECLARED.optional().describe(
+                'Required for edge_type accepts; must not be "cites". `basis-for` = forward derivation, stored flipped as derived-from'
               )
             })
           )

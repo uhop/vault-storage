@@ -5,12 +5,16 @@ import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
-import {EDGE_TYPES} from '../records/types.ts';
+import {EDGE_TYPE_ALIASES, EDGE_TYPES} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
 import {SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
 
-const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
+/** FM `edges:` value vocabulary: canonical types + direction-flipping aliases. */
+const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set([
+  ...EDGE_TYPES,
+  ...Object.keys(EDGE_TYPE_ALIASES)
+]);
 
 /**
  * Record types where a default-`cites` body wikilink is overwhelmingly
@@ -169,16 +173,20 @@ const forEachDeclaredEdge = (
   const {body, fmData} = src.read(record);
   const related = extractRelatedFromFrontmatter(fmData);
 
-  // FM `edges:` map: target string → edge type. The user's per-record
-  // override for the body-wikilink classifier. Resolve target strings to
-  // record_ids so build-edges can match by toId regardless of which slug
-  // form ([[foo]] vs [[topics/foo]]) the body uses.
-  const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, EDGE_TYPE_SET);
-  const fmOverrides = new Map<string, EdgeType>(); // toId → type
-  for (const [target, type] of fmEdgesRaw) {
+  // FM `edges:` map: target string → declared edge type. The user's
+  // per-record override for the body-wikilink classifier. Resolve target
+  // strings to record_ids so build-edges can match by toId regardless of
+  // which slug form ([[foo]] vs [[topics/foo]]) the body uses. Aliases
+  // (`basis-for`) normalize here to canonical type + flipped direction.
+  const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, DECLARED_EDGE_TYPE_SET);
+  const fmOverrides = new Map<string, {type: EdgeType; inverse: boolean}>(); // toId → normalized
+  for (const [target, declared] of fmEdgesRaw) {
     const resolved = resolver.resolve(target);
     if (resolved && resolved !== record.recordId) {
-      fmOverrides.set(resolved, type as EdgeType);
+      fmOverrides.set(
+        resolved,
+        EDGE_TYPE_ALIASES[declared] ?? {type: declared as EdgeType, inverse: false}
+      );
     }
   }
 
@@ -206,15 +214,17 @@ const forEachDeclaredEdge = (
       );
       continue;
     }
-    let finalType = c.type;
+    let finalType: EdgeType = c.type;
+    let finalInverse = c.inverse === true;
     const override = fmOverrides.get(resolved);
     if (c.type === 'cites' && override !== undefined) {
-      finalType = override;
+      finalType = override.type;
+      finalInverse = override.inverse;
       summary.fmOverridesApplied++;
       hooks.onOverride?.(resolved);
     }
     adjusted.push(
-      c.inverse
+      finalInverse
         ? {target: c.target, type: finalType, inverse: true}
         : {target: c.target, type: finalType}
     );

@@ -402,3 +402,41 @@ test('resolve-batch: edge_type accept pins the FM override', async t => {
     await stopCtx(ctx);
   }
 });
+
+test('resolve-batch: edge_type accept with basis-for stores a flipped derived-from edge', async t => {
+  const ctx = await startCtx();
+  try {
+    const {url, db, root} = ctx;
+    const alpha = recordId(db, 'topics/alpha.md');
+    const beta = recordId(db, 'topics/beta.md');
+    const edgeRow = db
+      .prepare(
+        `SELECT id FROM suggestions
+          WHERE kind = 'edge_type' AND status = 'pending' AND subject_id = ?`
+      )
+      .get(alpha) as {id: string} | undefined;
+    t.ok(edgeRow, 'import filed the default-cites review suggestion');
+
+    const res = await api(`${url}/suggestions/resolve-batch`, 'POST', {
+      resolved_by: 'batch-edges',
+      items: [{id: edgeRow!.id, decision: 'accept', edge_type: 'basis-for'}]
+    });
+    t.equal(res.body.accepted, 1);
+    t.equal(res.body.results[0].side_effect.override_key, 'topics/beta');
+    t.equal(res.body.results[0].resolved_by, 'fm-override');
+
+    // FM keeps the declared alias; the stored edge is canonical and flipped.
+    const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+    t.ok(/topics\/beta: basis-for/.test(onDisk), 'FM records the declared alias');
+    const flipped = db
+      .prepare('SELECT type FROM edges WHERE from_id = ? AND to_id = ?')
+      .get(beta, alpha) as {type: string} | undefined;
+    t.equal(flipped?.type, 'derived-from', 'edge stored beta→alpha as derived-from');
+    const direct = db
+      .prepare('SELECT type FROM edges WHERE from_id = ? AND to_id = ?')
+      .get(alpha, beta) as {type: string} | undefined;
+    t.equal(direct, undefined, 'no alpha→beta edge remains');
+  } finally {
+    await stopCtx(ctx);
+  }
+});

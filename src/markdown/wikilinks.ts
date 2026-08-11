@@ -57,8 +57,9 @@ export const extractRelatedFromFrontmatter = (data: {[key: string]: unknown}): s
  * Read the `edges:` map from frontmatter — a per-record override for the
  * body-wikilink classifier. Each entry is `<target>: <edge-type>`, where
  * `<target>` is a wikilink target as written in the body (slug or path form,
- * e.g. `topics/foo` or `foo`) and `<edge-type>` is one of the canonical edge
- * types from `EDGE_TYPES`.
+ * e.g. `topics/foo` or `foo`) and `<edge-type>` is a caller-accepted declared
+ * type — canonical `EDGE_TYPES`, plus `EDGE_TYPE_ALIASES` (`basis-for`) when
+ * the caller includes them in `validTypes`.
  *
  * Used by build-edges to override the classifier's default `cites` for
  * ambiguous body wikilinks. An explicit `target: cites` entry is meaningful —

@@ -142,6 +142,26 @@ test('"elaborated in" / "fed into" / "written up in" → inverse derived-from', 
   }
 });
 
+test('promotion-idiom verbs → inverse derived-from', t => {
+  // The house "material went there" verbs from the 2026-08-09 corpus scan.
+  for (const body of [
+    'Reasoning promoted to [[topics/some-pattern]].',
+    'Captured as [[topics/some-pattern]].',
+    'Extracted to [[topics/some-pattern]] for reuse.',
+    'Extracted as [[topics/some-pattern]].',
+    'Pattern distilled into [[topics/some-pattern]].',
+    'Distilled to [[topics/some-pattern]].',
+    'Lifted into [[topics/some-pattern]].',
+    'Spun out as [[topics/some-pattern]].',
+    'Spun off into [[topics/some-pattern]].'
+  ]) {
+    const out = classifyBodyLinks(body);
+    t.equal(out.length, 1, body);
+    t.equal(out[0]?.type, 'derived-from', body);
+    t.equal(out[0]?.inverse, true, body);
+  }
+});
+
 test('forward and active derived-from cues stay distinguishable', t => {
   const active = classifyBodyLinks('This is derived from [[source-note]].');
   const forward = classifyBodyLinks('This was generalized to [[source-note]].');

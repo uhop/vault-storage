@@ -1,6 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {revertExpiredClaims} from '../../records/claims.ts';
-import {EDGE_TYPES} from '../../records/types.ts';
+import {EDGE_TYPE_ALIASES, EDGE_TYPES} from '../../records/types.ts';
 import {uuidv7} from '../../util/uuid.ts';
 import {readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
@@ -751,7 +751,16 @@ export const claimSuggestionsHandler =
   };
 
 const BATCH_MAX = 100;
-const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
+/**
+ * Values an `edge_type` accept may carry: canonical types minus `cites`
+ * ("cites is correct" is a reject), plus declared aliases (`basis-for`,
+ * stored as derived-from with the edge direction flipped).
+ */
+const ACCEPT_EDGE_TYPES: readonly string[] = [
+  ...EDGE_TYPES.filter(t => t !== 'cites'),
+  ...Object.keys(EDGE_TYPE_ALIASES)
+];
+const ACCEPT_EDGE_TYPE_SET: ReadonlySet<string> = new Set(ACCEPT_EDGE_TYPES);
 
 interface BatchResult {
   id: string;
@@ -782,8 +791,9 @@ const payloadString = (payload: Record<string, unknown>, key: string): string | 
  * - `tag_suggestion` reject → the candidate is stripped from
  *   `agent.tags_suggested` (best-effort), then the row flips.
  * - `edge_type` accept → requires `edge_type` (a typed value, not `cites` —
- *   "cites is correct" is a reject); pins the FM `edges:` override and the
- *   scoped edge pass settles the row as `fm-override`.
+ *   "cites is correct" is a reject; the alias `basis-for` is accepted and
+ *   lands as derived-from with the edge flipped); pins the FM `edges:`
+ *   override and the scoped edge pass settles the row as `fm-override`.
  * - everything else → status flip only (their side effects carry judgment:
  *   `new_tag` minting, `duplicate` merging stay with the agent).
  *
@@ -909,15 +919,11 @@ export const resolveBatchSuggestionsHandler =
             sideEffect = addTagToRecord(deps, recordId, tag);
           } else if (row.kind === 'edge_type') {
             const edgeType = item['edge_type'];
-            if (
-              typeof edgeType !== 'string' ||
-              !EDGE_TYPE_SET.has(edgeType) ||
-              edgeType === 'cites'
-            ) {
+            if (typeof edgeType !== 'string' || !ACCEPT_EDGE_TYPE_SET.has(edgeType)) {
               fail(
                 id,
                 'invalid_edge_type',
-                `edge_type accept requires \`edge_type\` in: ${EDGE_TYPES.filter(t => t !== 'cites').join(', ')} — "cites is correct" is a reject`
+                `edge_type accept requires \`edge_type\` in: ${ACCEPT_EDGE_TYPES.join(', ')} — "cites is correct" is a reject`
               );
               continue;
             }
