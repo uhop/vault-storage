@@ -155,7 +155,7 @@ payload `{error, code, status, details}`. Common codes:
   (server-side spool, rebuilt by scan on restart) and archive into the target
   project's `handoff-archive.md` when resolved. `vault_resume_bundle`'s
   project block now carries the repo's handoff inbox, so a session sees the
-  work it inherited. Requires vault-storage ≥ 2026-08-11 (schema 18) for the
+  work it inherited. Requires vault-storage ≥ 2026-08-10 (schema 18) for the
   `/handoffs` endpoints; every other tool is unchanged against older servers.
 - 0.4.0 — repo-lease tools for agent coordination (53 tools):
   `vault_lease_list` / `vault_lease_events` / `vault_lease_claim` /
