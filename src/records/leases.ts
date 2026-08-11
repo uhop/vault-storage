@@ -87,7 +87,7 @@ export class LeasesRepository {
     this.#db = db;
   }
 
-  /** Coordination state is a clean slate on server start (D21). */
+  /** Leases are a clean slate on server start and stay gone — a lock has no artifact (D21). */
   clearAll(): void {
     this.#db.exec('DELETE FROM leases; DELETE FROM lease_events;');
   }

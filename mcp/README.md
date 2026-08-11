@@ -129,15 +129,34 @@ payload `{error, code, status, details}`. Common codes:
   `details.current_etag` is what to re-read and retry against
 - `empty_body` / `null_body` — the write would leave the document with no
   content; use `vault_delete_file` to remove one
-- `claimed_by_other` — the suggestion or repo lease is held by another
-  holder (`details.current` carries the current lease on `vault_lease_*`)
+- `claimed_by_other` — the suggestion, repo lease, or handoff is held by
+  another holder (`details.current` carries the current lease on
+  `vault_lease_*`, the current handoff on `vault_handoff_*`)
 - `lease_not_found` — renew/release/transfer on a resource nothing holds;
   after an expiry, re-claim instead
+- `handoff_not_found` — no handoff with that id (a resolved one stays
+  readable until the next server restart; after that its record is the
+  project's `handoff-archive.md`)
+- `not_open` — claiming a handoff that is claimed, returned, or resolved
+- `not_claimed` — resolving a handoff nobody has claimed; claim it first
+- `not_returned` — resubmitting a handoff that is not awaiting rework
+- `handoff_resolved` — adding a note to a done/rejected handoff
 - `network` — server unreachable
 - `bad_request`, `validation_failed`, `internal`
 
 ## Release notes
 
+- 0.5.0 — handoff tools for agent coordination (61 tools):
+  `vault_handoff_create` / `vault_handoff_list` / `vault_handoff_get` /
+  `vault_handoff_claim` / `vault_handoff_resolve` / `vault_handoff_resubmit` /
+  `vault_handoff_note` / `vault_handoff_events` — role-addressed cross-agent
+  work requests with a mandatory idempotency key, a claim/review loop that can
+  return work for rework, and append-only discussion. Handoffs are durable
+  (server-side spool, rebuilt by scan on restart) and archive into the target
+  project's `handoff-archive.md` when resolved. `vault_resume_bundle`'s
+  project block now carries the repo's handoff inbox, so a session sees the
+  work it inherited. Requires vault-storage ≥ 2026-08-11 (schema 18) for the
+  `/handoffs` endpoints; every other tool is unchanged against older servers.
 - 0.4.0 — repo-lease tools for agent coordination (53 tools):
   `vault_lease_list` / `vault_lease_events` / `vault_lease_claim` /
   `vault_lease_renew` / `vault_lease_release` / `vault_lease_transfer` —

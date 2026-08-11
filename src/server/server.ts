@@ -409,9 +409,9 @@ const handleRequest =
   };
 
 export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
-  // Coordination state is a clean slate on every server start (D21):
-  // durability lives in the filesystem; leases die with the process and are
-  // re-claimed in a fair race.
+  // Both coordination tables start empty (D21) — but only leases *stay* gone:
+  // a lock has no on-disk artifact, so it dies with the process and is
+  // re-claimed in a fair race. Durability lives in the filesystem.
   new LeasesRepository(opts.db).clearAll();
   // Handoffs get the same clean slate, then the index is rebuilt from the
   // spool — files are truth. Entries caught between resolve and archive by a
