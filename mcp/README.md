@@ -152,6 +152,17 @@ payload `{error, code, status, details}`. Common codes:
 
 ## Release notes
 
+- 0.6.0 — the handoff patch transport (63 tools): `vault_handoff_put_artifact`
+  attaches the work a reviewer actually applies — a `git format-patch --base=…`
+  series, or a base64 `bundle` for binary/multi-branch — and
+  `vault_handoff_get_artifact` reads it back, returning metadata unless
+  `include_content` is set, since a patch belongs in a file rather than in an
+  agent's context. Capped at 10 MB. The upload re-points the handoff's `ref` at
+  the spool; that ref type is server-set and cannot be declared on create. This
+  is what makes a handoff work across machines: agents cannot `git push`, so the
+  singleton server's spool is the fleet's shared storage. Requires vault-storage
+  schema 19 for the `/handoffs/{id}/artifact` pair; every other tool is
+  unchanged against older servers.
 - 0.5.0 — handoff tools for agent coordination (61 tools):
   `vault_handoff_create` / `vault_handoff_list` / `vault_handoff_get` /
   `vault_handoff_claim` / `vault_handoff_resolve` / `vault_handoff_resubmit` /
