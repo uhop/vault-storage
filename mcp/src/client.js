@@ -75,6 +75,19 @@ export class VaultClient {
     };
   }
 
+  /** Raw bytes back, for artifacts that are not JSON or markdown. */
+  async getBuffer(path, query = {}) {
+    const res = await this.#request('GET', this.url(path, query));
+    if (!res.ok) await this.#throwFromResponse(res);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  /** Raw-body PUT (spool artifacts); the server parses no JSON here. */
+  async putRaw(path, query, body, contentType) {
+    const res = await this.#request('PUT', this.url(path, query), {body, contentType});
+    return this.#parseJson(res);
+  }
+
   async putJson(path, body, {ifMatch} = {}) {
     const res = await this.#request('PUT', this.url(path), {
       body: JSON.stringify(body),

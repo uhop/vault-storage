@@ -94,10 +94,12 @@ import {
   claimHandoffHandler,
   completeHandoffArchival,
   createHandoffHandler,
+  getHandoffArtifactHandler,
   getHandoffHandler,
   handoffEventsHandler,
   listHandoffsHandler,
   noteHandoffHandler,
+  putHandoffArtifactHandler,
   resolveHandoffHandler,
   resubmitHandoffHandler
 } from './handlers/handoffs.ts';
@@ -306,6 +308,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
   const handoffDeps = {db: opts.db, records, vaultDataPath: opts.env.vaultDataPath};
   router.get('/handoffs', listHandoffsHandler(handoffDeps));
   router.get('/handoffs/events', handoffEventsHandler(handoffDeps));
+  router.get('/handoffs/{id}/artifact', getHandoffArtifactHandler(handoffDeps));
+  router.put('/handoffs/{id}/artifact', putHandoffArtifactHandler(handoffDeps));
   router.get('/handoffs/{id}', getHandoffHandler(handoffDeps));
   router.post('/handoffs', createHandoffHandler(handoffDeps));
   router.post('/handoffs/claim', claimHandoffHandler(handoffDeps));

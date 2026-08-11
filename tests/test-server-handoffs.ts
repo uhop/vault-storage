@@ -415,6 +415,214 @@ test('handoffs: crash between resolve and archive completes on next start', asyn
   }
 });
 
+const PATCH = `From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Someone <s@example.com>
+Subject: [PATCH] fix the matcher
+
+--
+2.43.0
+`;
+
+test('handoffs: artifact upload sets the spool ref, downloads back byte-identical', async t => {
+  const ctx = await startCtx();
+  try {
+    const created = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-a1'));
+    const id = created.body.handoff.id as string;
+    t.equal(created.body.handoff.artifact, null, 'no artifact on a fresh handoff');
+
+    const declared = await api(
+      `${ctx.url}/handoffs`,
+      'POST',
+      createPayload('k-a0', {ref: {type: 'spool', value: 'x.patch'}})
+    );
+    t.equal(declared.status, 400, 'a client cannot declare the spool ref');
+
+    const res = await fetch(`${ctx.url}/handoffs/${id}/artifact?actor=mba%2Fsession-b`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'text/x-patch'},
+      body: PATCH
+    });
+    t.equal(res.status, 200);
+    const put = await res.json();
+    t.equal(put.artifact.ext, 'patch');
+    t.equal(put.artifact.bytes, Buffer.byteLength(PATCH), 'byte count reported');
+    t.equal(put.handoff.ref.type, 'spool', 'upload re-points ref at the spool');
+    t.equal(put.handoff.ref.value, `${id}.patch`);
+
+    t.ok(
+      existsSync(join(ctx.root, 'handoff', 'deep6', 'open', `${id}.patch`)),
+      'artifact sits beside its sidecar'
+    );
+
+    const dl = await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(dl.status, 200);
+    t.equal(dl.headers.get('etag'), `"${put.artifact.sha256}"`, 'ETag is the artifact sha256');
+    t.equal(await dl.text(), PATCH, 'bytes round-trip unchanged');
+
+    const row = await api(`${ctx.url}/handoffs/${id}`, 'GET');
+    t.equal(row.body.artifact.sha256, put.artifact.sha256, 'artifact surfaces on the record');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('handoffs: artifact travels with the status transitions and dies with the entry', async t => {
+  const ctx = await startCtx();
+  try {
+    const created = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-a2'));
+    const id = created.body.handoff.id as string;
+    await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: PATCH
+    });
+
+    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    t.ok(
+      existsSync(join(ctx.root, 'handoff', 'deep6', 'claimed', `${id}.patch`)),
+      'artifact renamed into claimed/ with the sidecar'
+    );
+
+    await api(`${ctx.url}/handoffs/resolve`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      resolution: 'returned',
+      note: 'rebase it'
+    });
+    t.ok(
+      existsSync(join(ctx.root, 'handoff', 'deep6', 'returned', `${id}.patch`)),
+      'and on into returned/'
+    );
+
+    // A bundle replaces the patch — one artifact per handoff, whatever the ext.
+    const swap = await fetch(`${ctx.url}/handoffs/${id}/artifact?ext=bundle`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: 'PACK-binary-ish'
+    });
+    t.equal((await swap.json()).artifact.ext, 'bundle');
+    t.notOk(
+      existsSync(join(ctx.root, 'handoff', 'deep6', 'returned', `${id}.patch`)),
+      'the superseded patch is gone, not shadowed'
+    );
+
+    await api(`${ctx.url}/handoffs/resubmit`, 'POST', {id});
+    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const done = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      resolution: 'done'
+    });
+    t.equal(done.body.status, 'ok');
+
+    for (const status of ['open', 'claimed', 'returned', 'done']) {
+      t.notOk(
+        existsSync(join(ctx.root, 'handoff', 'deep6', status, `${id}.bundle`)),
+        `artifact cleared from ${status}/ on resolution`
+      );
+    }
+    const archive = readFileSync(join(ctx.root, 'projects', 'deep6', 'handoff-archive.md'), 'utf8');
+    t.ok(archive.includes('- artifact: `bundle`'), 'archive keeps the artifact fingerprint');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('handoffs: artifact guards — cap, empty, unknown ext, resolved, absent', async t => {
+  const ctx = await startCtx();
+  try {
+    const created = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-a3'));
+    const id = created.body.handoff.id as string;
+
+    const missing = await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(missing.status, 404, 'no artifact yet');
+    t.equal((await missing.json()).code, 'artifact_not_found');
+
+    const badExt = await fetch(`${ctx.url}/handoffs/${id}/artifact?ext=exe`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: 'x'
+    });
+    t.equal(badExt.status, 400, 'ext is a closed enum');
+
+    const badParam = await fetch(`${ctx.url}/handoffs/${id}/artifact?extension=patch`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: 'x'
+    });
+    t.equal(badParam.status, 400, 'typo query param named and rejected');
+
+    const empty = await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: ''
+    });
+    t.equal(empty.status, 400, 'an empty artifact is not a write');
+
+    const tooBig = await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: 'x'.repeat(10 * 1024 * 1024 + 1)
+    });
+    t.equal(tooBig.status, 413, 'over the 10 MB spool cap');
+    t.equal((await tooBig.json()).code, 'artifact_too_large');
+    t.notOk(
+      existsSync(join(ctx.root, 'handoff', 'deep6', 'open', `${id}.patch`)),
+      'a refused upload writes nothing'
+    );
+
+    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    await api(`${ctx.url}/handoffs/resolve`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      resolution: 'done'
+    });
+    const late = await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: PATCH
+    });
+    t.equal(late.status, 409, 'no artifact after resolution');
+    t.equal((await late.json()).code, 'handoff_resolved');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('handoffs: artifact survives a restart and is found by rebuild-by-scan', async t => {
+  const first = await startCtx();
+  let id = '';
+  try {
+    const a = await api(`${first.url}/handoffs`, 'POST', createPayload('k-a4'));
+    id = a.body.handoff.id;
+    await fetch(`${first.url}/handoffs/${id}/artifact`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`},
+      body: PATCH
+    });
+  } finally {
+    await stopCtx(first, true);
+  }
+
+  const second = await startCtx(first.root);
+  try {
+    const row = await api(`${second.url}/handoffs/${id}`, 'GET');
+    t.equal(row.body.artifact.ext, 'patch', 'artifact rebuilt from the spool');
+    t.equal(row.body.artifact.bytes, Buffer.byteLength(PATCH));
+    t.equal(row.body.ref.type, 'spool', 'the spool ref survived too');
+    const dl = await fetch(`${second.url}/handoffs/${id}/artifact`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(await dl.text(), PATCH, 'and the bytes are still there');
+  } finally {
+    await stopCtx(second);
+  }
+});
+
 test('handoffs: resume bundle inherits the inbox; brief counts pending', async t => {
   const ctx = await startCtx();
   try {

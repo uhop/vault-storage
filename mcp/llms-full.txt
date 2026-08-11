@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 61 MCP tools and 3
+traversal. The adapter exposes the server's REST API as 63 MCP tools and 3
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.
@@ -47,7 +47,7 @@ evidence of anything) and which of the three list shapes it uses:
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (61)
+## Tools (63)
 
 Search & list:
 
@@ -171,6 +171,15 @@ restart; resolved ones archive into projects/<project>/handoff-archive.md):
 - vault_handoff_resubmit — returned → open after rework, same id.
 - vault_handoff_note — append-only discussion; refused once resolved.
 - vault_handoff_events — transcript, newest first (cleared on restart).
+- vault_handoff_put_artifact — attach the transported work (agents cannot
+  `git push`, so the spool is the transfer): `git format-patch --base=…`
+  output as ext "patch", or a base64 "bundle" for binary/multi-branch. 10 MB
+  cap (413 artifact_too_large). Replaces any existing artifact and sets the
+  handoff's ref to {type: "spool"} — that ref type is server-set, never
+  declared on create.
+- vault_handoff_get_artifact — metadata {ext, bytes, sha256} by default;
+  include_content: true to inline it. For anything large, stream it to a file
+  with vault-curl instead, then `git apply --check` before `git am --3way`.
 
 System:
 

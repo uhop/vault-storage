@@ -15,7 +15,11 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 18, 'schema version is 18 after all migrations through handoffs');
+  t.equal(
+    result.current,
+    19,
+    'schema version is 19 after all migrations through the handoff artifact event'
+  );
   t.deepEqual(
     result.applied,
     [
@@ -36,7 +40,8 @@ test('runs the init migration and creates required tables', t => {
       '0015_suggestion_claims.sql',
       '0016_queue_blocked_by.sql',
       '0017_leases.sql',
-      '0018_handoffs.sql'
+      '0018_handoffs.sql',
+      '0019_handoff_artifact_event.sql'
     ],
     'all migrations applied in order'
   );
@@ -71,7 +76,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 18, 'schema version stays at 18');
+  t.equal(second.current, 19, 'schema version stays at 19');
   db.close();
 });
 
@@ -122,9 +127,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0015_suggestion_claims.sql',
       '0016_queue_blocked_by.sql',
       '0017_leases.sql',
-      '0018_handoffs.sql'
+      '0018_handoffs.sql',
+      '0019_handoff_artifact_event.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0018)'
+    'migrations from schema 9 onward applied (0010–0019)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {

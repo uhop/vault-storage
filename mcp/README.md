@@ -91,7 +91,10 @@ Fifty-three tools mapping to the REST surface, grouped by purpose:
   read), `vault_handoff_claim` (lazy claim expiry), `vault_handoff_resolve`
   (`done`/`rejected` archive into the project's `handoff-archive.md`;
   `returned` reopens the same record with a mandatory critique note),
-  `vault_handoff_resubmit`, `vault_handoff_note`, `vault_handoff_events`
+  `vault_handoff_resubmit`, `vault_handoff_note`, `vault_handoff_events`,
+  `vault_handoff_put_artifact` / `vault_handoff_get_artifact` (the transported
+  work — a `git format-patch` series or a bundle, 10 MB cap; the getter
+  returns metadata unless `include_content` is set)
 - **System** — `vault_status`, `vault_lint` (integrity checks plus the
   `coverage.enrichment` block and its `unenriched_records` worklist),
   `vault_resume_bundle` (one-shot session-start bundle: reindex + lint +
@@ -140,7 +143,10 @@ payload `{error, code, status, details}`. Common codes:
 - `not_open` — claiming a handoff that is claimed, returned, or resolved
 - `not_claimed` — resolving a handoff nobody has claimed; claim it first
 - `not_returned` — resubmitting a handoff that is not awaiting rework
-- `handoff_resolved` — adding a note to a done/rejected handoff
+- `handoff_resolved` — adding a note or artifact to a done/rejected handoff
+- `artifact_not_found` — the handoff carries no artifact
+- `artifact_too_large` — over the 10 MB spool cap; reference a branch
+  instead of shipping a blob
 - `network` — server unreachable
 - `bad_request`, `validation_failed`, `internal`
 

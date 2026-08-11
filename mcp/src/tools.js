@@ -963,6 +963,60 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_handoff_put_artifact',
+    {
+      description:
+        'Attach the transported work to a handoff — the artifact the reviewer actually applies. Exists because agents cannot `git push`: the singleton server\'s spool is the fleet\'s shared storage, so this same call moves work between hosts. Produce it with `git format-patch --base=$(git merge-base main HEAD) main..HEAD --stdout` (ext "patch", the default) — format-patch over a plain diff because it carries the commit message, author and date, and `--base` records what it applies to; use ext "bundle" (base64) for binary or multi-branch work. Capped at 10 MB (413 artifact_too_large — reference a branch instead of shipping a blob). Replaces any existing artifact and re-points the handoff\'s ref at {type: "spool", value: "<id>.<ext>"}; that ref type is server-set and cannot be declared on create. Returns {status: "ok", handoff, artifact: {ext, bytes, sha256}}; 404 handoff_not_found; 409 handoff_resolved once done/rejected, since the spool entry is cleared then and the archive is the record.',
+      inputSchema: {
+        id: z.string().min(1),
+        content: z.string().min(1).describe('Patch text, or base64 when encoding is base64'),
+        ext: z.enum(['patch', 'bundle']).optional().default('patch'),
+        encoding: z
+          .enum(['utf8', 'base64'])
+          .optional()
+          .default('utf8')
+          .describe('base64 for bundles and any binary artifact'),
+        actor: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Recorded on the artifact event, e.g. "<host>/<session>"')
+      }
+    },
+    wrap(async ({id, content, ext, encoding, actor}) =>
+      client.putRaw(
+        `/handoffs/${encodeURIComponent(id)}/artifact`,
+        {ext, actor},
+        Buffer.from(content, encoding),
+        ext === 'bundle' ? 'application/octet-stream' : 'text/x-patch'
+      )
+    )
+  );
+
+  mcp.registerTool(
+    'vault_handoff_get_artifact',
+    {
+      description:
+        "Fetch a handoff's artifact. Returns {id, ext, bytes, sha256} by default — metadata only, because a patch can be megabytes and reading it into the agent's context is usually the wrong move. Pass include_content: true to also get {content, encoding} (patches come back utf8, bundles base64). For anything large, prefer streaming it to a file instead: `vault-curl /handoffs/<id>/artifact -s > work.patch`, then `git apply --check work.patch` before `git am --3way < work.patch` — validation-first, so a patch that will not apply is a rejection you resolve, never a silent drop. 404 handoff_not_found, or artifact_not_found when the handoff carries none.",
+      inputSchema: {
+        id: z.string().min(1),
+        include_content: z.boolean().optional().default(false)
+      }
+    },
+    wrap(async ({id, include_content}) => {
+      const handoff = await client.getJson(`/handoffs/${encodeURIComponent(id)}`);
+      if (!handoff.artifact) {
+        return {id, artifact: null, note: 'this handoff carries no artifact'};
+      }
+      const meta = {id, ...handoff.artifact};
+      if (!include_content) return meta;
+      const raw = await client.getBuffer(`/handoffs/${encodeURIComponent(id)}/artifact`);
+      const encoding = handoff.artifact.ext === 'bundle' ? 'base64' : 'utf8';
+      return {...meta, encoding, content: raw.toString(encoding)};
+    })
+  );
+
+  mcp.registerTool(
     'vault_handoff_note',
     {
       description:

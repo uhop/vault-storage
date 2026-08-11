@@ -94,7 +94,15 @@ const REQUIRED_MENTIONS = {
   vault_handoff_claim: ['claimed_by_other', 'not_open', 'renewed', 'TTL'],
   vault_handoff_resolve: ['returned', 'archived_to', 'not_claimed', 'note'],
   vault_handoff_resubmit: ['not_returned', 'ref', 'same record'],
-  vault_handoff_note: ['handoff_resolved', 'notes', 'author']
+  vault_handoff_note: ['handoff_resolved', 'notes', 'author'],
+  vault_handoff_put_artifact: ['artifact_too_large', 'format-patch', 'spool', 'sha256', 'bundle'],
+  vault_handoff_get_artifact: [
+    'bytes',
+    'sha256',
+    'include_content',
+    'artifact_not_found',
+    'am --3way'
+  ]
 };
 
 test('every documented response field appears in its tool description', t => {

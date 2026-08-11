@@ -5,9 +5,11 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
 
 // Spool file layer for handoffs (agent-coordination design, leg 2): a
@@ -22,6 +24,23 @@ export const SPOOL_DIR = 'handoff';
 
 export const HANDOFF_STATUSES = ['open', 'claimed', 'done', 'rejected', 'returned'] as const;
 export type HandoffStatus = (typeof HANDOFF_STATUSES)[number];
+
+// The transported work (leg 3). `patch` is `git format-patch --base=…` output,
+// applied with `git am --3way`; `bundle` is the escape hatch for binary or
+// multi-branch work, which the reviewer fetches from and can `git bundle
+// verify`. Both ride beside the sidecar as `<id>.<ext>`, so the existing
+// sibling sweep moves and clears them with the handoff.
+export const ARTIFACT_EXTS = ['patch', 'bundle'] as const;
+export type ArtifactExt = (typeof ARTIFACT_EXTS)[number];
+
+/** Generous for a patch, small enough that the spool cannot become a disk problem (ruled 2026-08-08). */
+export const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
+
+export interface ArtifactInfo {
+  ext: ArtifactExt;
+  bytes: number;
+  sha256: string;
+}
 
 /** Sidecar frontmatter payload — everything the path does not already say. */
 export interface SpoolSidecar {
@@ -127,6 +146,71 @@ export const removeEntry = (
 ): void => {
   const dir = statusDir(vaultDataPath, project, status);
   for (const name of siblingNames(dir, id)) rmSync(join(dir, name), {force: true});
+};
+
+const artifactPath = (
+  vaultDataPath: string,
+  project: string,
+  status: HandoffStatus,
+  id: string,
+  ext: ArtifactExt
+): string => join(statusDir(vaultDataPath, project, status), `${id}.${ext}`);
+
+/**
+ * The handoff's transported work, if any — derived from disk on every read
+ * rather than mirrored into a column, since the spool is the source of truth
+ * and a stale column could claim an artifact that a crash never wrote. At
+ * most one per handoff: a second upload replaces the first, including across
+ * extensions, so `.patch` and `.bundle` can never both claim to be the work.
+ */
+export const artifactInfo = (
+  vaultDataPath: string,
+  project: string,
+  status: HandoffStatus,
+  id: string
+): ArtifactInfo | null => {
+  for (const ext of ARTIFACT_EXTS) {
+    const path = artifactPath(vaultDataPath, project, status, id, ext);
+    if (!existsSync(path)) continue;
+    return {
+      ext,
+      bytes: statSync(path).size,
+      sha256: createHash('sha256').update(readFileSync(path)).digest('hex')
+    };
+  }
+  return null;
+};
+
+export const readArtifact = (
+  vaultDataPath: string,
+  project: string,
+  status: HandoffStatus,
+  id: string
+): {ext: ArtifactExt; data: Buffer} | null => {
+  for (const ext of ARTIFACT_EXTS) {
+    const path = artifactPath(vaultDataPath, project, status, id, ext);
+    if (existsSync(path)) return {ext, data: readFileSync(path)};
+  }
+  return null;
+};
+
+/** Replaces any existing artifact — one per handoff, whatever its extension. */
+export const writeArtifact = (
+  vaultDataPath: string,
+  project: string,
+  status: HandoffStatus,
+  id: string,
+  ext: ArtifactExt,
+  data: Buffer
+): ArtifactInfo => {
+  const dir = statusDir(vaultDataPath, project, status);
+  mkdirSync(dir, {recursive: true});
+  for (const other of ARTIFACT_EXTS) {
+    if (other !== ext)
+      rmSync(artifactPath(vaultDataPath, project, status, id, other), {force: true});
+  }
+  writeFileSync(artifactPath(vaultDataPath, project, status, id, ext), data);
+  return {ext, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex')};
 };
 
 /**

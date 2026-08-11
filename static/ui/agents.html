@@ -243,6 +243,12 @@
         if (s < 5400) return `${Math.round(s / 60)}m ago`;
         return `${(s / 3600).toFixed(1)}h ago`;
       };
+      const fmtBytes = n =>
+        n < 1024
+          ? `${n} B`
+          : n < 1048576
+            ? `${(n / 1024).toFixed(1)} KB`
+            : `${(n / 1048576).toFixed(1)} MB`;
       const fmtTtl = iso => {
         if (!iso) return '—';
         const s = (Date.parse(iso) - Date.now()) / 1000;
@@ -318,6 +324,14 @@
             <td>${esc(h.status)}${h.status === 'claimed' ? ` by ${esc(h.claimed_by)}` : ''}</td>
             <td>${esc(h.from.host)}/${esc(h.from.session)}</td>
             <td>${h.ref ? `<code>${esc(h.ref.type)}: ${esc(h.ref.value)}</code>` : '—'}</td>
+            <td>${
+              h.artifact
+                ? `<button data-artifact="${esc(h.id)}" data-ext="${esc(h.artifact.ext)}"
+                     title="sha256 ${esc(h.artifact.sha256)}">${esc(h.artifact.ext)} · ${fmtBytes(
+                       h.artifact.bytes
+                     )}</button>`
+                : '—'
+            }</td>
             <td title="${esc(h.updated)}">${fmtSince(h.updated)}</td>
             <td>${h.notes.length > 0 ? h.notes.length : '—'}</td>
           </tr>`
@@ -326,10 +340,29 @@
         $('#handoffs').innerHTML = `
           <table>
             <thead><tr>
-              <th>id</th><th>to</th><th>kind</th><th>status</th><th>from</th><th>ref</th><th>touched</th><th>notes</th>
+              <th>id</th><th>to</th><th>kind</th><th>status</th><th>from</th><th>ref</th><th>artifact</th><th>touched</th><th>notes</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
+        // The artifact needs the bearer token, so it cannot be a plain link —
+        // fetch it authenticated and hand the browser a blob to save.
+        for (const btn of document.querySelectorAll('[data-artifact]')) {
+          btn.addEventListener('click', async () => {
+            try {
+              const res = await api(
+                `/handoffs/${encodeURIComponent(btn.dataset.artifact)}/artifact`
+              );
+              const url = URL.createObjectURL(await res.blob());
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${btn.dataset.artifact}.${btn.dataset.ext}`;
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch (e) {
+              handleErr(e);
+            }
+          });
+        }
       };
 
       const renderEvents = items => {

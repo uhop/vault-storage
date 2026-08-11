@@ -12,6 +12,7 @@ import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {TagsImporter} from '../../importer/import-tags.ts';
 import {parseFrontmatter, serializeFrontmatter} from '../../markdown/frontmatter.ts';
+import {ARTIFACT_EXTS, MAX_ARTIFACT_BYTES, type ArtifactExt} from '../../records/handoff-spool.ts';
 import {
   HANDOFF_KINDS,
   HANDOFF_REF_TYPES,
@@ -19,13 +20,14 @@ import {
   HandoffsRepository,
   MAX_CLAIM_TTL_SECONDS,
   MIN_CLAIM_TTL_SECONDS,
+  SPOOL_REF_TYPE,
   type Handoff,
   type HandoffKind,
   type HandoffRefType,
   type HandoffStatus
 } from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
-import {readBodyText} from '../body.ts';
+import {readBodyBuffer, readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -54,7 +56,8 @@ const toApi = (h: Handoff): Record<string, unknown> => ({
   claimed_at: h.claimedAt,
   claim_expires: h.claimExpires,
   result: h.result,
-  notes: h.notes
+  notes: h.notes,
+  artifact: h.artifact
 });
 
 interface ParsedBody {
@@ -120,6 +123,7 @@ const parseTtl = (
 
 const LIST_PARAMS: ReadonlySet<string> = new Set(['to', 'project', 'status', 'kind']);
 const EVENTS_PARAMS: ReadonlySet<string> = new Set(['id', 'limit']);
+const ARTIFACT_PARAMS: ReadonlySet<string> = new Set(['ext', 'actor']);
 
 /** GET /handoffs[?to=…&project=…&status=…&kind=…] — flat {count, items}. */
 export const listHandoffsHandler =
@@ -259,7 +263,7 @@ export const createHandoffHandler =
           ctx.res,
           400,
           'bad_request',
-          `ref.type must be one of: ${HANDOFF_REF_TYPES.join(', ')} (spool is reserved for the patch-transport leg)`
+          `ref.type must be one of: ${HANDOFF_REF_TYPES.join(', ')} — "${SPOOL_REF_TYPE}" is set by the server when you PUT /handoffs/{id}/artifact, not declared here`
         );
         return;
       }
@@ -538,6 +542,106 @@ export const noteHandoffHandler =
     }
   };
 
+/**
+ * PUT /handoffs/{id}/artifact?ext=patch|bundle — the transported work.
+ * Body is the raw bytes (a `git format-patch --base=…` series, or a bundle),
+ * capped at 10 MB. Exists because agents cannot `git push`: the singleton
+ * server's filesystem is the fleet's shared storage, so this same pair moves
+ * work between hosts with no extra machinery.
+ */
+export const putHandoffArtifactHandler =
+  (deps: HandoffDeps): Handler =>
+  async ctx => {
+    if (!rejectUnknownParams(ctx, ARTIFACT_PARAMS)) return;
+    const id = ctx.params['id'] ?? '';
+    const extRaw = ctx.query['ext'] ?? 'patch';
+    if (!(ARTIFACT_EXTS as readonly string[]).includes(extRaw)) {
+      sendError(ctx.res, 400, 'bad_request', `ext must be one of: ${ARTIFACT_EXTS.join(', ')}`);
+      return;
+    }
+    const actor = ctx.query['actor'];
+    if (actor !== undefined && actor.length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'actor must be a non-empty string when set');
+      return;
+    }
+
+    let data: Buffer;
+    try {
+      data = await readBodyBuffer(ctx.req, MAX_ARTIFACT_BYTES);
+    } catch {
+      sendError(
+        ctx.res,
+        413,
+        'artifact_too_large',
+        `artifact exceeds the ${MAX_ARTIFACT_BYTES}-byte spool cap — reference a branch instead of shipping a blob`
+      );
+      return;
+    }
+    if (data.length === 0) {
+      sendError(ctx.res, 400, 'bad_request', 'artifact body is empty');
+      return;
+    }
+
+    const outcome = new HandoffsRepository(deps.db, deps.vaultDataPath).putArtifact(
+      id,
+      extRaw as ArtifactExt,
+      data,
+      actor ?? 'unknown'
+    );
+    switch (outcome.status) {
+      case 'ok':
+        sendJson(ctx.res, 200, {
+          status: 'ok',
+          handoff: toApi(outcome.handoff),
+          artifact: outcome.artifact
+        });
+        return;
+      case 'not_found':
+        sendError(ctx.res, 404, 'handoff_not_found', `no handoff: ${id}`);
+        return;
+      case 'resolved':
+        sendError(
+          ctx.res,
+          409,
+          'handoff_resolved',
+          `${id} is ${outcome.current.status} — its spool entry is cleared and the archive is the record`,
+          {current: toApi(outcome.current)}
+        );
+        return;
+    }
+  };
+
+/**
+ * GET /handoffs/{id}/artifact — the raw bytes back, for `git am --3way` (or
+ * `git bundle verify` + fetch). ETag is the artifact's sha256, so a reviewer
+ * can confirm it got what the submitter sent.
+ */
+export const getHandoffArtifactHandler =
+  (deps: HandoffDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    const id = ctx.params['id'] ?? '';
+    const repo = new HandoffsRepository(deps.db, deps.vaultDataPath);
+    const handoff = repo.get(id);
+    if (handoff === null) {
+      sendError(ctx.res, 404, 'handoff_not_found', `no handoff: ${id}`);
+      return;
+    }
+    const artifact = repo.getArtifact(id);
+    if (artifact === null) {
+      sendError(ctx.res, 404, 'artifact_not_found', `${id} carries no artifact`);
+      return;
+    }
+    ctx.res.writeHead(200, {
+      'Content-Type':
+        artifact.ext === 'patch' ? 'text/x-patch; charset=utf-8' : 'application/octet-stream',
+      'Content-Length': String(artifact.data.length),
+      'Content-Disposition': `attachment; filename="${id}.${artifact.ext}"`,
+      ...(handoff.artifact ? {ETag: `"${handoff.artifact.sha256}"`} : {})
+    });
+    ctx.res.end(artifact.data);
+  };
+
 const ARCHIVE_HEADER = (project: string): string =>
   serializeFrontmatter({
     data: {
@@ -589,6 +693,12 @@ export const completeHandoffArchival = (
         ` · created ${handoff.created.slice(0, 10)} · resolved ${today}`
     ];
     if (handoff.ref !== null) lines.push(`- ref: \`${handoff.ref.type}: ${handoff.ref.value}\``);
+    // The artifact itself is cleared with the spool entry — the work has
+    // landed as commits by now — so the archive keeps its fingerprint.
+    if (handoff.artifact !== null) {
+      const a = handoff.artifact;
+      lines.push(`- artifact: \`${a.ext}\`, ${a.bytes} bytes, sha256 \`${a.sha256}\``);
+    }
     if (handoff.result !== null) lines.push(`- result: \`${JSON.stringify(handoff.result)}\``);
     lines.push('');
     // Blockquoted so headings inside the request prose can't break the archive's structure.

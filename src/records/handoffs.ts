@@ -2,10 +2,15 @@ import type {DatabaseSync} from 'node:sqlite';
 import {uuidv7} from '../util/uuid.ts';
 import {
   HANDOFF_STATUSES,
+  artifactInfo,
   moveEntry,
+  readArtifact,
   scanSpool,
+  writeArtifact,
   writeSidecar,
   removeEntry,
+  type ArtifactExt,
+  type ArtifactInfo,
   type HandoffStatus,
   type SpoolEntry,
   type SpoolSidecar
@@ -29,9 +34,16 @@ export const HANDOFF_KINDS = [
 ] as const;
 export type HandoffKind = (typeof HANDOFF_KINDS)[number];
 
-/** `spool` is reserved in the schema for the leg-3 patch transport; the API accepts these two. */
+/**
+ * Ref types a *client* may declare. `spool` is deliberately absent: it means
+ * "the work is an artifact in the spool", which is only true once one has been
+ * uploaded, so the server sets it on upload rather than letting a create
+ * assert it about a file that does not exist yet.
+ */
 export const HANDOFF_REF_TYPES = ['worktree', 'branch'] as const;
 export type HandoffRefType = (typeof HANDOFF_REF_TYPES)[number];
+
+export const SPOOL_REF_TYPE = 'spool';
 
 export {HANDOFF_STATUSES, type HandoffStatus};
 
@@ -62,6 +74,8 @@ export interface Handoff {
   claimExpires: string | null;
   result: Record<string, unknown> | null;
   notes: HandoffNote[];
+  /** Derived from the spool on read, never stored — the files are the truth. */
+  artifact: ArtifactInfo | null;
 }
 
 export interface HandoffEvent {
@@ -76,7 +90,8 @@ export interface HandoffEvent {
     | 'rejected'
     | 'returned'
     | 'resubmitted'
-    | 'note';
+    | 'note'
+    | 'artifact';
   actor: string | null;
   detail: string | null;
 }
@@ -120,6 +135,11 @@ export type ResubmitOutcome =
 
 export type NoteOutcome =
   {status: 'ok'; handoff: Handoff} | {status: 'not_found'} | {status: 'resolved'; current: Handoff};
+
+export type ArtifactOutcome =
+  | {status: 'ok'; handoff: Handoff; artifact: ArtifactInfo}
+  | {status: 'not_found'}
+  | {status: 'resolved'; current: Handoff};
 
 export interface RebuildReport {
   restored: number;
@@ -170,7 +190,8 @@ const toHandoff = (row: HandoffRow): Handoff => ({
   claimedAt: row.claimed_at,
   claimExpires: row.claim_expires,
   result: row.result === null ? null : (JSON.parse(row.result) as Record<string, unknown>),
-  notes: JSON.parse(row.notes) as HandoffNote[]
+  notes: JSON.parse(row.notes) as HandoffNote[],
+  artifact: null
 });
 
 const toSidecar = (h: Handoff): SpoolSidecar => ({
@@ -291,7 +312,8 @@ export class HandoffsRepository {
       claimedAt: null,
       claimExpires: null,
       result: null,
-      notes: []
+      notes: [],
+      artifact: null
     };
     // Sidecar before row: files are truth, so a crash between the two loses
     // the index (rebuilt by scan on the next start), never the submission.
@@ -311,7 +333,7 @@ export class HandoffsRepository {
     this.expireLazy(now);
     const row = this.#db.prepare('SELECT * FROM handoffs WHERE id = ?').get(id) as
       HandoffRow | undefined;
-    return row ? toHandoff(row) : null;
+    return row ? this.#attachArtifact(toHandoff(row)) : null;
   }
 
   list(filters: HandoffFilters, now?: string): Handoff[] {
@@ -338,7 +360,57 @@ export class HandoffsRepository {
     const rows = this.#db
       .prepare(`SELECT * FROM handoffs${where} ORDER BY created`)
       .all(...values) as unknown[] as HandoffRow[];
-    return rows.map(toHandoff);
+    return rows.map(row => this.#attachArtifact(toHandoff(row)));
+  }
+
+  /**
+   * Attach the transported work (leg 3): a git patch, or a bundle for
+   * binary/multi-branch work. Replaces any existing artifact and re-points
+   * `ref` at the spool, since that is now where the work actually lives.
+   * Refused once resolved — the spool entry is cleared at that point and the
+   * archive is the record.
+   */
+  putArtifact(
+    id: string,
+    ext: ArtifactExt,
+    data: Buffer,
+    actor: string,
+    now?: string
+  ): ArtifactOutcome {
+    const at = now ?? new Date().toISOString();
+    const current = this.get(id, at);
+    if (current === null) return {status: 'not_found'};
+    if (current.status === 'done' || current.status === 'rejected') {
+      return {status: 'resolved', current};
+    }
+
+    const info = writeArtifact(this.#vaultDataPath, current.project, current.status, id, ext, data);
+    const next: Handoff = {
+      ...current,
+      ref: {type: SPOOL_REF_TYPE, value: `${id}.${ext}`},
+      updated: at,
+      artifact: info
+    };
+    this.#update(next);
+    writeSidecar(this.#vaultDataPath, this.#toSpool(next));
+    this.#logEvent(at, id, 'artifact', actor, JSON.stringify(info));
+    return {status: 'ok', handoff: next, artifact: info};
+  }
+
+  getArtifact(id: string, now?: string): {ext: ArtifactExt; data: Buffer} | null {
+    const current = this.get(id, now);
+    if (current === null) return null;
+    return readArtifact(this.#vaultDataPath, current.project, current.status, id);
+  }
+
+  #attachArtifact(handoff: Handoff): Handoff {
+    handoff.artifact = artifactInfo(
+      this.#vaultDataPath,
+      handoff.project,
+      handoff.status,
+      handoff.id
+    );
+    return handoff;
   }
 
   /** open → claimed; idempotent re-claim by the current claimant is a renew. */
@@ -534,7 +606,10 @@ export class HandoffsRepository {
       claimedAt: claimed ? (s.claimed_at as string) : null,
       claimExpires: claimed ? (s.claim_expires as string) : null,
       result: resolved ? (s.result ?? null) : null,
-      notes: Array.isArray(s.notes) ? s.notes : []
+      notes: Array.isArray(s.notes) ? s.notes : [],
+      // The artifact is a sibling file, so the rebuild finds it the same way
+      // every other read does — a restart never orphans submitted work.
+      artifact: artifactInfo(this.#vaultDataPath, s.project, entry.status, s.id)
     };
   }
 
