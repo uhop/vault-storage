@@ -268,14 +268,7 @@
   <body>
     <header>
       <h1><a href="/ui/">vault-storage</a></h1>
-      <nav>
-        <a href="/ui/search.html">search</a>
-        <a href="/ui/projects.html">projects</a>
-        <a href="/ui/tags.html" aria-current="page">tags</a>
-        <a href="/ui/raw.html">raw</a>
-        <a href="/ui/folder.html">browse</a>
-        <a href="/ui/note.html">note</a>
-      </nav>
+      <vault-nav></vault-nav>
       <div class="spacer"></div>
       <div id="theme-toggle"></div>
       <button id="settings" title="Settings">⚙</button>
@@ -449,6 +442,7 @@
 
       init();
     </script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>
 </html>

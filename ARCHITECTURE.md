@@ -88,7 +88,7 @@ Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to n
 
 ## static/ UI
 
-Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's bearer from localStorage): dashboard, search, note editor, folder/projects/tags/raw browsers, archive + lint review pages; shared `api.js`, theme, `vault-editor` / `vault-markdown` web components, vendored `marked`.
+Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's bearer from localStorage): dashboard, search, note editor, folder/projects/tags/raw browsers, archive + lint review pages; shared `api.js`, theme, `vault-editor` / `vault-markdown` / `vault-toolbar` / `vault-nav` web components (the last renders the shared top-level menu on every page), vendored `marked`.
 
 ## Tests
 
