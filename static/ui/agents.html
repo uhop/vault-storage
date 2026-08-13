@@ -158,24 +158,6 @@
         padding: 0.6rem 0.9rem;
         margin-bottom: 1rem;
       }
-      dialog {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: var(--card);
-        color: var(--fg);
-        max-width: 24rem;
-      }
-      dialog .row {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.5rem;
-        margin-top: 0.8rem;
-      }
-      dialog input {
-        width: 100%;
-        padding: 0.4rem 0.6rem;
-        font: inherit;
-      }
     </style>
   </head>
   <body>
@@ -184,6 +166,7 @@
       <vault-nav></vault-nav>
       <div class="spacer"></div>
       <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
     </header>
     <main>
       <div id="status"></div>
@@ -209,21 +192,8 @@
       <ul class="events" id="events"></ul>
     </main>
 
-    <dialog id="auth-dlg">
-      <h2>API token</h2>
-      <p>
-        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
-        localStorage.
-      </p>
-      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
-      <div class="row">
-        <button id="auth-cancel">Cancel</button>
-        <button id="auth-ok" class="primary">Save</button>
-      </div>
-    </dialog>
-
     <script type="module">
-      import {api, apiJson, esc, setToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, showAuthDialog} from '/ui/api.js';
       const $ = sel => document.querySelector(sel);
 
       const showStatus = msg => {
@@ -422,19 +392,12 @@
         }
       });
 
-      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-      $('#auth-ok').addEventListener('click', () => {
-        setToken($('#auth-input').value.trim());
-        $('#auth-dlg').close();
-        refresh();
-      });
-      $('#auth-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') $('#auth-ok').click();
-      });
+      document.addEventListener('token-change', refresh);
 
       refresh();
       setInterval(refresh, 30_000);
     </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>

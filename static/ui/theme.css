@@ -80,3 +80,44 @@ header h1 a {
 header h1 a:hover {
   text-decoration: underline;
 }
+
+/* House dialog look — the vault-settings token dialog and every page dialog.
+   Both row spellings: page dialogs use .row; the shared component uses
+   .dlg-row (archive-review's generic .row list class collides with the other
+   name). */
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1.2rem;
+  background: var(--card);
+  color: var(--fg);
+  max-width: 24rem;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+dialog h2 {
+  margin: 0 0 0.8rem;
+  font-size: 1.05rem;
+}
+dialog p {
+  color: var(--muted);
+  margin: 0 0 0.8rem;
+  font-size: 0.9rem;
+}
+dialog input {
+  width: 100%;
+  padding: 0.5rem;
+  font-family: var(--mono);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+dialog .row,
+dialog .dlg-row {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.8rem;
+}

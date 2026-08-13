@@ -210,41 +210,6 @@
           transform: rotate(360deg);
         }
       }
-      dialog {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 1.2rem;
-        background: var(--card);
-        color: var(--fg);
-        max-width: 24rem;
-      }
-      dialog::backdrop {
-        background: rgba(0, 0, 0, 0.5);
-      }
-      dialog h2 {
-        margin: 0 0 0.8rem;
-        font-size: 1.05rem;
-      }
-      dialog p {
-        color: var(--muted);
-        margin: 0 0 0.8rem;
-        font-size: 0.9rem;
-      }
-      dialog input {
-        width: 100%;
-        padding: 0.5rem;
-        font-family: var(--mono);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: var(--bg);
-        color: var(--fg);
-      }
-      dialog .row {
-        display: flex;
-        gap: 0.5rem;
-        justify-content: flex-end;
-        margin-top: 0.8rem;
-      }
     </style>
   </head>
   <body>
@@ -253,7 +218,7 @@
       <vault-nav></vault-nav>
       <div class="spacer"></div>
       <div id="theme-toggle"></div>
-      <button id="settings" title="Settings">⚙</button>
+      <vault-settings></vault-settings>
     </header>
     <main>
       <p id="crumbs" class="crumbs"></p>
@@ -262,23 +227,11 @@
       </div>
     </main>
 
-    <dialog id="auth-dlg">
-      <h2>API token</h2>
-      <p>
-        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
-        localStorage.
-      </p>
-      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
-      <div class="row">
-        <button id="auth-cancel">Cancel</button>
-        <button id="auth-ok" class="primary">Save</button>
-      </div>
-    </dialog>
-
+    <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
     <script type="module" src="/ui/theme.js"></script>
     <script type="module">
-      import {apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       const $ = sel => document.querySelector(sel);
 
       const currentPath = () => {
@@ -392,16 +345,7 @@
 
       window.addEventListener('popstate', refresh);
 
-      const dlg = $('#auth-dlg');
-      $('#settings').addEventListener('click', () => {
-        showAuthDialog();
-      });
-      $('#auth-cancel').addEventListener('click', () => dlg.close());
-      $('#auth-ok').addEventListener('click', () => {
-        setToken($('#auth-input').value.trim());
-        dlg.close();
-        refresh();
-      });
+      document.addEventListener('token-change', refresh);
 
       refresh();
     </script>

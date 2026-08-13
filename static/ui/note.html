@@ -503,41 +503,6 @@
         flex-shrink: 0;
         font-size: 0.9rem;
       }
-      dialog {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 1.2rem;
-        background: var(--card);
-        color: var(--fg);
-        max-width: 24rem;
-      }
-      dialog::backdrop {
-        background: rgba(0, 0, 0, 0.5);
-      }
-      dialog h2 {
-        margin: 0 0 0.8rem;
-        font-size: 1.05rem;
-      }
-      dialog p {
-        color: var(--muted);
-        margin: 0 0 0.8rem;
-        font-size: 0.9rem;
-      }
-      dialog input {
-        width: 100%;
-        padding: 0.5rem;
-        font-family: var(--mono);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: var(--bg);
-        color: var(--fg);
-      }
-      dialog .row {
-        display: flex;
-        gap: 0.5rem;
-        justify-content: flex-end;
-        margin-top: 0.8rem;
-      }
       dialog#recent-dlg {
         max-width: 32rem;
         width: 90vw;
@@ -647,7 +612,7 @@
       <vault-nav></vault-nav>
       <div class="spacer"></div>
       <div id="theme-toggle"></div>
-      <button id="settings" title="Settings">⚙</button>
+      <vault-settings></vault-settings>
     </header>
     <vault-toolbar class="toolbar" id="toolbar">
       <button id="save">Save</button>
@@ -714,19 +679,6 @@
       <button type="button" tabindex="-1" data-insert-prefix="- [ ] " title="Task">[ ]</button>
     </div>
 
-    <dialog id="auth-dlg">
-      <h2>API token</h2>
-      <p>
-        Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
-        localStorage.
-      </p>
-      <input id="auth-input" type="password" autocomplete="off" spellcheck="false" />
-      <div class="row">
-        <button id="auth-cancel">Cancel</button>
-        <button id="auth-ok" class="primary">Save</button>
-      </div>
-    </dialog>
-
     <dialog id="del-dlg">
       <h2>Delete this note?</h2>
       <p id="del-msg">This will remove the file from the vault. Cannot be undone via the UI.</p>
@@ -783,7 +735,7 @@
       import '/ui/components/vault-markdown.js';
       import '/ui/components/vault-editor.js';
       import '/ui/components/vault-toolbar.js';
-      import {api, apiJson, esc, getToken, setToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
 
       const DRAFT_PREFIX = 'vault.draft.';
       const VIEW_KEY = 'vault.view-mode';
@@ -1285,16 +1237,7 @@ ready: false
       };
 
       // wiring ----------------------------------------------------------
-      $('#settings').addEventListener('click', showAuthDialog);
-      $('#auth-cancel').addEventListener('click', () => $('#auth-dlg').close());
-      $('#auth-ok').addEventListener('click', () => {
-        setToken($('#auth-input').value.trim());
-        $('#auth-dlg').close();
-        init();
-      });
-      $('#auth-input').addEventListener('keydown', e => {
-        if (e.key === 'Enter') $('#auth-ok').click();
-      });
+      document.addEventListener('token-change', init);
 
       $('#save').addEventListener('click', save);
       $('#del').addEventListener('click', () => $('#del-dlg').showModal());
@@ -1611,6 +1554,7 @@ ready: false
 
       init();
     </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>
