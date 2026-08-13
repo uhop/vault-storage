@@ -14,11 +14,9 @@
 // Relative import: resolves both served (/ui/components/ → /ui/api.js) and
 // under the tape6 test server (/static/ui/components/ → /static/ui/api.js).
 import {setToken, showAuthDialog} from '../api.js';
+import {makeHandlers} from './events.js';
 
-const makeHandlers = types =>
-  Object.fromEntries(types.map(type => [type, 'on' + type[0].toUpperCase() + type.slice(1)]));
-
-const HANDLERS = makeHandlers(['click', 'keydown']);
+const HANDLERS = makeHandlers('click', 'keydown');
 
 class VaultSettings extends HTMLElement {
   connectedCallback() {
