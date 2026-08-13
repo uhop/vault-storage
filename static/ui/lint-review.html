@@ -349,7 +349,6 @@
 
       const wireAliasSection = () => {
         if (!$('[data-section="aliases"]')) return;
-        $$('[data-alias]').forEach(c => c.addEventListener('change', updateAliasSelectionState));
         $('#aliases-toggle').addEventListener('click', () => {
           const checks = [...$$('[data-alias]')];
           const allSelected = checks.every(c => c.checked);
@@ -429,6 +428,11 @@
         $('#footer').textContent =
           `${lint.total_issues} total lint issues; ${danglingTotal} dangling aliases, ${temporalTotal} temporal anomalies`;
       };
+
+      // Delegated: #content re-renders per refresh, one listener covers every checkbox.
+      $('#content').addEventListener('change', e => {
+        if (e.target.closest('[data-alias]')) updateAliasSelectionState();
+      });
 
       document.addEventListener('token-change', refresh);
 

@@ -248,26 +248,6 @@
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
-        for (const btn of document.querySelectorAll('[data-release]')) {
-          btn.addEventListener('click', async () => {
-            if (!confirm(`Force-release ${btn.dataset.release} from ${btn.dataset.holder}?`))
-              return;
-            try {
-              await api('/leases/release', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                  resource: btn.dataset.release,
-                  holder: $('#claim-form').elements.holder.value || 'operator',
-                  force: true
-                })
-              });
-              await refresh();
-            } catch (e) {
-              handleErr(e);
-            }
-          });
-        }
       };
 
       const renderHandoffs = items => {
@@ -307,25 +287,6 @@
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
-        // The artifact needs the bearer token, so it cannot be a plain link —
-        // fetch it authenticated and hand the browser a blob to save.
-        for (const btn of document.querySelectorAll('[data-artifact]')) {
-          btn.addEventListener('click', async () => {
-            try {
-              const res = await api(
-                `/handoffs/${encodeURIComponent(btn.dataset.artifact)}/artifact`
-              );
-              const url = URL.createObjectURL(await res.blob());
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `${btn.dataset.artifact}.${btn.dataset.ext}`;
-              a.click();
-              URL.revokeObjectURL(url);
-            } catch (e) {
-              handleErr(e);
-            }
-          });
-        }
       };
 
       const renderEvents = items => {
@@ -389,6 +350,45 @@
           await refresh();
         } catch (e) {
           handleErr(e);
+        }
+      });
+
+      // Delegated: the tables re-render every refresh, the containers don't.
+      $('#leases').addEventListener('click', async e => {
+        const btn = e.target.closest('[data-release]');
+        if (!btn) return;
+        if (!confirm(`Force-release ${btn.dataset.release} from ${btn.dataset.holder}?`)) return;
+        try {
+          await api('/leases/release', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              resource: btn.dataset.release,
+              holder: $('#claim-form').elements.holder.value || 'operator',
+              force: true
+            })
+          });
+          await refresh();
+        } catch (err) {
+          handleErr(err);
+        }
+      });
+
+      // The artifact needs the bearer token, so it cannot be a plain link —
+      // fetch it authenticated and hand the browser a blob to save.
+      $('#handoffs').addEventListener('click', async e => {
+        const btn = e.target.closest('[data-artifact]');
+        if (!btn) return;
+        try {
+          const res = await api(`/handoffs/${encodeURIComponent(btn.dataset.artifact)}/artifact`);
+          const url = URL.createObjectURL(await res.blob());
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${btn.dataset.artifact}.${btn.dataset.ext}`;
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          handleErr(err);
         }
       });
 

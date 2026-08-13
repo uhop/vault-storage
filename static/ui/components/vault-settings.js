@@ -6,10 +6,19 @@
 // .row list class collides otherwise). Saving stores the token and dispatches
 // a bubbling `token-change` — the page's refresh-after-auth hook. api.js's
 // showAuthDialog() keeps working: the ids it queries are rendered here.
+//
+// Events ride the handleEvent pattern with the element as the delegate —
+// two listeners on the host cover all three buttons and the input
+// (web-components-sampler's reno-* house style).
 
 // Relative import: resolves both served (/ui/components/ → /ui/api.js) and
 // under the tape6 test server (/static/ui/components/ → /static/ui/api.js).
 import {setToken, showAuthDialog} from '../api.js';
+
+const makeHandlers = types =>
+  Object.fromEntries(types.map(type => [type, 'on' + type[0].toUpperCase() + type.slice(1)]));
+
+const HANDLERS = makeHandlers(['click', 'keydown']);
 
 class VaultSettings extends HTMLElement {
   connectedCallback() {
@@ -20,11 +29,10 @@ class VaultSettings extends HTMLElement {
     btn.id = 'settings';
     btn.title = 'Settings';
     btn.textContent = '⚙';
-    btn.addEventListener('click', showAuthDialog);
 
-    const dlg = document.createElement('dialog');
-    dlg.id = 'auth-dlg';
-    dlg.innerHTML = `
+    this._dlg = document.createElement('dialog');
+    this._dlg.id = 'auth-dlg';
+    this._dlg.innerHTML = `
       <h2>API token</h2>
       <p>
         Paste the bearer token (<code>VAULT_API_TOKEN</code>). Stored in your browser's
@@ -36,17 +44,37 @@ class VaultSettings extends HTMLElement {
         <button id="auth-ok" class="primary">Save</button>
       </div>
     `;
-    dlg.querySelector('#auth-cancel').addEventListener('click', () => dlg.close());
-    dlg.querySelector('#auth-ok').addEventListener('click', () => {
-      setToken(dlg.querySelector('#auth-input').value.trim());
-      dlg.close();
-      this.dispatchEvent(new CustomEvent('token-change', {bubbles: true}));
-    });
-    dlg.querySelector('#auth-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') dlg.querySelector('#auth-ok').click();
-    });
 
-    this.append(btn, dlg);
+    this.append(btn, this._dlg);
+    Object.keys(HANDLERS).forEach(eventName => this.addEventListener(eventName, this));
+  }
+
+  handleEvent(e) {
+    this[HANDLERS[e.type]](e);
+  }
+
+  onClick(e) {
+    switch (e.target.closest('button')?.id) {
+      case 'settings':
+        showAuthDialog();
+        break;
+      case 'auth-cancel':
+        this._dlg.close();
+        break;
+      case 'auth-ok':
+        this._save();
+        break;
+    }
+  }
+
+  onKeydown(e) {
+    if (e.key === 'Enter' && e.target.id === 'auth-input') this._save();
+  }
+
+  _save() {
+    setToken(this._dlg.querySelector('#auth-input').value.trim());
+    this._dlg.close();
+    this.dispatchEvent(new CustomEvent('token-change', {bubbles: true}));
   }
 }
 

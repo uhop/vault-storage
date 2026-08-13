@@ -1347,17 +1347,19 @@ ready: false
         ta.dispatchEvent(new Event('input', {bubbles: true}));
       };
 
-      $$('#insert-row button').forEach(btn => {
-        // Prevent the button from stealing focus from the editor on tap.
-        btn.addEventListener('mousedown', e => e.preventDefault());
-        btn.addEventListener('click', e => {
-          e.preventDefault();
-          if (btn.dataset.insertWrap !== undefined) {
-            insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
-          } else if (btn.dataset.insertPrefix !== undefined) {
-            insertPrefix(btn.dataset.insertPrefix);
-          }
-        });
+      // Prevent the buttons from stealing focus from the editor on tap.
+      $('#insert-row').addEventListener('mousedown', e => {
+        if (e.target.closest('button')) e.preventDefault();
+      });
+      $('#insert-row').addEventListener('click', e => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        e.preventDefault();
+        if (btn.dataset.insertWrap !== undefined) {
+          insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
+        } else if (btn.dataset.insertPrefix !== undefined) {
+          insertPrefix(btn.dataset.insertPrefix);
+        }
       });
 
       $('#editor').addEventListener('focus', () => {
@@ -1529,9 +1531,9 @@ ready: false
         openFind(false);
       });
       // Buttons keep focus in the active find/replace input so Enter still navigates.
-      $$('#find-bar button').forEach(btn =>
-        btn.addEventListener('mousedown', e => e.preventDefault())
-      );
+      $('#find-bar').addEventListener('mousedown', e => {
+        if (e.target.closest('button')) e.preventDefault();
+      });
 
       // Editor-wide shortcuts: ⌘S save, ⌘F find/replace, Esc closes the find bar.
       document.addEventListener('keydown', e => {

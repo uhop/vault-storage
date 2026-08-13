@@ -40,14 +40,20 @@ class VaultToolbar extends HTMLElement {
       btn.setAttribute('aria-pressed', 'false');
       btn.title = title;
       btn.textContent = label;
-      btn.addEventListener('click', () => {
-        this.mode = mode;
-        this.dispatchEvent(new CustomEvent('mode-change', {detail: {mode}, bubbles: true}));
-      });
       this._modes.appendChild(btn);
     }
+    this._modes.addEventListener('click', this);
 
     this.prepend(this._path, this._pill, this._modes);
+  }
+
+  handleEvent(e) {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    this.mode = btn.dataset.mode;
+    this.dispatchEvent(
+      new CustomEvent('mode-change', {detail: {mode: btn.dataset.mode}, bubbles: true})
+    );
   }
 
   get path() {
