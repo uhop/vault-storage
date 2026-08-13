@@ -81,6 +81,37 @@ header h1 a:hover {
   text-decoration: underline;
 }
 
+/* <vault-nav> — the shared menu look. */
+header nav {
+  display: flex;
+  gap: 0.8rem;
+  font-size: 0.9rem;
+}
+header nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+header nav a[aria-current] {
+  color: var(--fg);
+}
+
+/* <vault-settings> — the ⚙ matches the theme-toggle height (18px line +
+   0.4rem padding + 1px borders = 32.8px) on every page, independent of each
+   page's generic button rule. */
+vault-settings > button {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 18px;
+  cursor: pointer;
+}
+vault-settings > button:hover {
+  color: var(--fg);
+}
+
 /* House dialog look — the vault-settings token dialog and every page dialog.
    Both row spellings: page dialogs use .row; the shared component uses
    .dlg-row (archive-review's generic .row list class collides with the other
