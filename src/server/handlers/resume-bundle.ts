@@ -105,13 +105,22 @@ export const resumeBriefHandler =
       ? ((extractSection(clarifyQueue.body, 'Pending') ?? '').match(/^### Q-/gm)?.length ?? 0)
       : null;
 
+    // Order by `created`, not by any touch timestamp: `created` is preserved on
+    // upsert (schema 0014) while `modified_at`/`updated` are re-stamped by
+    // maintenance, so a status flip or an enrichment write would otherwise lift
+    // a months-old log to rank 1. `modified_at` stays as the intra-day
+    // tie-break, since `created` is date-only. The status filter is the other
+    // half: the path test catches logs MOVED under an archive/ folder, never
+    // one marked archived in place, which is what actually happened
+    // (2026-08-29). Same shape in the bundle query below.
     const logRow = db
       .prepare(
         `SELECT file_path, title, updated FROM records
           WHERE type = 'log'
+            AND status NOT IN ('archived', 'superseded')
             AND file_path NOT LIKE 'archive/%'
             AND file_path NOT LIKE '%/archive/%'
-          ORDER BY COALESCE(modified_at, updated) DESC, file_path DESC
+          ORDER BY created DESC, COALESCE(modified_at, updated) DESC, file_path DESC
           LIMIT 1`
       )
       .get() as {file_path: string; title: string | null; updated: string} | undefined;
@@ -250,9 +259,10 @@ export const resumeBundleHandler =
               `SELECT file_path, title, updated, agent_summary
                  FROM records
                 WHERE type = 'log'
+                  AND status NOT IN ('archived', 'superseded')
                   AND file_path NOT LIKE 'archive/%'
                   AND file_path NOT LIKE '%/archive/%'
-                ORDER BY COALESCE(modified_at, updated) DESC, file_path DESC
+                ORDER BY created DESC, COALESCE(modified_at, updated) DESC, file_path DESC
                 LIMIT ?`
             )
             .all(logsLimit) as unknown[] as {

@@ -296,7 +296,8 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
                   SUM(CASE WHEN ${emptyBody} THEN 1 ELSE 0 END) AS empty,
                   SUM(CASE WHEN (agent_summary IS NOT NULL AND agent_summary != '') AND NOT ${emptyBody} THEN 1 ELSE 0 END) AS enriched_nonempty
              FROM records
-            WHERE file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
+            WHERE status NOT IN ('archived', 'superseded')
+              AND file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
             GROUP BY type
             ORDER BY type`
       )
@@ -331,7 +332,8 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
             .prepare(
               `SELECT record_id, file_path, type
                  FROM records
-                WHERE file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
+                WHERE status NOT IN ('archived', 'superseded')
+              AND file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
                   AND type IN (${ENRICHABLE_TYPES.map(() => '?').join(',')})
                   AND NOT ${emptyBody}
                   AND (agent_summary IS NULL OR agent_summary = '')

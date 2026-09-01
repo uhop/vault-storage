@@ -76,6 +76,35 @@ const seed = (root: string): void => {
   );
   writeMd(
     root,
+    'logs/2026-05-31-stale-session.md',
+    [
+      '---',
+      'title: Stale session',
+      'type: log',
+      'created: 2026-05-31',
+      'updated: 2026-05-31',
+      '---',
+      'An old log that maintenance will touch.',
+      ''
+    ].join('\n')
+  );
+  writeMd(
+    root,
+    'logs/2026-06-15-archived-in-place.md',
+    [
+      '---',
+      'title: Archived in place',
+      'type: log',
+      'created: 2026-06-15',
+      'updated: 2026-08-29',
+      'status: archived',
+      '---',
+      'Archived at its original path, never moved under archive/.',
+      ''
+    ].join('\n')
+  );
+  writeMd(
+    root,
     'projects/vs-demo/queue.md',
     [
       '---',
@@ -99,7 +128,9 @@ const seed = (root: string): void => {
   );
 };
 
-const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => {
+const withServer = async (
+  fn: (url: string, db: ReturnType<typeof openDatabase>) => Promise<void>
+): Promise<void> => {
   const root = mkdtempSync(join(tmpdir(), 'vault-resume-brief-'));
   seed(root);
   const db = openDatabase({path: ':memory:'});
@@ -115,7 +146,7 @@ const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => 
   const addr = handle.server.address();
   const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
   try {
-    await fn(`http://127.0.0.1:${port}`);
+    await fn(`http://127.0.0.1:${port}`, db);
   } finally {
     await handle.close();
     db.close();
@@ -177,5 +208,74 @@ test('GET /system/resume-brief — validation is loud', async t => {
 
     const badName = await fetchRaw(`${url}/system/resume-brief?project=Not%20Kebab`);
     t.equal(badName.status, 400, 'non-kebab project 400s');
+  });
+});
+
+// A maintenance touch — a status flip, an enrichment write — re-stamps
+// modified_at/updated without moving `created`. Before the 2026-09-01 fix both
+// resume surfaces ordered on that touch and filtered archives by path only, so
+// an old log marked archived in place came back as the newest session
+// (observed 2026-08-29: three May logs above four born-enriched August ones).
+// The brief reads the DB directly, so a touch here stands; the bundle reindexes
+// first, which is why its fixture carries `status` in the file instead.
+const touch = (
+  db: ReturnType<typeof openDatabase>,
+  path: string,
+  patch: {status?: string; modifiedAt?: string}
+): void => {
+  if (patch.status !== undefined)
+    db.prepare(`UPDATE records SET status = ? WHERE file_path = ?`).run(patch.status, path);
+  if (patch.modifiedAt !== undefined)
+    db.prepare(`UPDATE records SET updated = ?, modified_at = ? WHERE file_path = ?`).run(
+      patch.modifiedAt.slice(0, 10),
+      patch.modifiedAt,
+      path
+    );
+};
+
+test('GET /system/resume-brief — a fresh touch on an old log does not make it newest', async t => {
+  await withServer(async (url, db) => {
+    // Both stamps are pinned: import sets modified_at to now for every fixture,
+    // so touching only the old log would leave it OLDER and the assertion would
+    // pass against the very bug it targets.
+    touch(db, 'logs/2026-07-22-last-session.md', {modifiedAt: '2026-07-22T10:00:00.000Z'});
+    touch(db, 'logs/2026-05-31-stale-session.md', {modifiedAt: '2026-08-29T04:15:14.582Z'});
+    const {status, raw} = await fetchRaw(`${url}/system/resume-brief`);
+    t.equal(status, 200);
+    const body = JSON.parse(raw) as {latest_log: {file_path: string} | null};
+    t.equal(
+      body.latest_log?.file_path,
+      'logs/2026-07-22-last-session.md',
+      'newest by created wins over the freshly-touched May log'
+    );
+  });
+});
+
+test('GET /system/resume-brief — a log archived in place is excluded, not just moved ones', async t => {
+  await withServer(async (url, db) => {
+    touch(db, 'logs/2026-07-22-last-session.md', {status: 'archived'});
+    const {raw} = await fetchRaw(`${url}/system/resume-brief`);
+    const body = JSON.parse(raw) as {latest_log: {file_path: string} | null};
+    t.equal(
+      body.latest_log?.file_path,
+      'logs/2026-05-31-stale-session.md',
+      'archiving the newest falls through to the next active log'
+    );
+  });
+});
+
+test('POST /system/resume-bundle — same selection rules, and they survive the reindex', async t => {
+  await withServer(async url => {
+    const res = await fetch(`${url}/system/resume-bundle?logs=5`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const body = (await res.json()) as {logs: {file_path: string}[]};
+    t.equal(res.status, 200);
+    t.deepEqual(
+      body.logs.map(l => l.file_path),
+      ['logs/2026-07-22-last-session.md', 'logs/2026-05-31-stale-session.md'],
+      'archived-in-place log excluded; the rest ordered by created'
+    );
   });
 });
