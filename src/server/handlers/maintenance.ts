@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {cleanupLint} from '../../maintenance/cleanup-lint.ts';
 import {cleanupTagAliases} from '../../maintenance/cleanup-tag-aliases.ts';
+import {DEFAULT_LOG_RETENTION_DAYS, expireLogs} from '../../maintenance/expire-logs.ts';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
@@ -32,6 +33,13 @@ interface SnapshotDeps {
 interface EmbedDeps {
   db: DatabaseSync;
   embedder: Embedder;
+}
+
+interface ExpireLogsDeps {
+  db: DatabaseSync;
+  vaultDataPath: string;
+  /** Invalidated after deletions, which change the path set. */
+  resolverCache: ResolverCache;
 }
 
 const parsePositiveFloat = (raw: string | undefined, fallback: number): number | null => {
@@ -258,6 +266,59 @@ export const cleanupLintHandler =
     const summary = cleanupLint(deps.db);
     sendJson(ctx.res, 200, summary);
     void ctx;
+  };
+
+/**
+ * POST /maintenance/expire-logs?days=&dry_run=&limit=
+ *
+ * Delete `type: log` records past the retention window (default 90 days)
+ * from disk and DB. Unlike find-retention-candidates, which files an
+ * `archive_candidate` for a human to judge, this acts: the 2026-07-31
+ * ruling settled log expiry as policy, and the citation convention
+ * (backticked plain path, never a `[[logs/…]]` wikilink) is what makes
+ * deletion safe. Records already `archived` or `superseded` are skipped;
+ * `_summary-*` distillates are `type: meta` and never in scope.
+ *
+ * Ages on `created`, not `updated` — see the module header. `dry_run=1`
+ * reports the same summary without touching anything, which is also how
+ * the sweep previews a pass.
+ *
+ * Returns `{scanned, qualifying, deleted, logs, dryRun, days, errors,
+ * durationMs}`; `logs` lists every qualifying record oldest first, so the
+ * response is the audit trail whether or not the pass deleted.
+ */
+export const expireLogsHandler =
+  (deps: ExpireLogsDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['days', 'dry_run', 'limit']))) return;
+    const days = parsePositiveInt(ctx.query['days'], DEFAULT_LOG_RETENTION_DAYS);
+    if (days === null) {
+      sendError(ctx.res, 400, 'bad_request', 'days must be a positive integer');
+      return;
+    }
+    const dryRawValue = ctx.query['dry_run'];
+    let dryRun = false;
+    if (dryRawValue !== undefined) {
+      if (!['0', '1', 'true', 'false'].includes(dryRawValue)) {
+        sendError(ctx.res, 400, 'bad_request', 'dry_run must be one of 0, 1, true, false');
+        return;
+      }
+      dryRun = dryRawValue === '1' || dryRawValue === 'true';
+    }
+    const limitRaw = ctx.query['limit'];
+    let limit: number | undefined;
+    if (limitRaw !== undefined) {
+      const parsed = parsePositiveInt(limitRaw, 0);
+      if (parsed === null || parsed === 0) {
+        sendError(ctx.res, 400, 'bad_request', 'limit must be a positive integer');
+        return;
+      }
+      limit = parsed;
+    }
+
+    const summary = expireLogs(deps.db, deps.vaultDataPath, {days, dryRun, limit});
+    if (summary.deleted > 0) deps.resolverCache.invalidate();
+    sendJson(ctx.res, 200, summary);
   };
 
 interface CleanupTagAliasesBody {

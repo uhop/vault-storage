@@ -20,6 +20,7 @@ import {
   cleanupLintHandler,
   cleanupTagAliasesHandler,
   embedPendingHandler,
+  expireLogsHandler,
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
   findRetentionCandidatesHandler,
@@ -245,6 +246,14 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/maintenance/find-upgrade-signals', findUpgradeSignalsHandler({db: opts.db}));
   router.post('/maintenance/cleanup-lint', cleanupLintHandler({db: opts.db}));
   router.post('/maintenance/cleanup-tag-aliases', cleanupTagAliasesHandler({db: opts.db}));
+  router.post(
+    '/maintenance/expire-logs',
+    expireLogsHandler({
+      db: opts.db,
+      vaultDataPath: opts.env.vaultDataPath,
+      resolverCache
+    })
+  );
   router.post(
     '/maintenance/embed-pending',
     embedPendingHandler({db: opts.db, embedder: opts.embedder})
