@@ -272,9 +272,11 @@ atomization, and UI-component paths.
 
 Node tests are `tests/test-*.ts`; browser tests are `tests/test-*.js`, discovered via the
 `tape6.cli` / `tape6.browser` config globs so each runner sees only its own environment.
-The browser suite runs through `tape-six-playwright`. npm 11.19 and later skip the
-package's postinstall, so install Chromium once with `npx playwright install chromium`;
-Firefox and WebKit need `npx playwright install firefox webkit` once.
+The browser suite runs through `tape-six-playwright`, whose postinstall installs Chromium.
+npm 12 blocks dependency install scripts unless `allowScripts` in `package.json` approves
+them; on npm 12, approve the package with `npm install-scripts approve tape-six-playwright`
+or run `npx playwright install chromium` once. Firefox and WebKit need
+`npx playwright install firefox webkit` once.
 
 > **Runner note:** the suite runs under `tape6 --flags F`, not `FO`. The fail-once (`O`)
 > early-exit masks failures under the parallel runner — a red assert prints `failed: 0` and
