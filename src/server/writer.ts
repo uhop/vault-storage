@@ -4,6 +4,7 @@ import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts
 import {contentHash} from '../util/hash.ts';
 import {normalizeTag} from '../migration/tags.ts';
 import {
+  AGENT_COMPLEXITY,
   PRIORITY_ALIASES,
   RECORD_STATUSES,
   RECORD_TYPES,
@@ -72,6 +73,7 @@ const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 const TYPE_SET: ReadonlySet<string> = new Set(RECORD_TYPES);
 const STATUS_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(STATUS_ALIASES));
 const PRIORITY_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(PRIORITY_ALIASES));
+const AGENT_COMPLEXITY_SET: ReadonlySet<string> = new Set(AGENT_COMPLEXITY);
 
 /**
  * Validate a single closed-enum FM field. Pass-through if the value is
@@ -106,6 +108,24 @@ const validatePriority = (value: unknown): string | null => {
     return `unknown priority alias '${value}' — expected an integer or one of: ${[...PRIORITY_ALIAS_KEYS].sort().join(', ')}`;
   }
   return 'priority must be an integer or a named alias';
+};
+
+/**
+ * `agent.complexity` is the one closed enum inside the enrichment block —
+ * a shape hint, not a difficulty grade (types.ts AGENT_COMPLEXITY). Only the
+ * key's presence is checked: an `agent` block without it, or no block at
+ * all, passes, since most writes never touch enrichment. Before 2026-09-06
+ * only the enrichment harness enforced the list and 150 records had drifted
+ * into difficulty words and genre words.
+ */
+const validateAgentComplexity = (agent: unknown): string | null => {
+  if (agent === undefined || agent === null || typeof agent !== 'object' || Array.isArray(agent))
+    return null;
+  const value = (agent as Record<string, unknown>)['complexity'];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return 'agent.complexity must be a string';
+  if (AGENT_COMPLEXITY_SET.has(value)) return null;
+  return `unknown agent.complexity value '${value}' — expected one of: ${[...AGENT_COMPLEXITY_SET].sort().join(', ')}`;
 };
 
 /**
@@ -389,6 +409,8 @@ export const validateWritePayload = (
   if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);
   const priorityErr = validatePriority(enumInput('priority'));
   if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
+  const complexityErr = validateAgentComplexity(enumInput('agent'));
+  if (complexityErr) throw new WriterError(complexityErr, 'invalid_enum_value', 400);
 };
 
 export interface WriteResult {

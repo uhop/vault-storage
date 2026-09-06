@@ -793,3 +793,52 @@ test('PUT /sections/{id} rejects non-integer numeric priorities', async t => {
     cleanup();
   }
 });
+
+test('PUT rejects an off-enum agent.complexity; the six shapes and an absent key pass', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const put = (agent: Record<string, unknown>): Promise<{status: number; body: unknown}> =>
+        fetchAuthed(`${ctx.url}/sections/${id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({frontmatter: {agent}, body: 'Alpha body.\n'})
+        });
+      const bad = await put({summary: 'a', complexity: 'moderate'});
+      t.equal(bad.status, 400, 'a difficulty word is refused');
+      t.equal((bad.body as {code: string}).code, 'invalid_enum_value');
+      t.ok(
+        ((bad.body as {error: string}).error || '').includes("agent.complexity value 'moderate'"),
+        'error names the field and the value'
+      );
+      t.ok(
+        ((bad.body as {error: string}).error || '').includes(
+          'code-heavy, hub, log-entry, mixed, prose, tabular'
+        ),
+        'error lists the accepted values'
+      );
+      const notString = await put({summary: 'a', complexity: 3});
+      t.equal(notString.status, 400, 'a number is refused');
+      for (const shape of ['prose', 'code-heavy', 'tabular', 'mixed', 'hub', 'log-entry']) {
+        const ok = await put({summary: 'a', complexity: shape});
+        t.equal(ok.status, 204, `${shape} passes`);
+      }
+      const absent = await put({summary: 'a'});
+      t.equal(absent.status, 204, 'an agent block without the key passes');
+      const md = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: '---\ntitle: Alpha\nagent:\n  complexity: analysis\n---\nAlpha body.\n'
+      });
+      t.equal(md.status, 400, 'markdown mode runs the same check');
+      t.equal((md.body as {code: string}).code, 'invalid_enum_value');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

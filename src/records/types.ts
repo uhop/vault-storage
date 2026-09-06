@@ -24,6 +24,23 @@ export const RECORD_STATUSES = ['active', 'draft', 'done', 'superseded', 'archiv
 export type RecordStatus = (typeof RECORD_STATUSES)[number];
 
 /**
+ * `agent.complexity` — the enrichment block's structural label (design
+ * agent-frontmatter-enrichment § Field schema; closed-enums.md § agent.complexity).
+ * A shape hint for the chunker and the review skills, never a difficulty
+ * grade. Validated at the API write boundary (writer.ts), not by a CHECK:
+ * the block lives in frontmatter only. Normalized fleet-wide 2026-09-06.
+ */
+export const AGENT_COMPLEXITY = [
+  'prose',
+  'code-heavy',
+  'tabular',
+  'mixed',
+  'hub',
+  'log-entry'
+] as const;
+export type AgentComplexity = (typeof AGENT_COMPLEXITY)[number];
+
+/**
  * Pre-canonicalization aliases for `status`. Per closed-enums design the
  * 14 legacy values collapse into 5; the importer maps known aliases
  * explicitly so legacy FM values keep their intent (e.g. `completed`
