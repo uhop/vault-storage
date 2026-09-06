@@ -6,7 +6,7 @@ import {QueueItemsRepository} from '../../queue/repo.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
 import {HandoffsRepository, type Handoff} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
-import {computeLintReport, type LintReport} from './lint.ts';
+import {computeLintReport, queueHygieneFindings, type LintReport} from './lint.ts';
 import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -148,7 +148,12 @@ export const resumeBriefHandler =
           active: mine.filter(row => row.section === 'active').map(row => row.title),
           backlog: mine.filter(row => row.section === 'backlog').length,
           ready: readyView(mine, universe).length,
-          blocked: blockedView(mine, universe).length
+          blocked: blockedView(mine, universe).length,
+          // The project's queue-hygiene findings (the `queue_hygiene` lint
+          // check filtered to this queue.md): short strings, usually none.
+          hygiene: queueHygieneFindings(db)
+            .filter(f => f.file_path === `projects/${project}/queue.md`)
+            .map(f => f.finding)
         },
         handoffs_pending: pendingHandoffs.n,
         feedback: feedback ? {updated: feedback.updated} : null

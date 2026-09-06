@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {countMismatch, itemCount, parseQueue, queueFindings} from '../../queue/lint.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -49,12 +50,57 @@ const ENRICHABLE_TYPES = ['permanent', 'project', 'design', 'research', 'query']
 
 const UNENRICHED_RECORDS_CAP = 500;
 
+const QUEUE_FILE_RE = /^projects\/[^/]+\/queue\.md$/;
+
+export interface QueueHygieneFinding {
+  file_path: string;
+  finding: string;
+}
+
+/**
+ * Queue hygiene over every `projects/<name>/queue.md`: the convention's
+ * malformations the parser cannot warn about (items under a non-schema H2,
+ * completion markers on open items, unbolded column-0 bullets, a heading
+ * glued to prose), plus the served `queue_items` count against the markdown —
+ * a mismatch is a stale slice or parser drift. One entry per defect; the
+ * resume brief filters it to the session's project.
+ */
+export const queueHygieneFindings = (db: DatabaseSync): QueueHygieneFinding[] => {
+  const rows = db
+    .prepare(
+      `SELECT file_path, body FROM records
+        WHERE file_path LIKE 'projects/%/queue.md'
+          AND status NOT IN ('archived', 'superseded')
+        ORDER BY file_path`
+    )
+    .all() as {file_path: string; body: string | null}[];
+  const served = new Map<string, number>();
+  const counts = db
+    .prepare(
+      `SELECT source_file, COUNT(*) AS n FROM queue_items
+        WHERE source_file LIKE 'projects/%/queue.md'
+        GROUP BY source_file`
+    )
+    .all() as {source_file: string; n: number}[];
+  for (const row of counts) served.set(row.source_file, Number(row.n));
+  const out: QueueHygieneFinding[] = [];
+  for (const row of rows) {
+    if (!QUEUE_FILE_RE.test(row.file_path)) continue;
+    const parsed = parseQueue(row.body ?? '');
+    for (const finding of queueFindings(parsed)) out.push({file_path: row.file_path, finding});
+    const mismatch = countMismatch(itemCount(parsed), served.get(row.file_path) ?? 0);
+    if (mismatch) out.push({file_path: row.file_path, finding: mismatch});
+  }
+  return out;
+};
+
 /**
  * GET /system/lint — bug-finding integrity checks.
  *
- * Each check is a focused DB query for a known failure mode. All checks
- * combined are O(N) on indexed columns; on a few-thousand-record vault
- * the full pass is < 100ms. Safe to call from `/vault resume`.
+ * Each check is a focused DB query for a known failure mode (queue hygiene
+ * also parses every `projects/*\/queue.md` body — a few dozen small files).
+ * All checks combined are O(N) on indexed columns; on a few-thousand-record
+ * vault the full pass is < 100ms. Safe to call from `/vault resume`.
  *
  * `ok` is `true` iff every check returned 0. When non-zero, `samples`
  * provides up to 10 identifiers per check so the agent can investigate
@@ -276,6 +322,20 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
             }
           ]
         : []
+    };
+  }
+
+  // Queue hygiene (2026-09-06): the client-side `/vault-lint --category=queue`
+  // rules, run here so the session-start brief carries them — the line that
+  // turns "move a shipped item when it ships" from a rule the agent remembers
+  // into one it cannot miss.
+  {
+    const findings = queueHygieneFindings(db);
+    checks['queue_hygiene'] = {
+      count: findings.length,
+      samples: findings
+        .slice(0, SAMPLE_LIMIT)
+        .map(f => ({file_path: f.file_path, finding: f.finding}))
     };
   }
 

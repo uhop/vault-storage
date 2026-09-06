@@ -3,6 +3,8 @@ import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import {parseQueueFile} from '../src/queue/parse.ts';
+import {QueueItemsRepository} from '../src/queue/repo.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer} from '../src/server/server.ts';
 
@@ -126,7 +128,8 @@ test('GET /system/lint on empty DB: ok=true, all checks 0', async t => {
       'orphan_embeddings',
       'orphan_vec_rows',
       'temporal_anomalies',
-      'dangling_tag_aliases'
+      'dangling_tag_aliases',
+      'queue_hygiene'
     ];
     for (const name of expectedChecks) {
       t.equal(r.checks[name]?.count, 0, `${name}.count=0`);
@@ -970,5 +973,123 @@ test('GET /system/lint detects auto_commit_failing from the git-sync meta streak
       'sample carries the streak start'
     );
     t.ok(String(sample?.['last_error']).includes('index.lock'), 'sample carries the last error');
+  });
+});
+
+// Queue hygiene: the parser's silent drops and the convention's malformations,
+// counted per queue.md, with the served queue_items count checked against the
+// markdown (2026-09-06).
+const MESSY_QUEUE = [
+  '## Active',
+  '',
+  '- **Phase 8 — MERGE SHIPPED 2026-07-29: all executed.** Real run.',
+  '',
+  '## Backlog',
+  '',
+  '- **Open item.** Still open.',
+  '- unbolded bullet the parser counts as an item',
+  '',
+  '## Done',
+  '',
+  '- **Shipped thing.** Left under an invented heading.',
+  '',
+  '## Watching',
+  '',
+  '(empty)',
+  ''
+].join('\n');
+
+test('GET /system/lint queue_hygiene: findings per queue.md, and the served count against the markdown', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'q-messy',
+      file_path: 'projects/messy/queue.md',
+      type: 'queue-item',
+      body: MESSY_QUEUE
+    });
+    insertVecChunk(db, {chunk_id: 'c-q-messy', record_id: 'q-messy', content_hash: 'hash-fresh'});
+    insertRecord(db, {
+      record_id: 'q-clean',
+      file_path: 'projects/clean/queue.md',
+      type: 'queue-item',
+      body: '## Active\n\n(empty)\n\n## Backlog\n\n- **One.** Open.\n\n## Watching\n\n(empty)\n'
+    });
+    insertVecChunk(db, {chunk_id: 'c-q-clean', record_id: 'q-clean', content_hash: 'hash-fresh'});
+    // An archived queue record is not linted, whatever it holds.
+    insertRecord(db, {
+      record_id: 'q-old',
+      file_path: 'projects/old/queue.md',
+      type: 'queue-item',
+      body: '## Done\n\n- **Gone.** archived project\n'
+    });
+    db.prepare(`UPDATE records SET status = 'archived' WHERE record_id = 'q-old'`).run();
+    insertVecChunk(db, {chunk_id: 'c-q-old', record_id: 'q-old', content_hash: 'hash-fresh'});
+    const repo = new QueueItemsRepository(db);
+    repo.applyParsed(
+      'messy',
+      'projects/messy/queue.md',
+      parseQueueFile('messy', 'projects/messy/queue.md', MESSY_QUEUE)
+    );
+    repo.applyParsed(
+      'clean',
+      'projects/clean/queue.md',
+      parseQueueFile('clean', 'projects/clean/queue.md', '## Backlog\n\n- **One.** Open.\n')
+    );
+
+    const first = await fetchJson(`${url}/system/lint`);
+    t.equal(first.status, 200);
+    const r1 = (
+      first.body as {
+        ok: boolean;
+        checks: Record<
+          string,
+          {count: number; samples: Array<{file_path: string; finding: string}>}
+        >;
+      }
+    ).checks['queue_hygiene'];
+    t.equal(r1?.count, 3, 'three findings: the marker, the unbolded bullet, the invented heading');
+    t.ok(
+      r1?.samples.every(s => s.file_path === 'projects/messy/queue.md'),
+      'the clean and the archived queues contribute nothing'
+    );
+    const findings = r1?.samples.map(s => s.finding) ?? [];
+    t.ok(
+      findings.some(f => /^Active "Phase 8 — MERGE SHIPPED 2026-07-29/.test(f)),
+      findings.join('\n')
+    );
+    t.ok(
+      findings.some(f => /^Backlog: 1 unbolded column-0 bullet counted as an item/.test(f)),
+      findings.join('\n')
+    );
+    t.ok(
+      findings.some(f => /^## Done: 1 item under a non-schema H2/.test(f)),
+      findings.join('\n')
+    );
+    t.notOk(
+      findings.some(f => /queue_items holds/.test(f)),
+      'served count matches the markdown'
+    );
+    t.equal((first.body as {ok: boolean}).ok, false, 'hygiene findings flip ok');
+
+    // A slice the watcher missed: one row gone from queue_items.
+    db.prepare(`DELETE FROM queue_items WHERE project = 'messy' AND title = 'Open item.'`).run();
+    const second = await fetchJson(`${url}/system/lint`);
+    const r2 = (
+      second.body as {
+        checks: Record<
+          string,
+          {count: number; samples: Array<{file_path: string; finding: string}>}
+        >;
+      }
+    ).checks['queue_hygiene'];
+    t.equal(r2?.count, 4, 'the mismatch is a fourth finding');
+    t.ok(
+      r2?.samples.some(
+        s =>
+          s.file_path === 'projects/messy/queue.md' &&
+          /^queue_items holds 2 items, the markdown 3 column-0 bullets/.test(s.finding)
+      ),
+      'the mismatch names both counts'
+    );
   });
 });

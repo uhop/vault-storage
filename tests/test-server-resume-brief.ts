@@ -126,6 +126,31 @@ const seed = (root: string): void => {
       ''
     ].join('\n')
   );
+  writeMd(
+    root,
+    'projects/vs-messy/queue.md',
+    [
+      '---',
+      'title: vs-messy — Queue',
+      'type: project',
+      '---',
+      '',
+      '## Active',
+      '',
+      '- **Landed — SHIPPED 2026-09-01.** never moved to the archive',
+      '',
+      '## Backlog',
+      '',
+      '- **Open.** fine',
+      '',
+      '## Done',
+      '',
+      '- **Invented heading.** invisible to every queue view',
+      '',
+      '## Watching',
+      ''
+    ].join('\n')
+  );
 };
 
 const withServer = async (
@@ -136,7 +161,9 @@ const withServer = async (
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   importVault(db, root);
-  syncQueueFile(new QueueItemsRepository(db), 'projects/vs-demo/queue.md', root);
+  const queueRepo = new QueueItemsRepository(db);
+  syncQueueFile(queueRepo, 'projects/vs-demo/queue.md', root);
+  syncQueueFile(queueRepo, 'projects/vs-messy/queue.md', root);
   const handle = await startServer({
     db,
     env: makeEnv(0, root),
@@ -188,7 +215,13 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
     const body = JSON.parse(raw) as {
       project: {
         name: string;
-        queue: {active: string[]; backlog: number; ready: number; blocked: number};
+        queue: {
+          active: string[];
+          backlog: number;
+          ready: number;
+          blocked: number;
+          hygiene: string[];
+        };
         feedback: {updated: string} | null;
       };
     };
@@ -196,7 +229,33 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
     t.equal(body.project.queue.backlog, 2, 'two backlog items');
     t.equal(body.project.queue.ready, 1, 'only the unblocked one is ready');
     t.equal(body.project.queue.blocked, 1, 'the ref-carrying one is blocked');
+    t.deepEqual(body.project.queue.hygiene, [], 'a clean queue carries no findings');
     t.equal(body.project.feedback?.updated, '2026-07-09');
+  });
+});
+
+test('GET /system/resume-brief?project= — the project’s queue-hygiene findings, and only its own', async t => {
+  await withServer(async url => {
+    const {status, raw} = await fetchRaw(`${url}/system/resume-brief?project=vs-messy`);
+    t.equal(status, 200);
+    const body = JSON.parse(raw) as {
+      lint: {ok: boolean; total_issues: number};
+      project: {queue: {hygiene: string[]}};
+    };
+    const findings = body.project.queue.hygiene;
+    t.equal(findings.length, 2, 'the shipped-but-open item and the invented heading');
+    t.ok(
+      findings.some(f =>
+        /^Active "Landed — SHIPPED 2026-09-01.": completion marker 'SHIPPED'/.test(f)
+      ),
+      findings.join('\n')
+    );
+    t.ok(
+      findings.some(f => /^## Done: 1 item under a non-schema H2/.test(f)),
+      findings.join('\n')
+    );
+    t.notOk(raw.includes('Mid-flight'), 'the other project’s queue stays out of this block');
+    t.equal(body.lint.ok, false, 'the fleet lint line counts them too');
   });
 });
 

@@ -33,7 +33,8 @@ const REQUIRED_MENTIONS = {
     'orphan_suggestions',
     'temporal_anomalies',
     'dangling_tag_aliases',
-    'auto_commit_failing'
+    'auto_commit_failing',
+    'queue_hygiene'
   ],
   vault_status: ['embedder', 'memory', 'sqlite_vec_version', 'last_indexed_commit'],
   vault_suggestions_summary: ['statuses', 'total', 'by_kind'],
