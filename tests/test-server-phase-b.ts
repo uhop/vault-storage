@@ -774,6 +774,11 @@ test('POST /system/resume-bundle packages session-start state in one call', asyn
       t.equal(bundle.logs.length, 3, 'default 3 logs');
       t.equal(bundle.logs[0]?.file_path, 'logs/2026-07-04-entry.md', 'newest log first');
       t.equal(bundle.logs[0]?.summary, 'fourth', 'log ships its agent.summary');
+      t.equal(
+        (bundle.logs[0] as {summary_stale?: boolean} | undefined)?.summary_stale,
+        true,
+        'a mismatched derived_from_hash marks the summary stale'
+      );
 
       t.equal(bundle.project.found, true, 'project resolved');
       t.matchString(

@@ -67,6 +67,18 @@ const extractSection = (body: string, title: string): string | null => {
 const emptySection = (text: string | null): boolean =>
   text === null || text.length === 0 || text === '(empty)';
 
+// A summary is a derived artifact: present, well-formed, and possibly
+// describing a body that has since changed. The importer already compares
+// these two hashes to file `agent_enrichment_stale`; the bundle and the brief
+// carry the same verdict beside every summary they ship, so a reader re-reads
+// the body instead of relaying a digest that predates it (2026-09-01: a resume
+// reported "newest, filed 2026-08-29" over a queue with a newer item).
+const staleSummary = (
+  summary: string | null,
+  derivedFromHash: string | null,
+  bodyHash: string
+): boolean => summary !== null && derivedFromHash !== null && derivedFromHash !== bodyHash;
+
 /**
  * GET /system/resume-brief?project=<name>
  *
@@ -156,7 +168,16 @@ export const resumeBriefHandler =
             .map(f => f.finding)
         },
         handoffs_pending: pendingHandoffs.n,
-        feedback: feedback ? {updated: feedback.updated} : null
+        feedback: feedback
+          ? {
+              updated: feedback.updated,
+              summary_stale: staleSummary(
+                feedback.agentSummary,
+                feedback.agentDerivedFromHash,
+                feedback.bodyHash
+              )
+            }
+          : null
       };
     }
 
@@ -261,7 +282,7 @@ export const resumeBundleHandler =
         ? []
         : (db
             .prepare(
-              `SELECT file_path, title, updated, agent_summary
+              `SELECT file_path, title, updated, agent_summary, agent_derived_from_hash, body_hash
                  FROM records
                 WHERE type = 'log'
                   AND status NOT IN ('archived', 'superseded')
@@ -275,6 +296,8 @@ export const resumeBundleHandler =
             title: string | null;
             updated: string;
             agent_summary: string | null;
+            agent_derived_from_hash: string | null;
+            body_hash: string;
           }[]);
 
     let projectBlock: Record<string, unknown> | null = null;
@@ -294,6 +317,11 @@ export const resumeBundleHandler =
           file_path: record.filePath,
           updated: record.updated,
           summary: record.agentSummary,
+          summary_stale: staleSummary(
+            record.agentSummary,
+            record.agentDerivedFromHash,
+            record.bodyHash
+          ),
           body_bytes: Buffer.byteLength(record.body, 'utf8'),
           ...(explicitBodies.has(name) ? {body: record.body} : {})
         };
@@ -348,7 +376,8 @@ export const resumeBundleHandler =
         file_path: r.file_path,
         title: r.title,
         updated: r.updated,
-        summary: r.agent_summary
+        summary: r.agent_summary,
+        summary_stale: staleSummary(r.agent_summary, r.agent_derived_from_hash, r.body_hash)
       })),
       project: projectBlock
     };

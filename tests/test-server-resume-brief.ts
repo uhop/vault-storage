@@ -338,3 +338,73 @@ test('POST /system/resume-bundle — same selection rules, and they survive the 
     );
   });
 });
+
+// A summary is a derived artifact; both resume surfaces say when it predates
+// the body (2026-09-01: a resume relayed "newest, filed 2026-08-29" over a
+// queue whose body held a newer item, while the same bundle counted the
+// staleness suggestion anonymously).
+test('resume brief + bundle — summary_stale flips when the body outruns its agent.summary', async t => {
+  await withServer(async url => {
+    const headers = {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/json'};
+    const put = await fetch(`${url}/vault/projects/vs-demo/feedback.md`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        frontmatter: {agent: {summary: 'rules digest', derived_from_hash: 'auto'}},
+        body: 'Rules the brief must never inline.\n'
+      })
+    });
+    t.equal(put.status, 204, 'enriched with a server-stamped hash');
+
+    const brief = async (): Promise<{updated: string; summary_stale: boolean} | null> => {
+      const {raw} = await fetchRaw(`${url}/system/resume-brief?project=vs-demo`);
+      return (
+        JSON.parse(raw) as {project: {feedback: {updated: string; summary_stale: boolean} | null}}
+      ).project.feedback;
+    };
+    const bundle = async (): Promise<{
+      logs: Array<{summary: string | null; summary_stale: boolean}>;
+      files: Record<string, {summary: string | null; summary_stale: boolean} | null>;
+    }> => {
+      const res = await fetch(`${url}/system/resume-bundle?project=vs-demo&logs=2`, {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+      });
+      const body = (await res.json()) as {
+        logs: Array<{summary: string | null; summary_stale: boolean}>;
+        project: {files: Record<string, {summary: string | null; summary_stale: boolean} | null>};
+      };
+      return {logs: body.logs, files: body.project.files};
+    };
+
+    t.equal((await brief())?.summary_stale, false, 'brief: fresh summary is not stale');
+    const fresh = await bundle();
+    t.equal(fresh.files['feedback']?.summary, 'rules digest', 'bundle ships the summary');
+    t.equal(fresh.files['feedback']?.summary_stale, false, 'bundle: fresh summary is not stale');
+    t.equal(fresh.files['queue']?.summary_stale, false, 'no summary at all is not stale either');
+    t.ok(
+      fresh.logs.every(l => l.summary === null && l.summary_stale === false),
+      'unenriched logs carry the marker as false'
+    );
+
+    const edit = await fetch(`${url}/vault/edit`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        path: 'projects/vs-demo/feedback.md',
+        op: 'append',
+        text: 'A rule added after the summary was derived.\n'
+      })
+    });
+    t.equal(edit.status, 200, 'body appended, FM verbatim');
+
+    t.equal(
+      (await brief())?.summary_stale,
+      true,
+      'brief: the pointer says the summary predates the body'
+    );
+    const stale = await bundle();
+    t.equal(stale.files['feedback']?.summary, 'rules digest', 'the old summary still ships');
+    t.equal(stale.files['feedback']?.summary_stale, true, 'bundle: marked stale beside it');
+  });
+});
