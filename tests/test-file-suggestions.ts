@@ -171,3 +171,28 @@ test('a link-removed rejection does not block re-filing; a reviewer rejection do
     db.close();
   }
 });
+
+test('a rejection with a NULL resolved_by still blocks re-filing (the 2026-09-07 re-file wave)', async t => {
+  const db = setup();
+  try {
+    const filer = new SuggestionFiler(db, 'edge_type');
+    const payload = {
+      from_record: 'rec-a',
+      from_path: 'topics/a.md',
+      to_record: 'rec-b',
+      to_path: 'topics/b.md',
+      classifier_type: 'cites' as const,
+      context: 'ctx'
+    };
+    t.equal(filer.file(payload, NOW), true, 'first filing lands');
+    // The shape most historical rejections have: status flipped, no resolver recorded.
+    db.prepare(
+      `UPDATE suggestions SET status = 'rejected', resolved_at = ?, resolved_by = NULL`
+    ).run(NOW);
+    t.equal(filer.file(payload, NOW), false, 'a NULL resolved_by rejection is still a verdict');
+    db.prepare(`UPDATE suggestions SET resolved_by = ''`).run();
+    t.equal(filer.file(payload, NOW), false, 'an empty resolved_by rejection blocks too');
+  } finally {
+    db.close();
+  }
+});

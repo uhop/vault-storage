@@ -307,7 +307,10 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
         ? ` AND status IN ('pending', 'claimed')`
         : spec.blocking === 'pending-or-snoozed-reject'
           ? ` AND (status IN ('pending', 'claimed') OR (status = 'rejected' AND resolved_at >= ?))`
-          : ` AND NOT (status = 'rejected' AND resolved_by = '${LINK_REMOVED}')`;
+          : // `IS`, not `=`: 2,904 of the 3,929 rejected edge_type rows carried a NULL
+            // resolved_by, and `NOT (… AND NULL)` is NULL, which un-blocked every one
+            // of them at the next full pass (2026-09-07, 1,520 re-filed).
+            ` AND NOT (status = 'rejected' AND resolved_by IS '${LINK_REMOVED}')`;
     this.#findExisting = db.prepare(
       `SELECT id FROM suggestions
        WHERE kind = '${kind}' AND ${identityClause}${blockingClause}
