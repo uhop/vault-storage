@@ -86,7 +86,9 @@ Fifty-three tools mapping to the REST surface, grouped by purpose:
   (also the explicit claim release), `vault_create_suggestion`
 - **Queue items** — `vault_queue_top`, `vault_queue_ready`, `vault_queue_blocked`,
   `vault_queue_by_section`, `vault_queue_by_priority`, `vault_queue_by_project`,
-  `vault_queue_project_archive`, `vault_queue_reindex`
+  `vault_queue_project_archive` (all seven take `exclude: "body"` for a
+  listing without the item prose, about a fifth of the bytes),
+  `vault_queue_reindex`
 - **Repo leases** (agent coordination) — `vault_lease_list`, `vault_lease_events`,
   `vault_lease_claim` (atomic; precedence human > cwd agent > side agent; side
   claims attest a clean checkout), `vault_lease_renew`, `vault_lease_release`

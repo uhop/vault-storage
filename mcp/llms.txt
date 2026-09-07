@@ -26,7 +26,8 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   reads one heading's section the same way), whole-document writes (optional
   `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
   `vault_move` / `vault_propose`), maintenance, tags, graph insight, the
-  suggestions review queue (claim / resolve batches), queue-item slices,
+  suggestions review queue (claim / resolve batches), queue-item slices
+  (`exclude: "body"` for a listing without the item prose),
   repo leases (`vault_lease_*` — agent coordination: atomic claim / renew /
   release / transfer with a human-first precedence lattice), handoffs
   (`vault_handoff_*` — role-addressed cross-agent work requests: idempotent

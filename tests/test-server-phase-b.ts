@@ -1258,6 +1258,28 @@ test('POST /vault/edit that drops the wikilink settles the pending edge_type sug
   }
 });
 
+test('GET /sections and GET /sections/{id} reject an exclude value other than body', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const slim = await fetchAuthed(`${ctx.url}/sections/${alphaId}?exclude=body`);
+      t.equal(slim.status, 200, 'exclude=body still works');
+      t.equal('body' in (slim.body as object), false, 'body omitted');
+      const one = await fetchAuthed(`${ctx.url}/sections/${alphaId}?exclude=bogus`);
+      t.equal(one.status, 400, 'record read: bogus exclude → 400');
+      const list = await fetchAuthed(`${ctx.url}/sections?exclude=bogus`);
+      t.equal(list.status, 400, 'record list: bogus exclude → 400');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /suggestions/{unknown}/accept returns 404', async t => {
   const {root, cleanup} = setup();
   try {

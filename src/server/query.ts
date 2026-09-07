@@ -62,3 +62,16 @@ export const splitCsv = (value: string | undefined): string[] => {
     .map(s => s.trim())
     .filter(s => s.length > 0);
 };
+
+/**
+ * `?exclude=body` drops body fields from a record or queue-item read; any other
+ * value is a 400, the same loud failure a bad `limit` gets, never a silent
+ * include. Returns null after sending the error.
+ */
+export const parseExclude = (ctx: RequestContext): {includeBody: boolean} | null => {
+  const raw = ctx.query['exclude'];
+  if (raw === undefined) return {includeBody: true};
+  if (raw === 'body') return {includeBody: false};
+  sendError(ctx.res, 400, 'bad_request', 'exclude must be "body"');
+  return null;
+};

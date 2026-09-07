@@ -8,7 +8,13 @@ import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {RECORD_COLUMNS, RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
 import {readBodyText} from '../body.ts';
-import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
+import {
+  NO_QUERY_PARAMS,
+  parseExclude,
+  parsePagination,
+  rejectUnknownParams,
+  splitCsv
+} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -102,8 +108,13 @@ export const getRecordHandler =
     // reflects the freshly-bumped clock (decay_score = 1.0).
     const refStamp = new Date().toISOString();
     deps.records.bumpLastReferenced(id, refStamp);
-    const includeBody = ctx.query['exclude'] !== 'body';
-    sendJson(ctx.res, 200, toJsonRecord({...record, lastReferenced: refStamp}, {includeBody}));
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
+    sendJson(
+      ctx.res,
+      200,
+      toJsonRecord({...record, lastReferenced: refStamp}, {includeBody: exclude.includeBody})
+    );
   };
 
 export const getRecordMetaHandler =
@@ -385,9 +396,10 @@ export const getRecordFmHandler =
       return;
     }
     const {data, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
-    const includeBody = ctx.query['exclude'] !== 'body';
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const response: {frontmatter: Record<string, unknown>; body?: string} = {frontmatter: data};
-    if (includeBody) response.body = body;
+    if (exclude.includeBody) response.body = body;
     sendJson(ctx.res, 200, response);
   };
 
@@ -835,7 +847,9 @@ export const listRecordsHandler =
       return;
     }
     const {offset, limit} = parsePagination(ctx.query);
-    const includeBody = ctx.query['exclude'] !== 'body';
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
+    const includeBody = exclude.includeBody;
 
     const {sql, countSql, bindings, countBindings} = buildListSql(
       filters,

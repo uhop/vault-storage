@@ -147,8 +147,10 @@ Queue-item slices (flat {count, items}):
 
 - vault_queue_top, vault_queue_ready, vault_queue_blocked,
   vault_queue_by_section, vault_queue_by_priority, vault_queue_by_project,
-  vault_queue_project_archive; vault_queue_reindex rebuilds the derivative
-  table after a multi-machine pull.
+  vault_queue_project_archive — all seven take exclude: "body" for a
+  listing without the item prose (about a fifth of the bytes; body_hash
+  stays); vault_queue_reindex rebuilds the derivative table after a
+  multi-machine pull.
 
 Repo leases (agent coordination — who may edit which repo working tree; flat
 {count, items}, ephemeral: cleared on server restart):

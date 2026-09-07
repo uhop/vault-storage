@@ -298,6 +298,46 @@ test('GET /queue/projects/{name}/archive — closed_at DESC with nulls last', as
   });
 });
 
+test('?exclude=body drops the item prose on every queue slice and nothing else', async t => {
+  await withServer(seedFleet, async url => {
+    const slices = [
+      '/queue/top?limit=3',
+      '/queue/by-section/backlog',
+      '/queue/by-priority/1',
+      '/queue/projects/alpha',
+      '/queue/projects/alpha/archive',
+      '/queue/ready?project=alpha',
+      '/queue/blocked'
+    ];
+    for (const path of slices) {
+      const sep = path.includes('?') ? '&' : '?';
+      const full = await fetchJson(`${url}${path}`, {headers: authHeader});
+      const slim = await fetchJson(`${url}${path}${sep}exclude=body`, {headers: authHeader});
+      t.equal(slim.status, 200, `${path}: 200`);
+      const fullItems = (full.body as {items: Array<Record<string, unknown>>}).items;
+      const slimItems = (slim.body as {items: Array<Record<string, unknown>>}).items;
+      t.equal(slimItems.length, fullItems.length, `${path}: same count`);
+      for (const [i, item] of slimItems.entries()) {
+        t.equal('body' in item, false, `${path}[${i}]: no body`);
+        const {body: _dropped, ...rest} = fullItems[i]!;
+        t.deepEqual(item, rest, `${path}[${i}]: every other field identical, body_hash included`);
+      }
+    }
+    t.ok(
+      (await fetchJson(`${url}/queue/projects/alpha`, {headers: authHeader})).body !== null &&
+        (
+          (await fetchJson(`${url}/queue/projects/alpha`, {headers: authHeader})).body as {
+            items: unknown[];
+          }
+        ).items.length > 0,
+      'the fixture has items, so the checks above were not vacuous'
+    );
+
+    const bogus = await fetchJson(`${url}/queue/top?exclude=bogus`, {headers: authHeader});
+    t.equal(bogus.status, 400, 'a value other than body is a loud 400, not a silent include');
+  });
+});
+
 test('POST /maintenance/reindex-queues — populates from disk', async t => {
   await withServer(
     (_db, root) => {

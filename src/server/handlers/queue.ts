@@ -9,7 +9,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {blockedView, readyView, type BlockerReport} from '../../queue/ready.ts';
 import {QueueItemsRepository, type QueueItemRow} from '../../queue/repo.ts';
 import {reindexAllQueues} from '../../queue/sync.ts';
-import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
+import {NO_QUERY_PARAMS, parseExclude, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -22,7 +22,13 @@ interface ReindexDeps {
   vaultDataPath: string;
 }
 
-const toApi = (row: QueueItemRow): Record<string, unknown> => ({
+/**
+ * `?exclude=body` keeps every field but the item prose, mirroring
+ * `toJsonRecord({includeBody: false})`: `body_hash` stays, so a slim read can
+ * still tell whether an item changed. Measured 2026-09-06: bodies are 82% of a
+ * project slice, and every "what is on the queue" read wants the rest.
+ */
+const toApi = (row: QueueItemRow, includeBody = true): Record<string, unknown> => ({
   id: row.id,
   project: row.project,
   section: row.section,
@@ -30,7 +36,7 @@ const toApi = (row: QueueItemRow): Record<string, unknown> => ({
   position: row.position,
   title: row.title,
   title_norm: row.title_norm,
-  body: row.body,
+  ...(includeBody ? {body: row.body} : {}),
   closed_at: row.closed_at,
   close_reason: row.close_reason,
   source_file: row.source_file,
@@ -56,7 +62,7 @@ const parseSignedInt = (raw: string | undefined): number | null => {
 };
 
 /**
- * GET /queue/top?limit=N
+ * GET /queue/top?limit=N[&exclude=body]
  *
  * Top N open items across the fleet, ordered by `(priority DESC, project,
  * section, position)`. Excludes archive. Default limit 20, max 100.
@@ -67,7 +73,9 @@ const parseSignedInt = (raw: string | undefined): number | null => {
 export const queueTopHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['limit']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['limit', 'exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const limit = parsePositiveInt(ctx.query['limit'], 20);
     if (limit === null) {
       sendError(ctx.res, 400, 'bad_request', 'limit must be a positive integer');
@@ -75,12 +83,12 @@ export const queueTopHandler =
     }
     const capped = Math.min(limit, 100);
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listTopOpen(capped).map(toApi);
+    const items = repo.listTopOpen(capped).map(row => toApi(row, exclude.includeBody));
     sendJson(ctx.res, 200, {limit: capped, count: items.length, items});
   };
 
 /**
- * GET /queue/by-section/{section}
+ * GET /queue/by-section/{section}[?exclude=body]
  *
  * Fleet-wide for one open section. `{section}` must be `active`, `backlog`,
  * or `watching`. Items are ordered by `(priority DESC, project, position)`.
@@ -88,19 +96,21 @@ export const queueTopHandler =
 export const queueBySectionHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const section = ctx.params['section'];
     if (section !== 'active' && section !== 'backlog' && section !== 'watching') {
       sendError(ctx.res, 400, 'bad_request', 'section must be one of: active, backlog, watching');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listBySection(section).map(toApi);
+    const items = repo.listBySection(section).map(row => toApi(row, exclude.includeBody));
     sendJson(ctx.res, 200, {section, count: items.length, items});
   };
 
 /**
- * GET /queue/by-priority/{n}
+ * GET /queue/by-priority/{n}[?exclude=body]
  *
  * Fleet-wide for one priority tier in Backlog. `{n}` is a signed integer.
  * Items are ordered by `(project, position)`.
@@ -108,19 +118,21 @@ export const queueBySectionHandler =
 export const queueByPriorityHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const priority = parseSignedInt(ctx.params['n']);
     if (priority === null) {
       sendError(ctx.res, 400, 'bad_request', 'priority must be a signed integer');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listByPriority(priority).map(toApi);
+    const items = repo.listByPriority(priority).map(row => toApi(row, exclude.includeBody));
     sendJson(ctx.res, 200, {priority, count: items.length, items});
   };
 
 /**
- * GET /queue/projects/{name}
+ * GET /queue/projects/{name}[?exclude=body]
  *
  * All open items (Active + Backlog + Watching) for one project, grouped
  * by section, ordered by `(section_rank, priority DESC, position)` —
@@ -129,19 +141,21 @@ export const queueByPriorityHandler =
 export const queueByProjectHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const project = ctx.params['name'];
     if (!project) {
       sendError(ctx.res, 400, 'bad_request', 'missing project name');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listOpenByProject(project).map(toApi);
+    const items = repo.listOpenByProject(project).map(row => toApi(row, exclude.includeBody));
     sendJson(ctx.res, 200, {project, count: items.length, items});
   };
 
 /**
- * GET /queue/projects/{name}/archive
+ * GET /queue/projects/{name}/archive[?exclude=body]
  *
  * Archive slice for one project, ordered by `closed_at DESC` with undated
  * rows last. Used for project-history surfaces (UI archive view, audit
@@ -150,19 +164,24 @@ export const queueByProjectHandler =
 export const queueArchiveByProjectHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const project = ctx.params['name'];
     if (!project) {
       sendError(ctx.res, 400, 'bad_request', 'missing project name');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listArchiveByProject(project).map(toApi);
+    const items = repo.listArchiveByProject(project).map(row => toApi(row, exclude.includeBody));
     sendJson(ctx.res, 200, {project, count: items.length, items});
   };
 
-const blockerReportToApi = (report: BlockerReport): Record<string, unknown> => ({
-  ...toApi(report.item),
+const blockerReportToApi = (
+  report: BlockerReport,
+  includeBody: boolean
+): Record<string, unknown> => ({
+  ...toApi(report.item, includeBody),
   blockers: report.blockers.map(b => ({
     ref: b.ref,
     state: b.state,
@@ -173,7 +192,7 @@ const blockerReportToApi = (report: BlockerReport): Record<string, unknown> => (
 });
 
 /**
- * GET /queue/ready[?project=<name>]
+ * GET /queue/ready[?project=<name>&exclude=body]
  *
  * Backlog items whose `blocked-by:` refs (if any) all resolve to archived
  * items — the "claimable next" view, ordered `(priority DESC, project,
@@ -186,12 +205,14 @@ const blockerReportToApi = (report: BlockerReport): Record<string, unknown> => (
 export const queueReadyHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['project']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['project', 'exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const project = ctx.query['project'];
     const repo = new QueueItemsRepository(deps.db);
     const universe = repo.listAll();
     const candidates = project ? universe.filter(row => row.project === project) : universe;
-    const items = readyView(candidates, universe).map(toApi);
+    const items = readyView(candidates, universe).map(row => toApi(row, exclude.includeBody));
     sendJson(ctx.res, 200, {
       ...(project ? {project} : {}),
       count: items.length,
@@ -200,7 +221,7 @@ export const queueReadyHandler =
   };
 
 /**
- * GET /queue/blocked[?project=<name>]
+ * GET /queue/blocked[?project=<name>&exclude=body]
  *
  * Open items (any open section) with at least one blocking ref, each with
  * per-ref resolution detail (`state`: open | unresolved | ambiguous, plus
@@ -211,12 +232,16 @@ export const queueReadyHandler =
 export const queueBlockedHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['project']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['project', 'exclude']))) return;
+    const exclude = parseExclude(ctx);
+    if (exclude === null) return;
     const project = ctx.query['project'];
     const repo = new QueueItemsRepository(deps.db);
     const universe = repo.listAll();
     const candidates = project ? universe.filter(row => row.project === project) : universe;
-    const items = blockedView(candidates, universe).map(blockerReportToApi);
+    const items = blockedView(candidates, universe).map(report =>
+      blockerReportToApi(report, exclude.includeBody)
+    );
     sendJson(ctx.res, 200, {
       ...(project ? {project} : {}),
       count: items.length,

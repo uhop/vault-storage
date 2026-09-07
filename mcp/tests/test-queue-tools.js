@@ -86,6 +86,28 @@ test('vault_queue_by_project → GET /queue/projects/{name}', async t => {
   t.equal(url, 'http://test/queue/projects/node-re2');
 });
 
+test('exclude: "body" rides as ?exclude=body on every queue slice, and is absent unless set', async t => {
+  const {mcp, getCaptured} = setup();
+  const calls = [
+    ['vault_queue_top', {limit: 5}, '/queue/top'],
+    ['vault_queue_by_section', {section: 'backlog'}, '/queue/by-section/backlog'],
+    ['vault_queue_by_priority', {priority: -1}, '/queue/by-priority/-1'],
+    ['vault_queue_by_project', {project: 'node-re2'}, '/queue/projects/node-re2'],
+    ['vault_queue_project_archive', {project: 'node-re2'}, '/queue/projects/node-re2/archive'],
+    ['vault_queue_ready', {project: 'node-re2'}, '/queue/ready'],
+    ['vault_queue_blocked', {}, '/queue/blocked']
+  ];
+  for (const [name, args, path] of calls) {
+    await mcp.tools.get(name)(args);
+    let url = new URL(getCaptured().url);
+    t.equal(url.pathname, path, `${name}: path`);
+    t.equal(url.searchParams.get('exclude'), null, `${name}: no exclude unless asked`);
+    await mcp.tools.get(name)({...args, exclude: 'body'});
+    url = new URL(getCaptured().url);
+    t.equal(url.searchParams.get('exclude'), 'body', `${name}: exclude=body sent`);
+  }
+});
+
 test('vault_queue_project_archive → GET /queue/projects/{name}/archive', async t => {
   const {mcp, getCaptured} = setup();
   await mcp.tools.get('vault_queue_project_archive')({project: 'node-re2'});
