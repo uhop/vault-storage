@@ -43,6 +43,7 @@ const makeEnv = (port: number, dataPath: string, uiPath: string): ServerEnv => (
 const ROUTES: Array<[string, string]> = [
   ['GET', '/system/status'],
   ['GET', '/system/lint'],
+  ['GET', '/queue/lint'],
   ['POST', '/system/resume-bundle'],
   ['GET', '/system/resume-brief'],
   ['POST', '/context-pack'],

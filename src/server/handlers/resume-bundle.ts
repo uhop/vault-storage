@@ -164,7 +164,7 @@ export const resumeBriefHandler =
           // The project's queue-hygiene findings (the `queue_hygiene` lint
           // check filtered to this queue.md): short strings, usually none.
           hygiene: queueHygieneFindings(db)
-            .filter(f => f.file_path === `projects/${project}/queue.md`)
+            .filter(f => f.project === project)
             .map(f => f.finding)
         },
         handoffs_pending: pendingHandoffs.n,

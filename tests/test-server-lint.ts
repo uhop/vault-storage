@@ -1093,3 +1093,74 @@ test('GET /system/lint queue_hygiene: findings per queue.md, and the served coun
     );
   });
 });
+
+test('GET /queue/lint: the queue_hygiene list uncapped, one project on request', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {
+      record_id: 'q-messy',
+      file_path: 'projects/messy/queue.md',
+      type: 'queue-item',
+      body: MESSY_QUEUE
+    });
+    insertVecChunk(db, {chunk_id: 'c-q-messy', record_id: 'q-messy', content_hash: 'hash-fresh'});
+    // Twelve invented headings, each holding an item: more findings than the
+    // /system/lint sample cap, so the capped and the full views differ.
+    const sprawl = ['## Backlog', '', '- **Open.** Fine.', ''];
+    for (let i = 1; i <= 12; ++i)
+      sprawl.push(`## Done ${i}`, '', `- **Shipped ${i}.** Left here.`, '');
+    const SPRAWL_QUEUE = sprawl.join('\n');
+    insertRecord(db, {
+      record_id: 'q-sprawl',
+      file_path: 'projects/sprawl/queue.md',
+      type: 'queue-item',
+      body: SPRAWL_QUEUE
+    });
+    insertVecChunk(db, {chunk_id: 'c-q-sprawl', record_id: 'q-sprawl', content_hash: 'hash-fresh'});
+    const repo = new QueueItemsRepository(db);
+    repo.applyParsed(
+      'messy',
+      'projects/messy/queue.md',
+      parseQueueFile('messy', 'projects/messy/queue.md', MESSY_QUEUE)
+    );
+    repo.applyParsed(
+      'sprawl',
+      'projects/sprawl/queue.md',
+      parseQueueFile('sprawl', 'projects/sprawl/queue.md', SPRAWL_QUEUE)
+    );
+
+    const lint = await fetchJson(`${url}/system/lint`);
+    const check = (lint.body as {checks: Record<string, {count: number; samples: unknown[]}>})
+      .checks['queue_hygiene'];
+    t.equal(check?.count, 15, '/system/lint counts all fifteen findings');
+    t.equal(check?.samples.length, 10, 'and shows ten');
+
+    const all = await fetchJson(`${url}/queue/lint`);
+    t.equal(all.status, 200);
+    const full = all.body as {
+      count: number;
+      project?: string;
+      items: Array<{project: string; file_path: string; finding: string}>;
+    };
+    t.equal(full.count, 15, 'the list is uncapped');
+    t.equal(full.items.length, 15);
+    t.equal(full.project, undefined, 'no project echo without the filter');
+    t.deepEqual(
+      [...new Set(full.items.map(i => i.project))].sort(),
+      ['messy', 'sprawl'],
+      'each item names its project'
+    );
+    t.ok(
+      full.items.every(i => i.file_path === `projects/${i.project}/queue.md`),
+      'file_path agrees with project'
+    );
+
+    const one = await fetchJson(`${url}/queue/lint?project=messy`);
+    const mine = one.body as {count: number; project: string; items: Array<{project: string}>};
+    t.equal(mine.project, 'messy', 'the project is echoed');
+    t.equal(mine.count, 3, 'the messy queue alone');
+    t.ok(mine.items.every(i => i.project === 'messy'));
+
+    const none = await fetchJson(`${url}/queue/lint?project=clean`);
+    t.equal((none.body as {count: number}).count, 0, 'a clean or unknown project is an empty list');
+  });
+});

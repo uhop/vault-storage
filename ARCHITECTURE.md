@@ -71,7 +71,7 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 ## Other modules
 
 - **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring; reservation machinery (`claims.ts` for suggestion batches, `leases.ts` for the repo-lease registry); the handoff queue (`handoffs.ts` composing the DB index with `handoff-spool.ts`, the file layer under root `handoff/<project>/<status>/<id>.md` — self-describing sidecars plus an optional `<id>.patch`/`.bundle` artifact beside them, status transitions as atomic renames over every `<id>.*` sibling, rebuild-by-scan on server start).
-- **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows (including `blocked-by:` refs); query-time blocker resolution + ready/blocked/cycle computation (`ready.ts`); the queue-hygiene rules (`lint.ts`) that `/system/lint` runs over every `queue.md`; watcher glue + full reindex.
+- **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows (including `blocked-by:` refs); query-time blocker resolution + ready/blocked/cycle computation (`ready.ts`); the queue-hygiene rules (`lint.ts`) that `/system/lint` and `/queue/lint` run over every `queue.md`; watcher glue + full reindex.
 - **`src/maintenance/`** — the find-\* scans, lint cleanups, incremental reindex, run-all bundle, scan scheduler, search-before-write propose, raw-inbox classification, doc-vec backfill.
 - **`src/markdown/`** — YAML frontmatter parse/serialize; wikilink extraction with code-region masking.
 - **`src/migration/`** — one-time Obsidian → vault-storage transform: enum remaps, tag canonicalization, frontmatter backfill, oversized-file atomization, taxonomy seeding.

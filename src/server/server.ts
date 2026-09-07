@@ -58,7 +58,7 @@ import {
   summarySuggestionsHandler
 } from './handlers/suggestions.ts';
 import {commitHandler} from './handlers/commit.ts';
-import {lintHandler} from './handlers/lint.ts';
+import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {resolveHandler} from './handlers/resolve.ts';
 import {releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
@@ -295,6 +295,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/queue/top', queueTopHandler({db: opts.db}));
   router.get('/queue/ready', queueReadyHandler({db: opts.db}));
   router.get('/queue/blocked', queueBlockedHandler({db: opts.db}));
+  router.get('/queue/lint', queueLintHandler({db: opts.db}));
   router.get('/queue/by-section/{section}', queueBySectionHandler({db: opts.db}));
   router.get('/queue/by-priority/{n}', queueByPriorityHandler({db: opts.db}));
   router.get('/queue/projects/{name}/archive', queueArchiveByProjectHandler({db: opts.db}));

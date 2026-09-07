@@ -50,9 +50,10 @@ const ENRICHABLE_TYPES = ['permanent', 'project', 'design', 'research', 'query']
 
 const UNENRICHED_RECORDS_CAP = 500;
 
-const QUEUE_FILE_RE = /^projects\/[^/]+\/queue\.md$/;
+const QUEUE_FILE_RE = /^projects\/([^/]+)\/queue\.md$/;
 
 export interface QueueHygieneFinding {
+  project: string;
   file_path: string;
   finding: string;
 }
@@ -85,11 +86,13 @@ export const queueHygieneFindings = (db: DatabaseSync): QueueHygieneFinding[] =>
   for (const row of counts) served.set(row.source_file, Number(row.n));
   const out: QueueHygieneFinding[] = [];
   for (const row of rows) {
-    if (!QUEUE_FILE_RE.test(row.file_path)) continue;
+    const project = QUEUE_FILE_RE.exec(row.file_path)?.[1];
+    if (!project) continue;
     const parsed = parseQueue(row.body ?? '');
-    for (const finding of queueFindings(parsed)) out.push({file_path: row.file_path, finding});
+    const push = (finding: string) => out.push({project, file_path: row.file_path, finding});
+    for (const finding of queueFindings(parsed)) push(finding);
     const mismatch = countMismatch(itemCount(parsed), served.get(row.file_path) ?? 0);
-    if (mismatch) out.push({file_path: row.file_path, finding: mismatch});
+    if (mismatch) push(mismatch);
   }
   return out;
 };
@@ -104,7 +107,7 @@ export const queueHygieneFindings = (db: DatabaseSync): QueueHygieneFinding[] =>
  *
  * `ok` is `true` iff every check returned 0. When non-zero, `samples`
  * provides up to 10 identifiers per check so the agent can investigate
- * without a follow-up query.
+ * without a follow-up query; `queue_hygiene`'s full list is `GET /queue/lint`.
  */
 export const computeLintReport = (db: DatabaseSync): LintReport => {
   const checks: Record<string, LintCheck> = {};
@@ -433,4 +436,23 @@ export const lintHandler =
   ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     sendJson(ctx.res, 200, computeLintReport(deps.db));
+  };
+
+/**
+ * GET /queue/lint[?project=<name>]
+ *
+ * The `queue_hygiene` check uncapped — every finding over every open
+ * `projects/<name>/queue.md`, or one project's — where `/system/lint` shows
+ * the first SAMPLE_LIMIT. This is the list claude-config's
+ * `/vault-lint --category=queue` reads instead of running its own copy of the
+ * rules (D25: the server copy is canonical). Items are
+ * `{project, file_path, finding}`.
+ */
+export const queueLintHandler =
+  (deps: LintDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['project']))) return;
+    const project = ctx.query['project'];
+    const items = queueHygieneFindings(deps.db).filter(f => !project || f.project === project);
+    sendJson(ctx.res, 200, {...(project ? {project} : {}), count: items.length, items});
   };
