@@ -6,11 +6,17 @@ export interface ApiError {
   details?: Record<string, unknown>;
 }
 
-export const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
+export const sendJson = (
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {}
+): void => {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload).toString()
+    'Content-Length': Buffer.byteLength(payload).toString(),
+    ...headers
   });
   res.end(payload);
 };

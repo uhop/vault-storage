@@ -9,6 +9,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {blockedView, readyView, type BlockerReport} from '../../queue/ready.ts';
 import {QueueItemsRepository, type QueueItemRow} from '../../queue/repo.ts';
 import {reindexAllQueues} from '../../queue/sync.ts';
+import {asOf} from '../as-of.ts';
 import {NO_QUERY_PARAMS, parseExclude, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -84,7 +85,7 @@ export const queueTopHandler =
     const capped = Math.min(limit, 100);
     const repo = new QueueItemsRepository(deps.db);
     const items = repo.listTopOpen(capped).map(row => toApi(row, exclude.includeBody));
-    sendJson(ctx.res, 200, {limit: capped, count: items.length, items});
+    sendJson(ctx.res, 200, {limit: capped, count: items.length, items, as_of: asOf(deps.db)});
   };
 
 /**
@@ -106,7 +107,7 @@ export const queueBySectionHandler =
     }
     const repo = new QueueItemsRepository(deps.db);
     const items = repo.listBySection(section).map(row => toApi(row, exclude.includeBody));
-    sendJson(ctx.res, 200, {section, count: items.length, items});
+    sendJson(ctx.res, 200, {section, count: items.length, items, as_of: asOf(deps.db)});
   };
 
 /**
@@ -128,7 +129,7 @@ export const queueByPriorityHandler =
     }
     const repo = new QueueItemsRepository(deps.db);
     const items = repo.listByPriority(priority).map(row => toApi(row, exclude.includeBody));
-    sendJson(ctx.res, 200, {priority, count: items.length, items});
+    sendJson(ctx.res, 200, {priority, count: items.length, items, as_of: asOf(deps.db)});
   };
 
 /**
@@ -151,7 +152,7 @@ export const queueByProjectHandler =
     }
     const repo = new QueueItemsRepository(deps.db);
     const items = repo.listOpenByProject(project).map(row => toApi(row, exclude.includeBody));
-    sendJson(ctx.res, 200, {project, count: items.length, items});
+    sendJson(ctx.res, 200, {project, count: items.length, items, as_of: asOf(deps.db)});
   };
 
 /**
@@ -174,7 +175,7 @@ export const queueArchiveByProjectHandler =
     }
     const repo = new QueueItemsRepository(deps.db);
     const items = repo.listArchiveByProject(project).map(row => toApi(row, exclude.includeBody));
-    sendJson(ctx.res, 200, {project, count: items.length, items});
+    sendJson(ctx.res, 200, {project, count: items.length, items, as_of: asOf(deps.db)});
   };
 
 const blockerReportToApi = (
@@ -216,7 +217,8 @@ export const queueReadyHandler =
     sendJson(ctx.res, 200, {
       ...(project ? {project} : {}),
       count: items.length,
-      items
+      items,
+      as_of: asOf(deps.db)
     });
   };
 
@@ -245,7 +247,8 @@ export const queueBlockedHandler =
     sendJson(ctx.res, 200, {
       ...(project ? {project} : {}),
       count: items.length,
-      items
+      items,
+      as_of: asOf(deps.db)
     });
   };
 

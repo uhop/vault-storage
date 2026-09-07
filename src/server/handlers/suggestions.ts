@@ -4,6 +4,7 @@ import {EDGE_TYPE_ALIASES, EDGE_TYPES} from '../../records/types.ts';
 import {uuidv7} from '../../util/uuid.ts';
 import {readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
+import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {
@@ -262,7 +263,8 @@ export const listSuggestionsHandler =
       items,
       offset,
       limit,
-      total
+      total,
+      as_of: asOf(deps.db)
     });
   };
 

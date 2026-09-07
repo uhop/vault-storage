@@ -164,9 +164,9 @@ export const buildRouter = (opts: BuildOptions): Router => {
     contextPackHandler({db: opts.db, records, edges, embedder: opts.embedder})
   );
   router.get('/sections', listRecordsHandler({db: opts.db}));
-  router.get('/sections/{id}/neighborhood', neighborhoodHandler({records, edges}));
+  router.get('/sections/{id}/neighborhood', neighborhoodHandler({db: opts.db, records, edges}));
   router.get('/sections/{id}/similar', similarHandler({db: opts.db, records}));
-  router.get('/sections/{id}/backlinks', backlinksHandler({records, edges}));
+  router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db, records, edges}));
   router.get('/sections/{id}/meta', getRecordMetaHandler({records}));
   const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, records};
   router.get('/sections/{id}/fm', getRecordFmHandler(recordFmDeps));

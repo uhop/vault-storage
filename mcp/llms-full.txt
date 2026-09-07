@@ -44,6 +44,12 @@ evidence of anything) and which of the three list shapes it uses:
   the limit, not fetch a second page;
 - genuinely unpaginated reads — everything arrives at once.
 
+Every list envelope, every queue slice, and the resume bundle also carry
+`as_of: {generation, indexed_commit, at}` — the content generation the answer
+was computed at (it moves on every record write), so an empty answer reads as
+"empty at generation N" and two reads can be compared; vault_search returns
+{as_of, hits} for the same reason.
+
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
@@ -52,7 +58,7 @@ suggestion kinds) so the canonical vocabulary is visible at discovery time.
 Search & list:
 
 - vault_search — lexical (FTS5, default) or semantic (mode=semantic) search;
-  [{filename, score, matches}].
+  {as_of, hits: [{filename, score, matches}]}.
 - vault_context_pack — one prepared RAG pack anchored by exactly one of
   `query` (hybrid: lexical FTS + semantic chunk-KNN, fused by reciprocal
   rank) or `record_id` (nearest chunks). Returns {anchor, chunks, graph,

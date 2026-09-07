@@ -8,6 +8,7 @@ import {HandoffsRepository, type Handoff} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {computeLintReport, queueHygieneFindings, type LintReport} from './lint.ts';
 import {rejectUnknownParams} from '../query.ts';
+import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -182,6 +183,7 @@ export const resumeBriefHandler =
     }
 
     sendJson(ctx.res, 200, {
+      as_of: asOf(deps.db),
       lint: {ok: lint.ok, total_issues: lint.total_issues},
       suggestions_pending: pendingRow.n,
       workflow: {
@@ -397,5 +399,5 @@ export const resumeBundleHandler =
       }
     }
 
-    sendJson(ctx.res, 200, payload);
+    sendJson(ctx.res, 200, {...payload, as_of: asOf(deps.db)});
   };

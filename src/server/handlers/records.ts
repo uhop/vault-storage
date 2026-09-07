@@ -7,6 +7,7 @@ import {TagsImporter} from '../../importer/import-tags.ts';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {RECORD_COLUMNS, RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
+import {asOf} from '../as-of.ts';
 import {readBodyText} from '../body.ts';
 import {
   NO_QUERY_PARAMS,
@@ -865,6 +866,7 @@ export const listRecordsHandler =
       items: rows.map(rowToRecord).map(r => toJsonRecord(r, {includeBody})),
       offset,
       limit,
-      total
+      total,
+      as_of: asOf(db)
     });
   };

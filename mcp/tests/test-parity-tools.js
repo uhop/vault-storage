@@ -201,3 +201,29 @@ test('vault_resume_bundle serialises project_bodies as CSV', async t => {
   t.ok(url.includes('project_bodies=learnings%2Cdecisions'), 'CSV-encoded for the REST query');
   t.ok(url.includes('project=vault-storage'), 'project still sent');
 });
+
+test('vault_search → POST /search/simple/ and wraps the bare hits with the as_of headers', async t => {
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify([{filename: 'topics/a.md', score: 1, matches: []}]), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Vault-Generation': '42',
+          'X-Vault-Indexed-Commit': 'abc1234',
+          'X-Vault-As-Of': '2026-09-07T00:00:00.000Z'
+        }
+      })
+  );
+  const result = await call('vault_search', {query: 'alpha', mode: 'lexical', limit: 5});
+  const url = new URL(getCaptured().url);
+  t.equal(url.pathname, '/search/simple/');
+  t.equal(url.searchParams.get('query'), 'alpha');
+  const out = JSON.parse(firstText(result));
+  t.deepEqual(out.as_of, {
+    generation: 42,
+    indexed_commit: 'abc1234',
+    at: '2026-09-07T00:00:00.000Z'
+  });
+  t.equal(out.hits.length, 1, 'hits carried through');
+});

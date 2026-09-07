@@ -3,6 +3,7 @@ import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams} from '../query.ts';
+import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -59,7 +60,8 @@ export const listTagsHandler =
       items: rows.map(r => ({tag: r.tag, record_count: r.record_count})),
       offset,
       limit,
-      total
+      total,
+      as_of: asOf(deps.db)
     });
   };
 
@@ -167,7 +169,8 @@ export const recordsByTagHandler =
       items,
       offset,
       limit,
-      total
+      total,
+      as_of: asOf(deps.db)
     });
   };
 

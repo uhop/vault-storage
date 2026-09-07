@@ -2,6 +2,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {RecordVecRepository} from '../../db/vec-repo.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {rejectUnknownParams} from '../query.ts';
+import {asOf, asOfHeaders} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -176,5 +177,6 @@ export const simpleSearchHandler =
         ? await semanticSearch(deps.db, deps.embedder, query, limit)
         : lexicalSearch(deps.db, query, limit);
 
-    sendJson(ctx.res, 200, hits);
+    // A bare array carries no keys, so the stamp rides in headers here.
+    sendJson(ctx.res, 200, hits, asOfHeaders(asOf(deps.db)));
   };

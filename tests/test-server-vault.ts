@@ -2243,6 +2243,75 @@ test('GET /vault/{path}?section= returns one section with the document etag', as
   }
 });
 
+test('as_of stamps list, queue, bundle, and brief responses, search carries it in headers, and a write advances it', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const stampOf = (x: unknown, label: string): number => {
+        const s = x as {generation: number; indexed_commit: string | null; at: string} | undefined;
+        t.equal(typeof s?.generation, 'number', `${label}: generation is a number`);
+        t.ok(
+          s?.indexed_commit === null || typeof s?.indexed_commit === 'string',
+          `${label}: indexed_commit is a sha or null`
+        );
+        t.ok(
+          typeof s?.at === 'string' && !Number.isNaN(Date.parse(s.at)),
+          `${label}: at is an ISO instant`
+        );
+        return s?.generation ?? -1;
+      };
+      const first = await fetchAuthed(`${ctx.url}/sections?limit=1`);
+      const g1 = stampOf((first.body as {as_of: unknown}).as_of, 'GET /sections');
+      const someId = (first.body as {items: Array<{record_id: string}>}).items[0]!.record_id;
+      for (const path of [
+        '/queue/top',
+        '/queue/ready',
+        '/suggestions?limit=1',
+        '/tags?limit=1',
+        `/sections/${someId}/backlinks?limit=1`
+      ]) {
+        const r = await fetchAuthed(`${ctx.url}${path}`);
+        t.equal(r.status, 200, `${path}: 200`);
+        t.equal(stampOf((r.body as {as_of: unknown}).as_of, path), g1, `${path}: same generation`);
+      }
+      const brief = await fetchAuthed(`${ctx.url}/system/resume-brief`);
+      t.equal(brief.status, 200, 'brief 200');
+      t.equal(stampOf((brief.body as {as_of: unknown}).as_of, 'resume-brief'), g1, 'brief stamped');
+      const bundle = await fetchAuthed(`${ctx.url}/system/resume-bundle`, {method: 'POST'});
+      t.equal(bundle.status, 200, 'bundle 200');
+      t.equal(
+        stampOf((bundle.body as {as_of: unknown}).as_of, 'resume-bundle'),
+        g1,
+        'bundle stamped'
+      );
+
+      const search = await fetch(`${ctx.url}/search/simple/?query=Alpha`, {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+      });
+      t.equal(search.headers.get('x-vault-generation'), String(g1), 'search: generation header');
+      t.ok(search.headers.get('x-vault-as-of'), 'search: as-of header');
+      t.ok(Array.isArray(await search.json()), 'search body stays a bare array');
+
+      const put = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha'}, body: 'Alpha rewritten.\n'})
+      });
+      t.equal(put.status, 204, 'write lands');
+      const second = await fetchAuthed(`${ctx.url}/sections?limit=1`);
+      const g2 = stampOf((second.body as {as_of: unknown}).as_of, 'after the write');
+      t.ok(g2 > g1, `generation advanced (${g1} → ${g2})`);
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /vault/edit — replace asserts: single hit works, miss and ambiguity are loud 409s', async t => {
   const {root, cleanup} = setupVault();
   try {

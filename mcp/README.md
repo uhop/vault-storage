@@ -116,7 +116,10 @@ discovery time, and every description names the response shape it returns
 — including conditional keys (`requested` on an alias lookup) and which of
 the three list shapes it uses: the paginated `{items, offset, limit, total}`
 envelope (page by `items.length`; the server caps `limit` at 100), the flat
-`{count, items}` queue slices, or a genuinely unpaginated read.
+`{count, items}` queue slices, or a genuinely unpaginated read. Every list envelope, every queue slice, and the resume
+bundle also carry `as_of: {generation, indexed_commit, at}`, the content
+generation the answer was computed at, so an empty answer reads as "empty at
+generation N"; `vault_search` returns `{as_of, hits}` for the same reason.
 
 ## Resources
 

@@ -1,7 +1,9 @@
+import type {DatabaseSync} from 'node:sqlite';
 import type {EdgesRepository} from '../../records/edges.ts';
 import {EDGE_TYPES, type Edge, type EdgeType} from '../../records/types.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
+import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
@@ -10,6 +12,7 @@ const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 const MAX_DEPTH = 5;
 
 interface EdgesDeps {
+  db: DatabaseSync;
   records: RecordsRepository;
   edges: EdgesRepository;
 }
@@ -202,5 +205,5 @@ export const backlinksHandler =
       };
     });
 
-    sendJson(ctx.res, 200, {items, offset, limit, total});
+    sendJson(ctx.res, 200, {items, offset, limit, total, as_of: asOf(deps.db)});
   };

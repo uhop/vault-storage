@@ -109,16 +109,29 @@ export const registerTools = (mcp, client) => {
     'vault_search',
     {
       description:
-        'Search the vault by lexical query (default) or semantic similarity (mode=semantic). Returns up to `limit` hits as [{filename, score, matches: [{match, context}]}].',
+        'Search the vault by lexical query (default) or semantic similarity (mode=semantic). Returns {as_of, hits}: hits is up to `limit` of [{filename, score, matches: [{match, context}]}], and as_of {generation, indexed_commit, at} is the content generation the answer was computed at, so an empty hits reads as "empty at generation N", never "none ever". (Adapters before 0.7.0 returned the bare hits array.)',
       inputSchema: {
         query: z.string().min(1).describe('Search query text'),
         mode: z.enum(['lexical', 'semantic']).optional().default('lexical'),
         limit: z.number().int().min(1).max(100).optional().default(20)
       }
     },
-    wrap(async ({query, mode, limit}) =>
-      client.postJson('/search/simple/', undefined, {query, mode, limit})
-    )
+    wrap(async ({query, mode, limit}) => {
+      const {json, headers} = await client.postJsonWithMeta('/search/simple/', undefined, {
+        query,
+        mode,
+        limit
+      });
+      const generation = headers.get('x-vault-generation');
+      return {
+        as_of: {
+          generation: generation === null ? null : Number(generation),
+          indexed_commit: headers.get('x-vault-indexed-commit') || null,
+          at: headers.get('x-vault-as-of')
+        },
+        hits: json
+      };
+    })
   );
 
   mcp.registerTool(
@@ -148,7 +161,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_pieces',
     {
       description:
-        'List records (atomized pieces or whole-file records) with filters. Returns the paginated envelope {items, offset, limit, total}, items being full record rows (add exclude: "body" to drop the bodies). Page by items.length, never by the limit you asked for — the server caps limit at 100 and echoes the value it actually used, so requesting 200 returns 100 and stepping offset by 200 silently skips half of every page.',
+        'List records (atomized pieces or whole-file records) with filters. Returns the paginated envelope {items, offset, limit, total}, items being full record rows (add exclude: "body" to drop the bodies). Page by items.length, never by the limit you asked for — the server caps limit at 100 and echoes the value it actually used, so requesting 200 returns 100 and stepping offset by 200 silently skips half of every page. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         type: z.array(RECORD_TYPE).optional(),
         status: z.array(RECORD_STATUS).optional(),
@@ -522,7 +535,7 @@ export const registerTools = (mcp, client) => {
     'vault_backlinks',
     {
       description:
-        'List inbound edges to a record, filterable by edge type. Returns the paginated envelope {items, offset, limit, total}, each item {edge: {from_id, to_id, type, weight, note, created}, from_record: <record row + agent_summary>}. Page by items.length, not by the limit you asked for — the server caps limit at 100 and echoes the effective value.',
+        'List inbound edges to a record, filterable by edge type. Returns the paginated envelope {items, offset, limit, total}, each item {edge: {from_id, to_id, type, weight, note, created}, from_record: <record row + agent_summary>}. Page by items.length, not by the limit you asked for — the server caps limit at 100 and echoes the effective value. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         record_id: z.string().min(1),
         type: z.array(EDGE_TYPE).optional(),
@@ -544,7 +557,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_tags',
     {
       description:
-        'List the managed tag taxonomy. Returns the paginated envelope {items: [{tag, record_count}], offset, limit, total}; page by items.length (limit caps at 100).',
+        'List the managed tag taxonomy. Returns the paginated envelope {items: [{tag, record_count}], offset, limit, total}; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         prefix: z.string().optional(),
         offset: z.number().int().min(0).optional().default(0),
@@ -570,7 +583,7 @@ export const registerTools = (mcp, client) => {
     'vault_records_by_tag',
     {
       description:
-        'List records carrying a tag; aliases resolve to canonical form. Returns {tag, items, offset, limit, total} where `tag` is the canonical name; passing an alias additionally sets `alias_for` and `requested`, which is how you detect the redirect. Items are record rows WITHOUT body, carrying agent_summary + agent_derived_from_hash. Page by items.length (limit caps at 100). 404 tag_not_found when the tag is not in the taxonomy — distinct from a known tag with zero records, which is a 200 with total 0.',
+        'List records carrying a tag; aliases resolve to canonical form. Returns {tag, items, offset, limit, total} where `tag` is the canonical name; passing an alias additionally sets `alias_for` and `requested`, which is how you detect the redirect. Items are record rows WITHOUT body, carrying agent_summary + agent_derived_from_hash. Page by items.length (limit caps at 100). 404 tag_not_found when the tag is not in the taxonomy — distinct from a known tag with zero records, which is a 200 with total 0. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         tag: z.string().min(1),
         offset: z.number().int().min(0).optional().default(0),
@@ -587,7 +600,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_suggestions',
     {
       description:
-        'List pending review-queue suggestions. Defaults to status=pending — the common case. `expand: "context"` inlines per-item triage context: record briefs (title/type/status/summary, keyed by record_id, null for deleted records) for every record the payload references, plus taxonomy info for tag kinds — judge a prefetched page instead of fetching per item. Returns the paginated envelope {items, offset, limit, total}, each item {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}. Page by items.length (limit caps at 100).',
+        'List pending review-queue suggestions. Defaults to status=pending — the common case. `expand: "context"` inlines per-item triage context: record briefs (title/type/status/summary, keyed by record_id, null for deleted records) for every record the payload references, plus taxonomy info for tag kinds — judge a prefetched page instead of fetching per item. Returns the paginated envelope {items, offset, limit, total}, each item {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}. Page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         kind: z.array(SUGGESTION_KIND).optional(),
         status: z.array(SUGGESTION_STATUS).optional(),
@@ -1090,7 +1103,7 @@ export const registerTools = (mcp, client) => {
     'vault_resume_bundle',
     {
       description:
-        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes as summary + body_bytes, plus full bodies for the files named in project_bodies, — every log and project-file entry also carries summary_stale: true when agent.derived_from_hash no longer matches the body, so re-read the body instead of relaying that summary, plus handoffs — the coordination inbox: {open: [...], returned: [...], claimed: n}, items as {id, to, kind, status, from, created, updated, ref, body_first_line}; claiming a repo means inheriting its open list, and returned means your own submission awaits rework — read the full body with vault_handoff_get)}. Replaces the separate reindex/lint/summary/queue/log reads. The feedback body is included by default only while the whole bundle fits the server’s 32 KiB budget — past it feedback instead carries body_omitted: {reason: "bundle_budget", budget_bytes} plus headings (a fence-masked section index) so the rules stay discoverable; fetch the body with vault_read_file, or force it here by naming feedback in project_bodies (explicit asks bypass the budget). Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those.',
+        'One-shot session-start bundle for /vault resume: runs the incremental reindex, then returns {reindex, lint (non-zero checks only), suggestions (pending by kind), workflow (agent-workflow Active section + clarify count), logs (most recent, as agent.summary lines), project (the named project’s notes as summary + body_bytes, plus full bodies for the files named in project_bodies, — every log and project-file entry also carries summary_stale: true when agent.derived_from_hash no longer matches the body, so re-read the body instead of relaying that summary, plus handoffs — the coordination inbox: {open: [...], returned: [...], claimed: n}, items as {id, to, kind, status, from, created, updated, ref, body_first_line}; claiming a repo means inheriting its open list, and returned means your own submission awaits rework — read the full body with vault_handoff_get)}. Replaces the separate reindex/lint/summary/queue/log reads. The feedback body is included by default only while the whole bundle fits the server’s 32 KiB budget — past it feedback instead carries body_omitted: {reason: "bundle_budget", budget_bytes} plus headings (a fence-masked section index) so the rules stay discoverable; fetch the body with vault_read_file, or force it here by naming feedback in project_bodies (explicit asks bypass the budget). Note the lint block is a digest, not the vault_lint response: `checks` is pre-filtered to non-zero entries, and coverage arrives flattened as `coverage_enrichment: {total, enriched, unenriched}` without the by_type breakdown or the unenriched_records worklist — call vault_lint when you need those. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         project: z
           .string()
@@ -1185,7 +1198,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_top',
     {
       description:
-        'Top N open queue items across the entire fleet, ordered by (priority DESC, project, section, position). Excludes archive. Default limit 20, max 100. Returns {limit, count, items} — a flat count+items envelope and unpaginated, not the {items, offset, limit, total} shape: there is no offset and no second page, so a truncated result means raise limit. Use case: "what is next across all projects?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'Top N open queue items across the entire fleet, ordered by (priority DESC, project, section, position). Excludes archive. Default limit 20, max 100. Returns {limit, count, items} — a flat count+items envelope and unpaginated, not the {items, offset, limit, total} shape: there is no offset and no second page, so a truncated result means raise limit. Use case: "what is next across all projects?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         limit: z.number().int().min(1).max(100).optional().default(20),
         exclude: z
@@ -1203,7 +1216,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_by_section',
     {
       description:
-        'All open queue items in one section across the fleet, ordered by (priority DESC, project, position). Returns {section, count, items} — unpaginated; the whole section comes back. Use case: "what is in flight everywhere?" (active), "what is waiting upstream?" (watching), "what is on every project\'s backlog?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'All open queue items in one section across the fleet, ordered by (priority DESC, project, position). Returns {section, count, items} — unpaginated; the whole section comes back. Use case: "what is in flight everywhere?" (active), "what is waiting upstream?" (watching), "what is on every project\'s backlog?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         section: z.enum(['active', 'backlog', 'watching']),
         exclude: z
@@ -1223,7 +1236,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_by_priority',
     {
       description:
-        'All Backlog items at a specific priority tier across the fleet, ordered by (project, position). Priority is a signed integer centered on 0 — `+2` / `+1` are boosted, `-1` / `-2` are demoted. Returns {priority, count, items} — unpaginated. Use case: "everything we said was priority +2 across all projects". Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'All Backlog items at a specific priority tier across the fleet, ordered by (project, position). Priority is a signed integer centered on 0 — `+2` / `+1` are boosted, `-1` / `-2` are demoted. Returns {priority, count, items} — unpaginated. Use case: "everything we said was priority +2 across all projects". Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         priority: z.number().int(),
         exclude: z
@@ -1243,7 +1256,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_by_project',
     {
       description:
-        'All open items (Active + Backlog + Watching) for one project, grouped by section in display order: Active first, Backlog by priority DESC, Watching last. Returns {project, count, items} — unpaginated. Use case: "what is on `<project>`\'s queue right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'All open items (Active + Backlog + Watching) for one project, grouped by section in display order: Active first, Backlog by priority DESC, Watching last. Returns {project, count, items} — unpaginated. Use case: "what is on `<project>`\'s queue right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         project: z.string().min(1).describe('Project slug, e.g. "node-re2"'),
         exclude: z
@@ -1263,7 +1276,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_ready',
     {
       description:
-        'Backlog items whose blocked-by refs (if any) all resolve to archived items — the "claimable next" view, ordered (priority DESC, project, position). Fleet-wide by default; pass project to scope. Active (already started) and Watching (upstream-gated) are excluded. Unresolved/ambiguous refs BLOCK conservatively — check vault_queue_blocked for the detail. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Use case: "what can I start right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'Backlog items whose blocked-by refs (if any) all resolve to archived items — the "claimable next" view, ordered (priority DESC, project, position). Fleet-wide by default; pass project to scope. Active (already started) and Watching (upstream-gated) are excluded. Unresolved/ambiguous refs BLOCK conservatively — check vault_queue_blocked for the detail. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Use case: "what can I start right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         project: z.string().min(1).optional().describe('Project slug to scope to, e.g. "node-re2"'),
         exclude: z
@@ -1281,7 +1294,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_blocked',
     {
       description:
-        'Open queue items with at least one blocking blocked-by ref, each with per-ref resolution detail (state: open | unresolved | ambiguous, plus the resolved target) and an in_cycle flag for mutually-blocked items that can never self-release. The complementary view to vault_queue_ready; unresolved/ambiguous states usually mean a typo\'d ref or a blocker that was renamed. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Each item is a queue row plus `in_cycle` and `blockers: [{ref, state, target?, matches?}]`; `target` is present only once a ref resolves, and `matches` only on an ambiguous ref, where it carries the candidates that made it ambiguous. Use case: "what is stuck, and on what exactly?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'Open queue items with at least one blocking blocked-by ref, each with per-ref resolution detail (state: open | unresolved | ambiguous, plus the resolved target) and an in_cycle flag for mutually-blocked items that can never self-release. The complementary view to vault_queue_ready; unresolved/ambiguous states usually mean a typo\'d ref or a blocker that was renamed. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Each item is a queue row plus `in_cycle` and `blockers: [{ref, state, target?, matches?}]`; `target` is present only once a ref resolves, and `matches` only on an ambiguous ref, where it carries the candidates that made it ambiguous. Use case: "what is stuck, and on what exactly?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         project: z.string().min(1).optional().describe('Project slug to scope to, e.g. "node-re2"'),
         exclude: z
@@ -1299,7 +1312,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_project_archive',
     {
       description:
-        'Archive slice for one project, ordered by closed_at DESC with undated rows last. Each item carries a regex-inferred close_reason (shipped | rejected | parked | deferred | null). Returns {project, count, items} — unpaginated. Use case: "what did `<project>` ship/reject/park, when?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay.',
+        'Archive slice for one project, ordered by closed_at DESC with undated rows last. Each item carries a regex-inferred close_reason (shipped | rejected | parked | deferred | null). Returns {project, count, items} — unpaginated. Use case: "what did `<project>` ship/reject/park, when?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         project: z.string().min(1).describe('Project slug, e.g. "node-re2"'),
         exclude: z

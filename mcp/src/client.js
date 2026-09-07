@@ -122,6 +122,18 @@ export class VaultClient {
     return this.#parseJson(res);
   }
 
+  /** `postJson` plus the response headers, for a route that stamps `as_of` there. */
+  async postJsonWithMeta(path, body, query = {}) {
+    const init = {};
+    if (body !== undefined) {
+      init.body = JSON.stringify(body);
+      init.contentType = 'application/json';
+    }
+    const res = await this.#request('POST', this.url(path, query), init);
+    const json = await this.#parseJson(res);
+    return {json, headers: res.headers};
+  }
+
   async #request(method, url, init = {}) {
     const headers = {
       Authorization: `Bearer ${this.#apiToken}`,
