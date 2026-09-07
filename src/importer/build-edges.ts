@@ -7,7 +7,7 @@ import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
 import {EDGE_TYPE_ALIASES, EDGE_TYPES} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
-import {SuggestionFiler} from './file-suggestions.ts';
+import {LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
 
 /** FM `edges:` value vocabulary: canonical types + direction-flipping aliases. */
@@ -57,6 +57,8 @@ export interface EdgeBuildSummary {
    *  bypassed `edge_type` filing per `skipEdgeTypeFilingFromTypes`. The
    *  edges still land in the DB; only the review-queue noise is suppressed. */
   suggestionsSkippedByType: number;
+  /** Pending `edge_type` suggestions rejected as `link-removed`: the body wikilink they asked about is gone. */
+  suggestionsLinkRemoved: number;
   /** Archived records skipped — outbound edges are not extracted from `status: archived` notes. */
   archivedSkipped: number;
   durationMs: number;
@@ -154,6 +156,8 @@ interface DeclarationHooks {
   onOverride?: (toId: string) => void;
   /** An unreviewed default-cites body link (candidate for an `edge_type` suggestion). */
   onCiteNeedingReview?: (toId: string, context: string) => void;
+  /** Every resolved body link, whatever its type — the set a pending `edge_type` row must still be in. */
+  onBodyLink?: (toId: string) => void;
 }
 
 /**
@@ -214,6 +218,7 @@ const forEachDeclaredEdge = (
       );
       continue;
     }
+    hooks.onBodyLink?.(resolved);
     let finalType: EdgeType = c.type;
     let finalInverse = c.inverse === true;
     const override = fmOverrides.get(resolved);
@@ -246,6 +251,7 @@ const scratchSummary = (): EdgeBuildSummary => ({
   fmOverridesApplied: 0,
   suggestionsFiled: 0,
   suggestionsSkippedByType: 0,
+  suggestionsLinkRemoved: 0,
   archivedSkipped: 0,
   durationMs: 0
 });
@@ -332,6 +338,7 @@ export const buildEdges = (
       }
 
       const citesNeedingReview: Array<{toId: string; context: string}> = [];
+      const bodyLinkIds = new Set<string>();
 
       forEachDeclaredEdge(
         record,
@@ -348,7 +355,8 @@ export const buildEdges = (
           // user edited FM manually after filing), auto-resolve it.
           onOverride: toId =>
             filer.accept({from_record: record.recordId, to_record: toId}, 'fm-override', now),
-          onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context})
+          onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context}),
+          onBodyLink: toId => bodyLinkIds.add(toId)
         }
       );
 
@@ -384,6 +392,22 @@ export const buildEdges = (
           now
         );
         if (filed) summary.suggestionsFiled++;
+      }
+
+      // A pending review whose link the body no longer carries is a moot
+      // question. Matched by id or by path: a target deleted and recreated
+      // leaves the row with a dangling to_record while the link still
+      // stands (the 2026-07-12 shape the filer's altIdentity exists for).
+      const bodyLinkPaths = new Set<string>();
+      for (const toId of bodyLinkIds) {
+        const target = byRecordId.get(toId);
+        if (target) bodyLinkPaths.add(target.filePath);
+      }
+      for (const {id, payload} of filer.pending({from_record: record.recordId})) {
+        const {to_record: toId, to_path: toPath} = payload;
+        if (typeof toId !== 'string' && typeof toPath !== 'string') continue;
+        if (bodyLinkIds.has(toId) || bodyLinkPaths.has(toPath)) continue;
+        if (filer.rejectById(id, LINK_REMOVED, now)) ++summary.suggestionsLinkRemoved;
       }
     }
 

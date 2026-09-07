@@ -551,6 +551,87 @@ test('frontmatter `edges:` overrides default-cites and skips suggestion-filing',
   }
 });
 
+test('dropping the body wikilink rejects the pending edge_type suggestion as link-removed; the pair re-files if the link returns', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'a.md',
+      ['---', 'title: A', '---', 'A mentions [[b]] vaguely.', ''].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+    const first = importVault(fx.db, fx.root);
+    t.equal(first.edges.suggestionsFiled, 1, 'first pass files a suggestion');
+
+    const rows = () =>
+      fx.db
+        .prepare(
+          `SELECT status, resolved_by FROM suggestions WHERE kind = 'edge_type' ORDER BY created, id`
+        )
+        .all() as Array<{status: string; resolved_by: string | null}>;
+
+    writeMd(fx.root, 'a.md', ['---', 'title: A', '---', 'A no longer mentions it.', ''].join('\n'));
+    const second = importVault(fx.db, fx.root);
+    t.equal(second.edges.suggestionsLinkRemoved, 1, 'the orphaned review is settled');
+    t.equal(second.edges.edgesDeleted, 1, 'the cites edge is GCd alongside');
+    t.deepEqual(
+      rows(),
+      [{status: 'rejected', resolved_by: 'link-removed'}],
+      'rejected as link-removed'
+    );
+
+    const third = importVault(fx.db, fx.root);
+    t.equal(third.edges.suggestionsLinkRemoved, 0, 'a settled row is not re-settled');
+
+    writeMd(fx.root, 'a.md', ['---', 'title: A', '---', 'A mentions [[b]] again.', ''].join('\n'));
+    const fourth = importVault(fx.db, fx.root);
+    t.equal(
+      fourth.edges.suggestionsFiled,
+      1,
+      'the returning link re-files: link-removed is not a verdict'
+    );
+    t.deepEqual(
+      rows(),
+      [
+        {status: 'rejected', resolved_by: 'link-removed'},
+        {status: 'pending', resolved_by: null}
+      ],
+      'both rows kept'
+    );
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('a pending edge_type row with a dangling to_record survives while the link stands (matched by to_path)', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'a.md',
+      ['---', 'title: A', '---', 'A mentions [[b]] vaguely.', ''].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+    importVault(fx.db, fx.root);
+    // The 2026-07-12 shape: b was deleted and recreated, so to_record names no record.
+    fx.db
+      .prepare(
+        `UPDATE suggestions SET payload = json_set(payload, '$.to_record', 'rec-b-old') WHERE kind = 'edge_type'`
+      )
+      .run();
+
+    const second = importVault(fx.db, fx.root);
+    t.equal(second.edges.suggestionsLinkRemoved, 0, 'not settled: the link is still in the body');
+    t.equal(second.edges.suggestionsFiled, 0, 'and not re-filed either');
+    const row = fx.db.prepare(`SELECT status FROM suggestions WHERE kind = 'edge_type'`).get() as {
+      status: string;
+    };
+    t.equal(row.status, 'pending', 'still pending');
+  } finally {
+    teardown(fx);
+  }
+});
+
 test('FM `edges:` alias basis-for overrides a default-cites link', async t => {
   const fx = setup();
   try {

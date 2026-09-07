@@ -27,6 +27,14 @@ const MS_PER_DAY = 86_400_000;
 export const DEFAULT_SNOOZE_DAYS = 14;
 
 /**
+ * `resolved_by` marker for an `edge_type` row rejected because the body
+ * wikilink it asked about is gone. A moot question, not a verdict: unlike
+ * every other rejection of a classification kind it does not block a
+ * re-filing, so the pair comes back for review if the link returns.
+ */
+export const LINK_REMOVED = 'link-removed';
+
+/**
  * ISO instant marking the start of the snooze window: a rejected row whose
  * `resolved_at >= snoozeCutoff(now, days)` still blocks re-filing. Falls back
  * to `now` (so no extra blocking) when `now` is unparseable.
@@ -299,7 +307,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
         ? ` AND status IN ('pending', 'claimed')`
         : spec.blocking === 'pending-or-snoozed-reject'
           ? ` AND (status IN ('pending', 'claimed') OR (status = 'rejected' AND resolved_at >= ?))`
-          : '';
+          : ` AND NOT (status = 'rejected' AND resolved_by = '${LINK_REMOVED}')`;
     this.#findExisting = db.prepare(
       `SELECT id FROM suggestions
        WHERE kind = '${kind}' AND ${identityClause}${blockingClause}
@@ -393,6 +401,20 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
             SET status = 'accepted', resolved_at = ?, resolved_by = ?,
                 claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
           WHERE id = ?`
+    );
+    return stmt.run(now, resolvedBy, id).changes > 0;
+  }
+
+  /** Reject a single unresolved suggestion by row id (pairs with {@link pending}). */
+  rejectById(id: string, resolvedBy: string, now: string): boolean {
+    const stmt = this.#statement(
+      'reject-by-id',
+      [],
+      () =>
+        `UPDATE suggestions
+            SET status = 'rejected', resolved_at = ?, resolved_by = ?,
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+          WHERE id = ? AND status IN ('pending', 'claimed')`
     );
     return stmt.run(now, resolvedBy, id).changes > 0;
   }

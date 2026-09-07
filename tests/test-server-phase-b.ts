@@ -1203,6 +1203,61 @@ test('PUT /sections/{id} FM edges override settles pending edge_type suggestion'
   }
 });
 
+test('POST /vault/edit that drops the wikilink settles the pending edge_type suggestion as link-removed', async t => {
+  const {root, cleanup} = setup();
+  try {
+    writeMd(
+      root,
+      'topics/alpha.md',
+      [
+        '---',
+        'title: Alpha',
+        'created: 2026-04-01',
+        'updated: 2026-04-01',
+        '---',
+        'See [[topics/beta]].',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'topics/beta.md',
+      ['---', 'title: Beta', 'created: 2026-04-02', 'updated: 2026-04-02', '---', 'Beta.', ''].join(
+        '\n'
+      )
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const pending = await fetchAuthed(`${ctx.url}/suggestions?kind=edge_type`);
+      const items = (pending.body as {items: Array<{id: string}>}).items;
+      t.equal(items.length, 1, 'importVault filed the default-cites review');
+      const suggestionId = items[0]!.id;
+
+      const r = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/alpha.md',
+          op: 'replace',
+          from: 'See [[topics/beta]].',
+          to: 'Beta is no longer mentioned.'
+        })
+      });
+      t.equal(r.status, 200, '200 edited');
+
+      t.match(
+        suggestionRow(ctx.db, suggestionId),
+        {status: 'rejected', resolved_by: 'link-removed'},
+        'edge_type settled by the edit itself, no reindex needed'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /suggestions/{unknown}/accept returns 404', async t => {
   const {root, cleanup} = setup();
   try {

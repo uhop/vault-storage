@@ -27,7 +27,7 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 - **`walk.ts`** — recursive `.md` walker (skips `.git`, `node_modules`, `.obsidian`).
 - **`type-from-path.ts`** — folder-default record-type inference (`_index.md` → index, `projects/*/state.md` → state, …).
 - **`import-tags.ts`** — normalize + alias-rewrite FM tags, replace the record's tag set atomically; unknown tags file `new_tag` suggestions.
-- **`build-edges.ts`** — second pass: FM `related:`/`edges:` + body wikilinks → resolved typed edges, stale-edge pruning, `edge_type` review suggestions.
+- **`build-edges.ts`** — second pass: FM `related:`/`edges:` + body wikilinks → resolved typed edges, stale-edge pruning, `edge_type` review suggestions (filed for unreviewed default-cites links; settled `fm-override` when the FM map pins the type, rejected `link-removed` once the body no longer carries the link — a moot question, not a verdict, so the pair re-files if the link returns).
 - **`classify-wikilinks.ts`** — heuristic edge classifier for body links (keyword cues; default `cites`).
 - **`resolver.ts`** — wikilink target → record id (exact path, `.md`-stripped, unique basename, `_about.md` fallback).
 - **`file-suggestions.ts`** — generic `SuggestionFiler` with per-kind idempotency and snooze semantics.

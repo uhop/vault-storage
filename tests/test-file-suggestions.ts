@@ -1,7 +1,11 @@
 import test from 'tape-six';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
-import {repathPendingSuggestions, SuggestionFiler} from '../src/importer/file-suggestions.ts';
+import {
+  LINK_REMOVED,
+  repathPendingSuggestions,
+  SuggestionFiler
+} from '../src/importer/file-suggestions.ts';
 
 const NOW = '2026-07-24T00:00:00Z';
 
@@ -131,6 +135,38 @@ test('repathPendingSuggestions rewrites payload paths for a moved record', async
       edgeOut?.payload.includes('"from_path":"topics/relocated.md"'),
       'outbound edge suggestion re-pathed on the from side'
     );
+  } finally {
+    db.close();
+  }
+});
+
+test('a link-removed rejection does not block re-filing; a reviewer rejection does', async t => {
+  const db = setup();
+  try {
+    const filer = new SuggestionFiler(db, 'edge_type');
+    const payload = {
+      from_record: 'rec-a',
+      from_path: 'topics/a.md',
+      to_record: 'rec-b',
+      to_path: 'topics/b.md',
+      classifier_type: 'cites' as const,
+      context: 'ctx'
+    };
+    t.equal(filer.file(payload, NOW), true, 'first filing lands');
+    const first = filer.pending({from_record: 'rec-a'});
+    t.equal(first.length, 1, 'one pending');
+    t.equal(filer.rejectById(first[0]!.id, LINK_REMOVED, NOW), true, 'rejected as link-removed');
+    t.equal(
+      filer.rejectById(first[0]!.id, LINK_REMOVED, NOW),
+      false,
+      'a settled row is left alone'
+    );
+    t.equal(filer.file(payload, NOW), true, 'the pair re-files: a moot question is not a verdict');
+
+    const second = filer.pending({from_record: 'rec-a'});
+    t.equal(second.length, 1, 'one pending again');
+    t.equal(filer.rejectById(second[0]!.id, 'agent', NOW), true, 'rejected by a reviewer');
+    t.equal(filer.file(payload, NOW), false, 'a verdict blocks for good');
   } finally {
     db.close();
   }
