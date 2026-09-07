@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    20,
-    'schema version is 20 after all migrations through the suggestion evidence backfill'
+    21,
+    'schema version is 21 after all migrations through the handoff touches and verifications'
   );
   t.deepEqual(
     result.applied,
@@ -42,7 +42,8 @@ test('runs the init migration and creates required tables', t => {
       '0017_leases.sql',
       '0018_handoffs.sql',
       '0019_handoff_artifact_event.sql',
-      '0020_suggestion_evidence.sql'
+      '0020_suggestion_evidence.sql',
+      '0021_handoff_touches_verification.sql'
     ],
     'all migrations applied in order'
   );
@@ -77,7 +78,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 20, 'schema version stays at 20');
+  t.equal(second.current, 21, 'schema version stays at 21');
   db.close();
 });
 
@@ -130,9 +131,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0017_leases.sql',
       '0018_handoffs.sql',
       '0019_handoff_artifact_event.sql',
-      '0020_suggestion_evidence.sql'
+      '0020_suggestion_evidence.sql',
+      '0021_handoff_touches_verification.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0020)'
+    'migrations from schema 9 onward applied (0010–0021)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {
@@ -361,7 +363,6 @@ test('0020 backfills payload.evidence by kind on rows filed before the filer sta
   const db = openDatabase({path: ':memory:'});
   try {
     runMigrations(db);
-    db.prepare(`UPDATE meta SET value = '19' WHERE key = 'schema_version'`).run();
     const insert = db.prepare(
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created) VALUES (?, ?, NULL, ?, 'pending', '2026-09-01T00:00:00Z')`
     );
@@ -378,8 +379,13 @@ test('0020 backfills payload.evidence by kind on rows filed before the filer sta
         evidence: {source: 'agent', asserted: false}
       })
     );
-    const again = runMigrations(db);
-    t.equal(again.current, 20, 'back at 20');
+    // The backfill is plain UPDATEs, so the file re-applies on a migrated DB.
+    db.exec(
+      readFileSync(
+        new URL('../src/db/schema/0020_suggestion_evidence.sql', import.meta.url),
+        'utf8'
+      )
+    );
     const evidence = (id: string) =>
       JSON.parse(
         (db.prepare('SELECT payload FROM suggestions WHERE id = ?').get(id) as {payload: string})

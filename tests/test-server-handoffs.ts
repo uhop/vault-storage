@@ -181,6 +181,211 @@ test('handoffs: guard-first validation on create and list', async t => {
   }
 });
 
+const PATCH_WITH_BASE = `From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Someone <s@example.com>
+Subject: [PATCH] fix the matcher
+
+---
+base-commit: 0123456789abcdef0123456789abcdef01234567
+2.43.0
+`;
+
+test('handoffs: touches are declared, validated, echoed, and reported as overlaps to the owner', async t => {
+  const ctx = await startCtx();
+  try {
+    const bad = await api(
+      `${ctx.url}/handoffs`,
+      'POST',
+      createPayload('k-t0', {touches: [{kind: 'blob', key: 'x', operation: 'modify'}]})
+    );
+    t.equal(bad.status, 400, 'unknown touch kind → 400');
+    t.equal(bad.body.code, 'invalid_enum_value');
+
+    const a = await api(
+      `${ctx.url}/handoffs`,
+      'POST',
+      createPayload('k-t1', {
+        touches: [
+          {kind: 'file', key: 'src/index.ts', operation: 'modify'},
+          {kind: 'api', key: 'GET /queue/top', operation: 'extend'}
+        ]
+      })
+    );
+    t.equal(a.status, 200);
+    t.deepEqual(a.body.handoff.touches, [
+      {kind: 'file', key: 'src/index.ts', operation: 'modify'},
+      {kind: 'api', key: 'GET /queue/top', operation: 'extend'}
+    ]);
+    const aId = a.body.handoff.id as string;
+
+    const b = await api(
+      `${ctx.url}/handoffs`,
+      'POST',
+      createPayload('k-t2', {touches: [{kind: 'file', key: 'src/index.ts', operation: 'replace'}]})
+    );
+    const bId = b.body.handoff.id as string;
+    const c = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-t3'));
+    t.deepEqual(c.body.handoff.touches, [], 'no declaration is an empty list');
+
+    const inbox = await api(`${ctx.url}/handoffs?to=${encodeURIComponent(ROLE)}`, 'GET');
+    const byId = new Map<string, any>(inbox.body.items.map((it: any) => [it.id, it]));
+    t.deepEqual(
+      byId.get(aId).overlaps,
+      [{id: bId, touches: [{kind: 'file', key: 'src/index.ts', operation: 'replace'}]}],
+      'a sees b on the shared file'
+    );
+    t.deepEqual(
+      byId.get(bId).overlaps,
+      [{id: aId, touches: [{kind: 'file', key: 'src/index.ts', operation: 'modify'}]}],
+      "b sees a, with a's operation"
+    );
+    t.equal('overlaps' in byId.get(c.body.handoff.id), false, 'no touches, no overlaps key');
+
+    const sidecar = readFileSync(join(ctx.root, 'handoff', 'deep6', 'open', `${aId}.md`), 'utf8');
+    t.ok(sidecar.includes('src/index.ts'), 'sidecar carries the declaration');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('handoffs: verification is bound to the artifact base sha; stale shows, resolved refuses', async t => {
+  const ctx = await startCtx();
+  try {
+    const created = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-v1'));
+    const id = created.body.handoff.id as string;
+
+    const early = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'npm test',
+      sha: 'abc1234',
+      exit: 0,
+      by: 'mba/session-b'
+    });
+    t.equal(early.status, 200);
+    t.equal(
+      early.body.handoff.verifications[0].stale,
+      null,
+      'no artifact yet: nothing to judge against'
+    );
+
+    const put = await fetch(`${ctx.url}/handoffs/${id}/artifact?ext=patch&actor=mba`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/octet-stream'},
+      body: PATCH_WITH_BASE
+    });
+    t.equal(put.status, 200);
+    const afterPut = await api(`${ctx.url}/handoffs/${id}`, 'GET');
+    t.equal(
+      afterPut.body.base_sha,
+      '0123456789abcdef0123456789abcdef01234567',
+      'base-commit parsed'
+    );
+    t.equal(afterPut.body.verifications[0].stale, true, 'the earlier pass ran on another sha');
+
+    const fresh = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'npm test',
+      sha: '0123456789abcdef0123456789abcdef01234567',
+      exit: 0,
+      by: 'mba/session-b'
+    });
+    t.equal(fresh.body.handoff.verifications[1].stale, false, 'a pass on the base sha is current');
+
+    const badSha = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'x',
+      sha: 'not-a-sha',
+      exit: 0,
+      by: 'me'
+    });
+    t.equal(badSha.status, 400);
+    const badExit = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'x',
+      sha: 'abc1234',
+      exit: -1,
+      by: 'me'
+    });
+    t.equal(badExit.status, 400);
+
+    const events = await api(`${ctx.url}/handoffs/events?id=${id}`, 'GET');
+    t.ok(
+      events.body.items.some((e: any) => e.event === 'verified'),
+      'verification logged'
+    );
+
+    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const done = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      resolution: 'done'
+    });
+    t.equal(done.body.status, 'ok');
+    const late = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'x',
+      sha: 'abc1234',
+      exit: 0,
+      by: 'me'
+    });
+    t.equal(late.status, 409, 'resolved → 409');
+    t.equal(late.body.code, 'handoff_resolved');
+
+    const archive = readFileSync(join(ctx.root, 'projects', 'deep6', 'handoff-archive.md'), 'utf8');
+    t.ok(
+      archive.includes('- base: `0123456789abcdef0123456789abcdef01234567`'),
+      'archive carries the base sha'
+    );
+    t.ok(
+      archive.includes('- verified: `npm test` at `abc1234` exit 0 by `mba/session-b`'),
+      'archive carries the verification'
+    );
+    t.ok(archive.includes('— stale'), 'and marks the stale one');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('handoffs: resubmit replaces touches, and a restart rebuilds them from the spool', async t => {
+  const ctx = await startCtx();
+  try {
+    const created = await api(
+      `${ctx.url}/handoffs`,
+      'POST',
+      createPayload('k-r1', {touches: [{kind: 'file', key: 'a.ts', operation: 'modify'}]})
+    );
+    const id = created.body.handoff.id as string;
+    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    await api(`${ctx.url}/handoffs/resolve`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      resolution: 'returned',
+      note: 'split it'
+    });
+    const re = await api(`${ctx.url}/handoffs/resubmit`, 'POST', {
+      id,
+      touches: [
+        {kind: 'file', key: 'a.ts', operation: 'modify'},
+        {kind: 'file', key: 'b.ts', operation: 'add'}
+      ]
+    });
+    t.equal(re.status, 200);
+    t.equal(re.body.handoff.touches.length, 2, 'touches replaced whole');
+
+    const root = ctx.root;
+    await stopCtx(ctx, true);
+    const again = await startCtx(root);
+    try {
+      const row = await api(`${again.url}/handoffs/${id}`, 'GET');
+      t.equal(row.body.touches.length, 2, 'rebuilt from the sidecar');
+    } finally {
+      await stopCtx(again);
+    }
+  } finally {
+    // root removed by the inner stop
+  }
+});
+
 test('handoffs: claim → resolve(done) archives into vault-data and clears the spool', async t => {
   const ctx = await startCtx();
   try {

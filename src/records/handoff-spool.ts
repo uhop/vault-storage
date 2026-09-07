@@ -58,6 +58,9 @@ export interface SpoolSidecar {
   claim_expires?: string;
   result?: Record<string, unknown>;
   notes: {author: string; at: string; text: string}[];
+  touches?: {kind: string; key: string; operation: string}[];
+  verifications?: {check: string; sha: string; exit: number; at: string; by: string}[];
+  base_sha?: string;
 }
 
 export interface SpoolEntry {

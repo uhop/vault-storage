@@ -17,6 +17,8 @@ import {
   HANDOFF_KINDS,
   HANDOFF_REF_TYPES,
   HANDOFF_STATUSES,
+  HANDOFF_TOUCH_KINDS,
+  HANDOFF_TOUCH_OPERATIONS,
   HandoffsRepository,
   MAX_CLAIM_TTL_SECONDS,
   MIN_CLAIM_TTL_SECONDS,
@@ -26,6 +28,7 @@ import {
   type HandoffRefType,
   type HandoffStatus
 } from '../../records/handoffs.ts';
+import type {HandoffTouch} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyBuffer, readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
@@ -57,8 +60,89 @@ const toApi = (h: Handoff): Record<string, unknown> => ({
   claim_expires: h.claimExpires,
   result: h.result,
   notes: h.notes,
+  touches: h.touches,
+  base_sha: h.baseSha,
+  // A verification is trusted only against the artifact it ran on.
+  verifications: h.verifications.map(v => ({
+    ...v,
+    stale: h.baseSha === null ? null : v.sha !== h.baseSha
+  })),
   artifact: h.artifact
 });
+
+const MAX_TOUCHES = 200;
+
+/**
+ * `touches` on create and resubmit: an array of {kind, key, operation}, each
+ * kind and operation from the closed enums. Returns the array, `undefined`
+ * when absent, or null after sending the 400.
+ */
+const parseTouches = (
+  ctx: Parameters<Handler>[0],
+  body: Record<string, unknown>
+): HandoffTouch[] | undefined | null => {
+  const raw = body['touches'];
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || raw.length > MAX_TOUCHES) {
+    sendError(
+      ctx.res,
+      400,
+      'bad_request',
+      `touches must be an array of at most ${MAX_TOUCHES} {kind, key, operation} entries`
+    );
+    return null;
+  }
+  const out: HandoffTouch[] = [];
+  for (const item of raw) {
+    const t = item as Record<string, unknown> | null;
+    if (
+      t === null ||
+      typeof t !== 'object' ||
+      Array.isArray(t) ||
+      typeof t['kind'] !== 'string' ||
+      !(HANDOFF_TOUCH_KINDS as readonly string[]).includes(t['kind']) ||
+      typeof t['key'] !== 'string' ||
+      t['key'].length === 0 ||
+      typeof t['operation'] !== 'string' ||
+      !(HANDOFF_TOUCH_OPERATIONS as readonly string[]).includes(t['operation'])
+    ) {
+      sendError(
+        ctx.res,
+        400,
+        'invalid_enum_value',
+        `each touch is {kind: ${HANDOFF_TOUCH_KINDS.join(' | ')}, key: non-empty string, operation: ${HANDOFF_TOUCH_OPERATIONS.join(' | ')}}`
+      );
+      return null;
+    }
+    out.push({
+      kind: t['kind'] as HandoffTouch['kind'],
+      key: t['key'],
+      operation: t['operation'] as HandoffTouch['operation']
+    });
+  }
+  return out;
+};
+
+/**
+ * In-flight handoffs to the same role that declare a touch this one also
+ * declares — what the owner reads before `git apply --check`. Only when
+ * non-empty, so an absent key is an answer.
+ */
+const overlapsOf = (
+  item: Handoff,
+  siblings: Handoff[]
+): Array<{id: string; touches: HandoffTouch[]}> => {
+  const mine = new Set(item.touches.map(t => `${t.kind}\t${t.key}`));
+  if (mine.size === 0) return [];
+  const out: Array<{id: string; touches: HandoffTouch[]}> = [];
+  for (const other of siblings) {
+    if (other.id === item.id || other.to !== item.to) continue;
+    if (other.status === 'done' || other.status === 'rejected') continue;
+    const shared = other.touches.filter(t => mine.has(`${t.kind}\t${t.key}`));
+    if (shared.length > 0) out.push({id: other.id, touches: shared});
+  }
+  return out;
+};
 
 interface ParsedBody {
   body: Record<string, unknown>;
@@ -146,14 +230,17 @@ export const listHandoffsHandler =
       return;
     }
     const repo = new HandoffsRepository(deps.db, deps.vaultDataPath);
-    const items = repo
-      .list({
-        ...(ctx.query['to'] !== undefined ? {to: ctx.query['to']} : {}),
-        ...(ctx.query['project'] !== undefined ? {project: ctx.query['project']} : {}),
-        ...(status !== undefined ? {status: status as HandoffStatus} : {}),
-        ...(kind !== undefined ? {kind: kind as HandoffKind} : {})
-      })
-      .map(toApi);
+    const listed = repo.list({
+      ...(ctx.query['to'] !== undefined ? {to: ctx.query['to']} : {}),
+      ...(ctx.query['project'] !== undefined ? {project: ctx.query['project']} : {}),
+      ...(status !== undefined ? {status: status as HandoffStatus} : {}),
+      ...(kind !== undefined ? {kind: kind as HandoffKind} : {})
+    });
+    const everything = listed.some(h => h.touches.length > 0) ? repo.list({}) : [];
+    const items = listed.map(h => {
+      const overlaps = overlapsOf(h, everything);
+      return {...toApi(h), ...(overlaps.length > 0 ? {overlaps} : {})};
+    });
     sendJson(ctx.res, 200, {count: items.length, items});
   };
 
@@ -273,6 +360,8 @@ export const createHandoffHandler =
       }
       ref = {type: r['type'] as HandoffRefType, value: r['value']};
     }
+    const touches = parseTouches(ctx, body);
+    if (touches === null) return;
 
     const outcome = new HandoffsRepository(deps.db, deps.vaultDataPath).create({
       idempotencyKey,
@@ -285,7 +374,8 @@ export const createHandoffHandler =
         session: from['session'],
         ...(from['repo'] !== undefined ? {repo: from['repo'] as string} : {})
       },
-      body: prose
+      body: prose,
+      ...(touches !== undefined ? {touches} : {})
     });
     sendJson(ctx.res, 200, {status: outcome.status, handoff: toApi(outcome.handoff)});
   };
@@ -487,6 +577,10 @@ export const resubmitHandoffHandler =
       };
     }
 
+    const touches = parseTouches(ctx, body);
+    if (touches === null) return;
+    if (touches !== undefined) updates.touches = touches;
+
     const outcome = new HandoffsRepository(deps.db, deps.vaultDataPath).resubmit(id, updates);
     switch (outcome.status) {
       case 'ok':
@@ -501,6 +595,68 @@ export const resubmitHandoffHandler =
           409,
           'not_returned',
           `${id} is ${outcome.current.status} — only a returned handoff can be resubmitted`,
+          {current: toApi(outcome.current)}
+        );
+        return;
+    }
+  };
+
+/**
+ * POST /handoffs/verify — record a gate's result bound to the sha it ran on:
+ * `{id, check, sha, exit, by}`. Append-only; the response (and every read)
+ * shows each verification with `stale`, judged against the artifact's
+ * `base-commit`, so a pass on an older patch is shown as such rather than
+ * trusted.
+ */
+export const verifyHandoffHandler =
+  (deps: HandoffDeps): Handler =>
+  async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    const parsed = await readJsonBody(ctx);
+    if (!parsed) return;
+    const {body} = parsed;
+    const id = requireString(ctx, body, 'id');
+    if (id === null) return;
+    const check = requireString(ctx, body, 'check');
+    if (check === null) return;
+    const sha = requireString(ctx, body, 'sha');
+    if (sha === null) return;
+    if (!/^[0-9a-f]{7,40}$/.test(sha)) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'sha must be a 7–40 character lowercase hex commit id'
+      );
+      return;
+    }
+    const by = requireString(ctx, body, 'by');
+    if (by === null) return;
+    const exit = body['exit'];
+    if (typeof exit !== 'number' || !Number.isInteger(exit) || exit < 0) {
+      sendError(ctx.res, 400, 'bad_request', 'exit must be a non-negative integer');
+      return;
+    }
+
+    const outcome = new HandoffsRepository(deps.db, deps.vaultDataPath).verify(id, {
+      check,
+      sha,
+      exit,
+      by
+    });
+    switch (outcome.status) {
+      case 'ok':
+        sendJson(ctx.res, 200, {status: 'ok', handoff: toApi(outcome.handoff)});
+        return;
+      case 'not_found':
+        sendError(ctx.res, 404, 'handoff_not_found', `no handoff: ${id}`);
+        return;
+      case 'resolved':
+        sendError(
+          ctx.res,
+          409,
+          'handoff_resolved',
+          `handoff ${id} is ${outcome.current.status}; nothing more to verify`,
           {current: toApi(outcome.current)}
         );
         return;
@@ -693,6 +849,18 @@ export const completeHandoffArchival = (
         ` · created ${handoff.created.slice(0, 10)} · resolved ${today}`
     ];
     if (handoff.ref !== null) lines.push(`- ref: \`${handoff.ref.type}: ${handoff.ref.value}\``);
+    if (handoff.touches.length > 0) {
+      lines.push(
+        `- touches: ${handoff.touches.map(t => `\`${t.kind}:${t.key}=${t.operation}\``).join(', ')}`
+      );
+    }
+    if (handoff.baseSha !== null) lines.push(`- base: \`${handoff.baseSha}\``);
+    for (const v of handoff.verifications) {
+      const stale = handoff.baseSha !== null && v.sha !== handoff.baseSha ? ' — stale' : '';
+      lines.push(
+        `- verified: \`${v.check}\` at \`${v.sha}\` exit ${v.exit} by \`${v.by}\` (${v.at})${stale}`
+      );
+    }
     // The artifact itself is cleared with the spool entry — the work has
     // landed as commits by now — so the archive keeps its fingerprint.
     if (handoff.artifact !== null) {

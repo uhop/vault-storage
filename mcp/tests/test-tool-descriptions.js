@@ -19,6 +19,7 @@ const descriptions = () => {
 
 /** Every field name a description must mention for its documented shape. */
 const REQUIRED_MENTIONS = {
+  vault_handoff_verify: ['stale', 'base_sha', 'handoff_resolved'],
   vault_create_suggestion: ['evidence', 'invalid_enum_value'],
   vault_read_suggestion: ['evidence', 'asserted'],
   vault_search: ['as_of'],
@@ -111,13 +112,21 @@ const REQUIRED_MENTIONS = {
   vault_lease_claim: ['claimed_by_other', 'preempted', 'renewed', 'attestation'],
   vault_lease_release: ['force', 'released'],
   vault_lease_transfer: ['to_holder', 'lease'],
-  vault_handoff_list: ['count', 'items', 'idempotency_key', 'claim_expires', 'notes', 'result'],
+  vault_handoff_list: [
+    'overlaps',
+    'count',
+    'items',
+    'idempotency_key',
+    'claim_expires',
+    'notes',
+    'result'
+  ],
   vault_handoff_get: ['handoff_not_found', 'status', 'returned'],
   vault_handoff_events: ['seq', 'handoff_id', 'actor', 'claim_expired', 'resubmitted'],
-  vault_handoff_create: ['idempotency_key', 'existing', 'handoff/', 'ref', 'from'],
+  vault_handoff_create: ['touches', 'idempotency_key', 'existing', 'handoff/', 'ref', 'from'],
   vault_handoff_claim: ['claimed_by_other', 'not_open', 'renewed', 'TTL'],
   vault_handoff_resolve: ['returned', 'archived_to', 'not_claimed', 'note'],
-  vault_handoff_resubmit: ['not_returned', 'ref', 'same record'],
+  vault_handoff_resubmit: ['touches', 'not_returned', 'ref', 'same record'],
   vault_handoff_note: ['handoff_resolved', 'notes', 'author'],
   vault_handoff_put_artifact: ['artifact_too_large', 'format-patch', 'spool', 'sha256', 'bundle'],
   vault_handoff_get_artifact: [

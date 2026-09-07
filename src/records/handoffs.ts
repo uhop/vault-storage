@@ -45,6 +45,42 @@ export type HandoffRefType = (typeof HANDOFF_REF_TYPES)[number];
 
 export const SPOOL_REF_TYPE = 'spool';
 
+/**
+ * What a handoff declares it changes — declared by the submitter, never
+ * inferred from prose (a keyword guess over the body caught 1 of 10 real
+ * conflicts in the study this borrows from). The owner reads it beside the
+ * other in-flight handoffs to the same role before `git apply --check`.
+ */
+export const HANDOFF_TOUCH_KINDS = ['file', 'symbol', 'schema', 'config', 'api'] as const;
+export type HandoffTouchKind = (typeof HANDOFF_TOUCH_KINDS)[number];
+export const HANDOFF_TOUCH_OPERATIONS = [
+  'add',
+  'extend',
+  'modify',
+  'replace',
+  'remove',
+  'rename'
+] as const;
+export type HandoffTouchOperation = (typeof HANDOFF_TOUCH_OPERATIONS)[number];
+export interface HandoffTouch {
+  kind: HandoffTouchKind;
+  key: string;
+  operation: HandoffTouchOperation;
+}
+
+/**
+ * A gate somebody ran, bound to the sha it ran on: the submitter at export,
+ * the owner after apply. Judged stale against the artifact's `base-commit`,
+ * never trusted across a changed patch.
+ */
+export interface HandoffVerification {
+  check: string;
+  sha: string;
+  exit: number;
+  at: string;
+  by: string;
+}
+
 export {HANDOFF_STATUSES, type HandoffStatus};
 
 export const DEFAULT_CLAIM_TTL_SECONDS = 1800; // a review burst, not a lease: 30 min like suggestion claims
@@ -74,6 +110,10 @@ export interface Handoff {
   claimExpires: string | null;
   result: Record<string, unknown> | null;
   notes: HandoffNote[];
+  touches: HandoffTouch[];
+  verifications: HandoffVerification[];
+  /** The `base-commit:` trailer of a format-patch artifact; null without one. */
+  baseSha: string | null;
   /** Derived from the spool on read, never stored — the files are the truth. */
   artifact: ArtifactInfo | null;
 }
@@ -91,7 +131,8 @@ export interface HandoffEvent {
     | 'returned'
     | 'resubmitted'
     | 'note'
-    | 'artifact';
+    | 'artifact'
+    | 'verified';
   actor: string | null;
   detail: string | null;
 }
@@ -104,6 +145,7 @@ export interface HandoffCreate {
   ref?: {type: HandoffRefType; value: string};
   from: {host: string; session: string; repo?: string};
   body: string;
+  touches?: HandoffTouch[];
   now?: string;
 }
 
@@ -132,6 +174,9 @@ export type ResubmitOutcome =
   | {status: 'ok'; handoff: Handoff}
   | {status: 'not_found'}
   | {status: 'not_returned'; current: Handoff};
+
+export type VerifyOutcome =
+  {status: 'ok'; handoff: Handoff} | {status: 'not_found'} | {status: 'resolved'; current: Handoff};
 
 export type NoteOutcome =
   {status: 'ok'; handoff: Handoff} | {status: 'not_found'} | {status: 'resolved'; current: Handoff};
@@ -169,6 +214,9 @@ interface HandoffRow {
   claim_expires: string | null;
   result: string | null;
   notes: string;
+  touches: string;
+  verifications: string;
+  base_sha: string | null;
 }
 
 const toHandoff = (row: HandoffRow): Handoff => ({
@@ -191,6 +239,9 @@ const toHandoff = (row: HandoffRow): Handoff => ({
   claimExpires: row.claim_expires,
   result: row.result === null ? null : (JSON.parse(row.result) as Record<string, unknown>),
   notes: JSON.parse(row.notes) as HandoffNote[],
+  touches: JSON.parse(row.touches ?? '[]') as HandoffTouch[],
+  verifications: JSON.parse(row.verifications ?? '[]') as HandoffVerification[],
+  baseSha: row.base_sha ?? null,
   artifact: null
 });
 
@@ -212,8 +263,17 @@ const toSidecar = (h: Handoff): SpoolSidecar => ({
   ...(h.claimedAt !== null ? {claimed_at: h.claimedAt} : {}),
   ...(h.claimExpires !== null ? {claim_expires: h.claimExpires} : {}),
   ...(h.result !== null ? {result: h.result} : {}),
-  notes: h.notes
+  notes: h.notes,
+  ...(h.touches.length > 0 ? {touches: h.touches} : {}),
+  ...(h.verifications.length > 0 ? {verifications: h.verifications} : {}),
+  ...(h.baseSha !== null ? {base_sha: h.baseSha} : {})
 });
+
+/** The `base-commit:` trailer `git format-patch --base` writes; null when absent. */
+export const parseBaseCommit = (data: Buffer): string | null => {
+  const m = /^base-commit: ([0-9a-f]{7,40})\s*$/m.exec(data.toString('utf8'));
+  return m ? m[1]! : null;
+};
 
 export class HandoffsRepository {
   #db: DatabaseSync;
@@ -313,6 +373,9 @@ export class HandoffsRepository {
       claimExpires: null,
       result: null,
       notes: [],
+      touches: req.touches ?? [],
+      verifications: [],
+      baseSha: null,
       artifact: null
     };
     // Sidecar before row: files are truth, so a crash between the two loses
@@ -389,6 +452,7 @@ export class HandoffsRepository {
       ...current,
       ref: {type: SPOOL_REF_TYPE, value: `${id}.${ext}`},
       updated: at,
+      baseSha: ext === 'patch' ? parseBaseCommit(data) : null,
       artifact: info
     };
     this.#update(next);
@@ -478,6 +542,7 @@ export class HandoffsRepository {
       from?: {host: string; session: string; repo?: string};
       ref?: {type: HandoffRefType; value: string};
       body?: string;
+      touches?: HandoffTouch[];
     },
     now?: string
   ): ResubmitOutcome {
@@ -492,6 +557,7 @@ export class HandoffsRepository {
       updated: at,
       ...(updates.ref !== undefined ? {ref: updates.ref} : {}),
       ...(updates.body !== undefined ? {body: updates.body} : {}),
+      ...(updates.touches !== undefined ? {touches: updates.touches} : {}),
       ...(updates.from !== undefined
         ? {
             from: {
@@ -506,6 +572,30 @@ export class HandoffsRepository {
     writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'returned'});
     moveEntry(this.#vaultDataPath, next.project, id, 'returned', 'open');
     this.#logEvent(at, id, 'resubmitted', `${next.from.host}/${next.from.session}`, null);
+    return {status: 'ok', handoff: next};
+  }
+
+  /** A gate's result bound to the sha it ran on — append-only, refused once resolved. */
+  verify(
+    id: string,
+    record: {check: string; sha: string; exit: number; by: string},
+    now?: string
+  ): VerifyOutcome {
+    const at = now ?? new Date().toISOString();
+    const current = this.get(id, at);
+    if (current === null) return {status: 'not_found'};
+    if (current.status === 'done' || current.status === 'rejected') {
+      return {status: 'resolved', current};
+    }
+    const entry: HandoffVerification = {...record, at};
+    const next: Handoff = {
+      ...current,
+      updated: at,
+      verifications: [...current.verifications, entry]
+    };
+    this.#update(next);
+    writeSidecar(this.#vaultDataPath, this.#toSpool(next));
+    this.#logEvent(at, id, 'verified', record.by, JSON.stringify(entry));
     return {status: 'ok', handoff: next};
   }
 
@@ -607,6 +697,11 @@ export class HandoffsRepository {
       claimExpires: claimed ? (s.claim_expires as string) : null,
       result: resolved ? (s.result ?? null) : null,
       notes: Array.isArray(s.notes) ? s.notes : [],
+      touches: Array.isArray(s.touches) ? (s.touches as HandoffTouch[]) : [],
+      verifications: Array.isArray(s.verifications)
+        ? (s.verifications as HandoffVerification[])
+        : [],
+      baseSha: typeof s.base_sha === 'string' ? s.base_sha : null,
       // The artifact is a sibling file, so the rebuild finds it the same way
       // every other read does — a restart never orphans submitted work.
       artifact: artifactInfo(this.#vaultDataPath, s.project, entry.status, s.id)
@@ -623,8 +718,9 @@ export class HandoffsRepository {
         `INSERT INTO handoffs (
            id, idempotency_key, project, to_role, kind, ref_type, ref_value,
            from_host, from_session, from_repo, body, status, created, updated,
-           claimed_by, claimed_at, claim_expires, result, notes
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           claimed_by, claimed_at, claim_expires, result, notes,
+           touches, verifications, base_sha
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         h.id,
@@ -645,7 +741,10 @@ export class HandoffsRepository {
         h.claimedAt,
         h.claimExpires,
         h.result === null ? null : JSON.stringify(h.result),
-        JSON.stringify(h.notes)
+        JSON.stringify(h.notes),
+        JSON.stringify(h.touches),
+        JSON.stringify(h.verifications),
+        h.baseSha
       );
   }
 
@@ -655,7 +754,8 @@ export class HandoffsRepository {
         `UPDATE handoffs
             SET status = ?, updated = ?, claimed_by = ?, claimed_at = ?, claim_expires = ?,
                 result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
-                from_host = ?, from_session = ?, from_repo = ?
+                from_host = ?, from_session = ?, from_repo = ?,
+                touches = ?, verifications = ?, base_sha = ?
           WHERE id = ?`
       )
       .run(
@@ -672,6 +772,9 @@ export class HandoffsRepository {
         h.from.host,
         h.from.session,
         h.from.repo,
+        JSON.stringify(h.touches),
+        JSON.stringify(h.verifications),
+        h.baseSha,
         h.id
       );
   }

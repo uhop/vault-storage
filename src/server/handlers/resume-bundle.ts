@@ -346,6 +346,7 @@ export const resumeBundleHandler =
         created: h.created,
         updated: h.updated,
         ref: h.ref,
+        touches: h.touches,
         body_first_line: h.body.split('\n', 1)[0] ?? ''
       });
       const inbox = new HandoffsRepository(db, deps.vaultDataPath).list({project});

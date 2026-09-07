@@ -102,7 +102,8 @@ import {
   noteHandoffHandler,
   putHandoffArtifactHandler,
   resolveHandoffHandler,
-  resubmitHandoffHandler
+  resubmitHandoffHandler,
+  verifyHandoffHandler
 } from './handlers/handoffs.ts';
 import {EdgesRepository} from '../records/edges.ts';
 import {ensureSpool} from '../records/handoff-spool.ts';
@@ -326,6 +327,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/handoffs/resolve', resolveHandoffHandler(handoffDeps));
   router.post('/handoffs/resubmit', resubmitHandoffHandler(handoffDeps));
   router.post('/handoffs/note', noteHandoffHandler(handoffDeps));
+  router.post('/handoffs/verify', verifyHandoffHandler(handoffDeps));
 
   if (opts.env.uiStaticPath) {
     const uiHandler = staticHandler({rootDir: opts.env.uiStaticPath, indexFile: 'index.html'});

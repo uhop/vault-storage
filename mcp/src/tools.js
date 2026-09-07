@@ -893,13 +893,18 @@ export const registerTools = (mcp, client) => {
     session: z.string().min(1),
     repo: z.string().min(1).optional().describe('Submitting repo, provenance only')
   });
+  const HANDOFF_TOUCH = z.object({
+    kind: z.enum(['file', 'symbol', 'schema', 'config', 'api']),
+    key: z.string().min(1).describe('The file path, symbol, table, config key, or route'),
+    operation: z.enum(['add', 'extend', 'modify', 'replace', 'remove', 'rename'])
+  });
   const HANDOFF_SHAPE =
-    '{id, idempotency_key, project, to, kind, ref: {type, value} | null, from: {host, session, repo}, body, status, created, updated, claimed_by, claimed_at, claim_expires, result, notes: [{author, at, text}]}';
+    '{id, idempotency_key, project, to, kind, ref: {type, value} | null, from: {host, session, repo}, body, status, created, updated, claimed_by, claimed_at, claim_expires, result, notes: [{author, at, text}], touches: [{kind, key, operation}], base_sha, verifications: [{check, sha, exit, at, by, stale}]}';
 
   mcp.registerTool(
     'vault_handoff_list',
     {
-      description: `List handoffs — role-addressed cross-agent work requests (agent-coordination protocol). Returns flat {count, items}, unpaginated (a handful of in-flight items by design; resolved handoffs archive into projects/<project>/handoff-archive.md and leave this list on the next server start). Each item ${HANDOFF_SHAPE}. Filter by to (the role, e.g. "repo:github.com/uhop/deep6"), project, status, kind — the repo's lease holder reads status=open as its inbox; a submitter watches status=returned for rework. Expired claims lazily revert to open on every read.`,
+      description: `List handoffs — role-addressed cross-agent work requests (agent-coordination protocol). Returns flat {count, items}, unpaginated (a handful of in-flight items by design; resolved handoffs archive into projects/<project>/handoff-archive.md and leave this list on the next server start). Each item ${HANDOFF_SHAPE}. Filter by to (the role, e.g. "repo:github.com/uhop/deep6"), project, status, kind — the repo's lease holder reads status=open as its inbox; a submitter watches status=returned for rework. Expired claims lazily revert to open on every read. An item that declares touches also carries overlaps: [{id, touches}] — the other in-flight handoffs to the same role that declare the same kind+key — only when there are any, so read it before git apply --check.`,
       inputSchema: {
         to: z.string().min(1).optional().describe('Role filter, e.g. "repo:github.com/uhop/deep6"'),
         project: z.string().min(1).optional().describe('Vault project name, e.g. "deep6"'),
@@ -937,7 +942,7 @@ export const registerTools = (mcp, client) => {
   mcp.registerTool(
     'vault_handoff_create',
     {
-      description: `File a work request addressed to a role, never a session — whoever holds (or later claims) the target repo's lease inherits it. Durable: the spool sidecar handoff/<project>/open/<id>.md survives server restarts. idempotency_key is mandatory — a failed create is ambiguous, and a retry with the same key returns the original ({status: "existing"}) instead of filing twice. Returns {status: "created" | "existing", handoff: ${HANDOFF_SHAPE}}. The submitter keeps its branch/worktree until the handoff resolves — the ref points at it; body says why and what to check.`,
+      description: `File a work request addressed to a role, never a session — whoever holds (or later claims) the target repo's lease inherits it. Durable: the spool sidecar handoff/<project>/open/<id>.md survives server restarts. idempotency_key is mandatory — a failed create is ambiguous, and a retry with the same key returns the original ({status: "existing"}) instead of filing twice. Returns {status: "created" | "existing", handoff: ${HANDOFF_SHAPE}}. The submitter keeps its branch/worktree until the handoff resolves — the ref points at it; body says why and what to check. Declare touches: [{kind: file | symbol | schema | config | api, key, operation: add | extend | modify | replace | remove | rename}] — what the work changes, said rather than inferred from prose, so the owner sees overlap with other in-flight handoffs (400 invalid_enum_value on an unknown kind or operation).`,
       inputSchema: {
         idempotency_key: z.string().min(1).describe('Caller-chosen; retry-safe create'),
         project: z
@@ -948,11 +953,12 @@ export const registerTools = (mcp, client) => {
         kind: HANDOFF_KIND,
         ref: HANDOFF_REF.optional().describe('Where the work lives; omit for a pure question'),
         from: HANDOFF_FROM.describe('Provenance only — nothing may key off it'),
-        body: z.string().min(1).describe('Why, and what to check')
+        body: z.string().min(1).describe('Why, and what to check'),
+        touches: z.array(HANDOFF_TOUCH).optional().describe('What the work changes, declared')
       }
     },
-    wrap(async ({idempotency_key, project, to, kind, ref, from, body}) =>
-      client.postJson('/handoffs', {idempotency_key, project, to, kind, ref, from, body})
+    wrap(async ({idempotency_key, project, to, kind, ref, from, body, touches}) =>
+      client.postJson('/handoffs', {idempotency_key, project, to, kind, ref, from, body, touches})
     )
   );
 
@@ -997,16 +1003,17 @@ export const registerTools = (mcp, client) => {
     'vault_handoff_resubmit',
     {
       description:
-        'Resubmit a returned handoff after rework (returned → open) — the same record and id, so the review loop converges instead of forking. Optionally update ref (the reworked branch/worktree), body, and from. Returns {status: "ok", handoff}; 404 handoff_not_found; 409 not_returned with details.current.',
+        'Resubmit a returned handoff after rework (returned → open) — the same record and id, so the review loop converges instead of forking. Optionally update ref (the reworked branch/worktree), body, from, and touches (replaced whole when given). Returns {status: "ok", handoff}; 404 handoff_not_found; 409 not_returned with details.current.',
       inputSchema: {
         id: z.string().min(1),
         ref: HANDOFF_REF.optional(),
         from: HANDOFF_FROM.optional(),
-        body: z.string().min(1).optional()
+        body: z.string().min(1).optional(),
+        touches: z.array(HANDOFF_TOUCH).optional()
       }
     },
-    wrap(async ({id, ref, from, body}) =>
-      client.postJson('/handoffs/resubmit', {id, ref, from, body})
+    wrap(async ({id, ref, from, body, touches}) =>
+      client.postJson('/handoffs/resubmit', {id, ref, from, body, touches})
     )
   );
 
@@ -1062,6 +1069,27 @@ export const registerTools = (mcp, client) => {
       const encoding = handoff.artifact.ext === 'bundle' ? 'base64' : 'utf8';
       return {...meta, encoding, content: raw.toString(encoding)};
     })
+  );
+
+  mcp.registerTool(
+    'vault_handoff_verify',
+    {
+      description:
+        'Record that a gate ran on a handoff, bound to the sha it ran on: {id, check, sha, exit, by} — the submitter after export (the check name, the exit code, the commit the patch was cut from), the owner after apply. Append-only; refused with 409 handoff_resolved once the handoff is done or rejected. Every read of the handoff shows each verification with stale: true when its sha is not the artifact\'s base_sha (parsed from the format-patch base-commit trailer), null when there is no artifact to judge against — a pass on an older patch is shown, never trusted. Returns {status: "ok", handoff}.',
+      inputSchema: {
+        id: z.string().min(1),
+        check: z.string().min(1).describe('The gate, e.g. "npm test" or "ts-check"'),
+        sha: z
+          .string()
+          .regex(/^[0-9a-f]{7,40}$/)
+          .describe('The commit the gate ran on'),
+        exit: z.number().int().min(0).describe("The gate's exit code; 0 is a pass"),
+        by: z.string().min(1).describe('Who ran it, e.g. "<host>/<session>"')
+      }
+    },
+    wrap(async ({id, check, sha, exit, by}) =>
+      client.postJson('/handoffs/verify', {id, check, sha, exit, by})
+    )
   );
 
   mcp.registerTool(
