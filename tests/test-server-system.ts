@@ -138,6 +138,33 @@ test('GET /system/health answers from memory with the watchdog and outcome block
   });
 });
 
+test('every error body is a superset of RFC 9457 Problem Details', async t => {
+  await withServer(async url => {
+    const missing = await fetchJson(`${url}/no/such/route`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(missing.status, 404);
+    const b = missing.body as Record<string, unknown>;
+    t.equal(typeof b['code'], 'string', 'code kept');
+    t.equal(typeof b['error'], 'string', 'error kept');
+    t.equal(b['status'], 404, 'status duplicated in the body');
+    t.equal(b['detail'], b['error'], 'detail is the same sentence as error');
+    t.equal(b['type'], `urn:vault-storage:problem:${b['code'] as string}`, 'type names the code');
+    t.ok(
+      /^[A-Z]/.test(b['title'] as string) && !(b['title'] as string).includes('_'),
+      'title is a short name, not the code'
+    );
+
+    const bad = await fetchJson(`${url}/system/health?x=1`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(bad.status, 400);
+    const c = bad.body as Record<string, unknown>;
+    t.equal(c['status'], 400);
+    t.equal(c['title'], 'Bad request');
+  });
+});
+
 test('unknown route returns 404', async t => {
   await withServer(async url => {
     const {status, body} = await fetchJson(`${url}/does/not/exist`, {

@@ -139,7 +139,9 @@ Three read-only resources the agent can fetch by URI:
 ## Errors
 
 Server errors surface as MCP tool errors (`isError: true`) with a JSON
-payload `{error, code, status, details}`. Common codes:
+payload `{error, code, status, details}`; the server's own body also carries
+the RFC 9457 Problem Details members (`type`, `title`, `status`, `detail`)
+beside them. Common codes:
 
 - `auth_failed` — `VAULT_API_TOKEN` missing or wrong
 - `not_found` — record/file/tag/suggestion absent
