@@ -274,9 +274,12 @@ atomization, and UI-component paths.
 Node tests are `tests/test-*.ts`; browser tests are `tests/test-*.js`, discovered via the
 `tape6.cli` / `tape6.browser` config globs so each runner sees only its own environment.
 The browser suite runs through `tape-six-playwright`, whose postinstall installs Chromium.
-npm 12 blocks dependency install scripts unless `allowScripts` in `package.json` approves
-them; on npm 12, approve the package with `npm install-scripts approve tape-six-playwright`
-or run `npx playwright install chromium` once. Firefox and WebKit need
+`allowScripts` in `package.json` settles the dependency install scripts for npm 12, which
+skips any script the field does not cover: it approves `tape-six-playwright` (name-only, so
+a dependency bump keeps the approval) and denies `onnxruntime-node` (its script fetches the
+CUDA and TensorRT provider libraries, which CPU inference never loads) and `protobufjs` (a
+version-range warning). npm 11.19 honours the same field, so a developer on either npm
+needs no extra step; `npm install-scripts ls` reports the state. Firefox and WebKit need
 `npx playwright install firefox webkit` once.
 
 > **Runner note:** the suite runs under `tape6 --flags F`, not `FO`. The fail-once (`O`)

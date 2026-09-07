@@ -81,5 +81,10 @@
   },
   "homepage": "https://github.com/uhop/vault-storage#readme",
   "author": "Eugene Lazutkin <eugene.lazutkin@gmail.com>",
-  "license": "BSD-3-Clause"
+  "license": "BSD-3-Clause",
+  "allowScripts": {
+    "tape-six-playwright": true,
+    "onnxruntime-node": false,
+    "protobufjs": false
+  }
 }
