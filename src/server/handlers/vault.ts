@@ -11,6 +11,13 @@ import type {ServerResponse} from 'node:http';
 import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
+import {
+  findSection,
+  HEADING_LINE_RE,
+  replaceSectionContent,
+  sectionContent,
+  type SectionSpan
+} from '../../markdown/sections.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {buildEdges} from '../../importer/build-edges.ts';
 import {repathPendingSuggestions, SuggestionFiler} from '../../importer/file-suggestions.ts';
@@ -131,14 +138,56 @@ const listFolder = (vaultRoot: string, relativePath: string, res: ServerResponse
   sendJson(res, 200, {files: entries});
 };
 
-/** GET /vault/{path} — file read, or compose-on-demand for atomized folders. */
+/**
+ * Resolve `heading` to its section span or send the error: 400 for a value
+ * that is not an ATX heading line, 409 `section_assert_failed` (with the
+ * occurrence count) when the heading is absent or ambiguous — asserted like
+ * `replace`, never a silent no-op.
+ */
+const sectionOrError = (
+  res: ServerResponse,
+  path: string,
+  body: string,
+  heading: string
+): SectionSpan | null => {
+  const wanted = heading.trim();
+  if (!HEADING_LINE_RE.test(wanted)) {
+    sendError(res, 400, 'bad_request', 'heading must be an ATX heading line such as "## Title"');
+    return null;
+  }
+  const found = findSection(body, wanted);
+  if (found.ok) return found.span;
+  sendError(
+    res,
+    409,
+    'section_assert_failed',
+    found.occurrences === 0
+      ? `heading not found in ${path}: ${wanted}`
+      : `heading occurs ${found.occurrences} times in ${path}: ${wanted}`,
+    {occurrences: found.occurrences}
+  );
+  return null;
+};
+
+/**
+ * GET /vault/{path} — file read, or compose-on-demand for atomized folders.
+ * `?section=<heading line>` returns one section as JSON instead: the content
+ * under that heading up to the next heading of the same or higher level,
+ * with the whole document's etag, so a client never pulls a large document
+ * into context to read one part of it.
+ */
 export const getVaultHandler =
   (deps: VaultDeps): Handler =>
   ctx => {
     // Precedes bumpLastReferenced: a rejected request must not leave a trace.
-    if (!rejectUnknownParams(ctx, new Set())) return;
+    if (!rejectUnknownParams(ctx, new Set(['section']))) return;
     const path = ctx.params['path'] ?? '';
+    const section = ctx.query['section'];
     if (path.endsWith('/')) {
+      if (section !== undefined) {
+        sendError(ctx.res, 400, 'bad_request', 'section applies to a file, not a folder');
+        return;
+      }
       listFolder(deps.vaultDataPath, path.slice(0, -1), ctx.res);
       return;
     }
@@ -154,6 +203,19 @@ export const getVaultHandler =
       const rec = records.getByPath(path);
       if (rec) records.bumpLastReferenced(rec.recordId);
       const document = readFileSync(abs, 'utf8');
+      if (section !== undefined) {
+        const {body} = parseFrontmatter(document);
+        const span = sectionOrError(ctx.res, path, body, section);
+        if (span === null) return;
+        sendJson(ctx.res, 200, {
+          path,
+          etag: documentEtag(document),
+          heading: span.heading,
+          level: span.level,
+          content: sectionContent(body, span)
+        });
+        return;
+      }
       sendText(ctx.res, 200, 'text/markdown; charset=utf-8', document, {
         ETag: `"${documentEtag(document)}"`
       });
@@ -164,6 +226,16 @@ export const getVaultHandler =
       const folderAbs = abs.slice(0, -'.md'.length);
       if (existsSync(folderAbs) && statSync(folderAbs).isDirectory()) {
         const composed = composeFolder(folderAbs);
+        if (composed !== null && section !== undefined) {
+          sendError(
+            ctx.res,
+            409,
+            'composed_view',
+            `no file exists at ${path} — it is composed on demand from the atomized folder ${path.slice(0, -'.md'.length)}/. Read the folder's pieces instead.`,
+            {composed: true, folder: `${path.slice(0, -'.md'.length)}/`}
+          );
+          return;
+        }
         if (composed !== null) {
           // Weak ETag: the document is virtual (no single on-disk file), so
           // If-Match's strong comparison can never succeed against it — a
@@ -418,6 +490,8 @@ interface EditBody {
   from?: unknown;
   to?: unknown;
   all?: unknown;
+  heading?: unknown;
+  body?: unknown;
 }
 
 /**
@@ -428,19 +502,25 @@ interface EditBody {
  *
  *   {path, op: "append", text}
  *   {path, op: "replace", from, to, all?}
+ *   {path, op: "replace-section", heading, body}
  *
  * Semantics mirror claude-config's `vault-put` exactly (the established
  * client idiom this replaces): append collapses trailing whitespace to a
  * single newline before the fragment; replace is ASSERTED — an absent
  * `from` is a 409, an ambiguous one without `all: true` is a 409 carrying
  * the count — never a silent no-op (the curly-vs-straight-apostrophe bug
- * class). Frontmatter rides verbatim from disk through the standard write
+ * class); replace-section swaps the content under one ATX heading (matched
+ * as a whole line, exactly once, code fences masked) up to the next heading
+ * of the same or higher level, trimmed and framed by blank lines, every byte
+ * outside the span untouched — the same assert, 409 `section_assert_failed`
+ * with the occurrence count. Frontmatter rides verbatim from disk through the standard write
  * path (`updated` re-stamped; enrichment staleness filed downstream); FM
  * changes stay on PUT / PATCH. Editing requires an existing on-disk file —
  * 404 otherwise, with a composed atomized view pointed at its pieces. No
  * If-Match: the server holds the document, so the RMW is atomic within the
  * single-threaded process — that is the point of the primitive. Returns
- * 200 `{path, etag, replaced?}`.
+ * 200 `{path, etag, replaced?}`, or `{path, etag, heading, level}` for a
+ * section.
  */
 export const editVaultHandler =
   (deps: VaultDeps): Handler =>
@@ -475,8 +555,13 @@ export const editVaultHandler =
       sendError(ctx.res, 400, 'invalid_path', 'only .md files are supported');
       return;
     }
-    if (req.op !== 'append' && req.op !== 'replace') {
-      sendError(ctx.res, 400, 'bad_request', 'op must be "append" or "replace"');
+    if (req.op !== 'append' && req.op !== 'replace' && req.op !== 'replace-section') {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'op must be "append", "replace", or "replace-section"'
+      );
       return;
     }
     if (req.op === 'append' && (typeof req.text !== 'string' || req.text.length === 0)) {
@@ -494,6 +579,26 @@ export const editVaultHandler =
       }
       if (req.all !== undefined && typeof req.all !== 'boolean') {
         sendError(ctx.res, 400, 'bad_request', '`all` must be a boolean');
+        return;
+      }
+    }
+    if (req.op === 'replace-section') {
+      if (typeof req.heading !== 'string' || !HEADING_LINE_RE.test(req.heading.trim())) {
+        sendError(
+          ctx.res,
+          400,
+          'bad_request',
+          'replace-section requires `heading`, an ATX heading line such as "## Title"'
+        );
+        return;
+      }
+      if (typeof req.body !== 'string') {
+        sendError(
+          ctx.res,
+          400,
+          'bad_request',
+          'replace-section requires a string `body` (empty empties the section)'
+        );
         return;
       }
     }
@@ -520,8 +625,14 @@ export const editVaultHandler =
 
     let edited: string;
     let replaced: number | undefined;
+    let section: {heading: string; level: number} | undefined;
     if (req.op === 'append') {
       edited = body.replace(/\s*$/, '\n') + (req.text as string);
+    } else if (req.op === 'replace-section') {
+      const span = sectionOrError(ctx.res, path, body, req.heading as string);
+      if (span === null) return;
+      edited = replaceSectionContent(body, span, req.body as string);
+      section = {heading: span.heading, level: span.level};
     } else {
       const from = req.from as string;
       const count = body.split(from).length - 1;
@@ -591,7 +702,8 @@ export const editVaultHandler =
     sendJson(ctx.res, 200, {
       path,
       etag,
-      ...(replaced !== undefined ? {replaced} : {})
+      ...(replaced !== undefined ? {replaced} : {}),
+      ...(section ?? {})
     });
   };
 

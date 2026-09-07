@@ -318,6 +318,41 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_read_section',
+    {
+      description:
+        "Read one section of a document without pulling the whole document into context: the content under an ATX heading line (`## Title`, matched as a whole line, exactly once, with code fences masked) up to the next heading of the same or higher level, trimmed. Returns {path, etag, heading, level, content} — the etag is the whole document's, the same one vault_read_file{include_etag} returns. An absent or ambiguous heading is a 409 `section_assert_failed` carrying details.occurrences; a composed folder view is a 409 pointing at its pieces. Pair with vault_replace_section for a read-edit-write on one section.",
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        heading: z
+          .string()
+          .min(1)
+          .describe('The heading line as written in the document, e.g. "## Active"')
+      }
+    },
+    wrap(async ({path, heading}) => client.getJson(`/vault/${path}`, {section: heading}))
+  );
+
+  mcp.registerTool(
+    'vault_replace_section',
+    {
+      description:
+        'Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss. Frontmatter rides through untouched; composed folder views are refused. Returns {path, etag, heading, level}.',
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        heading: z
+          .string()
+          .min(1)
+          .describe('The heading line as written in the document, e.g. "## Active"'),
+        body: z.string().describe('New section content; empty string empties the section')
+      }
+    },
+    wrap(async ({path, heading, body}) =>
+      client.postJson('/vault/edit', {path, op: 'replace-section', heading, body})
+    )
+  );
+
+  mcp.registerTool(
     'vault_patch_fm',
     {
       description:

@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 63 MCP tools and 3
+traversal. The adapter exposes the server's REST API as 65 MCP tools and 3
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.
@@ -47,7 +47,7 @@ evidence of anything) and which of the three list shapes it uses:
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (63)
+## Tools (65)
 
 Search & list:
 
@@ -76,12 +76,20 @@ Read:
   include_etag returns {path, etag, composed, content} for conditional writes.
 - vault_read_piece — one record by id.
 - vault_read_meta — the indexed record row minus body (not arbitrary FM keys).
+- vault_read_section — one ATX-heading section, {path, etag, heading, level,
+  content}: the heading matched as a whole line, exactly once, code fences
+  masked; the span runs to the next heading of the same or higher level;
+  absent or ambiguous 409s (section_assert_failed, details.occurrences).
 
 Narrow writes (atomic server-side ops; prefer these over whole-document writes):
 
 - vault_append — append to a body.
 - vault_replace — asserted string replace (absent target 409s, ambiguous
   without all=true 409s with the count — never a silent no-op).
+- vault_replace_section — replace the content under one heading (same
+  match and span rules as vault_read_section, same assert); the body is
+  trimmed and framed by blank lines, every byte outside the span untouched;
+  an empty body empties the section. Returns {path, etag, heading, level}.
 - vault_patch_fm — add/remove one frontmatter array member (related:, tags:…);
   echoes the resulting array.
 

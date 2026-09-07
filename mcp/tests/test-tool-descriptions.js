@@ -80,6 +80,8 @@ const REQUIRED_MENTIONS = {
   vault_run_scans: ['duplicates', 'compaction', 'retention', 'upgrade'],
   vault_append: ['etag'],
   vault_replace: ['etag', 'replaced'],
+  vault_read_section: ['etag', 'content', 'level', 'section_assert_failed'],
+  vault_replace_section: ['etag', 'heading', 'level', 'section_assert_failed'],
   vault_patch_fm: ['changed', 'results'],
   vault_read_file: ['etag', 'composed', 'content'],
   vault_write_file: ['expected_etag', 'If-Match'],

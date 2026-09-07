@@ -2034,6 +2034,215 @@ test('POST /vault/edit — append collapses trailing whitespace, FM verbatim, up
   }
 });
 
+const SECTION_DOC = [
+  '---',
+  'title: Sections',
+  'created: 2026-04-01',
+  'updated: 2026-04-01',
+  '---',
+  'Intro paragraph.',
+  '',
+  '## Active',
+  '',
+  '(empty)',
+  '',
+  '## Backlog',
+  '',
+  '- **One.** First.',
+  '',
+  '### Notes',
+  '',
+  'Sub-section text.',
+  '',
+  '```',
+  '## Backlog',
+  'fenced, not a heading',
+  '```',
+  '',
+  '## Watching',
+  '',
+  'Watch text.',
+  ''
+].join('\n');
+
+const editSection = (url: string, path: string, heading: string, body: string) =>
+  fetchAuthed(`${url}/vault/edit`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path, op: 'replace-section', heading, body})
+  });
+
+test('POST /vault/edit — replace-section swaps one heading block and leaves every other byte alone', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/sections.md', SECTION_DOC);
+    const ctx = await startTestServer(root);
+    try {
+      const res = await editSection(
+        ctx.url,
+        'topics/sections.md',
+        '## Backlog',
+        '\n- **Two.** Second.\n\n'
+      );
+      t.equal(res.status, 200, '200 with result');
+      t.match(
+        res.body,
+        {path: 'topics/sections.md', heading: '## Backlog', level: 2},
+        'response names the section'
+      );
+      const etag = (res.body as {etag: string}).etag;
+      t.ok(etag, 'new etag returned');
+
+      const onDisk = readFileSync(join(root, 'topics/sections.md'), 'utf8');
+      const {data, body} = parseFrontmatter(onDisk);
+      t.equal(data['title'], 'Sections', 'frontmatter preserved');
+      t.equal(
+        body,
+        [
+          'Intro paragraph.',
+          '',
+          '## Active',
+          '',
+          '(empty)',
+          '',
+          '## Backlog',
+          '',
+          '- **Two.** Second.',
+          '',
+          '## Watching',
+          '',
+          'Watch text.',
+          ''
+        ].join('\n'),
+        'subsection and fenced copy replaced with the trimmed body; the rest byte-identical'
+      );
+      const plain = await fetchAuthed(`${ctx.url}/vault/topics/sections.md`);
+      t.equal(plain.etag, `"${etag}"`, 'the returned etag is the document etag a GET now serves');
+
+      const emptied = await editSection(ctx.url, 'topics/sections.md', '## Watching', '');
+      t.equal(emptied.status, 200, 'empty body accepted');
+      t.ok(
+        readFileSync(join(root, 'topics/sections.md'), 'utf8').endsWith('\n## Watching\n'),
+        'an emptied last section keeps its heading and ends the file'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/edit — replace-section asserts: absent, ambiguous, fence-only, and malformed headings', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/sections.md', SECTION_DOC);
+    writeMd(
+      root,
+      'topics/dup.md',
+      ['---', 'title: Dup', '---', '## Dup', '', 'a', '', '## Dup', '', 'b', ''].join('\n')
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const missing = await editSection(ctx.url, 'topics/sections.md', '## Nope', 'x');
+      t.equal(missing.status, 409, 'absent heading → 409');
+      t.match(
+        missing.body,
+        {code: 'section_assert_failed', details: {occurrences: 0}},
+        'occurrences carried'
+      );
+
+      const fenced = await editSection(ctx.url, 'topics/sections.md', '### Fenced', 'x');
+      t.equal(fenced.status, 409, 'a heading that exists only inside a fence is absent');
+
+      const dup = await editSection(ctx.url, 'topics/dup.md', '## Dup', 'x');
+      t.equal(dup.status, 409, 'ambiguous heading → 409');
+      t.equal(
+        (dup.body as {details: {occurrences: number}}).details.occurrences,
+        2,
+        'count carried'
+      );
+
+      const bare = await editSection(ctx.url, 'topics/sections.md', 'Backlog', 'x');
+      t.equal(bare.status, 400, 'a heading without its hashes is a 400, not a miss');
+
+      const noBody = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/sections.md',
+          op: 'replace-section',
+          heading: '## Active'
+        })
+      });
+      t.equal(noBody.status, 400, 'body is required (empty string is allowed, absence is not)');
+
+      const untouched = readFileSync(join(root, 'topics/sections.md'), 'utf8');
+      t.equal(untouched, SECTION_DOC, 'no failed request wrote anything');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /vault/{path}?section= returns one section with the document etag', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/sections.md', SECTION_DOC);
+    const ctx = await startTestServer(root);
+    try {
+      const res = await fetchAuthed(
+        `${ctx.url}/vault/topics/sections.md?section=${encodeURIComponent('## Backlog')}`
+      );
+      t.equal(res.status, 200, '200 JSON');
+      t.ok(res.contentType?.includes('application/json'), 'JSON, not markdown');
+      const plain = await fetchAuthed(`${ctx.url}/vault/topics/sections.md`);
+      t.match(
+        res.body,
+        {
+          path: 'topics/sections.md',
+          etag: plain.etag!.slice(1, -1),
+          heading: '## Backlog',
+          level: 2,
+          content: [
+            '- **One.** First.',
+            '',
+            '### Notes',
+            '',
+            'Sub-section text.',
+            '',
+            '```',
+            '## Backlog',
+            'fenced, not a heading',
+            '```'
+          ].join('\n')
+        },
+        'section content, trimmed, with the same etag the whole-document GET serves'
+      );
+
+      const missing = await fetchAuthed(
+        `${ctx.url}/vault/topics/sections.md?section=${encodeURIComponent('## Nope')}`
+      );
+      t.equal(missing.status, 409, 'absent heading → 409 section_assert_failed');
+      t.equal((missing.body as {code: string}).code, 'section_assert_failed');
+
+      const folder = await fetchAuthed(
+        `${ctx.url}/vault/topics/?section=${encodeURIComponent('## X')}`
+      );
+      t.equal(folder.status, 400, 'section on a folder listing → 400');
+
+      const bogus = await fetchAuthed(`${ctx.url}/vault/topics/sections.md?section=x&bogus=1`);
+      t.equal(bogus.status, 400, 'unknown parameters still rejected alongside section');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /vault/edit — replace asserts: single hit works, miss and ambiguity are loud 409s', async t => {
   const {root, cleanup} = setupVault();
   try {

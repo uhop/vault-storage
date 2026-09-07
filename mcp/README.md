@@ -44,10 +44,16 @@ Fifty-three tools mapping to the REST surface, grouped by purpose:
   `vault_list_pieces` (filters incl. alias-aware `tag`), `vault_list_folder`
 - **Read** — `vault_read_piece`, `vault_read_meta`, `vault_read_file`
   (`include_etag: true` returns `{path, etag, composed, content}` — the
-  tag a conditional write needs, and the composed-folder flag)
+  tag a conditional write needs, and the composed-folder flag),
+  `vault_read_section` (one ATX-heading section as
+  `{path, etag, heading, level, content}`, so a large document never has
+  to be pulled into context to read one part of it)
 - **Narrow write** — `vault_append`, `vault_replace` (asserted: a missing
-  or ambiguous target is a 409, never a silent no-op), `vault_patch_fm`
-  (add/remove one frontmatter array member). All three are atomic
+  or ambiguous target is a 409, never a silent no-op),
+  `vault_replace_section` (the content under one heading, matched exactly
+  once with code fences masked, to the next heading of the same or higher
+  level; same assert), `vault_patch_fm` (add/remove one frontmatter array
+  member). All four are atomic
   server-side ops whose blast radius is the thing being changed, so they
   cannot lose the rest of the document. Prefer them over whole-document
   writes.
@@ -128,6 +134,8 @@ payload `{error, code, status, details}`. Common codes:
 - `conflict` — already-resolved suggestion, etc.
 - `replace_assert_failed` — `vault_replace` target missing, or ambiguous
   without `all` (`details.occurrences` carries the count)
+- `section_assert_failed` — `vault_read_section` / `vault_replace_section`
+  heading absent or ambiguous (`details.occurrences` carries the count)
 - `precondition_failed` — `expected_etag` is stale;
   `details.current_etag` is what to re-read and retry against
 - `empty_body` / `null_body` — the write would leave the document with no

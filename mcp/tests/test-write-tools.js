@@ -38,7 +38,13 @@ const firstText = result => result.content[0].text;
 
 test('the safe write tools are registered', t => {
   const {tool} = setup();
-  for (const name of ['vault_append', 'vault_replace', 'vault_patch_fm']) {
+  for (const name of [
+    'vault_append',
+    'vault_replace',
+    'vault_replace_section',
+    'vault_read_section',
+    'vault_patch_fm'
+  ]) {
     t.ok(tool(name), `${name} registered`);
   }
 });
@@ -54,6 +60,61 @@ test('vault_append → POST /vault/edit with op=append', async t => {
     op: 'append',
     text: '- new item\n'
   });
+});
+
+test('vault_replace_section → POST /vault/edit with op=replace-section', async t => {
+  const {call, getCaptured} = setup();
+  await call('vault_replace_section', {
+    path: 'projects/x/queue.md',
+    heading: '## Active',
+    body: '- item\n'
+  });
+  const captured = getCaptured();
+  t.equal(captured.init.method, 'POST');
+  t.equal(captured.url, 'http://test/vault/edit');
+  t.deepEqual(bodyOf(captured), {
+    path: 'projects/x/queue.md',
+    op: 'replace-section',
+    heading: '## Active',
+    body: '- item\n'
+  });
+
+  // An empty body empties the section — it must survive as an empty string.
+  await call('vault_replace_section', {path: 'a.md', heading: '## Active', body: ''});
+  t.equal(bodyOf(getCaptured()).body, '', 'empty body preserved');
+});
+
+test('vault_read_section → GET /vault/{path}?section=<heading line>', async t => {
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(
+        JSON.stringify({
+          path: 'projects/x/queue.md',
+          etag: 'e1',
+          heading: '## Active',
+          level: 2,
+          content: '(empty)'
+        }),
+        {status: 200, headers: {'Content-Type': 'application/json'}}
+      )
+  );
+  const result = await call('vault_read_section', {
+    path: 'projects/x/queue.md',
+    heading: '## Active'
+  });
+  const captured = getCaptured();
+  t.equal((captured.init.method ?? 'GET').toUpperCase(), 'GET');
+  const url = new URL(captured.url);
+  t.equal(url.pathname, '/vault/projects/x/queue.md');
+  t.equal(
+    url.searchParams.get('section'),
+    '## Active',
+    'heading rides as the section query parameter'
+  );
+  t.ok(
+    firstText(result).includes('"content":"(empty)"') || firstText(result).includes('(empty)'),
+    'section content returned'
+  );
 });
 
 test('vault_replace → POST /vault/edit with op=replace, all omitted unless set', async t => {

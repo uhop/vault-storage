@@ -2,7 +2,7 @@
 
 > Thin MCP (Model Context Protocol) adapter for vault-storage — an
 > AI-agent-first personal knowledge base (markdown source of truth + SQLite +
-> sqlite-vec index). Exposes the REST API as 63 MCP tools and 3 read-only
+> sqlite-vec index). Exposes the REST API as 65 MCP tools and 3 read-only
 > resources for Claude Code and any other MCP client. Holds no vault state:
 > every call forwards to a running vault-storage server identified by
 > `VAULT_API_URL`, authenticated with the `VAULT_API_TOKEN` bearer token.
@@ -21,8 +21,9 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
 - Tool groups: search & list (incl. `vault_context_pack` — one byte-budgeted
   RAG pack: hybrid top-K chunks + a deduped 1-hop graph whose inbound
   entries are the backlinks), read,
-  narrow writes (`vault_append` / `vault_replace` / `vault_patch_fm` —
-  asserted, atomic, small blast radius), whole-document writes (optional
+  narrow writes (`vault_append` / `vault_replace` / `vault_replace_section`
+  / `vault_patch_fm` — asserted, atomic, small blast radius; `vault_read_section`
+  reads one heading's section the same way), whole-document writes (optional
   `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
   `vault_move` / `vault_propose`), maintenance, tags, graph insight, the
   suggestions review queue (claim / resolve batches), queue-item slices,
