@@ -1322,6 +1322,41 @@ test('POST /suggestions stamps evidence {agent, false} unless given, and validat
   }
 });
 
+test('?fields= subsets records on the list and the single read, with the identity fields kept', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const list = await fetchAuthed(`${ctx.url}/sections?fields=title,type&limit=2`);
+      t.equal(list.status, 200);
+      for (const row of (list.body as {items: Array<Record<string, unknown>>}).items) {
+        t.deepEqual(
+          Object.keys(row).sort(),
+          ['file_path', 'record_id', 'title', 'type'],
+          'include list plus identity'
+        );
+      }
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const one = await fetchAuthed(`${ctx.url}/sections/${alphaId}?fields=-body,-content_hash`);
+      t.equal(one.status, 200);
+      const row = one.body as Record<string, unknown>;
+      t.equal('body' in row, false, 'body dropped');
+      t.equal('content_hash' in row, false, 'content_hash dropped');
+      t.equal(typeof row['title'], 'string', 'the rest kept');
+      const both = await fetchAuthed(`${ctx.url}/sections/${alphaId}?fields=title&exclude=body`);
+      t.equal(both.status, 400, 'fields and exclude together → 400');
+      const typo = await fetchAuthed(`${ctx.url}/sections?fields=titel`);
+      t.equal(typo.status, 400, 'a typo is a 400, never a silently missing column');
+      t.ok(((typo.body as {error: string}).error ?? '').includes('titel'), 'the error names it');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /suggestions/{unknown}/accept returns 404', async t => {
   const {root, cleanup} = setup();
   try {

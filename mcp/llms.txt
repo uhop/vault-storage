@@ -27,7 +27,8 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
   `vault_move` / `vault_propose`), maintenance, tags, graph insight, the
   suggestions review queue (claim / resolve batches), queue-item slices
-  (`exclude: "body"` for a listing without the item prose),
+  (`fields: "a,b"` / `"-a,-b"` to subset a row, `exclude: "body"` the older
+  alias for `fields: "-body"`),
   repo leases (`vault_lease_*` — agent coordination: atomic claim / renew /
   release / transfer with a human-first precedence lattice), handoffs
   (`vault_handoff_*` — role-addressed cross-agent work requests: idempotent

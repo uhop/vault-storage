@@ -10,7 +10,14 @@ import {blockedView, readyView, type BlockerReport} from '../../queue/ready.ts';
 import {QueueItemsRepository, type QueueItemRow} from '../../queue/repo.ts';
 import {reindexAllQueues} from '../../queue/sync.ts';
 import {asOf} from '../as-of.ts';
-import {NO_QUERY_PARAMS, parseExclude, rejectUnknownParams} from '../query.ts';
+import {
+  NO_QUERY_PARAMS,
+  parseFields,
+  projectFields,
+  rejectUnknownParams,
+  wantsBody,
+  type FieldSpec
+} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -48,6 +55,34 @@ const toApi = (row: QueueItemRow, includeBody = true): Record<string, unknown> =
   updated_at: row.updated_at
 });
 
+/** Every field a queue item carries — what `?fields=` is checked against; the blocked view adds two. */
+const QUEUE_ITEM_FIELDS: ReadonlySet<string> = new Set([
+  'id',
+  'project',
+  'section',
+  'priority',
+  'position',
+  'title',
+  'title_norm',
+  'body',
+  'closed_at',
+  'close_reason',
+  'source_file',
+  'source_line',
+  'body_hash',
+  'blocked_by',
+  'created_at',
+  'updated_at'
+]);
+const BLOCKED_ITEM_FIELDS: ReadonlySet<string> = new Set([
+  ...QUEUE_ITEM_FIELDS,
+  'blockers',
+  'in_cycle'
+]);
+const QUEUE_ALWAYS: ReadonlySet<string> = new Set(['id']);
+const subset = (row: Record<string, unknown>, fields: FieldSpec): Record<string, unknown> =>
+  projectFields(row, fields, QUEUE_ALWAYS);
+
 const parsePositiveInt = (raw: string | undefined, fallback: number): number | null => {
   if (raw === undefined) return fallback;
   const n = Number(raw);
@@ -74,9 +109,9 @@ const parseSignedInt = (raw: string | undefined): number | null => {
 export const queueTopHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['limit', 'exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['limit', 'exclude', 'fields']))) return;
+    const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
+    if (fields === null) return;
     const limit = parsePositiveInt(ctx.query['limit'], 20);
     if (limit === null) {
       sendError(ctx.res, 400, 'bad_request', 'limit must be a positive integer');
@@ -84,7 +119,9 @@ export const queueTopHandler =
     }
     const capped = Math.min(limit, 100);
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listTopOpen(capped).map(row => toApi(row, exclude.includeBody));
+    const items = repo
+      .listTopOpen(capped)
+      .map(row => subset(toApi(row, wantsBody(fields)), fields));
     sendJson(ctx.res, 200, {limit: capped, count: items.length, items, as_of: asOf(deps.db)});
   };
 
@@ -97,16 +134,18 @@ export const queueTopHandler =
 export const queueBySectionHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude', 'fields']))) return;
+    const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
+    if (fields === null) return;
     const section = ctx.params['section'];
     if (section !== 'active' && section !== 'backlog' && section !== 'watching') {
       sendError(ctx.res, 400, 'bad_request', 'section must be one of: active, backlog, watching');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listBySection(section).map(row => toApi(row, exclude.includeBody));
+    const items = repo
+      .listBySection(section)
+      .map(row => subset(toApi(row, wantsBody(fields)), fields));
     sendJson(ctx.res, 200, {section, count: items.length, items, as_of: asOf(deps.db)});
   };
 
@@ -119,16 +158,18 @@ export const queueBySectionHandler =
 export const queueByPriorityHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude', 'fields']))) return;
+    const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
+    if (fields === null) return;
     const priority = parseSignedInt(ctx.params['n']);
     if (priority === null) {
       sendError(ctx.res, 400, 'bad_request', 'priority must be a signed integer');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listByPriority(priority).map(row => toApi(row, exclude.includeBody));
+    const items = repo
+      .listByPriority(priority)
+      .map(row => subset(toApi(row, wantsBody(fields)), fields));
     sendJson(ctx.res, 200, {priority, count: items.length, items, as_of: asOf(deps.db)});
   };
 
@@ -142,16 +183,18 @@ export const queueByPriorityHandler =
 export const queueByProjectHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude', 'fields']))) return;
+    const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
+    if (fields === null) return;
     const project = ctx.params['name'];
     if (!project) {
       sendError(ctx.res, 400, 'bad_request', 'missing project name');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listOpenByProject(project).map(row => toApi(row, exclude.includeBody));
+    const items = repo
+      .listOpenByProject(project)
+      .map(row => subset(toApi(row, wantsBody(fields)), fields));
     sendJson(ctx.res, 200, {project, count: items.length, items, as_of: asOf(deps.db)});
   };
 
@@ -165,16 +208,18 @@ export const queueByProjectHandler =
 export const queueArchiveByProjectHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude', 'fields']))) return;
+    const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
+    if (fields === null) return;
     const project = ctx.params['name'];
     if (!project) {
       sendError(ctx.res, 400, 'bad_request', 'missing project name');
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
-    const items = repo.listArchiveByProject(project).map(row => toApi(row, exclude.includeBody));
+    const items = repo
+      .listArchiveByProject(project)
+      .map(row => subset(toApi(row, wantsBody(fields)), fields));
     sendJson(ctx.res, 200, {project, count: items.length, items, as_of: asOf(deps.db)});
   };
 
@@ -206,14 +251,16 @@ const blockerReportToApi = (
 export const queueReadyHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['project', 'exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['project', 'exclude', 'fields']))) return;
+    const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
+    if (fields === null) return;
     const project = ctx.query['project'];
     const repo = new QueueItemsRepository(deps.db);
     const universe = repo.listAll();
     const candidates = project ? universe.filter(row => row.project === project) : universe;
-    const items = readyView(candidates, universe).map(row => toApi(row, exclude.includeBody));
+    const items = readyView(candidates, universe).map(row =>
+      subset(toApi(row, wantsBody(fields)), fields)
+    );
     sendJson(ctx.res, 200, {
       ...(project ? {project} : {}),
       count: items.length,
@@ -234,15 +281,15 @@ export const queueReadyHandler =
 export const queueBlockedHandler =
   (deps: QueueDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['project', 'exclude']))) return;
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    if (!rejectUnknownParams(ctx, new Set(['project', 'exclude', 'fields']))) return;
+    const fields = parseFields(ctx, BLOCKED_ITEM_FIELDS);
+    if (fields === null) return;
     const project = ctx.query['project'];
     const repo = new QueueItemsRepository(deps.db);
     const universe = repo.listAll();
     const candidates = project ? universe.filter(row => row.project === project) : universe;
     const items = blockedView(candidates, universe).map(report =>
-      blockerReportToApi(report, exclude.includeBody)
+      subset(blockerReportToApi(report, wantsBody(fields)), fields)
     );
     sendJson(ctx.res, 200, {
       ...(project ? {project} : {}),

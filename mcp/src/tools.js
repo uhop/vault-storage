@@ -161,7 +161,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_pieces',
     {
       description:
-        'List records (atomized pieces or whole-file records) with filters. Returns the paginated envelope {items, offset, limit, total}, items being full record rows (add exclude: "body" to drop the bodies). Page by items.length, never by the limit you asked for — the server caps limit at 100 and echoes the value it actually used, so requesting 200 returns 100 and stepping offset by 200 silently skips half of every page. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'List records (atomized pieces or whole-file records) with filters. Returns the paginated envelope {items, offset, limit, total}, items being full record rows (add exclude: "body" to drop the bodies). Page by items.length, never by the limit you asked for — the server caps limit at 100 and echoes the value it actually used, so requesting 200 returns 100 and stepping offset by 200 silently skips half of every page. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         type: z.array(RECORD_TYPE).optional(),
         status: z.array(RECORD_STATUS).optional(),
@@ -178,7 +178,13 @@ export const registerTools = (mcp, client) => {
           .optional(),
         offset: z.number().int().min(0).optional().default(0),
         limit: z.number().int().min(1).max(100).optional().default(20),
-        exclude: z.enum(['body']).optional().describe('Set to "body" to omit body fields')
+        exclude: z.enum(['body']).optional().describe('Set to "body" to omit body fields'),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
+          )
       }
     },
     wrap(async args =>
@@ -193,7 +199,8 @@ export const registerTools = (mcp, client) => {
         sort: args.sort,
         offset: args.offset,
         limit: args.limit,
-        exclude: args.exclude
+        exclude: args.exclude,
+        fields: args.fields
       })
     )
   );
@@ -201,15 +208,23 @@ export const registerTools = (mcp, client) => {
   mcp.registerTool(
     'vault_read_piece',
     {
-      description: 'Read a single record by record_id (UUIDv7). Returns the record with body.',
+      description:
+        'Read a single record by record_id (UUIDv7). Returns the record with body. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         record_id: z.string().min(1),
-        exclude_body: z.boolean().optional()
+        exclude_body: z.boolean().optional(),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
+          )
       }
     },
-    wrap(async ({record_id, exclude_body}) =>
+    wrap(async ({record_id, exclude_body, fields}) =>
       client.getJson(`/sections/${encodeURIComponent(record_id)}`, {
-        exclude: exclude_body ? 'body' : undefined
+        exclude: exclude_body ? 'body' : undefined,
+        fields
       })
     )
   );
@@ -1333,7 +1348,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_top',
     {
       description:
-        'Top N open queue items across the entire fleet, ordered by (priority DESC, project, section, position). Excludes archive. Default limit 20, max 100. Returns {limit, count, items} — a flat count+items envelope and unpaginated, not the {items, offset, limit, total} shape: there is no offset and no second page, so a truncated result means raise limit. Use case: "what is next across all projects?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'Top N open queue items across the entire fleet, ordered by (priority DESC, project, section, position). Excludes archive. Default limit 20, max 100. Returns {limit, count, items} — a flat count+items envelope and unpaginated, not the {items, offset, limit, total} shape: there is no offset and no second page, so a truncated result means raise limit. Use case: "what is next across all projects?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         limit: z.number().int().min(1).max(100).optional().default(20),
         exclude: z
@@ -1341,17 +1356,23 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({limit, exclude}) => client.getJson('/queue/top', {limit, exclude}))
+    wrap(async ({limit, exclude, fields}) => client.getJson('/queue/top', {limit, exclude, fields}))
   );
 
   mcp.registerTool(
     'vault_queue_by_section',
     {
       description:
-        'All open queue items in one section across the fleet, ordered by (priority DESC, project, position). Returns {section, count, items} — unpaginated; the whole section comes back. Use case: "what is in flight everywhere?" (active), "what is waiting upstream?" (watching), "what is on every project\'s backlog?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'All open queue items in one section across the fleet, ordered by (priority DESC, project, position). Returns {section, count, items} — unpaginated; the whole section comes back. Use case: "what is in flight everywhere?" (active), "what is waiting upstream?" (watching), "what is on every project\'s backlog?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         section: z.enum(['active', 'backlog', 'watching']),
         exclude: z
@@ -1359,11 +1380,17 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({section, exclude}) =>
-      client.getJson(`/queue/by-section/${encodeURIComponent(section)}`, {exclude})
+    wrap(async ({section, exclude, fields}) =>
+      client.getJson(`/queue/by-section/${encodeURIComponent(section)}`, {exclude, fields})
     )
   );
 
@@ -1371,7 +1398,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_by_priority',
     {
       description:
-        'All Backlog items at a specific priority tier across the fleet, ordered by (project, position). Priority is a signed integer centered on 0 — `+2` / `+1` are boosted, `-1` / `-2` are demoted. Returns {priority, count, items} — unpaginated. Use case: "everything we said was priority +2 across all projects". Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'All Backlog items at a specific priority tier across the fleet, ordered by (project, position). Priority is a signed integer centered on 0 — `+2` / `+1` are boosted, `-1` / `-2` are demoted. Returns {priority, count, items} — unpaginated. Use case: "everything we said was priority +2 across all projects". Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         priority: z.number().int(),
         exclude: z
@@ -1379,11 +1406,20 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({priority, exclude}) =>
-      client.getJson(`/queue/by-priority/${encodeURIComponent(String(priority))}`, {exclude})
+    wrap(async ({priority, exclude, fields}) =>
+      client.getJson(`/queue/by-priority/${encodeURIComponent(String(priority))}`, {
+        exclude,
+        fields
+      })
     )
   );
 
@@ -1391,7 +1427,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_by_project',
     {
       description:
-        'All open items (Active + Backlog + Watching) for one project, grouped by section in display order: Active first, Backlog by priority DESC, Watching last. Returns {project, count, items} — unpaginated. Use case: "what is on `<project>`\'s queue right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'All open items (Active + Backlog + Watching) for one project, grouped by section in display order: Active first, Backlog by priority DESC, Watching last. Returns {project, count, items} — unpaginated. Use case: "what is on `<project>`\'s queue right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         project: z.string().min(1).describe('Project slug, e.g. "node-re2"'),
         exclude: z
@@ -1399,11 +1435,17 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({project, exclude}) =>
-      client.getJson(`/queue/projects/${encodeURIComponent(project)}`, {exclude})
+    wrap(async ({project, exclude, fields}) =>
+      client.getJson(`/queue/projects/${encodeURIComponent(project)}`, {exclude, fields})
     )
   );
 
@@ -1411,7 +1453,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_ready',
     {
       description:
-        'Backlog items whose blocked-by refs (if any) all resolve to archived items — the "claimable next" view, ordered (priority DESC, project, position). Fleet-wide by default; pass project to scope. Active (already started) and Watching (upstream-gated) are excluded. Unresolved/ambiguous refs BLOCK conservatively — check vault_queue_blocked for the detail. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Use case: "what can I start right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'Backlog items whose blocked-by refs (if any) all resolve to archived items — the "claimable next" view, ordered (priority DESC, project, position). Fleet-wide by default; pass project to scope. Active (already started) and Watching (upstream-gated) are excluded. Unresolved/ambiguous refs BLOCK conservatively — check vault_queue_blocked for the detail. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Use case: "what can I start right now?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         project: z.string().min(1).optional().describe('Project slug to scope to, e.g. "node-re2"'),
         exclude: z
@@ -1419,17 +1461,25 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({project, exclude}) => client.getJson('/queue/ready', {project, exclude}))
+    wrap(async ({project, exclude, fields}) =>
+      client.getJson('/queue/ready', {project, exclude, fields})
+    )
   );
 
   mcp.registerTool(
     'vault_queue_blocked',
     {
       description:
-        'Open queue items with at least one blocking blocked-by ref, each with per-ref resolution detail (state: open | unresolved | ambiguous, plus the resolved target) and an in_cycle flag for mutually-blocked items that can never self-release. The complementary view to vault_queue_ready; unresolved/ambiguous states usually mean a typo\'d ref or a blocker that was renamed. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Each item is a queue row plus `in_cycle` and `blockers: [{ref, state, target?, matches?}]`; `target` is present only once a ref resolves, and `matches` only on an ambiguous ref, where it carries the candidates that made it ambiguous. Use case: "what is stuck, and on what exactly?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'Open queue items with at least one blocking blocked-by ref, each with per-ref resolution detail (state: open | unresolved | ambiguous, plus the resolved target) and an in_cycle flag for mutually-blocked items that can never self-release. The complementary view to vault_queue_ready; unresolved/ambiguous states usually mean a typo\'d ref or a blocker that was renamed. Returns {count, items} — unpaginated, plus a `project` echo when you scoped the call. Each item is a queue row plus `in_cycle` and `blockers: [{ref, state, target?, matches?}]`; `target` is present only once a ref resolves, and `matches` only on an ambiguous ref, where it carries the candidates that made it ambiguous. Use case: "what is stuck, and on what exactly?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         project: z.string().min(1).optional().describe('Project slug to scope to, e.g. "node-re2"'),
         exclude: z
@@ -1437,17 +1487,25 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({project, exclude}) => client.getJson('/queue/blocked', {project, exclude}))
+    wrap(async ({project, exclude, fields}) =>
+      client.getJson('/queue/blocked', {project, exclude, fields})
+    )
   );
 
   mcp.registerTool(
     'vault_queue_project_archive',
     {
       description:
-        'Archive slice for one project, ordered by closed_at DESC with undated rows last. Each item carries a regex-inferred close_reason (shipped | rejected | parked | deferred | null). Returns {project, count, items} — unpaginated. Use case: "what did `<project>` ship/reject/park, when?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'Archive slice for one project, ordered by closed_at DESC with undated rows last. Each item carries a regex-inferred close_reason (shipped | rejected | parked | deferred | null). Returns {project, count, items} — unpaginated. Use case: "what did `<project>` ship/reject/park, when?" Pass exclude: "body" for a listing-shaped read without the item prose — about a fifth of the bytes; titles, sections, priorities, blockers, source lines, and body_hash stay. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared. Subset with fields: "a,b" keeps those fields (plus the identity fields), "-a,-b" drops them — one mode per call, unknown names are a 400; exclude: "body" is the older alias for fields: "-body".',
       inputSchema: {
         project: z.string().min(1).describe('Project slug, e.g. "node-re2"'),
         exclude: z
@@ -1455,11 +1513,17 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Set to "body" to drop the item bodies — a listing of titles, sections, priorities, and blockers'
+          ),
+        fields: z
+          .string()
+          .optional()
+          .describe(
+            'Subset: "a,b" keeps those fields, "-a,-b" drops them; identity fields always stay; unknown names are a 400'
           )
       }
     },
-    wrap(async ({project, exclude}) =>
-      client.getJson(`/queue/projects/${encodeURIComponent(project)}/archive`, {exclude})
+    wrap(async ({project, exclude, fields}) =>
+      client.getJson(`/queue/projects/${encodeURIComponent(project)}/archive`, {exclude, fields})
     )
   );
 

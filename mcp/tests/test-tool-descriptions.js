@@ -19,6 +19,7 @@ const descriptions = () => {
 
 /** Every field name a description must mention for its documented shape. */
 const REQUIRED_MENTIONS = {
+  vault_read_piece: ['fields'],
   vault_health: ['stalled', 'consecutive_timeouts', 'lag_ms'],
   vault_move_item: ['trail', 'item_assert_failed', 'etag'],
   vault_insert_item: ['etag', 'created', 'section_assert_failed'],
@@ -30,10 +31,10 @@ const REQUIRED_MENTIONS = {
   vault_queue_project_archive: ['as_of'],
   vault_queue_blocked: ['as_of'],
   vault_queue_ready: ['as_of'],
-  vault_queue_by_project: ['as_of'],
+  vault_queue_by_project: ['fields', 'as_of'],
   vault_queue_by_priority: ['as_of'],
   vault_queue_by_section: ['as_of'],
-  vault_queue_top: ['as_of'],
+  vault_queue_top: ['fields', 'as_of'],
   // The filed defect: /system/lint carries `coverage` beside {ok, total_issues,
   // checks}, and all nine check names — the description advertised five.
   vault_lint: [
@@ -62,7 +63,7 @@ const REQUIRED_MENTIONS = {
   vault_records_by_tag: ['as_of', 'items', 'offset', 'limit', 'total', 'alias_for', 'requested'],
   vault_tag_info: ['aliases', 'record_count', 'requested'],
   vault_list_tags: ['as_of', 'record_count', 'offset', 'total'],
-  vault_list_pieces: ['as_of', 'items', 'offset', 'limit', 'total'],
+  vault_list_pieces: ['fields', 'as_of', 'items', 'offset', 'limit', 'total'],
   vault_list_suggestions: [
     'evidence',
     'asserted',

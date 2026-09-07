@@ -129,3 +129,18 @@ test('project slugs with slashes/spaces are URL-encoded', async t => {
   const {url} = getCaptured();
   t.equal(url, 'http://test/queue/projects/weird%20name%2Fwith%2Fslash');
 });
+
+test('fields rides as ?fields= on the queue slices and on the record reads', async t => {
+  const {mcp, getCaptured} = setup();
+  await mcp.tools.get('vault_queue_by_project')({project: 'node-re2', fields: 'title,priority'});
+  t.equal(new URL(getCaptured().url).searchParams.get('fields'), 'title,priority');
+  await mcp.tools.get('vault_queue_top')({limit: 3, fields: '-body,-title_norm'});
+  t.equal(new URL(getCaptured().url).searchParams.get('fields'), '-body,-title_norm');
+  await mcp.tools.get('vault_list_pieces')({fields: 'title'});
+  t.equal(new URL(getCaptured().url).searchParams.get('fields'), 'title');
+  await mcp.tools.get('vault_read_piece')({record_id: 'r1', fields: 'title,type'});
+  const url = new URL(getCaptured().url);
+  t.equal(url.pathname, '/sections/r1');
+  t.equal(url.searchParams.get('fields'), 'title,type');
+  t.equal(url.searchParams.get('exclude'), null, 'exclude absent unless asked');
+});

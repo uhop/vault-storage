@@ -12,13 +12,16 @@ import {readBodyText} from '../body.ts';
 import {
   NO_QUERY_PARAMS,
   parseExclude,
+  parseFields,
   parsePagination,
+  projectFields,
   rejectUnknownParams,
-  splitCsv
+  splitCsv,
+  wantsBody
 } from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
-import {toJsonRecord} from '../serialize.ts';
+import {JSON_RECORD_ALWAYS, JSON_RECORD_FIELDS, toJsonRecord} from '../serialize.ts';
 import {
   AUTO_MANAGED_KEYS,
   ensureSafePath,
@@ -92,7 +95,7 @@ const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
 export const getRecordHandler =
   (deps: {records: RecordsRepository}): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['exclude']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['exclude', 'fields']))) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
@@ -109,12 +112,16 @@ export const getRecordHandler =
     // reflects the freshly-bumped clock (decay_score = 1.0).
     const refStamp = new Date().toISOString();
     deps.records.bumpLastReferenced(id, refStamp);
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
+    const fields = parseFields(ctx, JSON_RECORD_FIELDS);
+    if (fields === null) return;
     sendJson(
       ctx.res,
       200,
-      toJsonRecord({...record, lastReferenced: refStamp}, {includeBody: exclude.includeBody})
+      projectFields(
+        toJsonRecord({...record, lastReferenced: refStamp}, {includeBody: wantsBody(fields)}),
+        fields,
+        JSON_RECORD_ALWAYS
+      )
     );
   };
 
@@ -806,6 +813,7 @@ const LIST_PARAMS: ReadonlySet<string> = new Set([
   'updated_since',
   'sort',
   'exclude',
+  'fields',
   'offset',
   'limit'
 ]);
@@ -848,9 +856,9 @@ export const listRecordsHandler =
       return;
     }
     const {offset, limit} = parsePagination(ctx.query);
-    const exclude = parseExclude(ctx);
-    if (exclude === null) return;
-    const includeBody = exclude.includeBody;
+    const fields = parseFields(ctx, JSON_RECORD_FIELDS);
+    if (fields === null) return;
+    const includeBody = wantsBody(fields);
 
     const {sql, countSql, bindings, countBindings} = buildListSql(
       filters,
@@ -863,7 +871,9 @@ export const listRecordsHandler =
     const total = (db.prepare(countSql).get(...(countBindings as never[])) as {n: number}).n;
 
     sendJson(ctx.res, 200, {
-      items: rows.map(rowToRecord).map(r => toJsonRecord(r, {includeBody})),
+      items: rows
+        .map(rowToRecord)
+        .map(r => projectFields(toJsonRecord(r, {includeBody}), fields, JSON_RECORD_ALWAYS)),
       offset,
       limit,
       total,

@@ -338,6 +338,53 @@ test('?exclude=body drops the item prose on every queue slice and nothing else',
   });
 });
 
+test('?fields= subsets queue items: include and exclude lists, identity kept, typos and mixing refused', async t => {
+  await withServer(seedFleet, async url => {
+    const inc = await fetchJson(`${url}/queue/projects/alpha?fields=title,priority`, {
+      headers: authHeader
+    });
+    t.equal(inc.status, 200);
+    const rows = (inc.body as {items: Array<Record<string, unknown>>}).items;
+    t.ok(rows.length > 0, 'fixture has items');
+    for (const row of rows) {
+      t.deepEqual(Object.keys(row).sort(), ['id', 'priority', 'title'], 'include list plus the id');
+    }
+    const exc = await fetchJson(`${url}/queue/top?limit=2&fields=-body,-title_norm,-id`, {
+      headers: authHeader
+    });
+    t.equal(exc.status, 200);
+    for (const row of (exc.body as {items: Array<Record<string, unknown>>}).items) {
+      t.equal('body' in row, false, 'body dropped');
+      t.equal('title_norm' in row, false, 'title_norm dropped');
+      t.equal(typeof row['id'], 'string', 'the identity field stays even when excluded');
+      t.equal(typeof row['title'], 'string', 'others kept');
+    }
+    const alias = await fetchJson(`${url}/queue/projects/alpha?exclude=body`, {
+      headers: authHeader
+    });
+    t.equal(alias.status, 200, 'exclude=body still works as the alias');
+    t.equal('body' in (alias.body as {items: Array<Record<string, unknown>>}).items[0]!, false);
+
+    const blocked = await fetchJson(`${url}/queue/blocked?fields=title,blockers`, {
+      headers: authHeader
+    });
+    t.equal(blocked.status, 200, 'the blocked view knows its own extra fields');
+    const notHere = await fetchJson(`${url}/queue/top?fields=blockers`, {headers: authHeader});
+    t.equal(notHere.status, 400, 'blockers is not a field of the other slices');
+
+    for (const [q, why] of [
+      ['fields=title,-body', 'mixing include and exclude'],
+      ['fields=nope', 'unknown field'],
+      ['fields=', 'empty list'],
+      ['fields=title&exclude=body', 'fields and exclude together'],
+      ['fields=meta.x', 'a sub-object path']
+    ]) {
+      const r = await fetchJson(`${url}/queue/top?${q}`, {headers: authHeader});
+      t.equal(r.status, 400, `${why} → 400`);
+    }
+  });
+});
+
 test('POST /maintenance/reindex-queues — populates from disk', async t => {
   await withServer(
     (_db, root) => {

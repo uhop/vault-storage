@@ -56,6 +56,31 @@ export interface SerializeOptions {
   includeBody?: boolean;
 }
 
+/** Every field a JsonRecord can carry — what `?fields=` is checked against. */
+export const JSON_RECORD_FIELDS: ReadonlySet<string> = new Set([
+  'record_id',
+  'file_path',
+  'parent_path',
+  'sequence_key',
+  'type',
+  'status',
+  'priority',
+  'title',
+  'created',
+  'updated',
+  'modified_at',
+  'last_referenced',
+  'decay_score',
+  'content_hash',
+  'body_hash',
+  'archived_at',
+  'body',
+  'agent_summary',
+  'agent_derived_from_hash'
+]);
+/** Identity fields a subset never drops. */
+export const JSON_RECORD_ALWAYS: ReadonlySet<string> = new Set(['record_id', 'file_path']);
+
 export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonRecord => {
   const out: JsonRecord = {
     record_id: r.recordId,
