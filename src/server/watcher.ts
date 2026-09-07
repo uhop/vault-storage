@@ -6,6 +6,7 @@
 // create/modify/delete on Linux), so flush stats each path: present → import,
 // missing → delete. Idempotent.
 
+import type {HealthMonitor} from './health.ts';
 import {watch, statSync, type FSWatcher} from 'node:fs';
 import {join, sep} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
@@ -50,6 +51,8 @@ export interface WatcherOptions {
    * never serves paths the drain just changed.
    */
   onIndexChanged?: () => void;
+  /** Outcomes and events reported for /system/health. */
+  health?: HealthMonitor;
 }
 
 const SKIP_PATH_PARTS: ReadonlySet<string> = new Set([
@@ -191,6 +194,10 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       `reindex: imported=${imported} deleted=${deleted} errors=${errors} ` +
         `edges=${edges.edgesCreated} embed=${embed.embedded} queue_items=${queueItemsTouched}`
     );
+    opts.health?.recordReindex({
+      ok: errors === 0,
+      ...(errors > 0 ? {error: `${errors} file(s) failed to import`} : {})
+    });
 
     return {
       imported,
@@ -213,6 +220,10 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
         result = await drain();
       })
       .catch(err => {
+        opts.health?.recordReindex({
+          ok: false,
+          error: err instanceof Error ? err.message.split('\n')[0] : String(err)
+        });
         onError(err);
       });
     return inFlight.then(
@@ -242,6 +253,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       if (!filename) return;
       const relativePath = filename.toString().split(sep).join('/');
       if (shouldIgnore(relativePath)) return;
+      opts.health?.recordWatcherEvent();
       pending.add(relativePath);
       schedule();
     });

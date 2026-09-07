@@ -42,6 +42,7 @@ const makeEnv = (port: number, dataPath: string, uiPath: string): ServerEnv => (
 // parameter error rather than a 404 — that ordering is what these pin.
 const ROUTES: Array<[string, string]> = [
   ['GET', '/system/status'],
+  ['GET', '/system/health'],
   ['GET', '/system/lint'],
   ['GET', '/queue/lint'],
   ['POST', '/system/resume-bundle'],

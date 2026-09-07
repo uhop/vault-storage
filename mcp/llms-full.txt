@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 69 MCP tools and 3
+traversal. The adapter exposes the server's REST API as 70 MCP tools and 3
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.
@@ -53,7 +53,7 @@ was computed at (it moves on every record write), so an empty answer reads as
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (69)
+## Tools (70)
 
 Search & list:
 
@@ -222,6 +222,10 @@ restart; resolved ones archive into projects/<project>/handoff-archive.md):
 System:
 
 - vault_status — indexer/DB state, embedder and memory blocks.
+- vault_health — the process's view of itself from memory only: uptime,
+  watchdog lag, last git-sync and reindex outcomes, watcher's last event,
+  and stalled; never touches the database or the data mount, so it answers
+  while storage is wedged and the loop is not. Always 200.
 - vault_lint — integrity checks (nine categories) plus coverage.enrichment
   with the unenriched_records worklist; coverage never flips ok.
 - vault_resume_bundle — one-shot session-start bundle (reindex + lint digest +

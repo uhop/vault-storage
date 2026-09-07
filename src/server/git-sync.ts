@@ -36,7 +36,8 @@ import {statSync, unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
-import {getCurrentHead, isGitRepo, runGit} from '../util/git.ts';
+import {getCurrentHead, isGitRepo, runGit, type GitResult} from '../util/git.ts';
+import type {HealthMonitor} from './health.ts';
 
 export interface WorkHoursWindow {
   /** `HH:MM` in 24-hour local time. */
@@ -90,6 +91,8 @@ export interface GitSyncOptions {
   db?: DatabaseSync;
   log?: (msg: string) => void;
   onError?: (err: unknown) => void;
+  /** Outcomes reported for /system/health; a git child past its timeout marks the loop stalled. */
+  health?: HealthMonitor;
 }
 
 export interface GitSyncHandle {
@@ -193,13 +196,24 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
   };
 
   const clearFailures = (): void => {
+    opts.health?.recordGitSync({ok: true});
     if (!opts.db) return;
     opts.db.prepare(`DELETE FROM meta WHERE key IN ${FAILURE_META_KEYS}`).run();
+  };
+
+  // Whether the most recent git child was killed by its timeout — what turns
+  // a plain failure into a stall verdict on /system/health.
+  let lastTimedOut = false;
+  const git = async (args: string[]): Promise<GitResult> => {
+    const result = await runGit(vaultDataPath, args);
+    lastTimedOut = result.timedOut === true;
+    return result;
   };
 
   /** Ledger + warning in one step; always resolves the poll as 'quiet'. */
   const fail = (err: Error): 'quiet' => {
     recordFailure(err.message);
+    opts.health?.recordGitSync({ok: false, error: err.message, timedOut: lastTimedOut});
     onError(err);
     return 'quiet';
   };
@@ -229,7 +243,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
   const syncOnce = async (force: boolean): Promise<'committed' | 'quiet' | 'skipped'> => {
     if (!force && !inWindow()) return 'skipped';
 
-    const status = await runGit(vaultDataPath, ['status', '--porcelain']);
+    const status = await git(['status', '--porcelain']);
     if (status.exitCode !== 0) {
       return fail(new Error(`git status failed: ${status.stderr.trim()}`));
     }
@@ -241,13 +255,13 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
 
     const subject = commitSubject(dirtyLines.length);
     for (let attempt = 1; ; ++attempt) {
-      const add = await runGit(vaultDataPath, ['add', '-A']);
+      const add = await git(['add', '-A']);
       if (add.exitCode !== 0) {
         if (attempt < MAX_COMMIT_ATTEMPTS && isLockCollision(add.stderr) && removeStaleLock())
           continue;
         return fail(new Error(`git add failed: ${add.stderr.trim()}`));
       }
-      const commit = await runGit(vaultDataPath, [...identityArgs, 'commit', '-m', subject]);
+      const commit = await git([...identityArgs, 'commit', '-m', subject]);
       if (commit.exitCode !== 0) {
         // "nothing to commit" can happen if files were only in .gitignore.
         const benign =
@@ -281,7 +295,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
     }
 
     if (autoPush) {
-      const push = await runGit(vaultDataPath, ['push']);
+      const push = await git(['push']);
       if (push.exitCode !== 0) {
         onError(new Error(`git push failed: ${push.stderr.trim()}`));
         return 'committed';

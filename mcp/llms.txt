@@ -2,7 +2,7 @@
 
 > Thin MCP (Model Context Protocol) adapter for vault-storage — an
 > AI-agent-first personal knowledge base (markdown source of truth + SQLite +
-> sqlite-vec index). Exposes the REST API as 69 MCP tools and 3 read-only
+> sqlite-vec index). Exposes the REST API as 70 MCP tools and 3 read-only
 > resources for Claude Code and any other MCP client. Holds no vault state:
 > every call forwards to a running vault-storage server identified by
 > `VAULT_API_URL`, authenticated with the `VAULT_API_TOKEN` bearer token.

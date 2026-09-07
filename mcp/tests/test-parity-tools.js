@@ -227,3 +227,18 @@ test('vault_search → POST /search/simple/ and wraps the bare hits with the as_
   });
   t.equal(out.hits.length, 1, 'hits carried through');
 });
+
+test('vault_health → GET /system/health, no parameters', async t => {
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify({ok: true, stalled: false, loop: {lag_ms: 0}}), {
+        status: 200,
+        headers: {'Content-Type': 'application/json'}
+      })
+  );
+  const result = await call('vault_health', {});
+  const url = new URL(getCaptured().url);
+  t.equal(url.pathname, '/system/health');
+  t.equal(url.search, '');
+  t.ok(JSON.parse(firstText(result)).ok, 'body passed through');
+});

@@ -1,3 +1,4 @@
+import {startHealthMonitor} from './health.ts';
 import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {openDatabase} from '../db/connection.ts';
@@ -70,12 +71,15 @@ export const main = async (): Promise<void> => {
   // invalidate) and the watcher (drains invalidate after disk changes).
   const resolverCache = new ResolverCache(db);
 
+  // In-memory health: git-sync and the watcher report into it, /system/health reads it.
+  const health = startHealthMonitor();
   const handle = await startServer({
     db,
     env,
     schemaVersion: migration.current,
     embedder,
-    resolverCache
+    resolverCache,
+    health
   });
   process.stdout.write(
     `vault-storage: listening on ${handle.url} ` +
@@ -89,7 +93,8 @@ export const main = async (): Promise<void> => {
       vaultDataPath: env.vaultDataPath,
       embedder,
       debounceMs: env.watchDebounceMs,
-      onIndexChanged: () => resolverCache.invalidate()
+      onIndexChanged: () => resolverCache.invalidate(),
+      health
     });
     process.stdout.write(
       `vault-storage: watching ${env.vaultDataPath} (debounce=${env.watchDebounceMs}ms)\n`
@@ -116,7 +121,8 @@ export const main = async (): Promise<void> => {
       autoPush: env.autoPush,
       authorName: env.gitAuthorName,
       authorEmail: env.gitAuthorEmail,
-      db
+      db,
+      health
     });
     const backoff =
       env.commitIntervalMaxMs > env.commitIntervalMs
@@ -146,6 +152,7 @@ export const main = async (): Promise<void> => {
       watcher.close();
     }
     if (scanScheduler) scanScheduler.close();
+    health.close();
     if (gitSync) {
       await gitSync.syncNow();
       gitSync.close();

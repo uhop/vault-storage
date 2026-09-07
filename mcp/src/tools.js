@@ -1215,6 +1215,16 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_health',
+    {
+      description:
+        'What the server knows about itself from memory alone — never the database or the data mount: {ok, stalled, at, started_at, uptime_s, loop: {watchdog_interval_ms, last_tick_at, lag_ms, max_lag_ms, max_lag_at}, git_sync: {last_at, last_ok, last_error, runs, failures, consecutive_timeouts, timeouts}, reindex: {last_at, last_ok, last_error, runs, failures}, watcher: {last_event_at, events}}. stalled is true when the watchdog tick came late by more than twice its interval or the last git child timed out; ok is its negation. Always 200 — the verdict is in the body. vault_status is the probe that touches storage and fails when storage fails; read this one when vault_status hangs and you want to know whether the loop is alive.',
+      inputSchema: {}
+    },
+    wrap(async () => client.getJson('/system/health'))
+  );
+
+  mcp.registerTool(
     'vault_lint',
     {
       description:

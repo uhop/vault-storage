@@ -9,21 +9,54 @@ export interface GitResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /** The child was killed after `timeoutMs`; exitCode is -1 and stderr says so. */
+  timedOut?: boolean;
 }
 
-export const runGit = (cwd: string, args: string[]): Promise<GitResult> =>
+/**
+ * A git child that never returns holds its caller forever — on 2026-09-07 a
+ * `git add -A` sat in uninterruptible sleep on a wedged pool and the sync
+ * loop with it. Five minutes is far past any honest git operation here.
+ */
+export const GIT_TIMEOUT_MS = 5 * 60_000;
+
+export interface RunGitOptions {
+  timeoutMs?: number;
+  /** The executable; tests substitute one that hangs. */
+  bin?: string;
+}
+
+export const runGit = (cwd: string, args: string[], opts: RunGitOptions = {}): Promise<GitResult> =>
   new Promise(resolve => {
-    const proc = spawn('git', args, {cwd, stdio: ['ignore', 'pipe', 'pipe']});
+    const timeoutMs = opts.timeoutMs ?? GIT_TIMEOUT_MS;
+    const proc = spawn(opts.bin ?? 'git', args, {cwd, stdio: ['ignore', 'pipe', 'pipe']});
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const finish = (result: GitResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      finish({
+        exitCode: -1,
+        stdout,
+        stderr: `${stderr}${stderr.length > 0 ? '\n' : ''}timed out after ${timeoutMs} ms`,
+        timedOut: true
+      });
+    }, timeoutMs);
+    timer.unref();
     proc.stdout.on('data', d => {
       stdout += d.toString('utf8');
     });
     proc.stderr.on('data', d => {
       stderr += d.toString('utf8');
     });
-    proc.on('close', code => resolve({exitCode: code ?? -1, stdout, stderr}));
-    proc.on('error', err => resolve({exitCode: -1, stdout, stderr: String(err)}));
+    proc.on('close', code => finish({exitCode: code ?? -1, stdout, stderr}));
+    proc.on('error', err => finish({exitCode: -1, stdout, stderr: String(err)}));
   });
 
 export const isGitRepo = (path: string): boolean =>

@@ -107,6 +107,37 @@ test('GET /system/status with valid token returns indexer status', async t => {
   });
 });
 
+test('GET /system/health answers from memory with the watchdog and outcome blocks', async t => {
+  await withServer(async url => {
+    const {status, body} = await fetchJson(`${url}/system/health`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(status, 200, '200 ok');
+    const h = body as Record<string, any>;
+    t.equal(h['ok'], true, 'ok');
+    t.equal(h['stalled'], false, 'not stalled');
+    t.equal(typeof h['uptime_s'], 'number');
+    t.ok(!Number.isNaN(Date.parse(h['started_at'])), 'started_at is an instant');
+    t.equal(h['loop'].watchdog_interval_ms, 5000, 'default watchdog');
+    t.equal(h['loop'].lag_ms, 0);
+    t.deepEqual(h['git_sync'], {
+      last_at: null,
+      last_ok: null,
+      last_error: null,
+      runs: 0,
+      failures: 0,
+      consecutive_timeouts: 0,
+      timeouts: 0
+    });
+    t.equal(h['reindex'].runs, 0);
+    t.deepEqual(h['watcher'], {last_event_at: null, events: 0});
+    const bogus = await fetchJson(`${url}/system/health?x=1`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(bogus.status, 400, 'unknown parameters rejected');
+  });
+});
+
 test('unknown route returns 404', async t => {
   await withServer(async url => {
     const {status, body} = await fetchJson(`${url}/does/not/exist`, {

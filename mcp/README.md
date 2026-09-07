@@ -108,7 +108,9 @@ Fifty-three tools mapping to the REST surface, grouped by purpose:
   `vault_handoff_put_artifact` / `vault_handoff_get_artifact` (the transported
   work — a `git format-patch` series or a bundle, 10 MB cap; the getter
   returns metadata unless `include_content` is set)
-- **System** — `vault_status`, `vault_lint` (integrity checks plus the
+- **System** — `vault_status`, `vault_health` (the process from memory
+  alone: watchdog lag, last git-sync and reindex outcomes, `stalled`),
+  `vault_lint` (integrity checks plus the
   `coverage.enrichment` block and its `unenriched_records` worklist),
   `vault_resume_bundle` (one-shot session-start bundle: reindex + lint +
   suggestions + workflow + log summaries + project notes + the project's

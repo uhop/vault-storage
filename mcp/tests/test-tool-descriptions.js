@@ -19,6 +19,7 @@ const descriptions = () => {
 
 /** Every field name a description must mention for its documented shape. */
 const REQUIRED_MENTIONS = {
+  vault_health: ['stalled', 'consecutive_timeouts', 'lag_ms'],
   vault_move_item: ['trail', 'item_assert_failed', 'etag'],
   vault_insert_item: ['etag', 'created', 'section_assert_failed'],
   vault_remove_item: ['etag', 'removed', 'item_assert_failed'],

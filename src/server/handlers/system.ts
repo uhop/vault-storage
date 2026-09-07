@@ -1,3 +1,4 @@
+import type {HealthMonitor} from '../health.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import type {Embedder} from '../../embeddings/types.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
@@ -87,4 +88,19 @@ export const releaseEmbedderHandler =
       rss_after: memAfter.rss,
       rss_freed: memBefore.rss - memAfter.rss
     });
+  };
+
+/**
+ * GET /system/health — what the process knows about itself from memory
+ * alone: uptime, the watchdog's lag, the last git-sync and reindex outcomes,
+ * the watcher's last event, and `stalled`. Touches neither the database nor
+ * the data mount, so it still answers while storage is wedged and the loop
+ * is not; `/system/status` is the probe that fails with storage. Always
+ * 200 — the read succeeded; the verdict is in the body (`ok`).
+ */
+export const healthHandler =
+  (monitor: HealthMonitor): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    sendJson(ctx.res, 200, monitor.snapshot());
   };

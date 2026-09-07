@@ -61,7 +61,8 @@ import {commitHandler} from './handlers/commit.ts';
 import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {resolveHandler} from './handlers/resolve.ts';
-import {releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
+import {healthHandler, releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
+import {startHealthMonitor, type HealthMonitor} from './health.ts';
 import {
   addAliasHandler,
   addTaxonomyHandler,
@@ -131,9 +132,16 @@ interface BuildOptions {
    * surface without a watcher.
    */
   resolverCache?: ResolverCache;
+  /**
+   * The in-memory health monitor git-sync and the watcher report into
+   * (composition in index.ts). Defaults to a router-local one, so tests
+   * and bare servers still answer /system/health.
+   */
+  health?: HealthMonitor;
 }
 
 export const buildRouter = (opts: BuildOptions): Router => {
+  const health = opts.health ?? startHealthMonitor();
   const router = new Router();
 
   // Shared repositories: each constructor prepares its statements, so build
@@ -153,6 +161,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     })
   );
   router.get('/system/lint', lintHandler({db: opts.db}));
+  router.get('/system/health', healthHandler(health));
   router.post(
     '/system/resume-bundle',
     resumeBundleHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
