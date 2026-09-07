@@ -52,8 +52,11 @@ Fifty-three tools mapping to the REST surface, grouped by purpose:
   or ambiguous target is a 409, never a silent no-op),
   `vault_replace_section` (the content under one heading, matched exactly
   once with code fences masked, to the next heading of the same or higher
-  level; same assert), `vault_patch_fm` (add/remove one frontmatter array
-  member). All four are atomic
+  level; same assert), `vault_remove_item` / `vault_insert_item` /
+  `vault_move_item` (one queue item by its bold title — removed, inserted
+  into a section, or moved between documents with a trail after the title,
+  the queue-to-archive move as one request), `vault_patch_fm` (add/remove
+  one frontmatter array member). All of them are atomic
   server-side ops whose blast radius is the thing being changed, so they
   cannot lose the rest of the document. Prefer them over whole-document
   writes.

@@ -74,6 +74,7 @@ import {
   editVaultHandler,
   getVaultHandler,
   getVaultRootHandler,
+  moveItemHandler,
   moveVaultHandler,
   proposeVaultHandler,
   putVaultHandler,
@@ -217,6 +218,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
   router.post('/vault/edit', editVaultHandler(vaultDeps));
   router.post('/vault/move', moveVaultHandler(vaultDeps));
+  router.post('/vault/move-item', moveItemHandler(vaultDeps));
   router.post('/vault/supersede', supersedeVaultHandler(vaultDeps));
   router.post('/vault/propose', proposeVaultHandler(vaultDeps));
 

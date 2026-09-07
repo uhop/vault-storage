@@ -18,6 +18,14 @@ import {
   sectionContent,
   type SectionSpan
 } from '../../markdown/sections.ts';
+import {
+  findItem,
+  insertItem,
+  itemText,
+  removeItem,
+  withTrail,
+  type ItemSpan
+} from '../../queue/items.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {buildEdges} from '../../importer/build-edges.ts';
 import {repathPendingSuggestions, SuggestionFiler} from '../../importer/file-suggestions.ts';
@@ -492,7 +500,85 @@ interface EditBody {
   all?: unknown;
   heading?: unknown;
   body?: unknown;
+  title?: unknown;
+  section?: unknown;
+  item?: unknown;
+  position?: unknown;
+  create_section?: unknown;
 }
+
+const EDIT_OPS: ReadonlySet<string> = new Set([
+  'append',
+  'replace',
+  'replace-section',
+  'remove-item',
+  'insert-item'
+]);
+
+/**
+ * Locate one queue item by its bold title (normalized as the queue derivative
+ * normalizes it), optionally inside one `## Heading`; 409 `item_assert_failed`
+ * with the occurrence count when absent or ambiguous.
+ */
+const itemOrError = (
+  res: ServerResponse,
+  path: string,
+  body: string,
+  title: string,
+  section: string | undefined
+): ItemSpan | null => {
+  if (section !== undefined && sectionOrError(res, path, body, section) === null) return null;
+  const found = findItem(body, title, section);
+  if (found.ok) return found.span;
+  const where = section !== undefined ? `${path} § ${section.trim()}` : path;
+  sendError(
+    res,
+    409,
+    'item_assert_failed',
+    found.occurrences === 0
+      ? `item not found in ${where}: ${title}`
+      : `item title occurs ${found.occurrences} times in ${where}: ${title}`,
+    {occurrences: found.occurrences}
+  );
+  return null;
+};
+
+/** An item block as the queue convention writes it: a column-0 `- **Title.**` bullet, continuation lines allowed. */
+const validItemText = (res: ServerResponse, raw: unknown): string | null => {
+  if (typeof raw !== 'string' || !/^- \*\*/.test(raw.trim())) {
+    sendError(
+      res,
+      400,
+      'bad_request',
+      'item must be a string starting with "- **" (a bold-titled queue bullet)'
+    );
+    return null;
+  }
+  return raw.trim();
+};
+
+const positionOrError = (res: ServerResponse, raw: unknown): 'start' | 'end' | null => {
+  if (raw === undefined) return 'end';
+  if (raw === 'start' || raw === 'end') return raw;
+  sendError(res, 400, 'bad_request', 'position must be "start" or "end"');
+  return null;
+};
+
+const sectionInsertError = (
+  res: ServerResponse,
+  path: string,
+  heading: string,
+  occurrences: number
+): void =>
+  sendError(
+    res,
+    409,
+    'section_assert_failed',
+    occurrences === 0
+      ? `heading not found in ${path}: ${heading.trim()} (pass create_section: true to add it)`
+      : `heading occurs ${occurrences} times in ${path}: ${heading.trim()}`,
+    {occurrences}
+  );
 
 /**
  * POST /vault/edit — atomic server-side body edit: the read-modify-write
@@ -555,12 +641,12 @@ export const editVaultHandler =
       sendError(ctx.res, 400, 'invalid_path', 'only .md files are supported');
       return;
     }
-    if (req.op !== 'append' && req.op !== 'replace' && req.op !== 'replace-section') {
+    if (typeof req.op !== 'string' || !EDIT_OPS.has(req.op)) {
       sendError(
         ctx.res,
         400,
         'bad_request',
-        'op must be "append", "replace", or "replace-section"'
+        'op must be "append", "replace", "replace-section", "remove-item", or "insert-item"'
       );
       return;
     }
@@ -602,6 +688,40 @@ export const editVaultHandler =
         return;
       }
     }
+    if (
+      req.op === 'remove-item' &&
+      (typeof req.title !== 'string' || req.title.trim().length === 0)
+    ) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'remove-item requires `title`, the bold title of the item'
+      );
+      return;
+    }
+    if (
+      (req.op === 'remove-item' || req.op === 'insert-item') &&
+      req.section !== undefined &&
+      (typeof req.section !== 'string' || !HEADING_LINE_RE.test(req.section.trim()))
+    ) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'section must be an ATX heading line such as "## Backlog"'
+      );
+      return;
+    }
+    if (req.op === 'insert-item' && typeof req.section !== 'string') {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'insert-item requires `section`, the heading line to insert under'
+      );
+      return;
+    }
 
     const abs = safePathOrError(deps.vaultDataPath, path, ctx.res);
     if (abs === null) return;
@@ -626,8 +746,33 @@ export const editVaultHandler =
     let edited: string;
     let replaced: number | undefined;
     let section: {heading: string; level: number} | undefined;
+    let extra: Record<string, unknown> = {};
     if (req.op === 'append') {
       edited = body.replace(/\s*$/, '\n') + (req.text as string);
+    } else if (req.op === 'remove-item') {
+      const span = itemOrError(
+        ctx.res,
+        path,
+        body,
+        req.title as string,
+        req.section as string | undefined
+      );
+      if (span === null) return;
+      extra = {removed: itemText(body, span)};
+      edited = removeItem(body, span);
+    } else if (req.op === 'insert-item') {
+      const item = validItemText(ctx.res, req.item);
+      if (item === null) return;
+      const position = positionOrError(ctx.res, req.position);
+      if (position === null) return;
+      const heading = req.section as string;
+      const outcome = insertItem(body, heading, item, position, req.create_section === true);
+      if (!outcome.ok) {
+        sectionInsertError(ctx.res, path, heading, outcome.occurrences);
+        return;
+      }
+      edited = outcome.body;
+      extra = {section: heading.trim(), position, created: outcome.created};
     } else if (req.op === 'replace-section') {
       const span = sectionOrError(ctx.res, path, body, req.heading as string);
       if (span === null) return;
@@ -703,7 +848,224 @@ export const editVaultHandler =
       path,
       etag,
       ...(replaced !== undefined ? {replaced} : {}),
-      ...(section ?? {})
+      ...(section ?? {}),
+      ...extra
+    });
+  };
+
+interface MoveItemBody {
+  from_path?: unknown;
+  to_path?: unknown;
+  title?: unknown;
+  from_section?: unknown;
+  to_section?: unknown;
+  position?: unknown;
+  trail?: unknown;
+  create_section?: unknown;
+}
+
+/** One document's FM-stripped body plus what the write path needs to put it back; null after sending the error. */
+const loadEditable = (
+  deps: VaultDeps,
+  ctx: Parameters<Handler>[0],
+  path: string
+): {abs: string; fm: Record<string, unknown>; body: string} | null => {
+  const abs = safePathOrError(deps.vaultDataPath, path, ctx.res);
+  if (abs === null) return null;
+  if (!existsSync(abs) || !statSync(abs).isFile()) {
+    const folder = path.slice(0, -'.md'.length);
+    if (existsSync(join(abs.slice(0, -'.md'.length), '_about.md'))) {
+      sendError(
+        ctx.res,
+        409,
+        'composed_view',
+        `no file exists at ${path} — it is composed on demand from the atomized folder ${folder}/. Edit the folder's pieces instead.`,
+        {composed: true, folder: `${folder}/`}
+      );
+      return null;
+    }
+    sendError(ctx.res, 404, 'not_found', `no file at ${path} — edit cannot create documents`);
+    return null;
+  }
+  const {data, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+  const fm: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) if (value !== null) fm[key] = value;
+  return {abs, fm, body};
+};
+
+/** The edit route's write tail — disk, index, scoped edge pass. Returns the etag, or null after sending the error. */
+const commitBody = (
+  deps: VaultDeps,
+  ctx: Parameters<Handler>[0],
+  path: string,
+  abs: string,
+  fm: Record<string, unknown>,
+  body: string
+): string | null => {
+  const {records} = deps;
+  let etag: string;
+  try {
+    etag = writeSplitRecordToDisk({
+      filePath: path,
+      existing: records.getByPath(path),
+      frontmatter: fm,
+      body,
+      vaultDataPath: deps.vaultDataPath
+    }).etag;
+  } catch (err) {
+    if (err instanceof WriterError) {
+      sendError(ctx.res, err.status, err.code, err.message, err.details);
+      return null;
+    }
+    throw err;
+  }
+  const {recordId} = importFile(records, path, abs, undefined, {
+    tags: new TagsImporter(deps.db),
+    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
+    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
+    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
+  });
+  buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
+  return etag;
+};
+
+/**
+ * POST /vault/move-item — relocate one queue item between documents (or
+ * sections of one document) without the client reproducing its text:
+ * `{from_path, to_path, title, from_section?, to_section, position?, trail?,
+ * create_section?}`. The item is located by its bold title, `trail` is
+ * inserted right after that title (the archive's **Shipped** line), and the
+ * destination is written before the source, so a failure between the two
+ * leaves a duplicate to clean up, never a lost item. Returns
+ * `{title, from: {path, etag}, to: {path, etag}}`.
+ */
+export const moveItemHandler =
+  (deps: VaultDeps): Handler =>
+  async ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendError(ctx.res, 400, 'bad_request', 'body must be JSON');
+      return;
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'body must be an object {from_path, to_path, title, to_section, …}'
+      );
+      return;
+    }
+    const req = parsed as MoveItemBody;
+    const fromPath = typeof req.from_path === 'string' ? req.from_path : '';
+    const toPath = typeof req.to_path === 'string' ? req.to_path : '';
+    if (!fromPath.endsWith('.md') || !toPath.endsWith('.md')) {
+      sendError(ctx.res, 400, 'invalid_path', 'from_path and to_path are required .md paths');
+      return;
+    }
+    if (typeof req.title !== 'string' || req.title.trim().length === 0) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'title is required: the bold title of the item to move'
+      );
+      return;
+    }
+    if (
+      req.from_section !== undefined &&
+      (typeof req.from_section !== 'string' || !HEADING_LINE_RE.test(req.from_section.trim()))
+    ) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'from_section must be an ATX heading line such as "## Backlog"'
+      );
+      return;
+    }
+    if (typeof req.to_section !== 'string' || !HEADING_LINE_RE.test(req.to_section.trim())) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'to_section must be an ATX heading line such as "## 2026-09-06"'
+      );
+      return;
+    }
+    if (req.trail !== undefined && typeof req.trail !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', 'trail must be a string when set');
+      return;
+    }
+    const position = positionOrError(ctx.res, req.position);
+    if (position === null) return;
+
+    const source = loadEditable(deps, ctx, fromPath);
+    if (source === null) return;
+    const span = itemOrError(
+      ctx.res,
+      fromPath,
+      source.body,
+      req.title,
+      req.from_section as string | undefined
+    );
+    if (span === null) return;
+    let moved = itemText(source.body, span);
+    if (typeof req.trail === 'string' && req.trail.length > 0) moved = withTrail(moved, req.trail);
+
+    const same = fromPath === toPath;
+    const target = same ? source : loadEditable(deps, ctx, toPath);
+    if (target === null) return;
+    // Same document: remove first, so the insert sees the section without the item.
+    const targetBody = same ? removeItem(source.body, span) : target.body;
+    const inserted = insertItem(
+      targetBody,
+      req.to_section,
+      moved,
+      position,
+      req.create_section === true
+    );
+    if (!inserted.ok) {
+      sectionInsertError(ctx.res, toPath, req.to_section, inserted.occurrences);
+      return;
+    }
+
+    if (same) {
+      const etag = commitBody(deps, ctx, fromPath, source.abs, source.fm, inserted.body);
+      if (etag === null) return;
+      sendJson(ctx.res, 200, {
+        title: span.title,
+        from: {path: fromPath, etag},
+        to: {path: toPath, etag}
+      });
+      return;
+    }
+    // Destination first: a failure here leaves a duplicate, never a lost item.
+    const toEtag = commitBody(deps, ctx, toPath, target.abs, target.fm, inserted.body);
+    if (toEtag === null) return;
+    const fromEtag = commitBody(
+      deps,
+      ctx,
+      fromPath,
+      source.abs,
+      source.fm,
+      removeItem(source.body, span)
+    );
+    if (fromEtag === null) return;
+    sendJson(ctx.res, 200, {
+      title: span.title,
+      from: {path: fromPath, etag: fromEtag},
+      to: {path: toPath, etag: toEtag}
     });
   };
 

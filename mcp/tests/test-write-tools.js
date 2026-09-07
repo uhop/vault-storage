@@ -43,6 +43,9 @@ test('the safe write tools are registered', t => {
     'vault_replace',
     'vault_replace_section',
     'vault_read_section',
+    'vault_remove_item',
+    'vault_insert_item',
+    'vault_move_item',
     'vault_patch_fm'
   ]) {
     t.ok(tool(name), `${name} registered`);
@@ -115,6 +118,56 @@ test('vault_read_section → GET /vault/{path}?section=<heading line>', async t 
     firstText(result).includes('"content":"(empty)"') || firstText(result).includes('(empty)'),
     'section content returned'
   );
+});
+
+test('the item tools: remove and insert ride /vault/edit, move rides /vault/move-item', async t => {
+  const {call, getCaptured} = setup();
+  await call('vault_remove_item', {
+    path: 'projects/x/queue.md',
+    title: 'Old item.',
+    section: '## Backlog'
+  });
+  let c = getCaptured();
+  t.equal(c.url, 'http://test/vault/edit');
+  t.deepEqual(bodyOf(c), {
+    path: 'projects/x/queue.md',
+    op: 'remove-item',
+    title: 'Old item.',
+    section: '## Backlog'
+  });
+
+  await call('vault_insert_item', {
+    path: 'projects/x/queue.md',
+    section: '## Active',
+    item: '- **New.** x',
+    position: 'start'
+  });
+  c = getCaptured();
+  t.equal(bodyOf(c).op, 'insert-item');
+  t.equal(bodyOf(c).position, 'start');
+  t.equal('create_section' in bodyOf(c), false, 'undefined flags are dropped by JSON');
+
+  await call('vault_move_item', {
+    from_path: 'projects/x/queue.md',
+    to_path: 'projects/x/queue-archive.md',
+    title: 'Old item.',
+    to_section: '## 2026-09-06',
+    position: 'start',
+    trail: '**Shipped 2026-09-06**',
+    create_section: true
+  });
+  c = getCaptured();
+  t.equal(c.url, 'http://test/vault/move-item');
+  t.equal(c.init.method, 'POST');
+  t.deepEqual(bodyOf(c), {
+    from_path: 'projects/x/queue.md',
+    to_path: 'projects/x/queue-archive.md',
+    title: 'Old item.',
+    to_section: '## 2026-09-06',
+    position: 'start',
+    trail: '**Shipped 2026-09-06**',
+    create_section: true
+  });
 });
 
 test('vault_replace → POST /vault/edit with op=replace, all omitted unless set', async t => {

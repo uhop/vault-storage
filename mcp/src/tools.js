@@ -366,6 +366,103 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_remove_item',
+    {
+      description:
+        'Remove one queue item from a document by its bold title — the `- **Title.**` bullet and every continuation line under it — leaving every other byte alone, server-side and atomically. The title is matched the way the queue derivative normalizes it (case, whitespace, and hyphen variants collapsed), exactly once; pass section (a heading line such as "## Backlog") to search one section only. ASSERTED: absent or ambiguous is a 409 `item_assert_failed` with details.occurrences. Returns {path, etag, removed} — `removed` is the item\'s text, so it can be re-inserted elsewhere with vault_insert_item without retyping; for a relocation prefer vault_move_item, which does both in one request.',
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        title: z.string().min(1).describe('The bold title, e.g. "Drop the security overrides."'),
+        section: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Heading line to search within, e.g. "## Backlog"')
+      }
+    },
+    wrap(async ({path, title, section}) =>
+      client.postJson('/vault/edit', {path, op: 'remove-item', title, section})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_insert_item',
+    {
+      description:
+        "Insert one queue item (a `- **Title.**` bullet with any continuation lines) into a section of a document, at its start or end (default end), framed by blank lines, every other byte untouched. The section is a heading line matched exactly once with code fences masked; a section that reads `(empty)` is replaced by the item. create_section: true adds a missing heading before the first heading of the same level (a newest-first archive's new date block); otherwise an absent heading is a 409 `section_assert_failed`. Returns {path, etag, section, position, created}.",
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        section: z
+          .string()
+          .min(1)
+          .describe('Heading line to insert under, e.g. "## Active" or "## 2026-09-06"'),
+        item: z.string().min(1).describe('The item text, starting with "- **"'),
+        position: z.enum(['start', 'end']).optional().describe('Where in the section; default end'),
+        create_section: z.boolean().optional().describe('Add the heading when it is missing')
+      }
+    },
+    wrap(async ({path, section, item, position, create_section}) =>
+      client.postJson('/vault/edit', {
+        path,
+        op: 'insert-item',
+        section,
+        item,
+        position,
+        create_section
+      })
+    )
+  );
+
+  mcp.registerTool(
+    'vault_move_item',
+    {
+      description:
+        "Move one queue item between documents, or between sections of one document, without reproducing its text — the queue-to-archive move as one request. The item is found by its bold title (normalized, exactly once; from_section narrows the search), `trail` is inserted right after the bold title (the archive's **Shipped …** line, a leading space added), and it lands at the start or end (default end) of to_section in to_path, with create_section: true adding a missing heading before the first of the same level (a new archive date block). The destination is written before the source, so a failure between the two leaves a duplicate to clean up, never a lost item. Asserted: 409 `item_assert_failed` or `section_assert_failed` with details.occurrences. Returns {title, from: {path, etag}, to: {path, etag}}.",
+      inputSchema: {
+        from_path: z.string().min(1).describe('Where the item is now'),
+        to_path: z.string().min(1).describe('Where it goes; may equal from_path'),
+        title: z.string().min(1).describe('The bold title of the item'),
+        from_section: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Heading line to search within, e.g. "## Backlog"'),
+        to_section: z.string().min(1).describe('Heading line to land under, e.g. "## 2026-09-06"'),
+        position: z.enum(['start', 'end']).optional().describe('Where in to_section; default end'),
+        trail: z
+          .string()
+          .optional()
+          .describe(
+            'Text inserted right after the bold title, e.g. "**Shipped 2026-09-06**, … Original filing follows."'
+          ),
+        create_section: z.boolean().optional().describe('Add to_section when it is missing')
+      }
+    },
+    wrap(
+      async ({
+        from_path,
+        to_path,
+        title,
+        from_section,
+        to_section,
+        position,
+        trail,
+        create_section
+      }) =>
+        client.postJson('/vault/move-item', {
+          from_path,
+          to_path,
+          title,
+          from_section,
+          to_section,
+          position,
+          trail,
+          create_section
+        })
+    )
+  );
+
+  mcp.registerTool(
     'vault_patch_fm',
     {
       description:

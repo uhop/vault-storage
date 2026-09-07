@@ -2312,6 +2312,236 @@ test('as_of stamps list, queue, bundle, and brief responses, search carries it i
   }
 });
 
+const QUEUE_DOC = [
+  '---',
+  'title: Q',
+  'created: 2026-04-01',
+  'updated: 2026-04-01',
+  '---',
+  'Queue intro.',
+  '',
+  '## Active',
+  '',
+  '(empty)',
+  '',
+  '## Backlog',
+  '',
+  '- **Alpha.** First item.',
+  '',
+  '- **Beta.** Second item',
+  '  with a continuation line.',
+  '',
+  '## Watching',
+  '',
+  '(empty)',
+  ''
+].join('\n');
+
+const ARCHIVE_DOC = [
+  '---',
+  'title: A',
+  'created: 2026-04-01',
+  'updated: 2026-04-01',
+  '---',
+  'Archive intro.',
+  '',
+  '## 2026-09-05',
+  '',
+  '- **Old.** Shipped earlier.',
+  ''
+].join('\n');
+
+const editJson = (url: string, body: unknown) =>
+  fetchAuthed(`${url}/vault/edit`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+
+test('POST /vault/edit — remove-item and insert-item address a queue bullet by its bold title', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'projects/p/queue.md', QUEUE_DOC);
+    const ctx = await startTestServer(root);
+    try {
+      const removed = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'remove-item',
+        title: 'beta.',
+        section: '## Backlog'
+      });
+      t.equal(removed.status, 200, 'removed');
+      t.equal(
+        (removed.body as {removed: string}).removed,
+        '- **Beta.** Second item\n  with a continuation line.',
+        'the item text comes back, continuation included'
+      );
+      const afterRemove = parseFrontmatter(
+        readFileSync(join(root, 'projects/p/queue.md'), 'utf8')
+      ).body;
+      t.equal(
+        afterRemove,
+        [
+          'Queue intro.',
+          '',
+          '## Active',
+          '',
+          '(empty)',
+          '',
+          '## Backlog',
+          '',
+          '- **Alpha.** First item.',
+          '',
+          '## Watching',
+          '',
+          '(empty)',
+          ''
+        ].join('\n'),
+        'nothing else moved'
+      );
+
+      const missing = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'remove-item',
+        title: 'Gamma.'
+      });
+      t.equal(missing.status, 409, 'absent title → 409');
+      t.match(missing.body, {code: 'item_assert_failed', details: {occurrences: 0}});
+
+      const inserted = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Active',
+        item: '- **Now.** Started.\n',
+        position: 'start'
+      });
+      t.equal(inserted.status, 200, 'inserted');
+      t.match(inserted.body, {section: '## Active', position: 'start', created: false});
+      const afterInsert = parseFrontmatter(
+        readFileSync(join(root, 'projects/p/queue.md'), 'utf8')
+      ).body;
+      t.ok(
+        afterInsert.includes('## Active\n\n- **Now.** Started.\n\n## Backlog'),
+        'placeholder replaced, framed'
+      );
+
+      const notBullet = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Active',
+        item: 'plain text'
+      });
+      t.equal(notBullet.status, 400, 'an item must be a bold-titled bullet');
+      const noSection = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Nope',
+        item: '- **X.** y'
+      });
+      t.equal(noSection.status, 409, 'absent section without create_section → 409');
+      t.equal((noSection.body as {code: string}).code, 'section_assert_failed');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/move-item — the queue-to-archive move in one request, and a same-document move', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'projects/p/queue.md', QUEUE_DOC);
+    writeMd(root, 'projects/p/queue-archive.md', ARCHIVE_DOC);
+    const ctx = await startTestServer(root);
+    try {
+      const moved = await fetchAuthed(`${ctx.url}/vault/move-item`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          from_path: 'projects/p/queue.md',
+          to_path: 'projects/p/queue-archive.md',
+          title: 'Alpha.',
+          from_section: '## Backlog',
+          to_section: '## 2026-09-06',
+          position: 'start',
+          trail: '**Shipped 2026-09-06**, done. Original filing follows.',
+          create_section: true
+        })
+      });
+      t.equal(moved.status, 200, 'moved');
+      const out = moved.body as {
+        title: string;
+        from: {path: string; etag: string};
+        to: {path: string; etag: string};
+      };
+      t.equal(out.title, 'Alpha.');
+      const archive = readFileSync(join(root, 'projects/p/queue-archive.md'), 'utf8');
+      t.ok(
+        archive.includes(
+          '## 2026-09-06\n\n- **Alpha.** **Shipped 2026-09-06**, done. Original filing follows. First item.\n\n## 2026-09-05'
+        ),
+        'new date block first, trail after the bold title, original prose kept'
+      );
+      const queue = readFileSync(join(root, 'projects/p/queue.md'), 'utf8');
+      t.equal(queue.includes('Alpha.'), false, 'gone from the source');
+      const toGet = await fetchAuthed(`${ctx.url}/vault/projects/p/queue-archive.md`);
+      t.equal(toGet.etag, `"${out.to.etag}"`, 'destination etag is the served one');
+      const fromGet = await fetchAuthed(`${ctx.url}/vault/projects/p/queue.md`);
+      t.equal(fromGet.etag, `"${out.from.etag}"`, 'source etag is the served one');
+
+      const promote = await fetchAuthed(`${ctx.url}/vault/move-item`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          from_path: 'projects/p/queue.md',
+          to_path: 'projects/p/queue.md',
+          title: 'Beta.',
+          to_section: '## Active'
+        })
+      });
+      t.equal(promote.status, 200, 'same-document move');
+      const afterPromote = parseFrontmatter(
+        readFileSync(join(root, 'projects/p/queue.md'), 'utf8')
+      ).body;
+      t.ok(
+        afterPromote.includes(
+          '## Active\n\n- **Beta.** Second item\n  with a continuation line.\n\n## Backlog'
+        ),
+        'landed in Active with its continuation'
+      );
+      t.ok(afterPromote.includes('## Backlog\n\n## Watching'), 'Backlog left empty');
+
+      const noDest = await fetchAuthed(`${ctx.url}/vault/move-item`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          from_path: 'projects/p/queue.md',
+          to_path: 'projects/p/queue.md',
+          title: 'Beta.',
+          to_section: '## Nope'
+        })
+      });
+      t.equal(noDest.status, 409, 'missing destination section without create_section → 409');
+      const noFile = await fetchAuthed(`${ctx.url}/vault/move-item`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          from_path: 'projects/p/nope.md',
+          to_path: 'projects/p/queue.md',
+          title: 'Beta.',
+          to_section: '## Active'
+        })
+      });
+      t.equal(noFile.status, 404, 'missing source → 404');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /vault/edit — replace asserts: single hit works, miss and ambiguity are loud 409s', async t => {
   const {root, cleanup} = setupVault();
   try {

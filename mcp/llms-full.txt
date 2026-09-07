@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 66 MCP tools and 3
+traversal. The adapter exposes the server's REST API as 69 MCP tools and 3
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.
@@ -53,7 +53,7 @@ was computed at (it moves on every record write), so an empty answer reads as
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (66)
+## Tools (69)
 
 Search & list:
 
@@ -98,6 +98,14 @@ Narrow writes (atomic server-side ops; prefer these over whole-document writes):
   an empty body empties the section. Returns {path, etag, heading, level}.
 - vault_patch_fm — add/remove one frontmatter array member (related:, tags:…);
   echoes the resulting array.
+- vault_remove_item / vault_insert_item — one queue item by its bold title
+  (normalized, exactly once; 409 item_assert_failed): removed with its
+  continuation lines (the text comes back as `removed`), or inserted at the
+  start or end of a section, framed by blank lines, with create_section for a
+  missing heading.
+- vault_move_item — the queue-to-archive move as one request: from_path →
+  to_path, title, to_section, optional trail inserted after the bold title,
+  destination written before the source. Returns {title, from, to} with etags.
 
 Whole-document writes:
 
