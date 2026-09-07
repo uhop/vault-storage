@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    19,
-    'schema version is 19 after all migrations through the handoff artifact event'
+    20,
+    'schema version is 20 after all migrations through the suggestion evidence backfill'
   );
   t.deepEqual(
     result.applied,
@@ -41,7 +41,8 @@ test('runs the init migration and creates required tables', t => {
       '0016_queue_blocked_by.sql',
       '0017_leases.sql',
       '0018_handoffs.sql',
-      '0019_handoff_artifact_event.sql'
+      '0019_handoff_artifact_event.sql',
+      '0020_suggestion_evidence.sql'
     ],
     'all migrations applied in order'
   );
@@ -76,7 +77,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 19, 'schema version stays at 19');
+  t.equal(second.current, 20, 'schema version stays at 20');
   db.close();
 });
 
@@ -128,9 +129,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0016_queue_blocked_by.sql',
       '0017_leases.sql',
       '0018_handoffs.sql',
-      '0019_handoff_artifact_event.sql'
+      '0019_handoff_artifact_event.sql',
+      '0020_suggestion_evidence.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0019)'
+    'migrations from schema 9 onward applied (0010–0020)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {
@@ -353,4 +355,58 @@ test('records_after_delete cascades to pending suggestions (schema 9)', t => {
   t.equal(byId['s4']?.status, 'pending', 's4 (different subject) untouched');
 
   db.close();
+});
+
+test('0020 backfills payload.evidence by kind on rows filed before the filer stamped it', t => {
+  const db = openDatabase({path: ':memory:'});
+  try {
+    runMigrations(db);
+    db.prepare(`UPDATE meta SET value = '19' WHERE key = 'schema_version'`).run();
+    const insert = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created) VALUES (?, ?, NULL, ?, 'pending', '2026-09-01T00:00:00Z')`
+    );
+    insert.run('e1', 'edge_type', JSON.stringify({from_record: 'a', to_record: 'b'}));
+    insert.run('d1', 'duplicate', JSON.stringify({a_record: 'a', b_record: 'b', distance: 0.1}));
+    insert.run('t1', 'tag_suggestion', JSON.stringify({tag: 'x', record_id: 'a'}));
+    insert.run('c1', 'compaction_candidate', JSON.stringify({folder_path: 'logs/'}));
+    insert.run(
+      'k1',
+      'edge_type',
+      JSON.stringify({
+        from_record: 'a',
+        to_record: 'c',
+        evidence: {source: 'agent', asserted: false}
+      })
+    );
+    const again = runMigrations(db);
+    t.equal(again.current, 20, 'back at 20');
+    const evidence = (id: string) =>
+      JSON.parse(
+        (db.prepare('SELECT payload FROM suggestions WHERE id = ?').get(id) as {payload: string})
+          .payload
+      ).evidence;
+    t.deepEqual(
+      evidence('e1'),
+      {source: 'structural', asserted: true},
+      'edge_type → structural, asserted'
+    );
+    t.deepEqual(
+      evidence('d1'),
+      {source: 'vector', asserted: false},
+      'duplicate → vector, surfaced'
+    );
+    t.deepEqual(evidence('t1'), {source: 'agent', asserted: false}, 'tag_suggestion → agent');
+    t.deepEqual(
+      evidence('c1'),
+      {source: 'metric', asserted: true},
+      'compaction → metric, asserted'
+    );
+    t.deepEqual(
+      evidence('k1'),
+      {source: 'agent', asserted: false},
+      'an existing evidence key is left alone'
+    );
+  } finally {
+    db.close();
+  }
 });

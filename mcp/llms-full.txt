@@ -142,6 +142,11 @@ Review queue:
 
 - vault_list_suggestions (expand: "context" inlines per-item record briefs),
   vault_read_suggestion, vault_suggestions_summary — pending counts by kind.
+- every suggestion payload carries evidence {source: vector | lexical | agent |
+  metric | structural, asserted}: asserted is true only for a fact read from
+  stored data, false for a similarity threshold's or an agent's finding;
+  vault_create_suggestion validates a given evidence and defaults it to
+  {agent, false}.
 - vault_claim_suggestions — reserve a batch under a holder with a TTL;
   vault_reopen_suggestion doubles as the explicit claim release.
 - vault_accept_suggestion / vault_reject_suggestion — single decisions.

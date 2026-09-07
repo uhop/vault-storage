@@ -196,3 +196,67 @@ test('a rejection with a NULL resolved_by still blocks re-filing (the 2026-09-07
     db.close();
   }
 });
+
+test('the filer stamps payload.evidence per kind, and a caller-supplied evidence wins', async t => {
+  const db = setup();
+  try {
+    const read = (kind: string) =>
+      (
+        db
+          .prepare('SELECT payload FROM suggestions WHERE kind = ? ORDER BY created, id')
+          .all(kind) as Array<{payload: string}>
+      ).map(r => (JSON.parse(r.payload) as {evidence: unknown}).evidence);
+    new SuggestionFiler(db, 'edge_type').file(
+      {
+        from_record: 'a',
+        from_path: 'a.md',
+        to_record: 'b',
+        to_path: 'b.md',
+        classifier_type: 'cites',
+        context: 'c'
+      },
+      NOW
+    );
+    new SuggestionFiler(db, 'duplicate').file(
+      {a_record: 'a', b_record: 'b', a_path: 'a.md', b_path: 'b.md', distance: 0.1} as never,
+      NOW
+    );
+    new SuggestionFiler(db, 'tag_suggestion').file(
+      {tag: 't', record_id: 'a', file_path: 'a.md'},
+      NOW
+    );
+    new SuggestionFiler(db, 'archive_candidate').file(
+      {record_id: 'a', file_path: 'a.md', rule: 'log > 90d'} as never,
+      NOW
+    );
+    new SuggestionFiler(db, 'agent_enrichment_stale').file(
+      {record_id: 'a', file_path: 'a.md', agent_derived_from_hash: 'x', current_body_hash: 'y'},
+      NOW
+    );
+    t.deepEqual(read('edge_type'), [{source: 'structural', asserted: true}]);
+    t.deepEqual(read('duplicate'), [{source: 'vector', asserted: false}]);
+    t.deepEqual(read('tag_suggestion'), [{source: 'agent', asserted: false}]);
+    t.deepEqual(read('archive_candidate'), [{source: 'metric', asserted: true}]);
+    t.deepEqual(read('agent_enrichment_stale'), [{source: 'structural', asserted: true}]);
+
+    new SuggestionFiler(db, 'edge_type').file(
+      {
+        from_record: 'a',
+        from_path: 'a.md',
+        to_record: 'c',
+        to_path: 'c.md',
+        classifier_type: 'cites',
+        context: 'c',
+        evidence: {source: 'lexical', asserted: true}
+      },
+      NOW
+    );
+    t.deepEqual(
+      read('edge_type')[1],
+      {source: 'lexical', asserted: true},
+      'explicit evidence kept'
+    );
+  } finally {
+    db.close();
+  }
+});

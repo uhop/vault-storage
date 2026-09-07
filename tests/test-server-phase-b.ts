@@ -1280,6 +1280,48 @@ test('GET /sections and GET /sections/{id} reject an exclude value other than bo
   }
 });
 
+test('POST /suggestions stamps evidence {agent, false} unless given, and validates a given one', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const post = (payload: unknown) =>
+        fetchAuthed(`${ctx.url}/suggestions`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({kind: 'contradiction_candidate', payload})
+        });
+      const plain = await post({note: 'a and b disagree'});
+      t.equal(plain.status, 201, 'created');
+      t.deepEqual(
+        (plain.body as {payload: {evidence: unknown}}).payload.evidence,
+        {source: 'agent', asserted: false},
+        'a hand-filed finding is a judgement'
+      );
+      const given = await post({
+        note: 'same title',
+        evidence: {source: 'structural', asserted: true}
+      });
+      t.equal(given.status, 201, 'created with explicit evidence');
+      t.deepEqual(
+        (given.body as {payload: {evidence: unknown}}).payload.evidence,
+        {source: 'structural', asserted: true},
+        'explicit evidence kept'
+      );
+      const bad = await post({note: 'x', evidence: {source: 'guess', asserted: true}});
+      t.equal(bad.status, 400, 'unknown source → 400');
+      t.equal((bad.body as {code: string}).code, 'invalid_enum_value');
+      const notBool = await post({note: 'x', evidence: {source: 'agent', asserted: 'yes'}});
+      t.equal(notBool.status, 400, 'asserted must be a boolean');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /suggestions/{unknown}/accept returns 404', async t => {
   const {root, cleanup} = setup();
   try {
@@ -1419,8 +1461,13 @@ test('POST /suggestions creates a pending suggestion', async t => {
       t.equal(created.status, 'pending', 'starts pending');
       t.deepEqual(
         created.payload,
-        {note: 'A says X, B says not X', a_record: 'rec-1', b_record: 'rec-2'},
-        'payload round-tripped'
+        {
+          note: 'A says X, B says not X',
+          a_record: 'rec-1',
+          b_record: 'rec-2',
+          evidence: {source: 'agent', asserted: false}
+        },
+        'payload round-tripped, with the default evidence stamped'
       );
     } finally {
       await teardown(ctx);

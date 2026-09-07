@@ -73,6 +73,27 @@ export const PRIORITY_ALIASES: Readonly<Record<string, number>> = {
   critical: 2
 };
 
+/**
+ * How a suggestion's finding was produced (`payload.evidence.source`).
+ * `asserted` is true only for a fact read from stored data — a stale hash, an
+ * unknown tag on frontmatter, an unreviewed link — never for a similarity
+ * threshold or an agent's judgement: the ambiguity resolved to produce those
+ * is the ambiguity a reader cannot resolve reliably.
+ */
+export const EVIDENCE_SOURCES = ['vector', 'lexical', 'agent', 'metric', 'structural'] as const;
+export type EvidenceSource = (typeof EVIDENCE_SOURCES)[number];
+export interface Evidence {
+  source: EvidenceSource;
+  asserted: boolean;
+}
+const EVIDENCE_SOURCE_SET: ReadonlySet<string> = new Set(EVIDENCE_SOURCES);
+export const isEvidence = (value: unknown): value is Evidence =>
+  typeof value === 'object' &&
+  value !== null &&
+  !Array.isArray(value) &&
+  EVIDENCE_SOURCE_SET.has((value as {source?: unknown}).source as string) &&
+  typeof (value as {asserted?: unknown}).asserted === 'boolean';
+
 export const EDGE_TYPES = [
   'supersedes',
   'revises',

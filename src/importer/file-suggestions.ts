@@ -8,6 +8,7 @@
 // content produce no new suggestions.
 
 import type {DatabaseSync, SQLInputValue, StatementSync} from 'node:sqlite';
+import type {Evidence} from '../records/types.ts';
 import {uuidv7} from '../util/uuid.ts';
 
 const MS_PER_DAY = 86_400_000;
@@ -172,7 +173,12 @@ interface FilerSpec {
   blocking: BlockingScope;
   /** Payload field mirrored into `subject_id`; null = not record-scoped. */
   subject: string | null;
+  /** Provenance stamped into `payload.evidence` unless the caller supplies one. */
+  evidence: Evidence;
 }
+
+const STRUCTURAL: Evidence = {source: 'structural', asserted: true};
+const METRIC: Evidence = {source: 'metric', asserted: true};
 
 const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
   /**
@@ -186,7 +192,8 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
     identity: ['from_record', 'to_record'],
     altIdentity: ['from_record', 'to_path'],
     blocking: 'all-statuses',
-    subject: 'from_record'
+    subject: 'from_record',
+    evidence: STRUCTURAL
   },
   /**
    * TagsImporter rejects unknown tags (not in `tags_taxonomy` and not
@@ -196,7 +203,12 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
    * link and auto-accepts every pending suggestion for the tag
    * (`accept({tag}, 'taxonomy-add' | 'alias-add')`).
    */
-  new_tag: {identity: ['tag', 'record_id'], blocking: 'all-statuses', subject: 'record_id'},
+  new_tag: {
+    identity: ['tag', 'record_id'],
+    blocking: 'all-statuses',
+    subject: 'record_id',
+    evidence: STRUCTURAL
+  },
   /**
    * Agent-judged additions from `agent.tags_suggested`. The tag is NOT (yet)
    * on the record's FM `tags:`; the agent thinks it should be — distinct from
@@ -207,7 +219,12 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
    * Auto-resolves on import via {@link acceptRealizedTagSuggestions} once the
    * suggested tag is realized on the record.
    */
-  tag_suggestion: {identity: ['tag', 'record_id'], blocking: 'all-statuses', subject: 'record_id'},
+  tag_suggestion: {
+    identity: ['tag', 'record_id'],
+    blocking: 'all-statuses',
+    subject: 'record_id',
+    evidence: {source: 'agent', asserted: false}
+  },
   /**
    * High-similarity record pair from the maintenance scan. Idempotent on the
    * unordered pair — the scan canonicalizes (lower record_id first), but the
@@ -217,7 +234,8 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
     identity: ['a_record', 'b_record'],
     symmetric: true,
     blocking: 'all-statuses',
-    subject: 'a_record'
+    subject: 'a_record',
+    evidence: {source: 'vector', asserted: false}
   },
   /**
    * A folder of pieces has accumulated enough content (piece-count threshold)
@@ -230,7 +248,8 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
   compaction_candidate: {
     identity: ['folder_path'],
     blocking: 'pending-or-snoozed-reject',
-    subject: null
+    subject: null,
+    evidence: METRIC
   },
   /**
    * The per-type retention scan flagged a record as past its calendar
@@ -241,7 +260,8 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
   archive_candidate: {
     identity: ['subject'],
     blocking: 'pending-or-snoozed-reject',
-    subject: 'record_id'
+    subject: 'record_id',
+    evidence: METRIC
   },
   /**
    * Filed by the time-to-upgrade evaluator when a backend-shape signal trips:
@@ -250,13 +270,23 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
    * acknowledges the observed level — the evaluator re-files only when the
    * metric outgrows it (hysteresis in find-upgrade-signals.ts).
    */
-  inefficiency_detected: {identity: ['signal'], blocking: 'pending-only', subject: null},
+  inefficiency_detected: {
+    identity: ['signal'],
+    blocking: 'pending-only',
+    subject: null,
+    evidence: METRIC
+  },
   /**
    * Same evaluator as `inefficiency_detected`, but the recommended remedy is
    * migrating to a more robust backend (Postgres+pgvector+AGE per the
    * design's backend-comparison doc).
    */
-  infrastructure_upgrade: {identity: ['signal'], blocking: 'pending-only', subject: null},
+  infrastructure_upgrade: {
+    identity: ['signal'],
+    blocking: 'pending-only',
+    subject: null,
+    evidence: METRIC
+  },
   /**
    * The source FM has both `agent.summary` and `agent.derived_from_hash` but
    * the recorded hash no longer matches the body's current hash — the LLM saw
@@ -264,7 +294,12 @@ const FILER_SPECS: Record<SuggestionKind, FilerSpec> = {
    * pending per record; import auto-accepts with `resolved_by='hash-matched'`
    * once the hashes agree again (likely via `/vault-enrich-all`).
    */
-  agent_enrichment_stale: {identity: ['subject'], blocking: 'pending-only', subject: 'record_id'}
+  agent_enrichment_stale: {
+    identity: ['subject'],
+    blocking: 'pending-only',
+    subject: 'record_id',
+    evidence: STRUCTURAL
+  }
 };
 
 const column = (key: MatchKey): string =>
@@ -333,7 +368,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
    * subject for kinds whose subject isn't in the payload (upgrade signals).
    */
   file(
-    payload: KindPayloads[K],
+    payload: KindPayloads[K] & {evidence?: Evidence},
     now: string,
     opts: {snoozeDays?: number; subjectId?: string | null} = {}
   ): boolean {
@@ -356,7 +391,8 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       params.push(snoozeCutoff(now, opts.snoozeDays ?? DEFAULT_SNOOZE_DAYS));
     }
     if (this.#findExisting.get(...params)) return false;
-    this.#insert.run(uuidv7(), subject, JSON.stringify(payload), now);
+    const stored = {...payload, evidence: payload.evidence ?? spec.evidence};
+    this.#insert.run(uuidv7(), subject, JSON.stringify(stored), now);
     return true;
   }
 

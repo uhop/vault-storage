@@ -1,6 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {revertExpiredClaims} from '../../records/claims.ts';
-import {EDGE_TYPE_ALIASES, EDGE_TYPES} from '../../records/types.ts';
+import {EDGE_TYPES, EDGE_TYPE_ALIASES, EVIDENCE_SOURCES, isEvidence} from '../../records/types.ts';
 import {uuidv7} from '../../util/uuid.ts';
 import {readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
@@ -528,6 +528,19 @@ export const createSuggestionHandler =
       Array.isArray(body.payload)
     ) {
       sendError(ctx.res, 400, 'bad_request', 'payload must be a JSON object');
+      return;
+    }
+    // A hand-filed finding is a judgement unless the caller says otherwise.
+    const payload = body.payload as Record<string, unknown>;
+    if (payload['evidence'] === undefined) {
+      payload['evidence'] = {source: 'agent', asserted: false};
+    } else if (!isEvidence(payload['evidence'])) {
+      sendError(
+        ctx.res,
+        400,
+        'invalid_enum_value',
+        `payload.evidence must be {source: ${EVIDENCE_SOURCES.join(' | ')}, asserted: boolean}`
+      );
       return;
     }
     let subjectId: string | null = null;
