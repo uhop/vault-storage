@@ -15,60 +15,6 @@
     <link rel="icon" sizes="any" href="/favicon.ico" />
     <link rel="stylesheet" href="/ui/theme.css" />
     <style>
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        margin: 0;
-        padding: 0;
-      }
-      body {
-        font:
-          15px/1.5 system-ui,
-          -apple-system,
-          Segoe UI,
-          Roboto,
-          sans-serif;
-        background: var(--bg);
-        color: var(--fg);
-        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-          env(safe-area-inset-left);
-      }
-      header {
-        display: flex;
-        align-items: baseline;
-        gap: 1rem;
-        padding: 0.8rem 1rem;
-        border-bottom: 1px solid var(--line);
-      }
-      header h1 {
-        font-size: 1.05rem;
-        margin: 0;
-        font-weight: 600;
-      }
-      header .spacer {
-        flex: 1;
-      }
-      main {
-        padding: 1rem;
-        max-width: 56rem;
-        margin: 0 auto;
-      }
-      button {
-        padding: 0.5rem 1rem;
-        border: 1px solid var(--line);
-        background: var(--card);
-        color: var(--fg);
-        border-radius: 4px;
-        cursor: pointer;
-        font: inherit;
-      }
-      button.primary {
-        background: var(--accent);
-        color: #fff;
-        border-color: var(--accent);
-      }
       section + section {
         margin-top: 1.2rem;
       }
@@ -140,35 +86,10 @@
         color: var(--muted);
       }
       .empty {
-        color: var(--muted);
         padding: 1rem;
-        text-align: center;
-        font-size: 0.9rem;
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: 8px;
-      }
-      .err {
-        color: var(--bad);
-        padding: 0.8rem 1rem;
-        background: var(--card);
-        border: 1px solid var(--bad);
-        border-radius: 6px;
-      }
-      .spinner {
-        display: inline-block;
-        width: 0.9em;
-        height: 0.9em;
-        border: 2px solid var(--line);
-        border-top-color: var(--muted);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        vertical-align: -0.15em;
-      }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
       }
       .hint {
         color: var(--muted);

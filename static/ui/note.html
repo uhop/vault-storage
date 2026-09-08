@@ -15,59 +15,17 @@
     <link rel="icon" sizes="any" href="/favicon.ico" />
     <link rel="stylesheet" href="/ui/theme.css" />
     <style>
-      * {
-        box-sizing: border-box;
-      }
       html,
       body {
-        margin: 0;
-        padding: 0;
         height: 100%;
       }
       body {
-        font:
-          15px/1.5 system-ui,
-          -apple-system,
-          Segoe UI,
-          Roboto,
-          sans-serif;
-        background: var(--bg);
-        color: var(--fg);
         height: 100dvh;
         display: flex;
         flex-direction: column;
-        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-          env(safe-area-inset-left);
       }
       header {
-        display: flex;
-        align-items: baseline;
-        gap: 1rem;
-        padding: 0.8rem 1rem;
-        border-bottom: 1px solid var(--line);
         flex-shrink: 0;
-      }
-      header h1 {
-        font-size: 1.05rem;
-        margin: 0;
-        font-weight: 600;
-      }
-      header .spacer {
-        flex: 1;
-      }
-      button {
-        padding: 0.5rem 1rem;
-        border: 1px solid var(--line);
-        background: var(--card);
-        color: var(--fg);
-        border-radius: 4px;
-        cursor: pointer;
-        font: inherit;
-      }
-      button.primary {
-        background: var(--accent);
-        color: #fff;
-        border-color: var(--accent);
       }
       button.danger {
         color: var(--bad);
@@ -126,21 +84,12 @@
         border-width: 1.5px;
       }
       .spinner {
-        display: inline-block;
-        width: 0.9em;
-        height: 0.9em;
-        border: 2px solid var(--line);
         border-top-color: currentColor;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        vertical-align: -0.15em;
-      }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
       }
       main {
+        padding: 0;
+        max-width: none;
+        margin: 0;
         flex: 1;
         min-height: 0;
         display: flex;
@@ -484,10 +433,9 @@
         }
       }
       .err {
-        color: var(--bad);
-        padding: 0.8rem 1rem;
-        background: var(--card);
+        border: 0;
         border-bottom: 1px solid var(--bad);
+        border-radius: 0;
         flex-shrink: 0;
         font-size: 0.9rem;
       }

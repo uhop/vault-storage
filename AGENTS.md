@@ -35,7 +35,7 @@ Start with `ARCHITECTURE.md` for the full module map. The coarse shape:
 - **`src/maintenance/`** — scans (duplicates, compaction, retention, upgrade signals), lint cleanup, incremental reindex, raw inbox.
 - **`src/migration/`** — one-time Obsidian-vault → vault-storage tree transform (atomization, tag canonicalization, frontmatter backfill).
 - **`mcp/`** — plain-JS MCP adapter over the REST API (own package, tests, published to npm as `@uhop/vault-storage-mcp`).
-- **`static/ui/`** — light dashboard/editor UI served by the server.
+- **`static/ui/`** — light dashboard/editor UI served by the server. Every page links `theme.css` before its own `<style>` and inherits the page chrome (reset, body and header frame, `main`, generic `button`, `.err` / `.empty` / `.spinner` / `.footer`) from it; override a value by restating it, never by copying the block. Verify a CSS change with `scripts/ui-style-snapshot.mjs` (snapshot before, snapshot after, diff).
 - **`skills/`** — Claude Code vault skills (install instructions in `skills/README.md`).
 
 ## Dependencies

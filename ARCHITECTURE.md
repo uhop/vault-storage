@@ -88,7 +88,7 @@ Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to n
 
 ## static/ UI
 
-Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's bearer from localStorage): dashboard, search, note editor, folder/projects/tags/raw browsers, archive + lint review pages, the agents page (leases + handoffs), and the fleet GitHub dashboard (`fleet.html` — the movement brief and the standing-counts table over the `fleet-status` runs and per-project baselines stored in the vault, parsed client-side; `fleet-digest.js` is the pure port of that skill's renderers, held line-for-line to the CLI by `tests/test-fleet-digest.js`); shared `api.js`, theme, `vault-editor` / `vault-markdown` / `vault-toolbar` / `vault-nav` / `vault-settings` web components (the last two render the shared top-level menu and the ⚙ API-token dialog on every page), vendored `marked`.
+Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's bearer from localStorage): dashboard, search, note editor, folder/projects/tags/raw browsers, archive + lint review pages, the agents page (leases + handoffs), and the fleet GitHub dashboard (`fleet.html` — the movement brief and the standing-counts table over the `fleet-status` runs and per-project baselines stored in the vault, parsed client-side; `fleet-digest.js` is the pure port of that skill's renderers, held line-for-line to the CLI by `tests/test-fleet-digest.js`); shared `api.js`; `theme.css` (tokens, the theme toggle, the dialog and nav looks, and since 2026-09-08 the page chrome every page used to copy — reset, body and header frame, `main`, generic `button`, `.err` / `.empty` / `.spinner` / `.footer`; a page restates a value in its own `<style>`, which follows the sheet, to override it; `scripts/ui-style-snapshot.mjs` is the computed-style gate for changes there); `vault-editor` / `vault-markdown` / `vault-toolbar` / `vault-nav` / `vault-settings` web components (the last two render the shared top-level menu and the ⚙ API-token dialog on every page), vendored `marked`.
 
 ## Tests
 
@@ -97,6 +97,6 @@ Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's
 ## bin/, scripts/, skills/, eval/
 
 - **`bin/update.sh`** — update a deployed instance; **`bin/vault-curl`** — authenticated curl wrapper for the REST API.
-- **`scripts/probe-unresolved.ts`**, **`scripts/scan-promotable-edges.ts`** — one-off DB probes.
+- **`scripts/probe-unresolved.ts`**, **`scripts/scan-promotable-edges.ts`** — one-off DB probes; **`scripts/ui-style-snapshot.mjs`** — computed-style snapshot of every UI page over a fixture vault, and the diff of two snapshots (the rendered-comparison gate for CSS changes).
 - **`skills/`** — Claude Code vault skills (see `skills/README.md`).
 - **`eval/`** — retrieval-quality harnesses over an imported DB: baseline report, `agent.summary`-prefix A/B, related-candidate proposals, alternate-model trials.
