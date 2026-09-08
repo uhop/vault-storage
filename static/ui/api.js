@@ -56,8 +56,12 @@ export const esc = s =>
  * stored token. Every page ships the same dialog markup; one opener keeps
  * prefill/focus behavior from drifting per page.
  */
-export const showAuthDialog = () => {
+export const showAuthDialog = async () => {
+  // A page module runs before the <vault-settings> module defines the element
+  // that renders the dialog, so a first visit without a token must wait for it.
+  if (!document.querySelector('#auth-dlg')) await customElements.whenDefined('vault-settings');
   const dlg = document.querySelector('#auth-dlg');
+  if (!dlg) return;
   document.querySelector('#auth-input').value = getToken();
   dlg.showModal();
   document.querySelector('#auth-input').focus();

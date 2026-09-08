@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — fleet</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.8rem 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 1.05rem;
+        margin: 0;
+        font-weight: 600;
+      }
+      header .spacer {
+        flex: 1;
+      }
+      main {
+        padding: 1rem;
+        max-width: 72rem;
+        margin: 0 auto;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 0;
+      }
+      section + section {
+        margin-top: 1.6rem;
+      }
+      .bar {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.8rem;
+        margin-bottom: 0.6rem;
+      }
+      .bar .meta {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .bar label {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      select {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.2rem 0.4rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--card);
+        color: var(--fg);
+      }
+      a {
+        color: var(--accent);
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.9em;
+      }
+      .brief .lead {
+        margin: 0 0 0.5rem;
+      }
+      .brief ul {
+        margin: 0;
+        padding-left: 1.2rem;
+      }
+      .brief li {
+        margin: 0.3rem 0;
+      }
+      .brief .repo {
+        font-family: var(--mono);
+      }
+      .brief a.x {
+        font-size: 0.75rem;
+        color: var(--muted);
+        text-decoration: none;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        padding: 0 0.35em;
+        margin-left: 0.3rem;
+        vertical-align: 0.1em;
+      }
+      .brief a.x:hover {
+        color: var(--fg);
+        border-color: var(--muted);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.35rem 0.6rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: baseline;
+        white-space: nowrap;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      th.n,
+      td.n {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      tr.repo td.name {
+        font-family: var(--mono);
+        color: var(--accent);
+        cursor: pointer;
+      }
+      tr.repo td.name:hover,
+      tr.repo.open td.name {
+        text-decoration: underline;
+      }
+      tr.total td {
+        font-weight: 600;
+        border-bottom: 0;
+      }
+      tr.detail td {
+        white-space: normal;
+        background: var(--card);
+        padding: 0.6rem 0.9rem 0.7rem;
+        font-size: 0.85rem;
+      }
+      tr.detail ul {
+        margin: 0.15rem 0 0.4rem;
+        padding-left: 1.2rem;
+      }
+      tr.detail .links {
+        margin-top: 0.4rem;
+        color: var(--muted);
+      }
+      .zero {
+        color: var(--muted);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .empty {
+        color: var(--muted);
+        padding: 0.8rem 0;
+        font-size: 0.9rem;
+      }
+      .err {
+        color: var(--bad);
+        padding: 0.8rem 1rem;
+        margin-bottom: 1rem;
+        background: var(--card);
+        border: 1px solid var(--bad);
+        border-radius: 6px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 0.9em;
+        height: 0.9em;
+        border: 2px solid var(--line);
+        border-top-color: var(--muted);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: -0.15em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .footer {
+        color: var(--muted);
+        font-size: 0.8rem;
+        padding: 1rem;
+        text-align: center;
+        font-family: var(--mono);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <div id="status"></div>
+      <section>
+        <div class="bar">
+          <h2>Movement</h2>
+          <label
+            >since
+            <select id="window"></select
+          ></label>
+          <span class="meta" id="runs-meta"></span>
+        </div>
+        <div class="brief" id="brief"></div>
+      </section>
+      <section>
+        <div class="bar">
+          <h2>Repositories</h2>
+          <span class="meta" id="table-meta"></span>
+        </div>
+        <div id="table"></div>
+      </section>
+    </main>
+    <div class="footer" id="footer"></div>
+
+    <script type="module">
+      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {
+        DIGEST_PATH,
+        stateDocPath,
+        parseRuns,
+        parseBaseline,
+        parseWhen,
+        storedMovement,
+        brief,
+        baselineRow,
+        baselineDetail,
+        alertText,
+        plural,
+        short
+      } from '/ui/fleet-digest.js';
+
+      const WINDOW_KEY = 'vault.fleet.window';
+      const WINDOWS = [
+        ['1d', '24 hours'],
+        ['7d', '7 days'],
+        ['30d', '30 days'],
+        ['90d', '90 days'],
+        ['all', 'all stored runs']
+      ];
+      // A baseline older than `show --fleet`'s default window is marked stale.
+      const STALE_MS = 7 * 864e5;
+      const LOADING = '<div class="empty"><span class="spinner"></span> loading…</div>';
+      const $ = sel => document.querySelector(sel);
+
+      let runs = [],
+        baselines = [];
+
+      const windowState = () => {
+        const w = localStorage.getItem(WINDOW_KEY);
+        return WINDOWS.some(([v]) => v === w) ? w : '7d';
+      };
+      const cutoffOf = w => (w === 'all' ? null : parseWhen(w));
+
+      const rowId = repo => `repo-${repo.replace(/[^A-Za-z0-9]+/g, '-')}`;
+      const nameOf = entry => entry.baseline.repo ?? entry.project;
+      const ext = (href, text, cls = '') =>
+        `<a${cls ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+      const renderParts = parts =>
+        parts.map(p => (typeof p === 'string' ? esc(p) : ext(p.href, p.text))).join('');
+      const noteHref = path => `/ui/note.html?path=${encodeURIComponent(path)}&view=preview`;
+      const queueHref = project => noteHref(`projects/${project}/queue.md`);
+
+      const renderBrief = () => {
+        const {
+          digest,
+          runs: selected,
+          cutoff
+        } = storedMovement(runs, {
+          cutoff: cutoffOf(windowState())
+        });
+        $('#runs-meta').textContent = runs.length
+          ? `${plural(selected.length, 'run')} in the window · ${plural(runs.length, 'run')} stored, newest ${short(runs[0].collected_at)}`
+          : '';
+        if (!runs.length) {
+          $('#brief').innerHTML =
+            `<div class="empty">No stored runs in <code>${esc(DIGEST_PATH)}</code> — run <code>/fleet-status</code>, then commit.</div>`;
+          return;
+        }
+        if (!selected.length) {
+          $('#brief').innerHTML =
+            `<div class="empty">No stored runs since ${esc(short(cutoff))}.</div>`;
+          return;
+        }
+        const m = brief(digest);
+        const stored = m.stored
+          ? ` (${plural(m.stored.runs, 'stored run')}, newest ${short(m.stored.newest)})`
+          : '';
+        const lines = m.moved.map(
+          x =>
+            `<li><span class="repo">${ext(`https://github.com/${x.repo}`, x.name)}</span>${
+              x.project
+                ? `<a class="x" href="${queueHref(x.project)}" title="The project's queue">queue</a>`
+                : ''
+            }<a class="x" href="#${rowId(x.repo)}" data-expand="${esc(x.repo)}" title="The stored baseline">baseline</a>: ${x.phrases.map(renderParts).join('; ')}</li>`
+        );
+        if (m.counters.length) lines.push(`<li>counters: ${esc(m.counters.join('; '))}</li>`);
+        if (m.firstRuns.length)
+          lines.push(
+            `<li>first run: ${esc(plural(m.firstRuns.length, 'repository', 'repositories'))} (baseline recorded)</li>`
+          );
+        if (m.errors.length)
+          lines.push(
+            `<li>errors: ${esc(m.errors.map(e => `${e.name}: ${e.message}`).join('; '))}</li>`
+          );
+        if (m.partial)
+          lines.push(`<li>partial errors: ${m.partial} (details in the stored run)</li>`);
+        if (m.quiet > 0)
+          lines.push(`<li>quiet: ${esc(plural(m.quiet, 'repository', 'repositories'))}</li>`);
+        if (!lines.length) lines.push('<li>none</li>');
+        $('#brief').innerHTML =
+          `<p class="lead">Fleet movement since ${esc(m.stamp)} — ${esc(plural(m.repos, 'repository', 'repositories'))}, ${m.moved.length} with movement${esc(stored)}</p><ul>${lines.join('')}</ul>`;
+      };
+
+      const numCell = (n, cls = '') => `<td class="n ${n === 0 ? 'zero' : cls}">${esc(n)}</td>`;
+      const alertCell = a =>
+        `<td class="n ${!a ? 'zero' : a.open > 0 ? 'warn' : ''}" title="${esc(
+          a
+            ? Object.entries(a.by_severity)
+                .map(([k, n]) => `${n} ${k}`)
+                .join(', ') || 'no open alerts'
+            : 'not available'
+        )}">${esc(alertText(a))}</td>`;
+      const ciClass = ci =>
+        !ci ? 'zero' : ci.state === 'success' ? 'ok' : ci.state === 'failure' ? 'bad' : 'warn';
+      const ciCell = ci =>
+        `<td class="${ciClass(ci)}" title="${esc(ci ? `${ci.name}, ${short(ci.updated_at)}` : 'no workflow run recorded')}">${
+          ci ? (ci.html_url ? ext(ci.html_url, ci.state, ciClass(ci)) : esc(ci.state)) : 'none'
+        }</td>`;
+
+      const renderTable = () => {
+        if (!baselines.length) {
+          $('#table').innerHTML =
+            '<div class="empty">No stored baselines — no <code>projects/*/state.md</code> carries a <code>## GitHub</code> block yet.</div>';
+          return;
+        }
+        const sum = {issues: 0, prs: 0, stars: 0, forks: 0};
+        const rows = baselines.map(entry => {
+          const r = baselineRow(entry.baseline),
+            name = nameOf(entry);
+          sum.issues += r.issues;
+          sum.prs += r.prs;
+          sum.stars += r.stars ?? 0;
+          sum.forks += r.forks ?? 0;
+          const stale = r.collected_at && Date.now() - Date.parse(r.collected_at) > STALE_MS;
+          return `<tr class="repo" id="${rowId(name)}" data-repo="${esc(name)}">
+            <td class="name" title="Expand the stored baseline">${esc(name)}</td>
+            ${numCell(r.issues)}${numCell(r.prs)}
+            <td class="n ${r.discussions === 0 || !r.hasDiscussions ? 'zero' : ''}">${r.hasDiscussions ? r.discussions : '-'}</td>
+            ${numCell(r.stars ?? '-')}${numCell(r.forks ?? '-')}
+            <td class="n ${r.advisories === 0 ? 'zero' : r.noCve ? 'warn' : ''}">${r.advisories}${r.noCve ? ` (${r.noCve} no CVE)` : ''}</td>
+            ${alertCell(r.dependabot)}${alertCell(r.codeScanning)}
+            ${ciCell(r.ci)}
+            <td class="${stale ? 'warn' : ''}" title="${esc(r.collected_at ?? '')}">${esc(short(r.collected_at))}</td>
+          </tr>`;
+        });
+        rows.push(
+          `<tr class="total"><td>Total (${baselines.length})</td>${numCell(sum.issues)}${numCell(sum.prs)}<td></td>${numCell(sum.stars)}${numCell(sum.forks)}<td colspan="5"></td></tr>`
+        );
+        $('#table').innerHTML = `<table>
+          <thead><tr>
+            <th>Repository</th><th class="n">Issues</th><th class="n">PRs</th><th class="n">Discussions</th>
+            <th class="n">Stars</th><th class="n">Forks</th><th class="n">Advisories</th>
+            <th class="n">Dependabot</th><th class="n">Scanning</th><th>CI</th><th>Collected</th>
+          </tr></thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>`;
+      };
+
+      const renderDetail = entry => {
+        const {project, baseline: b} = entry;
+        const r = baselineRow(b),
+          d = baselineDetail(b);
+        const {digest, cutoff} = storedMovement(runs, {
+          cutoff: cutoffOf(windowState()),
+          repo: r.repo
+        });
+        const lines = [
+          `${esc(plural(r.stars ?? 0, 'star'))}, ${esc(plural(r.forks ?? 0, 'fork'))}, ${esc(plural(r.watchers ?? 0, 'watcher'))}; ${esc(plural(r.issues, 'open issue'))}, ${esc(plural(r.prs, 'open PR'))}${r.hasDiscussions ? `, ${esc(plural(r.discussions, 'open discussion'))}` : ''}; CI ${
+            r.ci
+              ? `${r.ci.html_url ? ext(r.ci.html_url, r.ci.state) : esc(r.ci.state)} (${esc(r.ci.name)}, ${esc(short(r.ci.updated_at))})`
+              : 'none'
+          }`,
+          `alerts: dependabot ${esc(alertText(r.dependabot))}, code scanning ${esc(alertText(r.codeScanning))}; collected ${esc(short(r.collected_at))}${d.firstRun ? ' (first run)' : ''}`
+        ];
+        const sections = [];
+        if (d.advisories.length)
+          sections.push(
+            `<div>advisories (${d.advisories.length}):</div><ul>${d.advisories
+              .map(
+                a =>
+                  `<li>${a.html_url ? ext(a.html_url, a.id) : `<code>${esc(a.id)}</code>`} ${esc(a.state)} ${esc(a.severity ?? '-')} ${esc(a.cve_id ?? 'no CVE')} ${esc(short(a.published_at))} ${esc(a.summary ?? '')}</li>`
+              )
+              .join('')}</ul>`
+          );
+        if (d.openItems.length)
+          sections.push(
+            `<div>open items (${d.openItems.length}):</div><ul>${d.openItems
+              .map(
+                it =>
+                  `<li>${it.is_pr ? 'PR' : 'issue'} ${it.html_url ? ext(it.html_url, `#${it.number}`) : `#${esc(it.number)}`} ${esc(it.title)} — ${esc(it.author)}${it.bot ? ' (bot)' : ''}, ${esc(plural((it.comments ?? 0) + (it.review_comments ?? 0), 'comment'))}, ${esc(plural((it.reactions ?? 0) + (it.comment_reactions ?? 0), 'reaction'))}${it.last_comment ? `, last comment ${esc(it.last_comment.author)} ${esc(short(it.last_comment.at))}` : ''}${it.draft ? ', draft' : ''}</li>`
+              )
+              .join('')}</ul>`
+          );
+        if (d.openDiscussions.length)
+          sections.push(
+            `<div>open discussions (${d.openDiscussions.length}):</div><ul>${d.openDiscussions
+              .map(
+                x =>
+                  `<li>${x.html_url ? ext(x.html_url, `#${x.number}`) : `#${esc(x.number)}`} ${esc(x.title)} — ${esc(x.author)}, ${esc(x.category ?? '-')}, ${esc(plural(x.comments ?? 0, 'comment'))}, ${esc(plural((x.reactions ?? 0) + (x.comment_reactions ?? 0), 'reaction'))}${x.last_comment ? `, last comment ${esc(x.last_comment.author)} ${esc(short(x.last_comment.at))}` : ''}${x.answered ? ', answered' : ''}</li>`
+              )
+              .join('')}</ul>`
+          );
+        if (d.release)
+          sections.push(
+            `<div>latest release: ${d.release.html_url ? ext(d.release.html_url, d.release.tag_name) : esc(d.release.tag_name)}${d.release.name ? ` — ${esc(d.release.name)}` : ''}${d.release.draft ? ' (draft)' : ''}${d.release.prerelease ? ' (prerelease)' : ''} ${esc(short(d.release.published_at))}</div>`
+          );
+        const m = digest.repos.length ? brief(digest) : null;
+        const changes = [];
+        if (m?.moved.length)
+          changes.push(...m.moved[0].phrases.map(p => `<li>${renderParts(p)}</li>`));
+        if (m?.counters.length) changes.push(`<li>counters: ${esc(m.counters.join('; '))}</li>`);
+        sections.push(
+          changes.length
+            ? `<div>changes since ${esc(m.stamp)} (${esc(plural(digest.totals.events, 'event'))}):</div><ul>${changes.join('')}</ul>`
+            : `<div>changes${cutoff ? ` since ${esc(short(cutoff))}` : ''}: none stored</div>`
+        );
+        return `${lines.map(l => `<div>${l}</div>`).join('')}${sections.join('')}<div class="links">${
+          r.html_url ? `${ext(r.html_url, 'GitHub')} · ` : ''
+        }<a href="${queueHref(project)}">queue</a> · <a href="${noteHref(stateDocPath(project))}">state.md</a></div>`;
+      };
+
+      const detailRow = entry => {
+        const tr = document.createElement('tr');
+        tr.className = 'detail';
+        tr.innerHTML = `<td colspan="11">${renderDetail(entry)}</td>`;
+        return tr;
+      };
+
+      const toggleRow = (tr, open = !tr.classList.contains('open')) => {
+        const current = tr.nextElementSibling?.classList.contains('detail')
+          ? tr.nextElementSibling
+          : null;
+        tr.classList.toggle('open', open);
+        if (!open) {
+          current?.remove();
+          return;
+        }
+        const entry = baselines.find(x => nameOf(x) === tr.dataset.repo);
+        if (!entry) return;
+        if (current) current.replaceWith(detailRow(entry));
+        else tr.after(detailRow(entry));
+      };
+
+      const refreshOpenRows = () => {
+        for (const tr of document.querySelectorAll('tr.repo.open')) toggleRow(tr, true);
+      };
+
+      const expandFromHash = () => {
+        const tr = location.hash && document.getElementById(location.hash.slice(1));
+        if (tr?.classList.contains('repo')) toggleRow(tr, true);
+      };
+
+      const load = async () => {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        $('#status').innerHTML = '';
+        $('#brief').innerHTML = LOADING;
+        $('#table').innerHTML = LOADING;
+        try {
+          const [text, list] = await Promise.all([
+            api(`/vault/${DIGEST_PATH}`)
+              .then(r => r.text())
+              .catch(e => {
+                if (e.message === 'not-found') return '';
+                throw e;
+              }),
+            apiJson('/vault/projects/')
+          ]);
+          runs = parseRuns(text);
+          renderBrief();
+          const folders = (list.files ?? []).filter(f => f.endsWith('/')).map(f => f.slice(0, -1));
+          const found = await Promise.all(
+            folders.map(async project => {
+              try {
+                const res = await api(`/vault/${stateDocPath(encodeURIComponent(project))}`);
+                const baseline = parseBaseline(await res.text());
+                return baseline && {project, baseline};
+              } catch (e) {
+                if (e.message === 'not-found') return null;
+                throw e;
+              }
+            })
+          );
+          baselines = found.filter(Boolean).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+          renderTable();
+          $('#table-meta').textContent =
+            `${plural(baselines.length, 'repository', 'repositories')} with a stored baseline · ${plural(folders.length, 'project')}`;
+          $('#footer').textContent =
+            `${plural(baselines.length, 'baseline')} · ${plural(runs.length, 'stored run')}${runs.length ? ` · newest ${short(runs[0].collected_at)}` : ''}`;
+          expandFromHash();
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#status').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+        }
+      };
+
+      const sel = $('#window');
+      sel.innerHTML = WINDOWS.map(([v, label]) => `<option value="${v}">${label}</option>`).join(
+        ''
+      );
+      sel.value = windowState();
+      sel.addEventListener('change', () => {
+        localStorage.setItem(WINDOW_KEY, sel.value);
+        renderBrief();
+        refreshOpenRows();
+      });
+
+      // Delegated: the table and the brief re-render, their containers don't.
+      $('#table').addEventListener('click', e => {
+        const td = e.target.closest('td.name');
+        if (td) toggleRow(td.closest('tr'));
+      });
+      $('#brief').addEventListener('click', e => {
+        const a = e.target.closest('[data-expand]');
+        if (!a) return;
+        const tr = document.getElementById(rowId(a.dataset.expand));
+        if (tr) toggleRow(tr, true);
+        else e.preventDefault();
+      });
+      window.addEventListener('hashchange', expandFromHash);
+      document.addEventListener('token-change', load);
+
+      load();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>

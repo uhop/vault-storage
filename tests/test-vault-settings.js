@@ -1,7 +1,7 @@
 import test from 'tape-six';
 
 import '/static/ui/components/vault-settings.js';
-import {getToken, setToken} from '/static/ui/api.js';
+import {getToken, setToken, showAuthDialog} from '/static/ui/api.js';
 
 const mount = () => {
   const el = document.createElement('vault-settings');
@@ -90,6 +90,28 @@ test('vault-settings button opens the dialog prefilled', t => {
     const dlg = el.querySelector('dialog');
     t.ok(dlg.open, 'dialog opened');
     t.equal(el.querySelector('#auth-input').value, 'stored-token', 'prefilled from storage');
+    dlg.close();
+  } finally {
+    setToken(saved);
+    el.remove();
+  }
+});
+
+test('showAuthDialog resolves without a mounted dialog instead of throwing', async t => {
+  t.equal(document.querySelector('#auth-dlg'), null, 'no dialog mounted');
+  await showAuthDialog();
+  t.pass('resolved');
+});
+
+test('showAuthDialog opens a mounted dialog synchronously', t => {
+  const el = mount();
+  const saved = getToken();
+  try {
+    setToken('sync-token');
+    showAuthDialog();
+    const dlg = el.querySelector('dialog');
+    t.ok(dlg.open, 'opened before the promise settles');
+    t.equal(el.querySelector('#auth-input').value, 'sync-token', 'prefilled');
     dlg.close();
   } finally {
     setToken(saved);

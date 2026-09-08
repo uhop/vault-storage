@@ -7,6 +7,7 @@ import {buildNav} from '/static/ui/components/vault-nav.js';
 const CANON = [
   ['/ui/search.html', 'search'],
   ['/ui/projects.html', 'projects'],
+  ['/ui/fleet.html', 'fleet'],
   ['/ui/tags.html', 'tags'],
   ['/ui/raw.html', 'raw'],
   ['/ui/folder.html', 'browse'],

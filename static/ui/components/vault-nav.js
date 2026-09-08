@@ -9,6 +9,7 @@
 const ITEMS = [
   {href: '/ui/search.html', label: 'search'},
   {href: '/ui/projects.html', label: 'projects'},
+  {href: '/ui/fleet.html', label: 'fleet'},
   {href: '/ui/tags.html', label: 'tags'},
   {href: '/ui/raw.html', label: 'raw'},
   {href: '/ui/folder.html', label: 'browse'},
