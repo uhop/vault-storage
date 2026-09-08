@@ -83,8 +83,8 @@ Standalone stdio MCP ↔ REST adapter (plain JS, no local state), published to n
 
 - **`src/index.js`** — entry: env (`VAULT_API_URL`, `VAULT_API_TOKEN`), `McpServer` over stdio, tool + resource registration.
 - **`src/client.js`** — fetch wrapper adding base URL + bearer, error normalization, `If-Match` / `ETag` pass-through.
-- **`src/tools.js`** — 70 tools (one per REST endpoint) with zod schemas mirroring the server's closed enums, at parity with the REST surface: reads, writes, lifecycle (`supersede`/`move`/`propose`), `/maintenance/*`, and the coordination families (`vault_lease_*`, `vault_handoff_*`), so the `/vault ingest`, `sweep`, `learn` and `resume` workflows all run MCP-native. Writes split by blast radius: `vault_append` / `vault_replace` / `vault_replace_section` / `vault_patch_fm` change only what they name (atomic server-side ops), while `vault_write_file` / `vault_update_piece` replace a whole document and take an optional `expected_etag`.
-- **`src/resources.js`** — 3 read-only resources: `vault://status`, `vault://suggestions/pending`, `vault://taxonomy/tags`.
+- **`src/tools.js`** — one tool per REST endpoint, with zod schemas mirroring the server's closed enums, at parity with the REST surface: reads, writes, lifecycle (`supersede`/`move`/`propose`), `/maintenance/*`, and the coordination families (`vault_lease_*`, `vault_handoff_*`), so the `/vault ingest`, `sweep`, `learn` and `resume` workflows all run MCP-native. Writes split by blast radius: `vault_append` / `vault_replace` / `vault_replace_section` / `vault_patch_fm` change only what they name (atomic server-side ops), while `vault_write_file` / `vault_update_piece` replace a whole document and take an optional `expected_etag`.
+- **`src/resources.js`** — read-only resources: `vault://status`, `vault://suggestions/pending`, `vault://taxonomy/tags`.
 
 ## static/ UI
 

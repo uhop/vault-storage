@@ -3,7 +3,7 @@
 Thin MCP (Model Context Protocol) adapter for vault-storage, an AI-agent-first
 personal knowledge base: markdown files are the source of truth, a SQLite +
 sqlite-vec index provides fast lookup, semantic search, and typed-edge
-traversal. The adapter exposes the server's REST API as 70 MCP tools and 3
+traversal. The adapter exposes the server's REST API as MCP tools and
 read-only resources. It is deliberately stateless — every call forwards to a
 running vault-storage server; guards and validation live server-side so every
 client gets them.

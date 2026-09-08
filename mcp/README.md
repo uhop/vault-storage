@@ -35,7 +35,7 @@ was started with (e.g., the one in your `.env`).
 
 ## Tools
 
-Fifty-three tools mapping to the REST surface, grouped by purpose:
+The tools map to the REST surface, grouped by purpose:
 
 - **Search & list** — `vault_search`, `vault_context_pack` (one prepared
   RAG pack — hybrid top-K chunks + a deduped 1-hop graph whose inbound
@@ -132,7 +132,7 @@ generation N"; `vault_search` returns `{as_of, hits}` for the same reason.
 
 ## Resources
 
-Three read-only resources the agent can fetch by URI:
+Read-only resources the agent can fetch by URI:
 
 - `vault://status` — indexer state, schema version, counts
 - `vault://suggestions/pending` — bulk pending review items
@@ -176,6 +176,23 @@ beside them. Common codes:
 
 ## Release notes
 
+- 0.7.0 — section, item, and health tools, and response subsetting:
+  `vault_read_section` / `vault_replace_section` read or rewrite the content
+  under one ATX heading and leave every other byte alone; `vault_remove_item`,
+  `vault_insert_item`, and `vault_move_item` address a queue bullet by its bold
+  title, the move writing the destination before the source and inserting a
+  trail after the title; `vault_handoff_verify` records a gate run bound to a
+  commit, shown `stale` once the artifact's base moves, and handoffs declare
+  `touches` on create and resubmit with overlaps reported in the list;
+  `vault_health` answers from the server's memory alone, so a wedged store is
+  told apart from a dead process. `fields=` subsets the responses of nine tools
+  (an include list or a `-`-prefixed exclude list; `exclude=body` stays as the
+  alias on the queue tools); every list envelope, queue slice, the resume bundle
+  and the brief carry `as_of`, and `vault_search` returns `{as_of, hits}`; the
+  bundle and brief mark `summary_stale`; suggestion payloads carry `evidence`;
+  error bodies add the RFC 9457 members; `vault_lint` carries `queue_hygiene`.
+  The new tools and parameters need vault-storage from 2026-09-07 (migration
+  0021); calls without them are unchanged against older servers.
 - 0.6.0 — the handoff patch transport (63 tools): `vault_handoff_put_artifact`
   attaches the work a reviewer actually applies — a `git format-patch --base=…`
   series, or a base64 `bundle` for binary/multi-branch — and

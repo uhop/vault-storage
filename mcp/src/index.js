@@ -2,8 +2,8 @@
 // vault-storage-mcp — MCP adapter for the vault-storage REST API.
 //
 // Reads VAULT_API_URL and VAULT_API_TOKEN from the environment (set in the
-// MCP client config), connects to the REST server, and exposes ~20 tools and
-// 3 resources to the agent. Pure protocol adapter — no local state.
+// MCP client config), connects to the REST server, and exposes tools and
+// resources to the agent. Pure protocol adapter — no local state.
 
 import {createRequire} from 'node:module';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
