@@ -92,7 +92,7 @@ Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's
 
 ## Tests
 
-~65 `tests/test-*.ts` files on tape-six. Standard pattern: in-memory SQLite, `FakeEmbedder`, config passed as literal objects (no `VAULT_*` env reads); server tests bind a real HTTP server on loopback. `tests/test-bge-embedder.ts` is the one non-hermetic test — it loads the real model (~33 MB download on a cold cache). Three tests shell out to the real `git` binary.
+~65 `tests/test-*.ts` files on tape-six. Standard pattern: in-memory SQLite, `FakeEmbedder`, config passed as literal objects (no `VAULT_*` env reads); server tests bind a real HTTP server on loopback. `tests/test-bge-embedder.ts` is the one non-hermetic test — it loads the real model (~33 MB download on a cold cache; CI caches that directory between runs, keyed on the lockfile). Three tests shell out to the real `git` binary.
 
 ## bin/, scripts/, skills/, eval/
 

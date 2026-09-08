@@ -24,8 +24,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{matrix.node-version}}
+      - run: npm ci
+      # must follow npm ci: it wipes node_modules, where transformers.js keeps the model cache
+      - uses: actions/cache@v6
+        with:
+          path: node_modules/@huggingface/transformers/.cache
+          key: bge-model-${{hashFiles('package-lock.json')}}
+          restore-keys: bge-model-
       - run: |
-          npm ci
           npm run lint
           npm run ts-check
           npm test
