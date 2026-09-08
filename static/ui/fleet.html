@@ -493,7 +493,8 @@
       };
 
       const expandFromHash = () => {
-        const tr = location.hash && document.getElementById(location.hash.slice(1));
+        if (!location.hash) return;
+        const tr = document.getElementById(location.hash.slice(1));
         if (tr?.classList.contains('repo')) toggleRow(tr, true);
       };
 
