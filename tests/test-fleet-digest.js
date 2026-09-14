@@ -25,6 +25,7 @@ import {
   majorOf,
   compareVersions,
   repoGlance,
+  answered,
   packageMovement
 } from '/static/ui/fleet-digest.js';
 
@@ -873,4 +874,53 @@ test('packageMovement reports publishes and dependents changes in the window', t
   t.deepEqual(packageMovement(PACKAGES, '2026-09-20T00:00:00.000Z'), [], 'nothing since');
   t.deepEqual(packageMovement(PACKAGES, null), [], 'no window, no movement');
   t.deepEqual(packageMovement(null, '2026-09-01T00:00:00.000Z'), []);
+});
+
+test('repoGlance marks new items from people that the account has not answered', t => {
+  const now = Date.parse('2026-09-14T00:00:00Z');
+  const recent = '2026-09-10T00:00:00Z',
+    old = '2026-08-01T00:00:00Z';
+  const issue = (author, extra = {}) => ({
+    is_pr: false,
+    state: 'open',
+    author,
+    created_at: recent,
+    ...extra
+  });
+  const b = {
+    repo: 'octo/fresh',
+    gh_user: 'octo',
+    items: {
+      1: issue('alice'),
+      2: issue('alice', {owner_reacted: true}),
+      3: issue('alice', {owner_commented: true}),
+      4: issue('alice', {assignees: ['octo']}),
+      5: {...issue('dependabot[bot]'), is_pr: true, bot: true},
+      6: issue('octo'),
+      7: issue('alice', {created_at: old}),
+      8: issue('bob', {last_comment: {author: 'octo', at: recent}}),
+      9: issue('bob', {reactions: 3, owner_reacted: false})
+    },
+    discussions: {
+      10: {closed: false, author: 'carol', created_at: recent, owner_commented: false},
+      11: {closed: false, author: 'carol', created_at: recent, owner_commented: true}
+    }
+  };
+  const g = repoGlance(b, null, {now});
+  t.deepEqual(
+    [...g.issues, ...g.prs, ...g.discussions]
+      .filter(x => x.fresh)
+      .map(x => x.number)
+      .sort((x, y) => x - y),
+    [1, 9, 10],
+    'answered by a reaction, a comment, or an assignee; bots, own items, and old items never count'
+  );
+  t.equal(g.freshCount, 3);
+  t.equal(g.owner, 'octo');
+  t.equal(repoGlance(b, null, {now, newDays: 3}).freshCount, 0, 'a shorter window');
+  t.ok(
+    answered({last_comment: {author: 'octo'}}, 'octo'),
+    'an older baseline: the last comment stands in'
+  );
+  t.notOk(answered({reactions: 3}, 'octo'), "someone else's reaction is not an answer");
 });

@@ -600,16 +600,36 @@ const severityList = bySeverity =>
     )
     .map(([severity, n]) => `${n} ${severity}`);
 
-export const repoGlance = (b, cutoff = null) => {
+// New and unanswered: opened by a person other than the collecting account in
+// the last NEW_DAYS, with no reaction, comment, or assignee from that account.
+export const NEW_DAYS = 10;
+
+// A baseline collected before the owner_* facts were stored falls back to the
+// last comment being the owner's.
+export const answered = (x, owner) =>
+  x.owner_reacted === true ||
+  x.owner_commented === true ||
+  (x.assignees?.length ?? 0) > 0 ||
+  (Boolean(owner) && x.last_comment?.author === owner);
+
+export const repoGlance = (b, cutoff = null, {now = Date.now(), newDays = NEW_DAYS} = {}) => {
   const since = at => Boolean(cutoff) && typeof at === 'string' && at >= cutoff;
   const active = x => since(x.updated_at) || since(x.last_comment?.at);
+  const owner = b.gh_user ?? null;
+  const newSince = new Date(now - newDays * 864e5).toISOString();
+  const fresh = x =>
+    !x.bot &&
+    typeof x.created_at === 'string' &&
+    x.created_at >= newSince &&
+    x.author !== owner &&
+    !answered(x, owner);
   const byNumberDesc = (x, y) => y.number - x.number;
   const open = Object.entries(b.items ?? {})
     .filter(([, it]) => it.state === 'open')
-    .map(([number, it]) => ({...it, number: Number(number), active: active(it)}));
+    .map(([number, it]) => ({...it, number: Number(number), active: active(it), fresh: fresh(it)}));
   const discussions = Object.entries(b.discussions ?? {})
     .filter(([, d]) => !d.closed)
-    .map(([number, d]) => ({...d, number: Number(number), active: active(d)}))
+    .map(([number, d]) => ({...d, number: Number(number), active: active(d), fresh: fresh(d)}))
     .sort(byNumberDesc);
   const advisories = Object.entries(b.advisories ?? {})
     .filter(([, a]) => a.state !== 'closed' && a.state !== 'withdrawn')
@@ -634,6 +654,7 @@ export const repoGlance = (b, cutoff = null) => {
     prs = open.filter(it => it.is_pr).sort(byNumberDesc);
   return {
     repo: row.repo,
+    owner,
     html_url: row.html_url,
     stars: row.stars,
     forks: row.forks,
@@ -647,6 +668,7 @@ export const repoGlance = (b, cutoff = null) => {
     alerts,
     ci: row.ci,
     ciFailing,
+    freshCount: [...issues, ...prs, ...discussions].filter(x => x.fresh).length,
     attention:
       issues.length > 0 ||
       prs.length > 0 ||

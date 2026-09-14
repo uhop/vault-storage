@@ -9,6 +9,7 @@ const STYLE = `
 .chip:hover, .chip[aria-expanded='true'] { border-color: var(--accent); }
 .chip.bot { color: light-dark(#6f42c1, #b392f0); border-color: light-dark(#c9b3ee, #5e4b8b); }
 .chip.draft { border-style: dashed; }
+.chip.new { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--card)); font-weight: 600; }
 .chip.warn { color: var(--warn); border-color: var(--warn); }
 .chip.bad { color: var(--bad); border-color: var(--bad); }
 .chip.active::after { content: ''; position: absolute; top: -3px; right: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }

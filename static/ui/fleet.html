@@ -97,6 +97,22 @@
         padding: 0.35rem 0;
         border-bottom: 1px solid var(--line);
       }
+      .glance li.fresh,
+      .legend-line {
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .glance li.fresh {
+        padding-left: 0.6rem;
+      }
+      .glance li.fresh .repo {
+        font-weight: 600;
+      }
+      .legend-line {
+        font-family: var(--mono);
+        font-weight: 600;
+        padding: 0 0.4rem 0 0.6rem;
+      }
       .glance .repo {
         font-family: var(--mono);
         min-width: 13rem;
@@ -268,6 +284,16 @@
           <details class="legend" id="legend">
             <summary>Legend</summary>
             <div class="legend-panel">
+              <span class="legend-line">repository</span
+              ><span
+                >Has a new item from a person that you have not answered yet; these come
+                first.</span
+              >
+              <span class="chip new">#12</span
+              ><span
+                >Opened by a person in the last 10 days, with no reaction, comment, or assignee from
+                you.</span
+              >
               <span class="chip">#12</span
               ><span
                 >An open issue, PR, or discussion. Hover or tap it for details; click it to keep
@@ -371,6 +397,17 @@
       const byProject = (a, b) => a.project.localeCompare(b.project);
       const signed = n => `${n > 0 ? '+' : '−'}${Math.abs(n).toLocaleString('en-US')}`;
 
+      const answerLines = it => {
+        if (it.bot) return [];
+        const how = [
+          it.owner_commented === true && 'you commented',
+          it.owner_reacted === true && 'you reacted',
+          (it.assignees?.length ?? 0) > 0 && `assigned to ${it.assignees.join(', ')}`
+        ].filter(Boolean);
+        if (how.length) return [how.join('; ')];
+        return it.fresh ? ['new: no reaction, comment, or assignee from you yet'] : [];
+      };
+
       const itemPop = (it, kind) => {
         const comments = (it.comments ?? 0) + (it.review_comments ?? 0),
           reactions = (it.reactions ?? 0) + (it.comment_reactions ?? 0),
@@ -379,6 +416,7 @@
           title: `#${it.number} ${it.title}`,
           lines: [
             `${KINDS[kind][0]} by ${it.author ?? 'unknown'}${it.bot ? ' (bot)' : ''}, opened ${when(it.created_at)}${it.draft ? ', draft' : ''}${it.category ? `, ${it.category}` : ''}${it.answered ? ', answered' : ''}`,
+            ...answerLines(it),
             comments
               ? `${plural(comments, 'comment')}${last?.author ? `, the last by ${last.author} on ${when(last.at)}` : ''}`
               : 'no comments',
@@ -394,8 +432,10 @@
       const group = (label, chips) =>
         chips ? `<span class="group"><span class="label">${esc(label)}</span>${chips}</span>` : '';
 
-      const itemGroup = (list, kind) => {
-        if (!list.length) return '';
+      const itemGroup = (items, kind) => {
+        if (!items.length) return '';
+        // New, unanswered items lead, so the "+N" overflow never hides one.
+        const list = [...items].sort((a, b) => Number(b.fresh) - Number(a.fresh));
         const shown = list.slice(0, MAX_CHIPS),
           rest = list.slice(MAX_CHIPS);
         const chips = shown
@@ -403,7 +443,12 @@
             chip(
               `#${it.number}`,
               itemPop(it, kind),
-              [it.bot && 'bot', it.draft && 'draft', it.active && 'active'].filter(Boolean)
+              [
+                it.fresh && 'new',
+                it.bot && 'bot',
+                it.draft && 'draft',
+                it.active && 'active'
+              ].filter(Boolean)
             )
           )
           .join('');
@@ -415,7 +460,9 @@
                 lines: rest.map(it => `#${it.number} ${it.title}`),
                 links: rest.map(it => ({text: `#${it.number}`, href: it.html_url ?? it.url}))
               },
-              rest.some(it => it.active) ? ['active'] : []
+              [rest.some(it => it.fresh) && 'new', rest.some(it => it.active) && 'active'].filter(
+                Boolean
+              )
             )
           : '';
         return group(KINDS[kind][list.length === 1 ? 0 : 1], chips + more);
@@ -529,8 +576,10 @@
           const info = g
             ? `${plural(g.stars ?? 0, 'star')}, ${plural(g.forks ?? 0, 'fork')}, ${plural(g.watchers ?? 0, 'watcher')} · GitHub collected ${short(g.collected_at)}`
             : 'no public fleet repository; npm only';
-          lines.push(
-            `<li><a class="repo" href="${projectHref(e.project)}" title="${esc(info)}">${esc(e.project)}</a>${
+          const fresh = g?.freshCount ?? 0;
+          lines.push({
+            fresh,
+            html: `<li${fresh ? ' class="fresh"' : ''}><a class="repo" href="${projectHref(e.project)}" title="${esc(info)}">${esc(e.project)}</a>${
               g && isStale(g.collected_at) ? '<span class="warn">stale</span>' : ''
             }${
               g
@@ -541,18 +590,22 @@
                   ciGroup(g)
                 : ''
             }${npmGroups(e.project, movement)}</li>`
-          );
+          });
         }
-        $('#glance-meta').textContent = `${lines.length} with something open or moving${
-          cutoff ? ` · a dot marks activity since ${when(cutoff)}` : ''
-        }`;
+        // Stable: repositories with a new, unanswered item first, each group by name.
+        lines.sort((a, b) => Number(b.fresh > 0) - Number(a.fresh > 0));
+        const freshRepos = lines.filter(l => l.fresh > 0).length;
+        $('#glance-meta').textContent =
+          `${freshRepos ? `${freshRepos} with new items from people · ` : ''}${lines.length} with something open or moving${
+            cutoff ? ` · a dot marks activity since ${when(cutoff)}` : ''
+          }`;
         const folded = quiet.length
           ? `<details class="quiet-list"${wasOpen ? ' open' : ''}><summary>${esc(plural(quiet.length, 'repository', 'repositories'))} with nothing open</summary><div class="names">${quiet
               .map(e => `<a href="${projectHref(e.project)}">${esc(e.project)}</a>`)
               .join(' · ')}</div></details>`
           : '';
         $('#glance').innerHTML = lines.length
-          ? `<ul class="glance">${lines.join('')}</ul>${folded}`
+          ? `<ul class="glance">${lines.map(l => l.html).join('')}</ul>${folded}`
           : `<div class="empty">Nothing open or moving.</div>${folded}`;
       };
 
@@ -588,8 +641,13 @@
           return;
         }
         const sum = {issues: 0, prs: 0, stars: 0, forks: 0};
-        const rows = list.map(entry => {
-          const r = baselineRow(entry.baseline);
+        const sorted = list.map(entry => ({
+          project: entry.project,
+          entry,
+          r: baselineRow(entry.baseline)
+        }));
+        const sort = sortRows('repos', sorted);
+        const rows = sorted.map(({entry, r}) => {
           sum.issues += r.issues;
           sum.prs += r.prs;
           sum.stars += r.stars ?? 0;
@@ -608,19 +666,13 @@
         rows.push(
           `<tr class="total"><td>Total (${list.length})</td>${numCell(sum.issues)}${numCell(sum.prs)}<td></td>${numCell(sum.stars)}${numCell(sum.forks)}<td colspan="5"></td></tr>`
         );
-        $('#table').innerHTML = `<table>
-          <thead><tr>
-            <th>Repository</th><th class="n">Issues</th><th class="n">PRs</th><th class="n">Discussions</th>
-            <th class="n">Stars</th><th class="n">Forks</th><th class="n">Advisories</th>
-            <th class="n">Dependabot</th><th class="n">Scanning</th><th>CI</th><th>Collected</th>
-          </tr></thead>
-          <tbody>${rows.join('')}</tbody>
-        </table>`;
+        $('#table').innerHTML =
+          `<table><thead><tr>${headRow('repos', sort)}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
       };
 
       // ─── Packages ────────────────────────────────────────────────────────────
 
-      const COLUMNS = [
+      const PACKAGE_COLUMNS = [
         {key: 'name', label: 'Package', value: r => r.name, text: true},
         {key: 'project', label: 'Project', value: r => r.project, text: true},
         {key: 'latest', label: 'Latest', value: r => r.published_at ?? '', text: true},
@@ -638,13 +690,71 @@
         {key: 'collected', label: 'Collected', value: r => r.collected_at ?? '', text: true}
       ];
 
-      const sortState = () => {
-        try {
-          const s = JSON.parse(localStorage.getItem(SORT_KEY));
-          if (COLUMNS.some(c => c.key === s?.key && c.value)) return s;
-        } catch {}
-        return {key: 'weekly', dir: 'desc'};
+      const REPO_COLUMNS = [
+        {key: 'name', label: 'Repository', value: x => x.project, text: true},
+        {key: 'issues', label: 'Issues', value: x => x.r.issues, n: true},
+        {key: 'prs', label: 'PRs', value: x => x.r.prs, n: true},
+        {
+          key: 'discussions',
+          label: 'Discussions',
+          value: x => (x.r.hasDiscussions ? x.r.discussions : -1),
+          n: true
+        },
+        {key: 'stars', label: 'Stars', value: x => x.r.stars ?? -1, n: true},
+        {key: 'forks', label: 'Forks', value: x => x.r.forks ?? -1, n: true},
+        {key: 'advisories', label: 'Advisories', value: x => x.r.advisories, n: true},
+        {key: 'dependabot', label: 'Dependabot', value: x => x.r.dependabot?.open ?? -1, n: true},
+        {key: 'scanning', label: 'Scanning', value: x => x.r.codeScanning?.open ?? -1, n: true},
+        {key: 'ci', label: 'CI', value: x => x.r.ci?.state ?? '', text: true},
+        {key: 'collected', label: 'Collected', value: x => x.r.collected_at ?? '', text: true}
+      ];
+
+      // One sort per table, remembered per viewer; a column without a value does not sort.
+      const TABLES = {
+        repos: {
+          columns: REPO_COLUMNS,
+          storage: 'vault.fleet.repos.sort',
+          fallback: {key: 'name', dir: 'asc'},
+          tie: x => x.project
+        },
+        packages: {
+          columns: PACKAGE_COLUMNS,
+          storage: SORT_KEY,
+          fallback: {key: 'weekly', dir: 'desc'},
+          tie: x => x.name
+        }
       };
+
+      const sortState = table => {
+        const t = TABLES[table];
+        try {
+          const s = JSON.parse(localStorage.getItem(t.storage));
+          if (t.columns.some(c => c.key === s?.key && c.value)) return s;
+        } catch {}
+        return t.fallback;
+      };
+
+      const sortRows = (table, rows) => {
+        const t = TABLES[table],
+          sort = sortState(table);
+        const col = t.columns.find(c => c.key === sort.key);
+        const sign = sort.dir === 'asc' ? 1 : -1;
+        rows.sort((a, b) => {
+          const x = col.value(a),
+            y = col.value(b);
+          const d = col.text ? String(x).localeCompare(String(y)) : x - y;
+          return sign * d || t.tie(a).localeCompare(t.tie(b));
+        });
+        return sort;
+      };
+
+      const headRow = (table, sort, extra = () => '') =>
+        TABLES[table].columns
+          .map(
+            c =>
+              `<th class="${c.n ? 'n ' : ''}${c.value ? 'sortable' : ''}" ${c.value ? `data-table="${table}" data-sort="${c.key}" aria-sort="${sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}" tabindex="0"` : ''}>${esc(c.label)}${extra(c)}</th>`
+          )
+          .join('');
 
       const signedPercent = ratio =>
         typeof ratio === 'number'
@@ -666,15 +776,7 @@
               r => r.name.toLowerCase().includes(query) || r.project.toLowerCase().includes(query)
             )
           : all;
-        const sort = sortState();
-        const col = COLUMNS.find(c => c.key === sort.key);
-        const sign = sort.dir === 'asc' ? 1 : -1;
-        rows.sort((a, b) => {
-          const x = col.value(a),
-            y = col.value(b);
-          const d = col.text ? String(x).localeCompare(String(y)) : x - y;
-          return sign * d || a.name.localeCompare(b.name);
-        });
+        const sort = sortRows('packages', rows);
         const weeks = new Set(all.map(r => r.week && `${r.week.start}:${r.week.end}`));
         const [start, end] = weeks.size === 1 ? ([...weeks][0]?.split(':') ?? []) : [];
         const cutoff = cutoffOf(windowState());
@@ -711,10 +813,11 @@
         body.push(
           `<tr class="total"><td>Total (${rows.length})</td><td></td><td></td><td class="n" title="${esc(weekly.toLocaleString('en-US'))}">${esc(compact(weekly))}</td><td colspan="6"></td></tr>`
         );
-        const head = COLUMNS.map(
-          c =>
-            `<th class="${c.n ? 'n ' : ''}${c.value ? 'sortable' : ''}" ${c.value ? `data-sort="${c.key}" aria-sort="${sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}" tabindex="0"` : ''}>${esc(c.label)}${c.key === 'weekly' && start ? `<span class="sub">${esc(rangeLabel(start, end))}</span>` : ''}</th>`
-        ).join('');
+        const head = headRow('packages', sort, c =>
+          c.key === 'weekly' && start
+            ? `<span class="sub">${esc(rangeLabel(start, end))}</span>`
+            : ''
+        );
         $('#table').innerHTML =
           `<table><thead><tr>${head}</tr></thead><tbody>${body.join('')}</tbody></table>`;
       };
@@ -802,12 +905,16 @@
       $('#filter').addEventListener('input', renderPackages);
 
       const sortBy = th => {
-        const s = sortState();
-        const key = th.dataset.sort;
-        const col = COLUMNS.find(c => c.key === key);
+        const table = th.dataset.table,
+          key = th.dataset.sort;
+        const s = sortState(table),
+          col = TABLES[table].columns.find(c => c.key === key);
         const dir = s.key === key ? (s.dir === 'asc' ? 'desc' : 'asc') : col.text ? 'asc' : 'desc';
-        localStorage.setItem(SORT_KEY, JSON.stringify({key, dir}));
-        renderPackages();
+        try {
+          localStorage.setItem(TABLES[table].storage, JSON.stringify({key, dir}));
+        } catch {}
+        if (table === 'repos') renderRepos();
+        else renderPackages();
       };
 
       // Delegated: the table re-renders, its container doesn't.
