@@ -312,8 +312,8 @@
               ><span>A security advisory without a CVE, or not yet published.</span>
               <span class="chip warn">Dependabot 3</span
               ><span
-                >Open alerts, counted exactly. A ≥ before the number means the count stopped at the
-                collector's cap of 2,000.</span
+                >Open alerts. A ≥ before the number means the collector stopped counting there, so
+                the repository has at least that many.</span
               >
               <span class="chip bad">failure</span
               ><span>The last CI run on the default branch did not succeed.</span>
@@ -500,7 +500,12 @@
               `${label} ${count}`,
               {
                 title: `${count} open ${label} alerts`,
-                lines: alert.severities,
+                lines: [
+                  ...(alert.truncated
+                    ? [`Counting stopped at ${alert.open}; the severities cover those only.`]
+                    : []),
+                  ...alert.severities
+                ],
                 links: [
                   {
                     text: 'Open on GitHub',
@@ -618,9 +623,10 @@
       const alertCell = a =>
         `<td class="n ${!a ? 'zero' : a.open > 0 ? 'warn' : ''}" title="${esc(
           a
-            ? Object.entries(a.by_severity)
-                .map(([k, n]) => `${n} ${k}`)
-                .join(', ') || 'no open alerts'
+            ? (a.truncated ? `counting stopped at ${a.open}: ` : '') +
+                (Object.entries(a.by_severity)
+                  .map(([k, n]) => `${n} ${k}`)
+                  .join(', ') || 'no open alerts')
             : 'not available'
         )}">${a?.open === 0 ? '&nbsp;' : esc(alertText(a))}</td>`;
       const ciClass = ci =>
