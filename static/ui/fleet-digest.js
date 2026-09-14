@@ -500,6 +500,22 @@ export const latestMajorShare = npm =>
     ? (npm.by_major[majorOf(npm.latest)] ?? 0) / npm.versions_total
     : null;
 
+// A share that prints as 100% says the package has one major line in use.
+export const wholeShare = share => typeof share === 'number' && Math.round(100 * share) >= 100;
+
+const TOP_VERSIONS = 5;
+
+// {share, atMost}: a latest version outside a full top list is capped by the
+// last one there; outside a shorter list it had no downloads.
+export const latestVersionShare = npm => {
+  if (!npm?.latest || !npm.versions_total) return null;
+  const top = npm.top_versions ?? [];
+  const hit = top.find(([v]) => v === npm.latest);
+  if (hit) return {share: hit[1] / npm.versions_total, atMost: false};
+  if (top.length < TOP_VERSIONS) return {share: 0, atMost: false};
+  return {share: top[top.length - 1][1] / npm.versions_total, atMost: true};
+};
+
 // The latest major plus the two heaviest others, newest first; the rest folds
 // into one row, so a long 0.x tail stays one line.
 export const majorShares = (npm, kept = 3) => {
@@ -565,6 +581,7 @@ export const packageRow = (project, snapshot, p) => {
     weekly: n?.weekly ?? [],
     change: fourWeekChange(n?.weekly),
     latestMajorShare: latestMajorShare(n),
+    latestVersionShare: latestVersionShare(n),
     dependents: n?.dependents ?? null,
     total: n?.total?.downloads ?? null,
     level: p.fleet?.level ?? null,

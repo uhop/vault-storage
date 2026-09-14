@@ -16,6 +16,8 @@ import {
   parsePackages,
   fourWeekChange,
   latestMajorShare,
+  latestVersionShare,
+  wholeShare,
   majorShares,
   dependentsChange,
   weekEnds,
@@ -719,6 +721,24 @@ test('package readers derive the table columns', t => {
   t.equal(fourWeekChange([1, 2, 3]), null, 'fewer than eight weeks');
   t.equal(latestMajorShare(npm), 0.35);
   t.equal(latestMajorShare({...npm, by_major: null}), null, 'no split read');
+  t.notOk(wholeShare(0.35));
+  t.ok(wholeShare(1));
+  t.ok(wholeShare(2470757 / 2470758), 'one stray download on another major still reads 100%');
+  t.notOk(wholeShare(0.994));
+  t.notOk(wholeShare(null), 'no split read');
+
+  t.deepEqual(latestVersionShare(npm), {share: 0.25, atMost: false});
+  t.deepEqual(
+    latestVersionShare({...npm, latest: '3.2.0'}),
+    {share: 0.02, atMost: true},
+    'outside a full top list: at most the last one listed'
+  );
+  t.deepEqual(
+    latestVersionShare({...npm, latest: '3.2.0', top_versions: npm.top_versions.slice(0, 3)}),
+    {share: 0, atMost: false},
+    'outside a shorter list: no downloads'
+  );
+  t.equal(latestVersionShare({...npm, versions_total: null}), null, 'no split read');
 
   t.deepEqual(
     majorShares(npm).map(r => [r.label, r.share, r.latest]),
@@ -767,6 +787,7 @@ test('package readers derive the table columns', t => {
     latest: '3.1.0',
     week: {downloads: 2000},
     latestMajorShare: 0.35,
+    latestVersionShare: {share: 0.25, atMost: false},
     total: 104000,
     level: 2,
     collected_at: '2026-09-14T01:20:00.000Z'

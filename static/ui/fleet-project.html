@@ -217,6 +217,8 @@
         weekEnds,
         fourWeekChange,
         majorShares,
+        latestMajorShare,
+        wholeShare,
         dependentsChange,
         compareVersions,
         NOISE_BASE
@@ -327,7 +329,7 @@
           })
         ].join('');
 
-        const shares = majorShares(n);
+        const shares = wholeShare(latestMajorShare(n)) ? [] : majorShares(n);
         const byVersion = n.dependents?.by_version ?? {};
         const top = n.top_versions ?? [];
         const versions = top.length

@@ -355,7 +355,9 @@
         packageRows,
         dependentsChange,
         compact,
-        percent
+        percent,
+        majorOf,
+        wholeShare
       } from '/ui/fleet-digest.js';
       import {
         WINDOWS,
@@ -686,7 +688,18 @@
         {key: 'weekly', label: 'Weekly', value: r => r.week?.downloads ?? -1, n: true},
         {key: 'trend', label: '26 weeks'},
         {key: 'change', label: 'Δ 4 weeks', value: r => r.change?.ratio ?? -Infinity, n: true},
-        {key: 'major', label: 'Latest major', value: r => r.latestMajorShare ?? -1, n: true},
+        {
+          key: 'major',
+          label: 'Latest\nmajor',
+          value: r => (wholeShare(r.latestMajorShare) ? -0.5 : (r.latestMajorShare ?? -1)),
+          n: true
+        },
+        {
+          key: 'version',
+          label: 'Latest\nversion',
+          value: r => r.latestVersionShare?.share ?? -1,
+          n: true
+        },
         {
           key: 'dependents',
           label: 'Dependents',
@@ -696,6 +709,28 @@
         {key: 'level', label: 'Level', value: r => r.level ?? -1, n: true},
         {key: 'collected', label: 'Collected', value: r => r.collected_at ?? '', text: true}
       ];
+
+      const splitNote = r =>
+        (r.week?.downloads ?? 0) < 100
+          ? 'under 100 downloads a week: the version split is not read'
+          : 'no version split stored for this week';
+      const majorCell = r => {
+        const share = r.latestMajorShare;
+        if (share === null) return `<td class="n quiet" title="${esc(splitNote(r))}">-</td>`;
+        if (wholeShare(share))
+          return `<td class="n" title="${esc(`${majorOf(r.latest)}.x carries all downloads, to the nearest percent`)}">&nbsp;</td>`;
+        return `<td class="n">${esc(percent(share))}</td>`;
+      };
+      const versionCell = r => {
+        const v = r.latestVersionShare;
+        if (v === null) return `<td class="n quiet" title="${esc(splitNote(r))}">-</td>`;
+        if (v.share === 0)
+          return `<td class="n" title="${esc(`no downloads of ${r.latest} that week`)}">&nbsp;</td>`;
+        const title = v.atMost
+          ? `${r.latest} is not among the five most downloaded versions`
+          : `${r.latest}: ${percent(v.share)} of the week's downloads`;
+        return `<td class="n" title="${esc(title)}">${esc(`${v.atMost ? '≤' : ''}${percent(v.share)}`)}</td>`;
+      };
 
       const REPO_COLUMNS = [
         {key: 'name', label: 'Repository', value: x => x.project, text: true},
@@ -759,7 +794,7 @@
         TABLES[table].columns
           .map(
             c =>
-              `<th class="${c.n ? 'n ' : ''}${c.value ? 'sortable' : ''}" ${c.value ? `data-table="${table}" data-sort="${c.key}" aria-sort="${sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}" tabindex="0"` : ''}>${esc(c.label)}${extra(c)}</th>`
+              `<th class="${c.n ? 'n ' : ''}${c.value ? 'sortable' : ''}" ${c.value ? `data-table="${table}" data-sort="${c.key}" aria-sort="${sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}" tabindex="0"` : ''}>${c.label.split('\n').map(esc).join('<br>')}${extra(c)}</th>`
           )
           .join('');
 
@@ -811,14 +846,15 @@
             <td class="n" title="${esc(r.week ? `${r.week.downloads.toLocaleString('en-US')} downloads, ${rangeLabel(r.week.start, r.week.end)}` : '')}">${r.week?.downloads === 0 ? '&nbsp;' : esc(compact(r.week?.downloads))}</td>
             <td>${sparkline(trend, {label: `Weekly downloads, last ${trend.length} weeks, ending ${r.week ? dayLabel(r.week.end) : ''}`})}</td>
             <td class="n ${!r.change || r.change.noisy ? 'quiet' : ''}" title="${esc(r.change ? `${r.change.last.toLocaleString('en-US')} in the last 4 weeks against ${r.change.prev.toLocaleString('en-US')} before${r.change.noisy ? ' — under 5,000, mostly noise' : ''}` : '')}">${esc(signedPercent(r.change?.ratio))}</td>
-            <td class="n ${r.latestMajorShare === null ? 'quiet' : ''}" title="${r.latestMajorShare === null ? ((r.week?.downloads ?? 0) < 100 ? 'under 100 downloads a week: the version split is not read' : 'no version split stored for this week') : ''}">${esc(percent(r.latestMajorShare))}</td>
+            ${majorCell(r)}
+            ${versionCell(r)}
             <td class="n" title="${esc(change ? `deps.dev direct dependents; ${change.delta >= 0 ? '+' : ''}${change.delta} since ${dayLabel(change.since)}${change.partial ? ' (tracking began then)' : ''}` : '')}">${r.dependents ? count(r.dependents.direct) : '-'}${change?.delta ? ` <span class="quiet">${change.delta > 0 ? '+' : '−'}${Math.abs(change.delta)}</span>` : ''}</td>
             <td class="n">${esc(r.level ?? '-')}</td>
             <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(short(r.collected_at))}">${esc(monthDay(r.collected_at?.slice(0, 10)))}</td>
           </tr>`;
         });
         body.push(
-          `<tr class="total"><td>Total (${rows.length})</td><td></td><td></td><td class="n" title="${esc(weekly.toLocaleString('en-US'))}">${esc(compact(weekly))}</td><td colspan="6"></td></tr>`
+          `<tr class="total"><td>Total (${rows.length})</td><td></td><td></td><td class="n" title="${esc(weekly.toLocaleString('en-US'))}">${esc(compact(weekly))}</td><td colspan="7"></td></tr>`
         );
         const head = headRow('packages', sort, c =>
           c.key === 'weekly' && start
