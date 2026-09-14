@@ -9,6 +9,7 @@ import {embedPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {startupReindex} from '../maintenance/startup-reindex.ts';
+import {backfillChunkTextHashes} from '../maintenance/backfill-chunk-text-hashes.ts';
 import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startScanScheduler, type ScanSchedulerHandle} from '../maintenance/scan-scheduler.ts';
@@ -64,7 +65,7 @@ export const main = async (): Promise<void> => {
     process.stdout.write(`vault-storage: initial reindex of ${env.vaultDataPath}…\n`);
     try {
       const summary = await startupReindex(db, env.vaultDataPath, {
-        migrationsApplied: migration.applied
+        reindexMigrations: migration.reindex
       });
       const embed = await embedPending(db, embedder);
       resolverCache.invalidate();
@@ -90,6 +91,13 @@ export const main = async (): Promise<void> => {
       `vault-storage: doc-vec backfill — ${backfill.written} written, ` +
         `${backfill.upToDate} up-to-date, ${backfill.skipped} skipped ` +
         `(${backfill.durationMs} ms)\n`
+    );
+  }
+  const textHashes = await backfillChunkTextHashes(db);
+  if (textHashes.candidates > 0) {
+    process.stdout.write(
+      `vault-storage: chunk text-hash backfill — ${textHashes.written} written, ` +
+        `${textHashes.skipped} skipped (${textHashes.durationMs} ms)\n`
     );
   }
 

@@ -39,11 +39,18 @@ export class RecordVecRepository {
   readonly #nearestChunks: StatementSync;
   readonly #chunksForRecord: StatementSync;
   readonly #allChunks: StatementSync;
+  readonly #vectorsByTextHash: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#insertMeta = db.prepare(
-      `INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash)
-       VALUES (?, ?, ?, ?)`
+      `INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash, text_hash)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    this.#vectorsByTextHash = db.prepare(
+      `SELECT c.text_hash AS text_hash, v.embedding AS embedding
+         FROM chunks c
+         JOIN record_vec v ON v.chunk_id = c.chunk_id
+        WHERE c.record_id = ? AND c.text_hash IS NOT NULL`
     );
     this.#insertVec = db.prepare('INSERT INTO record_vec (chunk_id, embedding) VALUES (?, ?)');
     // Vec rows are located through chunks, so this delete must run before
@@ -92,15 +99,36 @@ export class RecordVecRepository {
    * inserts the new ones. `chunks` and any per-chunk sub-arrays are zero-based;
    * `chunk_id` is composed as `${recordId}:${index}`.
    */
-  setChunks(recordId: string, contentHash: string, chunks: Float32Array[]): void {
+  setChunks(
+    recordId: string,
+    contentHash: string,
+    chunks: Float32Array[],
+    textHashes: readonly (string | null)[] = []
+  ): void {
     this.#deleteVecsByRecord.run(recordId);
     this.#deleteMetaByRecord.run(recordId);
     for (let i = 0; i < chunks.length; i++) {
       const v = chunks[i]!;
       const chunkId = `${recordId}:${i}`;
-      this.#insertMeta.run(chunkId, recordId, i, contentHash);
+      this.#insertMeta.run(chunkId, recordId, i, contentHash, textHashes[i] ?? null);
       this.#insertVec.run(chunkId, toBlob(v));
     }
+  }
+
+  /** A record's stored vectors keyed by the hash of the chunk text they embed; chunks without a hash are left out. */
+  getVectorsByTextHash(recordId: string): Map<string, Float32Array> {
+    const rows = this.#vectorsByTextHash.all(recordId) as unknown[] as {
+      text_hash: string;
+      embedding: Uint8Array;
+    }[];
+    const out = new Map<string, Float32Array>();
+    for (const r of rows) {
+      out.set(
+        r.text_hash,
+        new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)
+      );
+    }
+    return out;
   }
 
   /** Returns the content_hash recorded with this record's chunks, or null. */

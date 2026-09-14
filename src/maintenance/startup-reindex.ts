@@ -54,13 +54,13 @@ export const importerFingerprint = async (
 export const startupReindex = async (
   db: DatabaseSync,
   vaultDataPath: string,
-  opts: {migrationsApplied: readonly string[]; fingerprint?: string}
+  opts: {reindexMigrations: readonly string[]; fingerprint?: string}
 ): Promise<StartupReindexSummary> => {
   const fingerprint = opts.fingerprint ?? (await importerFingerprint());
   const reason: FullReindexReason | null =
     getLastIndexedCommit(db) === null
       ? 'no-anchor'
-      : opts.migrationsApplied.length > 0
+      : opts.reindexMigrations.length > 0
         ? 'migrations'
         : getMetaValue(db, IMPORTER_FINGERPRINT_KEY) !== fingerprint
           ? 'importer-changed'

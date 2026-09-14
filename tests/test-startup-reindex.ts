@@ -47,7 +47,7 @@ test('startupReindex: a fresh database gets a full import and records the finger
   const fx = setup();
   try {
     const summary = await startupReindex(fx.db, fx.root, {
-      migrationsApplied: [],
+      reindexMigrations: [],
       fingerprint: 'f1'
     });
     t.equal(summary.reason, 'no-anchor');
@@ -62,9 +62,9 @@ test('startupReindex: a fresh database gets a full import and records the finger
 test('startupReindex: a restart with nothing changed stays incremental', async t => {
   const fx = setup();
   try {
-    await startupReindex(fx.db, fx.root, {migrationsApplied: [], fingerprint: 'f1'});
+    await startupReindex(fx.db, fx.root, {reindexMigrations: [], fingerprint: 'f1'});
     const summary = await startupReindex(fx.db, fx.root, {
-      migrationsApplied: [],
+      reindexMigrations: [],
       fingerprint: 'f1'
     });
     t.equal(summary.reason, null, 'no reason for a full import');
@@ -78,17 +78,17 @@ test('startupReindex: a restart with nothing changed stays incremental', async t
 test('startupReindex: a migration or a changed importer forces a full import', async t => {
   const fx = setup();
   try {
-    await startupReindex(fx.db, fx.root, {migrationsApplied: [], fingerprint: 'f1'});
+    await startupReindex(fx.db, fx.root, {reindexMigrations: [], fingerprint: 'f1'});
 
     const migrated = await startupReindex(fx.db, fx.root, {
-      migrationsApplied: ['0099_example.sql'],
+      reindexMigrations: ['0099_example.sql'],
       fingerprint: 'f1'
     });
     t.equal(migrated.reason, 'migrations');
     t.equal(migrated.fellBack, true, 'full import after a migration');
 
     const changed = await startupReindex(fx.db, fx.root, {
-      migrationsApplied: [],
+      reindexMigrations: [],
       fingerprint: 'f2'
     });
     t.equal(changed.reason, 'importer-changed');
@@ -102,10 +102,10 @@ test('startupReindex: a migration or a changed importer forces a full import', a
 test('startupReindex: a file edited while the server was down is imported', async t => {
   const fx = setup();
   try {
-    await startupReindex(fx.db, fx.root, {migrationsApplied: [], fingerprint: 'f1'});
+    await startupReindex(fx.db, fx.root, {reindexMigrations: [], fingerprint: 'f1'});
     writeMd(fx.root, 'topics/a.md', '---\ntitle: A edited\n---\nbody A, edited while down\n');
     const summary = await startupReindex(fx.db, fx.root, {
-      migrationsApplied: [],
+      reindexMigrations: [],
       fingerprint: 'f1'
     });
     t.equal(summary.reason, null, 'incremental');

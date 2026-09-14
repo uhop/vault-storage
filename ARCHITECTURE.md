@@ -38,7 +38,7 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 - **`bge.ts`** — `Xenova/bge-small-en-v1.5` (384-dim, CLS-pool, L2-norm) via `@huggingface/transformers` ONNX on CPU; held by a `time-queues` Retainer that frees the ~GB arena after idle; `maxBatch` sub-batching; NaN-vector retry + logging.
 - **`fake.ts`** — deterministic sha256-seeded unit vectors; used by tests and `VAULT_EMBEDDER=fake`.
 - **`chunker.ts`** — markdown-aware chunking: header-path prefixes, paragraph/char overlap, optional `agent.summary` prefix (HyDE anchor).
-- **`embed-pass.ts`** — `embedPending`: re-embeds records whose content hash drifted; batch-embeds outside the transaction, writes per batch.
+- **`embed-pass.ts`** — `embedPending`: re-embeds records whose content hash drifted; reuses the stored vector of every chunk whose text hash (schema 0023) is unchanged, so an edit sends only its changed chunks to the model; batch-embeds outside the transaction, writes per batch. ONNX inference itself runs synchronously on the main thread (onnxruntime-node wraps `session.run` in `setImmediate`), so each model call blocks the loop.
 - **`anomaly-log.ts`** — append-only JSONL log of non-finite-vector events.
 
 Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record MIN chunk distance) and **`src/db/doc-vec-repo.ts`** (one mean-pooled vector per record; drives duplicate detection).
@@ -46,8 +46,8 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 ## DB layer (`src/db/`)
 
 - **`connection.ts`** — `node:sqlite` `DatabaseSync` + `sqlite-vec` extension, `sha256_hex` SQL function, FK enforcement, WAL.
-- **`migrate.ts`** — applies `schema/NNNN_*.sql` in numeric order, each in its own transaction (`-- migrate:no-transaction` opt-out for table rebuilds).
-- **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index, 0022 partial expression indexes on the suggestion identity keys (their expressions must match `column()` in `file-suggestions.ts`, or the planner scans). A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
+- **`migrate.ts`** — applies `schema/NNNN_*.sql` in numeric order, each in its own transaction (`-- migrate:no-transaction` opt-out for table rebuilds). A migration carrying a `-- migrate:no-reindex` line changes nothing the importer derives, so it does not force the startup full import; `MigrationResult.reindex` lists the ones that do.
+- **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index, 0023 `chunks.text_hash` (filled for existing chunk sets by `backfillChunkTextHashes` at startup), 0022 partial expression indexes on the suggestion identity keys (their expressions must match `column()` in `file-suggestions.ts`, or the planner scans). A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
 - **`meta.ts`** — typed KV: `schema_version`, `last_indexed_commit`, `content_generation`, git-sync failure ledger.
 
 ## Server surface (`src/server/handlers/`)

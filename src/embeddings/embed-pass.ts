@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {meanPoolNormalize, RecordDocVecRepository} from '../db/doc-vec-repo.ts';
 import {RecordVecRepository} from '../db/vec-repo.ts';
+import {contentHash} from '../util/hash.ts';
 import {chunkBody} from './chunker.ts';
 import type {Embedder} from './types.ts';
 
@@ -13,6 +14,8 @@ export interface EmbedSummary {
   total: number;
   /** Total chunks written this pass. */
   chunksWritten: number;
+  /** Chunks whose stored vector was reused instead of re-embedded (their text was unchanged). */
+  chunksReused: number;
   /** Doc-level vectors written (one per record-with-chunks). */
   docVecsWritten: number;
   durationMs: number;
@@ -83,40 +86,48 @@ export const embedPending = async (
   let chunksWritten = 0;
   let docVecsWritten = 0;
 
-  // Each record produces N chunks; embed in batches of `batchSize` chunks
-  // for throughput. We accumulate chunks across records, then commit when
-  // we hit a batch boundary.
-  type Pending = {row: PendingRow; chunkTexts: string[]; chunkVectors: Float32Array[]};
+  // Chunks are embedded in batches of `batchSize` across records; a chunk
+  // whose text hash already has a stored vector for the record is reused, so
+  // an edit re-embeds only the chunks it changed.
+  type Pending = {
+    row: PendingRow;
+    texts: string[];
+    hashes: string[];
+    vectors: (Float32Array | null)[];
+    missing: number[];
+  };
   const buf: Pending[] = [];
   let bufChunkCount = 0;
+  let chunksReused = 0;
 
   const flush = async (): Promise<void> => {
     if (buf.length === 0) return;
     const flatTexts: string[] = [];
-    for (const p of buf) flatTexts.push(...p.chunkTexts);
-    const flatVecs = await embedder.embedBatch(flatTexts);
+    for (const p of buf) for (const i of p.missing) flatTexts.push(p.texts[i]!);
+    const flatVecs = flatTexts.length ? await embedder.embedBatch(flatTexts) : [];
 
     let idx = 0;
     db.exec('BEGIN');
     try {
       for (const p of buf) {
-        const vecs_ = flatVecs.slice(idx, idx + p.chunkTexts.length);
-        idx += p.chunkTexts.length;
+        for (const i of p.missing) p.vectors[i] = flatVecs[idx++]!;
+        const vecs_ = p.vectors as Float32Array[];
         // BGE / transformers.js occasionally produces a NaN chunk vector on
         // otherwise normal inputs (caught 2026-05-03 — 2 of 5701 live chunks
         // affected; root cause unknown, suspected tokenizer/ONNX edge case).
         // Drop the bad vectors here so neither record_vec nor record_doc_vec
         // ever stores NaN — a single NaN chunk poisons the mean-pool sum and
         // produces an all-NaN doc-vec, which sqlite-vec then returns as null
-        // distance on every neighbour query.
-        const cleanVecs = vecs_.filter(isAllFinite);
-        const dropped = vecs_.length - cleanVecs.length;
+        // distance on every neighbour query. Hashes are dropped in step, so a
+        // kept vector stays paired with the text it embeds.
+        const kept = vecs_.flatMap((v, i) => (isAllFinite(v) ? [i] : []));
+        const dropped = vecs_.length - kept.length;
         if (dropped > 0) {
           console.warn(
             `[embed] dropped ${dropped} non-finite chunk vector(s) of ${vecs_.length} for record ${p.row.record_id}`
           );
         }
-        if (cleanVecs.length === 0) {
+        if (kept.length === 0) {
           // All chunks NaN — write the original anyway so we don't loop on
           // re-embed every pass; downstream consumers will see no doc-vec
           // (skipped below) and treat the record as not-similar to anything.
@@ -129,7 +140,13 @@ export const embedPending = async (
           chunksWritten += vecs_.length;
           continue;
         }
-        vecs.setChunks(p.row.record_id, p.row.content_hash, cleanVecs);
+        const cleanVecs = kept.map(i => vecs_[i]!);
+        vecs.setChunks(
+          p.row.record_id,
+          p.row.content_hash,
+          cleanVecs,
+          kept.map(i => p.hashes[i]!)
+        );
         // Doc-level vector: mean-pool the chunk vectors and L2-renormalize.
         // Drives whole-record operations (find-duplicates, clustering).
         // record_vec stays the source of truth for chunk-level retrieval.
@@ -151,11 +168,19 @@ export const embedPending = async (
   };
 
   for (const row of pending) {
-    const chunkTexts = chunkBody(row.body, {summary: row.agent_summary});
-    if (chunkTexts.length === 0) continue;
-    if (bufChunkCount + chunkTexts.length > batchSize && buf.length > 0) await flush();
-    buf.push({row, chunkTexts, chunkVectors: []});
-    bufChunkCount += chunkTexts.length;
+    const texts = chunkBody(row.body, {summary: row.agent_summary});
+    if (texts.length === 0) continue;
+    const hashes = texts.map(contentHash);
+    const stored = vecs.getVectorsByTextHash(row.record_id);
+    const vectors = hashes.map(h => {
+      const v = stored.get(h);
+      return v !== undefined && isAllFinite(v) ? v : null;
+    });
+    const missing = vectors.flatMap((v, i) => (v === null ? [i] : []));
+    chunksReused += texts.length - missing.length;
+    if (bufChunkCount + missing.length > batchSize && buf.length > 0) await flush();
+    buf.push({row, texts, hashes, vectors, missing});
+    bufChunkCount += missing.length;
     if (bufChunkCount >= batchSize) await flush();
   }
   await flush();
@@ -165,6 +190,7 @@ export const embedPending = async (
     upToDate: total - embedded,
     total,
     chunksWritten,
+    chunksReused,
     docVecsWritten,
     durationMs: Math.round(performance.now() - start)
   };

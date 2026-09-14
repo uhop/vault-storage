@@ -3,9 +3,11 @@ import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {RecordVecRepository} from '../src/db/vec-repo.ts';
+import {chunkBody} from '../src/embeddings/chunker.ts';
 import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import type {Embedder} from '../src/embeddings/types.ts';
+import {backfillChunkTextHashes} from '../src/maintenance/backfill-chunk-text-hashes.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import type {VaultRecord} from '../src/records/types.ts';
 import {contentHash, embedInputHash} from '../src/util/hash.ts';
@@ -308,4 +310,170 @@ test('embedPending', async t => {
       fx.db.close();
     }
   });
+});
+
+class CountingEmbedder implements Embedder {
+  readonly dim = 384;
+  readonly modelName = 'counting-fake';
+  readonly retained = false;
+  readonly inner = new FakeEmbedder();
+  readonly embedded: string[] = [];
+  poison: (text: string) => boolean = () => false;
+
+  async embed(text: string): Promise<Float32Array> {
+    return (await this.embedBatch([text]))[0]!;
+  }
+
+  async embedBatch(texts: string[]): Promise<Float32Array[]> {
+    this.embedded.push(...texts);
+    const out = await this.inner.embedBatch(texts);
+    return out.map((v, i) => (this.poison(texts[i]!) ? new Float32Array(v.length).fill(NaN) : v));
+  }
+
+  async releaseRetained(): Promise<void> {}
+}
+
+const longBody = (sections: number): string =>
+  Array.from(
+    {length: sections},
+    (_, s) =>
+      `## Section ${s}\n\n` +
+      Array.from({length: 3}, (_, p) => `Paragraph ${s}.${p} ${'text '.repeat(90)}`).join('\n\n')
+  ).join('\n\n');
+
+const storedHashes = (db: DatabaseSync, recordId: string): (string | null)[] =>
+  (
+    db
+      .prepare('SELECT text_hash FROM chunks WHERE record_id = ? ORDER BY chunk_index')
+      .all(recordId) as {text_hash: string | null}[]
+  ).map(r => r.text_hash);
+
+test('embedPending reuses the vectors of unchanged chunks', async t => {
+  await t.test('an append re-embeds only the chunk it changed', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const body = longBody(6);
+      const a = makeRecord('topics/long.md', body);
+      fx.records.insert(a);
+      const first = await embedPending(fx.db, embedder);
+      const chunks = fx.vecs.getChunks(a.recordId).length;
+      t.ok(chunks > 6, `the body spans several chunks (${chunks})`);
+      t.equal(first.chunksReused, 0, 'nothing to reuse on the first pass');
+      t.equal(embedder.embedded.length, chunks, 'every chunk embedded once');
+      t.deepEqual(
+        storedHashes(fx.db, a.recordId),
+        chunkBody(body).map(text => contentHash(text)),
+        'each chunk stores the hash of its text'
+      );
+      const before = fx.vecs.getChunks(a.recordId).map(v => Array.from(v));
+
+      embedder.embedded.length = 0;
+      const appended = `${body}\n\nOne more paragraph at the end.`;
+      fx.records.upsertByPath({...a, body: appended, contentHash: contentHash(appended)});
+      const second = await embedPending(fx.db, embedder);
+      t.equal(second.embedded, 1, 'the record was re-embedded');
+      t.equal(embedder.embedded.length, 1, 'one chunk text went to the model');
+      t.equal(second.chunksReused, chunks - 1, 'every other chunk reused');
+      const after = fx.vecs.getChunks(a.recordId).map(v => Array.from(v));
+      t.deepEqual(after.slice(0, -1), before.slice(0, -1), 'reused vectors unchanged');
+      t.equal(fx.vecs.getRecordContentHash(a.recordId), contentHash(appended), 'new hash recorded');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('a summary change re-embeds every chunk', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const body = longBody(4);
+      const a = {...makeRecord('topics/long.md', body), agentSummary: 'first summary'};
+      a.contentHash = embedInputHash(body, a.agentSummary);
+      fx.records.insert(a);
+      await embedPending(fx.db, embedder);
+      const chunks = embedder.embedded.length;
+
+      embedder.embedded.length = 0;
+      const refreshed = {
+        ...a,
+        agentSummary: 'second summary',
+        contentHash: embedInputHash(body, 'second summary')
+      };
+      fx.records.upsertByPath(refreshed);
+      const second = await embedPending(fx.db, embedder);
+      t.equal(embedder.embedded.length, chunks, 'every chunk re-embedded');
+      t.equal(second.chunksReused, 0, 'nothing reused');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('a dropped non-finite vector keeps the remaining hashes paired', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const body = longBody(3);
+      const texts = chunkBody(body);
+      const bad = texts[1]!;
+      embedder.poison = text => text === bad;
+      const a = makeRecord('topics/long.md', body);
+      fx.records.insert(a);
+      await embedPending(fx.db, embedder);
+      const expected = texts.filter(text => text !== bad).map(text => contentHash(text));
+      t.deepEqual(storedHashes(fx.db, a.recordId), expected, 'hashes follow the kept vectors');
+
+      embedder.poison = () => false;
+      embedder.embedded.length = 0;
+      const edited = `${body}\n\nAppended.`;
+      fx.records.upsertByPath({...a, body: edited, contentHash: contentHash(edited)});
+      await embedPending(fx.db, embedder);
+      t.ok(embedder.embedded.includes(bad), 'the chunk with no stored vector is embedded again');
+      t.equal(embedder.embedded.length, 2, 'it and the appended chunk, nothing else');
+    } finally {
+      fx.db.close();
+    }
+  });
+});
+
+test('backfillChunkTextHashes fills hashes for chunk sets that still match their record', async t => {
+  const fx = setup();
+  const embedder = new CountingEmbedder();
+  try {
+    const bodyA = longBody(3);
+    const a = makeRecord('topics/a.md', bodyA);
+    const b = makeRecord('topics/b.md', longBody(2).replaceAll('Paragraph', 'Line'));
+    fx.records.insert(a);
+    fx.records.insert(b);
+    // Embedded before 0023: chunks without text hashes.
+    const vecsA = await embedder.inner.embedBatch(chunkBody(bodyA));
+    fx.vecs.setChunks(a.recordId, a.contentHash, vecsA);
+    fx.vecs.setChunks(b.recordId, 'an older body', [(await embedder.inner.embed('old'))!]);
+
+    const summary = await backfillChunkTextHashes(fx.db);
+    t.equal(summary.candidates, 2);
+    t.equal(summary.written, 1, 'the matching record is filled');
+    t.equal(summary.skipped, 1, 'the stale chunk set is left alone');
+    t.deepEqual(
+      storedHashes(fx.db, a.recordId),
+      chunkBody(bodyA).map(text => contentHash(text)),
+      'hashes follow chunk order'
+    );
+    t.deepEqual(storedHashes(fx.db, b.recordId), [null], 'stale record untouched');
+
+    const again = await backfillChunkTextHashes(fx.db);
+    t.equal(again.written, 0, 'idempotent');
+
+    const edited = `${bodyA}\n\nAppended.`;
+    fx.records.upsertByPath({...a, body: edited, contentHash: contentHash(edited)});
+    embedder.embedded.length = 0;
+    await embedPending(fx.db, embedder);
+    t.equal(
+      embedder.embedded.filter(text => chunkBody(edited).includes(text)).length,
+      1,
+      'the backfilled record reuses its unchanged chunks on the next edit'
+    );
+  } finally {
+    fx.db.close();
+  }
 });

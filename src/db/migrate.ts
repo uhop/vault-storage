@@ -14,9 +14,17 @@ const MIGRATION_FILE = /^(\d{4})_.*\.sql$/;
  */
 const NO_TXN_MARKER = '-- migrate:no-transaction';
 
+/**
+ * A migration carrying this line changes nothing the importer derives from files
+ * (an index, a new empty column), so it does not force a full import at startup.
+ */
+const NO_REINDEX_MARKER = /^-- migrate:no-reindex$/m;
+
 export interface MigrationResult {
   /** Filenames of migrations applied in this call (already-applied ones are skipped). */
   applied: string[];
+  /** The applied migrations that force a full import: every one without the no-reindex marker. */
+  reindex: string[];
   /** Schema version after the run. */
   current: number;
 }
@@ -45,6 +53,7 @@ export const runMigrations = (db: DatabaseSync): MigrationResult => {
     .sort();
 
   const applied: string[] = [];
+  const reindex: string[] = [];
   for (const file of files) {
     const match = MIGRATION_FILE.exec(file);
     if (!match || !match[1]) continue;
@@ -78,7 +87,8 @@ export const runMigrations = (db: DatabaseSync): MigrationResult => {
       }
     }
     applied.push(file);
+    if (!NO_REINDEX_MARKER.test(sql)) reindex.push(file);
   }
 
-  return {applied, current: getVersion()};
+  return {applied, reindex, current: getVersion()};
 };
