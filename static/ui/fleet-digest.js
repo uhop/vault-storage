@@ -6,6 +6,7 @@
 export const DIGEST_PATH = 'projects/agent-workflow/fleet-status.md';
 export const stateDocPath = project => `projects/${project}/state.md`;
 const GITHUB_HEADING = '## GitHub';
+const PACKAGES_HEADING = '## Packages';
 
 export const short = iso => (iso ?? '').replace(/T(\d\d:\d\d).*$/, ' $1');
 export const plural = (n, word, words = `${word}s`) => `${n} ${n === 1 ? word : words}`;
@@ -31,10 +32,12 @@ export const parseRuns = text => {
   return runs.sort(byDesc(r => r.collected_at));
 };
 
-export const parseBaseline = text => {
-  const at = text.indexOf(`\n${GITHUB_HEADING}\n`);
+const parseSection = (text, heading) => {
+  const at = text.indexOf(`\n${heading}\n`);
   if (at < 0) return null;
-  const m = /```json\n([\s\S]*?)\n```/.exec(text.slice(at));
+  const rest = text.slice(at + 1),
+    next = rest.indexOf('\n## ');
+  const m = /```json\n([\s\S]*?)\n```/.exec(next < 0 ? rest : rest.slice(0, next));
   if (!m) return null;
   try {
     return JSON.parse(m[1]);
@@ -42,6 +45,9 @@ export const parseBaseline = text => {
     return null;
   }
 };
+
+export const parseBaseline = text => parseSection(text, GITHUB_HEADING);
+export const parsePackages = text => parseSection(text, PACKAGES_HEADING);
 
 export const parseWhen = text => {
   const m = /^(\d+)d$/.exec(text);
@@ -59,7 +65,7 @@ export const storedMovement = (all, {cutoff = null, runs: count = null, repo = n
   const byRepo = new Map();
   let fleetSize = null;
   for (const run of [...runs].reverse()) {
-    if (run.mode === 'fleet' && run.totals?.repos)
+    if (run.mode === 'fleet' && !run.packages_only && run.totals?.repos)
       fleetSize = run.totals.repos - (run.totals.first_run ?? 0) - (run.totals.errors ?? 0);
     for (const r of run.repos ?? []) {
       if (repo && r.repo !== repo) continue;
@@ -151,6 +157,8 @@ export const eventLine = e => {
       return `${e.kind} ${e.from} → ${e.to} open`;
     case e.kind === 'ci.conclusion':
       return `ci ${e.name}: ${e.from} → ${e.to}`;
+    case e.kind === 'package.dependents':
+      return `package.dependents ${e.package} ${e.from} → ${e.to}`;
     default:
       return `${e.kind} ${JSON.stringify(e)}`;
   }
@@ -220,6 +228,7 @@ const briefCounters = (repos, ghUser) => {
     forkLogins = new Map(),
     watchers = new Map(),
     watcherLogins = new Map(),
+    dependents = new Map(),
     reactions = new Map(),
     bots = [],
     alertsDown = [];
@@ -229,7 +238,8 @@ const briefCounters = (repos, ghUser) => {
     const name = shortRepo(r.repo, ghUser);
     for (const e of r.events) {
       const k = e.kind;
-      if (k === 'stars.count') add(stars, name, e.delta ?? e.to - e.from);
+      if (k === 'package.dependents') add(dependents, e.package, e.delta ?? e.to - e.from);
+      else if (k === 'stars.count') add(stars, name, e.delta ?? e.to - e.from);
       else if (k === 'star.new') add(stars, name, 1);
       else if (k === 'star.removed') add(stars, name, -1);
       else if (k === 'fork.new') {
@@ -263,6 +273,10 @@ const briefCounters = (repos, ghUser) => {
     parts.push(
       `watchers ${signed(total(watchers))} (${list(watchers, ([k, v]) => `${k} ${signed(v)}${watcherLogins.has(k) ? `: ${watcherLogins.get(k).join(', ')}` : ''}`)})`
     );
+  if (dependents.size)
+    parts.push(
+      `dependents ${signed(total(dependents))} (${list(dependents, ([k, v]) => `${k} ${signed(v)}`)})`
+    );
   if (reactions.size)
     parts.push(
       `reactions ${signed(total(reactions))} (${list(reactions, ([k, v]) => `${k} ${signed(v)}`)})`
@@ -280,7 +294,7 @@ export const brief = digest => {
   let active = 0;
   for (const r of live) {
     const weighted = r.events.map(e => ({w: briefWeight(e, ghUser), e})).filter(x => x.w !== null);
-    if (weighted.length) ++active;
+    if (weighted.length && r.github !== false) ++active;
     const lead = weighted.filter(x => typeof x.w === 'number').sort((a, b) => a.w - b.w);
     if (lead.length)
       moved.push({
@@ -303,8 +317,11 @@ export const brief = digest => {
   const errors = digest.repos
     .filter(r => r.error)
     .map(r => ({name: shortRepo(r.repo, ghUser), message: r.error.message}));
-  const partial = live.reduce((n, r) => n + (r.errors?.length ?? 0), 0);
-  const fleetSize = digest.stored ? digest.stored.fleet_size : live.length;
+  const partial =
+    live.reduce((n, r) => n + (r.errors?.length ?? 0), 0) + (digest.package_errors?.length ?? 0);
+  const fleetSize = digest.stored
+    ? digest.stored.fleet_size
+    : live.filter(r => r.github !== false).length;
   return {
     fleet,
     since,
@@ -404,3 +421,159 @@ export const baselineDetail = b => ({
   since: b.window?.since ?? null,
   firstRun: Boolean(b.window?.first_run)
 });
+
+// ─── Packages ────────────────────────────────────────────────────────────────
+// Readers over the `## Packages` block the same script writes: the table's
+// derived columns and the detail page's series.
+
+const DAY_MS = 864e5;
+const addDays = (day, n) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+// Four weeks against the four before; below this base the change is noise
+// (topics/npm-download-counts-are-not-users).
+export const NOISE_BASE = 5000;
+
+const compareParts = (pa, pb) => {
+  for (let i = 0; i < Math.max(pa.length, pb.length); ++i) {
+    const x = pa[i] ?? '',
+      y = pb[i] ?? '';
+    const d = /^\d+$/.test(x) && /^\d+$/.test(y) ? Number(x) - Number(y) : x.localeCompare(y);
+    if (d) return d;
+  }
+  return 0;
+};
+
+// Semver precedence: build metadata is ignored, and a release sorts above its
+// own prereleases.
+export const compareVersions = (a, b) => {
+  const [mainA, preA = ''] = a.replace(/\+.*$/, '').split(/-(.*)/),
+    [mainB, preB = ''] = b.replace(/\+.*$/, '').split(/-(.*)/);
+  const d = compareParts(mainA.split('.'), mainB.split('.'));
+  if (d || preA === preB) return d;
+  if (!preA || !preB) return preA ? -1 : 1;
+  return compareParts(preA.split('.'), preB.split('.'));
+};
+
+export const majorOf = version => {
+  const [major, minor] = version.split('.');
+  return major === '0' ? `0.${minor}` : major;
+};
+
+export const compact = n => {
+  if (typeof n !== 'number') return '-';
+  const abs = Math.abs(n);
+  if (abs < 1e4) return n.toLocaleString('en-US');
+  const units = [
+    [1e3, 'K'],
+    [1e6, 'M'],
+    [1e9, 'B']
+  ];
+  const scaled = i => {
+    const v = n / units[i][0],
+      a = Math.abs(v);
+    return a >= 100 ? Math.round(v) : Number(v.toFixed(a >= 10 ? 1 : 2));
+  };
+  // The unit follows the rounded value, so 999,500 reads 1M, never 1000K.
+  let i = abs >= 1e9 ? 2 : abs >= 1e6 ? 1 : 0;
+  if (i < 2 && Math.abs(scaled(i)) >= 1000) ++i;
+  return `${scaled(i)}${units[i][1]}`;
+};
+
+export const percent = share =>
+  typeof share === 'number' ? `${(100 * share).toFixed(share < 0.1 ? 1 : 0)}%` : '-';
+
+// The end day of each stored week, oldest first.
+export const weekEnds = npm =>
+  (npm?.weekly ?? []).map((_, i, all) => addDays(npm.week.end, -7 * (all.length - 1 - i)));
+
+export const fourWeekChange = weekly => {
+  if (!weekly || weekly.length < 8) return null;
+  const sum = list => list.reduce((a, b) => a + b, 0);
+  const last = sum(weekly.slice(-4)),
+    prev = sum(weekly.slice(-8, -4));
+  return {last, prev, ratio: prev ? (last - prev) / prev : null, noisy: prev < NOISE_BASE};
+};
+
+export const latestMajorShare = npm =>
+  npm?.latest && npm.by_major && npm.versions_total
+    ? (npm.by_major[majorOf(npm.latest)] ?? 0) / npm.versions_total
+    : null;
+
+// The latest major plus the two heaviest others, newest first; the rest folds
+// into one row, so a long 0.x tail stays one line.
+export const majorShares = (npm, kept = 3) => {
+  if (!npm?.by_major || !npm.versions_total) return [];
+  const latest = npm.latest ? majorOf(npm.latest) : null;
+  const rows = Object.entries(npm.by_major).map(([major, n]) => ({
+    major,
+    label: `${major}.x`,
+    n,
+    share: n / npm.versions_total,
+    latest: major === latest
+  }));
+  const chosen = new Set(
+    [...rows]
+      .sort((a, b) => Number(b.latest) - Number(a.latest) || b.n - a.n)
+      .slice(0, kept)
+      .map(r => r.major)
+  );
+  const out = rows
+    .filter(r => chosen.has(r.major))
+    .sort((a, b) => compareVersions(b.major, a.major));
+  const rest = rows.filter(r => !chosen.has(r.major));
+  if (rest.length) {
+    const n = rest.reduce((a, r) => a + r.n, 0);
+    out.push({
+      major: null,
+      label: `${plural(rest.length, 'other major')}`,
+      n,
+      share: n / npm.versions_total,
+      latest: false
+    });
+  }
+  return out;
+};
+
+// Dependents now against the last point at or before `cutoff`; when tracking
+// began after it, against the first point, flagged `partial`.
+export const dependentsChange = (dependents, cutoff = null) => {
+  const history = dependents?.history ?? [];
+  if (!history.length) return null;
+  const now = history[history.length - 1][1];
+  const day = cutoff ? cutoff.slice(0, 10) : null;
+  let base = history[0];
+  if (day)
+    for (const point of history) {
+      if (point[0] > day) break;
+      base = point;
+    }
+  return {now, delta: now - base[1], since: base[0], partial: Boolean(day) && history[0][0] > day};
+};
+
+export const packageRow = (project, snapshot, p) => {
+  const n = p.npm;
+  return {
+    name: p.name,
+    project,
+    repo: p.repo ?? null,
+    published: Boolean(p.published),
+    latest: n?.latest ?? null,
+    published_at: n?.published_at ?? null,
+    deprecated: Boolean(n?.deprecated),
+    week: n?.week ?? null,
+    weekly: n?.weekly ?? [],
+    change: fourWeekChange(n?.weekly),
+    latestMajorShare: latestMajorShare(n),
+    dependents: n?.dependents ?? null,
+    total: n?.total?.downloads ?? null,
+    level: p.fleet?.level ?? null,
+    collected_at: snapshot.collected_at ?? null
+  };
+};
+
+// Every published package across the stored baselines.
+export const packageRows = entries =>
+  entries.flatMap(({project, packages}) =>
+    (packages?.packages ?? []).filter(p => p.npm).map(p => packageRow(project, packages, p))
+  );

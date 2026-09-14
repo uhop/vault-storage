@@ -16,7 +16,7 @@
     <link rel="stylesheet" href="/ui/theme.css" />
     <style>
       main {
-        max-width: 72rem;
+        max-width: 80rem;
       }
       h2 {
         font-size: 1rem;
@@ -40,12 +40,40 @@
         font-size: 0.85rem;
         color: var(--muted);
       }
-      select {
+      select,
+      input[type='search'] {
         font: inherit;
         font-size: 0.85rem;
         padding: 0.2rem 0.4rem;
         border: 1px solid var(--line);
         border-radius: 4px;
+        background: var(--card);
+        color: var(--fg);
+      }
+      .switch {
+        display: inline-flex;
+        align-self: center;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .switch button {
+        border: 0;
+        border-radius: 0;
+        padding: 0.25rem 0.75rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        background: transparent;
+        color: var(--muted);
+      }
+      .switch button + button {
+        border-left: 1px solid var(--line);
+      }
+      .switch button:hover {
+        color: var(--fg);
+      }
+      .switch button[aria-pressed='true'] {
         background: var(--card);
         color: var(--fg);
       }
@@ -69,7 +97,7 @@
       .brief .repo {
         font-family: var(--mono);
       }
-      .brief a.x {
+      a.x {
         font-size: 0.75rem;
         color: var(--muted);
         text-decoration: none;
@@ -79,9 +107,12 @@
         margin-left: 0.3rem;
         vertical-align: 0.1em;
       }
-      .brief a.x:hover {
+      a.x:hover {
         color: var(--fg);
         border-color: var(--muted);
+      }
+      .scroll {
+        overflow-x: auto;
       }
       table {
         width: 100%;
@@ -93,20 +124,42 @@
         text-align: left;
         padding: 0.35rem 0.6rem;
         border-bottom: 1px solid var(--line);
-        vertical-align: baseline;
+        vertical-align: middle;
         white-space: nowrap;
       }
       th {
         color: var(--muted);
         font-weight: 500;
       }
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+      }
+      th.sortable:hover {
+        color: var(--fg);
+      }
+      th[aria-sort='ascending']::after {
+        content: ' ▲';
+        font-size: 0.7em;
+      }
+      th[aria-sort='descending']::after {
+        content: ' ▼';
+        font-size: 0.7em;
+      }
+      th .sub {
+        display: block;
+        font-size: 0.75rem;
+        font-weight: 400;
+      }
       th.n,
       td.n {
         text-align: right;
         font-variant-numeric: tabular-nums;
       }
-      tr.repo td.name {
+      td.name {
         font-family: var(--mono);
+      }
+      tr.repo td.name {
         color: var(--accent);
         cursor: pointer;
       }
@@ -128,11 +181,12 @@
         margin: 0.15rem 0 0.4rem;
         padding-left: 1.2rem;
       }
-      tr.detail .links {
+      .links {
         margin-top: 0.4rem;
         color: var(--muted);
       }
-      .zero {
+      .zero,
+      .quiet {
         color: var(--muted);
       }
       .warn {
@@ -176,10 +230,14 @@
       </section>
       <section>
         <div class="bar">
-          <h2>Repositories</h2>
+          <div class="switch" role="group" aria-label="Table">
+            <button type="button" data-view="repos">Repositories</button>
+            <button type="button" data-view="packages">Packages</button>
+          </div>
+          <input type="search" id="filter" placeholder="filter packages" hidden />
           <span class="meta" id="table-meta"></span>
         </div>
-        <div id="table"></div>
+        <div class="scroll" id="table"></div>
       </section>
     </main>
     <div class="footer" id="footer"></div>
@@ -191,46 +249,47 @@
         stateDocPath,
         parseRuns,
         parseBaseline,
+        parsePackages,
         parseWhen,
         storedMovement,
         brief,
         baselineRow,
-        baselineDetail,
         alertText,
         plural,
-        short
+        short,
+        packageRows,
+        dependentsChange,
+        compact,
+        percent
       } from '/ui/fleet-digest.js';
+      import {
+        WINDOWS,
+        WINDOW_KEY,
+        windowState,
+        isStale,
+        ext,
+        renderParts,
+        queueHref,
+        projectHref,
+        npmHref,
+        githubDetail
+      } from '/ui/fleet-view.js';
+      import {sparkline, rangeLabel, dayLabel, monthDay} from '/ui/fleet-charts.js';
 
-      const WINDOW_KEY = 'vault.fleet.window';
-      const WINDOWS = [
-        ['1d', '24 hours'],
-        ['7d', '7 days'],
-        ['30d', '30 days'],
-        ['90d', '90 days'],
-        ['all', 'all stored runs']
-      ];
-      // A baseline older than `show --fleet`'s default window is marked stale.
-      const STALE_MS = 7 * 864e5;
+      const VIEW_PARAM = 'view';
+      const SORT_KEY = 'vault.fleet.packages.sort';
       const LOADING = '<div class="empty"><span class="spinner"></span> loading…</div>';
+      const DAY_MS = 864e5;
       const $ = sel => document.querySelector(sel);
 
       let runs = [],
-        baselines = [];
+        entries = [];
 
-      const windowState = () => {
-        const w = localStorage.getItem(WINDOW_KEY);
-        return WINDOWS.some(([v]) => v === w) ? w : '7d';
-      };
       const cutoffOf = w => (w === 'all' ? null : parseWhen(w));
-
+      const viewState = () =>
+        new URLSearchParams(location.search).get(VIEW_PARAM) === 'packages' ? 'packages' : 'repos';
       const rowId = repo => `repo-${repo.replace(/[^A-Za-z0-9]+/g, '-')}`;
       const nameOf = entry => entry.baseline.repo ?? entry.project;
-      const ext = (href, text, cls = '') =>
-        `<a${cls ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
-      const renderParts = parts =>
-        parts.map(p => (typeof p === 'string' ? esc(p) : ext(p.href, p.text))).join('');
-      const noteHref = path => `/ui/note.html?path=${encodeURIComponent(path)}&view=preview`;
-      const queueHref = project => noteHref(`projects/${project}/queue.md`);
 
       const renderBrief = () => {
         const {
@@ -261,9 +320,9 @@
           x =>
             `<li><span class="repo">${ext(`https://github.com/${x.repo}`, x.name)}</span>${
               x.project
-                ? `<a class="x" href="${queueHref(x.project)}" title="The project's queue">queue</a>`
+                ? `<a class="x" href="${queueHref(x.project)}" title="The project's queue">queue</a><a class="x" href="${projectHref(x.project)}" title="The project's GitHub and npm details">details</a>`
                 : ''
-            }<a class="x" href="#${rowId(x.repo)}" data-expand="${esc(x.repo)}" title="The stored baseline">baseline</a>: ${x.phrases.map(renderParts).join('; ')}</li>`
+            }: ${x.phrases.map(renderParts).join('; ')}</li>`
         );
         if (m.counters.length) lines.push(`<li>counters: ${esc(m.counters.join('; '))}</li>`);
         if (m.firstRuns.length)
@@ -283,6 +342,8 @@
           `<p class="lead">Fleet movement since ${esc(m.stamp)} — ${esc(plural(m.repos, 'repository', 'repositories'))}, ${m.moved.length} with movement${esc(stored)}</p><ul>${lines.join('')}</ul>`;
       };
 
+      // ─── Repositories ────────────────────────────────────────────────────────
+
       const numCell = (n, cls = '') => `<td class="n ${n === 0 ? 'zero' : cls}">${esc(n)}</td>`;
       const alertCell = a =>
         `<td class="n ${!a ? 'zero' : a.open > 0 ? 'warn' : ''}" title="${esc(
@@ -299,21 +360,25 @@
           ci ? (ci.html_url ? ext(ci.html_url, ci.state, ciClass(ci)) : esc(ci.state)) : 'none'
         }</td>`;
 
-      const renderTable = () => {
-        if (!baselines.length) {
+      const repoEntries = () => entries.filter(e => e.baseline);
+
+      const renderRepos = () => {
+        const list = repoEntries();
+        $('#table-meta').textContent =
+          `${plural(list.length, 'repository', 'repositories')} with a stored baseline · ${plural(entries.length, 'project')} with stored fleet data`;
+        if (!list.length) {
           $('#table').innerHTML =
             '<div class="empty">No stored baselines — no <code>projects/*/state.md</code> carries a <code>## GitHub</code> block yet.</div>';
           return;
         }
         const sum = {issues: 0, prs: 0, stars: 0, forks: 0};
-        const rows = baselines.map(entry => {
+        const rows = list.map(entry => {
           const r = baselineRow(entry.baseline),
             name = nameOf(entry);
           sum.issues += r.issues;
           sum.prs += r.prs;
           sum.stars += r.stars ?? 0;
           sum.forks += r.forks ?? 0;
-          const stale = r.collected_at && Date.now() - Date.parse(r.collected_at) > STALE_MS;
           return `<tr class="repo" id="${rowId(name)}" data-repo="${esc(name)}">
             <td class="name" title="Expand the stored baseline">${esc(name)}</td>
             ${numCell(r.issues)}${numCell(r.prs)}
@@ -322,11 +387,11 @@
             <td class="n ${r.advisories === 0 ? 'zero' : r.noCve ? 'warn' : ''}">${r.advisories}${r.noCve ? ` (${r.noCve} no CVE)` : ''}</td>
             ${alertCell(r.dependabot)}${alertCell(r.codeScanning)}
             ${ciCell(r.ci)}
-            <td class="${stale ? 'warn' : ''}" title="${esc(r.collected_at ?? '')}">${esc(short(r.collected_at))}</td>
+            <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(r.collected_at ?? '')}">${esc(short(r.collected_at))}</td>
           </tr>`;
         });
         rows.push(
-          `<tr class="total"><td>Total (${baselines.length})</td>${numCell(sum.issues)}${numCell(sum.prs)}<td></td>${numCell(sum.stars)}${numCell(sum.forks)}<td colspan="5"></td></tr>`
+          `<tr class="total"><td>Total (${list.length})</td>${numCell(sum.issues)}${numCell(sum.prs)}<td></td>${numCell(sum.stars)}${numCell(sum.forks)}<td colspan="5"></td></tr>`
         );
         $('#table').innerHTML = `<table>
           <thead><tr>
@@ -336,75 +401,14 @@
           </tr></thead>
           <tbody>${rows.join('')}</tbody>
         </table>`;
-      };
-
-      const renderDetail = entry => {
-        const {project, baseline: b} = entry;
-        const r = baselineRow(b),
-          d = baselineDetail(b);
-        const {digest, cutoff} = storedMovement(runs, {
-          cutoff: cutoffOf(windowState()),
-          repo: r.repo
-        });
-        const lines = [
-          `${esc(plural(r.stars ?? 0, 'star'))}, ${esc(plural(r.forks ?? 0, 'fork'))}, ${esc(plural(r.watchers ?? 0, 'watcher'))}; ${esc(plural(r.issues, 'open issue'))}, ${esc(plural(r.prs, 'open PR'))}${r.hasDiscussions ? `, ${esc(plural(r.discussions, 'open discussion'))}` : ''}; CI ${
-            r.ci
-              ? `${r.ci.html_url ? ext(r.ci.html_url, r.ci.state) : esc(r.ci.state)} (${esc(r.ci.name)}, ${esc(short(r.ci.updated_at))})`
-              : 'none'
-          }`,
-          `alerts: dependabot ${esc(alertText(r.dependabot))}, code scanning ${esc(alertText(r.codeScanning))}; collected ${esc(short(r.collected_at))}${d.firstRun ? ' (first run)' : ''}`
-        ];
-        const sections = [];
-        if (d.advisories.length)
-          sections.push(
-            `<div>advisories (${d.advisories.length}):</div><ul>${d.advisories
-              .map(
-                a =>
-                  `<li>${a.html_url ? ext(a.html_url, a.id) : `<code>${esc(a.id)}</code>`} ${esc(a.state)} ${esc(a.severity ?? '-')} ${esc(a.cve_id ?? 'no CVE')} ${esc(short(a.published_at))} ${esc(a.summary ?? '')}</li>`
-              )
-              .join('')}</ul>`
-          );
-        if (d.openItems.length)
-          sections.push(
-            `<div>open items (${d.openItems.length}):</div><ul>${d.openItems
-              .map(
-                it =>
-                  `<li>${it.is_pr ? 'PR' : 'issue'} ${it.html_url ? ext(it.html_url, `#${it.number}`) : `#${esc(it.number)}`} ${esc(it.title)} — ${esc(it.author)}${it.bot ? ' (bot)' : ''}, ${esc(plural((it.comments ?? 0) + (it.review_comments ?? 0), 'comment'))}, ${esc(plural((it.reactions ?? 0) + (it.comment_reactions ?? 0), 'reaction'))}${it.last_comment ? `, last comment ${esc(it.last_comment.author)} ${esc(short(it.last_comment.at))}` : ''}${it.draft ? ', draft' : ''}</li>`
-              )
-              .join('')}</ul>`
-          );
-        if (d.openDiscussions.length)
-          sections.push(
-            `<div>open discussions (${d.openDiscussions.length}):</div><ul>${d.openDiscussions
-              .map(
-                x =>
-                  `<li>${x.html_url ? ext(x.html_url, `#${x.number}`) : `#${esc(x.number)}`} ${esc(x.title)} — ${esc(x.author)}, ${esc(x.category ?? '-')}, ${esc(plural(x.comments ?? 0, 'comment'))}, ${esc(plural((x.reactions ?? 0) + (x.comment_reactions ?? 0), 'reaction'))}${x.last_comment ? `, last comment ${esc(x.last_comment.author)} ${esc(short(x.last_comment.at))}` : ''}${x.answered ? ', answered' : ''}</li>`
-              )
-              .join('')}</ul>`
-          );
-        if (d.release)
-          sections.push(
-            `<div>latest release: ${d.release.html_url ? ext(d.release.html_url, d.release.tag_name) : esc(d.release.tag_name)}${d.release.name ? ` — ${esc(d.release.name)}` : ''}${d.release.draft ? ' (draft)' : ''}${d.release.prerelease ? ' (prerelease)' : ''} ${esc(short(d.release.published_at))}</div>`
-          );
-        const m = digest.repos.length ? brief(digest) : null;
-        const changes = [];
-        if (m?.moved.length)
-          changes.push(...m.moved[0].phrases.map(p => `<li>${renderParts(p)}</li>`));
-        if (m?.counters.length) changes.push(`<li>counters: ${esc(m.counters.join('; '))}</li>`);
-        sections.push(
-          changes.length
-            ? `<div>changes since ${esc(m.stamp)} (${esc(plural(digest.totals.events, 'event'))}):</div><ul>${changes.join('')}</ul>`
-            : `<div>changes${cutoff ? ` since ${esc(short(cutoff))}` : ''}: none stored</div>`
-        );
-        return `${lines.map(l => `<div>${l}</div>`).join('')}${sections.join('')}<div class="links">${
-          r.html_url ? `${ext(r.html_url, 'GitHub')} · ` : ''
-        }<a href="${queueHref(project)}">queue</a> · <a href="${noteHref(stateDocPath(project))}">state.md</a></div>`;
+        expandFromHash();
       };
 
       const detailRow = entry => {
+        const {html, links} = githubDetail(entry, runs, cutoffOf(windowState()));
         const tr = document.createElement('tr');
         tr.className = 'detail';
-        tr.innerHTML = `<td colspan="11">${renderDetail(entry)}</td>`;
+        tr.innerHTML = `<td colspan="11">${html}<div class="links"><a href="${projectHref(entry.project)}">details</a> · ${links}</div></td>`;
         return tr;
       };
 
@@ -417,7 +421,7 @@
           current?.remove();
           return;
         }
-        const entry = baselines.find(x => nameOf(x) === tr.dataset.repo);
+        const entry = repoEntries().find(x => nameOf(x) === tr.dataset.repo);
         if (!entry) return;
         if (current) current.replaceWith(detailRow(entry));
         else tr.after(detailRow(entry));
@@ -431,6 +435,118 @@
         if (!location.hash) return;
         const tr = document.getElementById(location.hash.slice(1));
         if (tr?.classList.contains('repo')) toggleRow(tr, true);
+      };
+
+      // ─── Packages ────────────────────────────────────────────────────────────
+
+      const COLUMNS = [
+        {key: 'name', label: 'Package', value: r => r.name, text: true},
+        {key: 'project', label: 'Project', value: r => r.project, text: true},
+        {key: 'latest', label: 'Latest', value: r => r.published_at ?? '', text: true},
+        {key: 'weekly', label: 'Weekly', value: r => r.week?.downloads ?? -1, n: true},
+        {key: 'trend', label: '26 weeks'},
+        {key: 'change', label: 'Δ 4 weeks', value: r => r.change?.ratio ?? -Infinity, n: true},
+        {key: 'major', label: 'Latest major', value: r => r.latestMajorShare ?? -1, n: true},
+        {
+          key: 'dependents',
+          label: 'Dependents',
+          value: r => r.dependents?.direct ?? -1,
+          n: true
+        },
+        {key: 'level', label: 'Level', value: r => r.level ?? -1, n: true},
+        {key: 'collected', label: 'Collected', value: r => r.collected_at ?? '', text: true}
+      ];
+
+      const sortState = () => {
+        try {
+          const s = JSON.parse(localStorage.getItem(SORT_KEY));
+          if (COLUMNS.some(c => c.key === s?.key && c.value)) return s;
+        } catch {}
+        return {key: 'weekly', dir: 'desc'};
+      };
+
+      const signedPercent = ratio =>
+        typeof ratio === 'number'
+          ? `${ratio > 0 ? '+' : ratio < 0 ? '−' : ''}${percent(Math.abs(ratio))}`
+          : '-';
+      const ageText = iso => {
+        if (!iso) return '';
+        const days = Math.floor((Date.now() - Date.parse(iso)) / DAY_MS);
+        if (days < 60) return `${days}d`;
+        if (days < 730) return `${Math.round(days / 30.44)} mo`;
+        return `${Math.round(days / 365.25)} y`;
+      };
+
+      const renderPackages = () => {
+        const all = packageRows(entries);
+        const query = $('#filter').value.trim().toLowerCase();
+        const rows = query
+          ? all.filter(
+              r => r.name.toLowerCase().includes(query) || r.project.toLowerCase().includes(query)
+            )
+          : all;
+        const sort = sortState();
+        const col = COLUMNS.find(c => c.key === sort.key);
+        const sign = sort.dir === 'asc' ? 1 : -1;
+        rows.sort((a, b) => {
+          const x = col.value(a),
+            y = col.value(b);
+          const d = col.text ? String(x).localeCompare(String(y)) : x - y;
+          return sign * d || a.name.localeCompare(b.name);
+        });
+        const weeks = new Set(all.map(r => r.week && `${r.week.start}:${r.week.end}`));
+        const [start, end] = weeks.size === 1 ? ([...weeks][0]?.split(':') ?? []) : [];
+        const cutoff = cutoffOf(windowState());
+        const newest = all
+          .map(r => r.collected_at)
+          .sort()
+          .pop();
+        $('#table-meta').textContent = all.length
+          ? `${plural(rows.length, 'package')}${query ? ` of ${all.length}` : ''} · ${start ? `downloads ${rangeLabel(start, end)}` : 'download weeks differ'} · collected ${short(newest)}`
+          : '';
+        if (!all.length) {
+          $('#table').innerHTML =
+            '<div class="empty">No stored packages — no <code>projects/*/state.md</code> carries a <code>## Packages</code> block yet. Run <code>fleet-status.mjs collect --fleet --packages-only</code>, then commit.</div>';
+          return;
+        }
+        let weekly = 0;
+        const body = rows.map(r => {
+          weekly += r.week?.downloads ?? 0;
+          const change = dependentsChange(r.dependents, cutoff);
+          const trend = r.weekly.slice(-26);
+          return `<tr>
+            <td class="name"><a href="${projectHref(r.project, `pkg-${r.name}`)}" title="GitHub and npm details">${esc(r.name)}</a><a class="x" href="${esc(npmHref(r.name))}" target="_blank" rel="noopener">npm</a>${r.deprecated ? ' <span class="warn">deprecated</span>' : ''}</td>
+            <td><a href="${projectHref(r.project)}">${esc(r.project)}</a></td>
+            <td title="${esc(r.published_at ? `published ${dayLabel(r.published_at.slice(0, 10))}` : '')}">${esc(r.latest ?? '-')} <span class="quiet">${esc(ageText(r.published_at))}</span></td>
+            <td class="n" title="${esc(r.week ? `${r.week.downloads.toLocaleString('en-US')} downloads, ${rangeLabel(r.week.start, r.week.end)}` : '')}">${esc(compact(r.week?.downloads))}</td>
+            <td>${sparkline(trend, {label: `Weekly downloads, last ${trend.length} weeks, ending ${r.week ? dayLabel(r.week.end) : ''}`})}</td>
+            <td class="n ${!r.change || r.change.noisy ? 'quiet' : ''}" title="${esc(r.change ? `${r.change.last.toLocaleString('en-US')} in the last 4 weeks against ${r.change.prev.toLocaleString('en-US')} before${r.change.noisy ? ' — under 5,000, mostly noise' : ''}` : '')}">${esc(signedPercent(r.change?.ratio))}</td>
+            <td class="n ${r.latestMajorShare === null ? 'quiet' : ''}" title="${r.latestMajorShare === null ? ((r.week?.downloads ?? 0) < 100 ? 'under 100 downloads a week: the version split is not read' : 'no version split stored for this week') : ''}">${esc(percent(r.latestMajorShare))}</td>
+            <td class="n" title="${esc(change ? `deps.dev direct dependents; ${change.delta >= 0 ? '+' : ''}${change.delta} since ${dayLabel(change.since)}${change.partial ? ' (tracking began then)' : ''}` : '')}">${esc(r.dependents ? r.dependents.direct.toLocaleString('en-US') : '-')}${change?.delta ? ` <span class="quiet">${change.delta > 0 ? '+' : '−'}${Math.abs(change.delta)}</span>` : ''}</td>
+            <td class="n">${esc(r.level ?? '-')}</td>
+            <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(short(r.collected_at))}">${esc(monthDay(r.collected_at?.slice(0, 10)))}</td>
+          </tr>`;
+        });
+        body.push(
+          `<tr class="total"><td>Total (${rows.length})</td><td></td><td></td><td class="n" title="${esc(weekly.toLocaleString('en-US'))}">${esc(compact(weekly))}</td><td colspan="6"></td></tr>`
+        );
+        const head = COLUMNS.map(
+          c =>
+            `<th class="${c.n ? 'n ' : ''}${c.value ? 'sortable' : ''}" ${c.value ? `data-sort="${c.key}" aria-sort="${sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}" tabindex="0"` : ''}>${esc(c.label)}${c.key === 'weekly' && start ? `<span class="sub">${esc(rangeLabel(start, end))}</span>` : ''}</th>`
+        ).join('');
+        $('#table').innerHTML =
+          `<table><thead><tr>${head}</tr></thead><tbody>${body.join('')}</tbody></table>`;
+      };
+
+      // ─── Views ───────────────────────────────────────────────────────────────
+
+      const renderView = () => {
+        const view = viewState();
+        for (const b of document.querySelectorAll('.switch button'))
+          b.setAttribute('aria-pressed', String(b.dataset.view === view));
+        $('#filter').hidden = view !== 'packages';
+        if (view === 'packages') renderPackages();
+        else renderRepos();
       };
 
       const load = async () => {
@@ -458,21 +574,25 @@
             folders.map(async project => {
               try {
                 const res = await api(`/vault/${stateDocPath(encodeURIComponent(project))}`);
-                const baseline = parseBaseline(await res.text());
-                return baseline && {project, baseline};
+                const doc = await res.text();
+                const baseline = parseBaseline(doc),
+                  packages = parsePackages(doc);
+                return baseline || packages ? {project, baseline, packages} : null;
               } catch (e) {
                 if (e.message === 'not-found') return null;
                 throw e;
               }
             })
           );
-          baselines = found.filter(Boolean).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-          renderTable();
-          $('#table-meta').textContent =
-            `${plural(baselines.length, 'repository', 'repositories')} with a stored baseline · ${plural(folders.length, 'project')}`;
+          entries = found
+            .filter(Boolean)
+            .sort((a, b) =>
+              (a.baseline?.repo ?? a.project).localeCompare(b.baseline?.repo ?? b.project)
+            );
+          renderView();
+          const packages = packageRows(entries).length;
           $('#footer').textContent =
-            `${plural(baselines.length, 'baseline')} · ${plural(runs.length, 'stored run')}${runs.length ? ` · newest ${short(runs[0].collected_at)}` : ''}`;
-          expandFromHash();
+            `${plural(repoEntries().length, 'baseline')} · ${plural(packages, 'package')} · ${plural(runs.length, 'stored run')}${runs.length ? ` · newest ${short(runs[0].collected_at)}` : ''}`;
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();
@@ -490,20 +610,44 @@
       sel.addEventListener('change', () => {
         localStorage.setItem(WINDOW_KEY, sel.value);
         renderBrief();
-        refreshOpenRows();
+        if (viewState() === 'packages') renderPackages();
+        else refreshOpenRows();
       });
 
-      // Delegated: the table and the brief re-render, their containers don't.
+      document.querySelector('.switch').addEventListener('click', e => {
+        const b = e.target.closest('button[data-view]');
+        if (!b) return;
+        const url = new URL(location.href);
+        if (b.dataset.view === 'packages') url.searchParams.set(VIEW_PARAM, 'packages');
+        else url.searchParams.delete(VIEW_PARAM);
+        url.hash = '';
+        history.replaceState(null, '', url);
+        renderView();
+      });
+      $('#filter').addEventListener('input', renderPackages);
+
+      const sortBy = th => {
+        const s = sortState();
+        const key = th.dataset.sort;
+        const col = COLUMNS.find(c => c.key === key);
+        const dir = s.key === key ? (s.dir === 'asc' ? 'desc' : 'asc') : col.text ? 'asc' : 'desc';
+        localStorage.setItem(SORT_KEY, JSON.stringify({key, dir}));
+        renderPackages();
+      };
+
+      // Delegated: the tables and the brief re-render, their containers don't.
       $('#table').addEventListener('click', e => {
-        const td = e.target.closest('td.name');
+        const th = e.target.closest('th[data-sort]');
+        if (th) return sortBy(th);
+        const td = e.target.closest('tr.repo td.name');
         if (td) toggleRow(td.closest('tr'));
       });
-      $('#brief').addEventListener('click', e => {
-        const a = e.target.closest('[data-expand]');
-        if (!a) return;
-        const tr = document.getElementById(rowId(a.dataset.expand));
-        if (tr) toggleRow(tr, true);
-        else e.preventDefault();
+      $('#table').addEventListener('keydown', e => {
+        const th = e.target.closest('th[data-sort]');
+        if (th && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          sortBy(th);
+        }
       });
       window.addEventListener('hashchange', expandFromHash);
       document.addEventListener('token-change', load);

@@ -15,6 +15,7 @@ const PAGES = [
   'agents',
   'archive-review',
   'fleet',
+  'fleet-project',
   'folder',
   'index',
   'lint-review',

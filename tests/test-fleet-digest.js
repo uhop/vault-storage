@@ -12,7 +12,18 @@ import {
   alertText,
   short,
   clip,
-  plural
+  plural,
+  parsePackages,
+  fourWeekChange,
+  latestMajorShare,
+  majorShares,
+  dependentsChange,
+  weekEnds,
+  packageRows,
+  compact,
+  percent,
+  majorOf,
+  compareVersions
 } from '/static/ui/fleet-digest.js';
 
 // A collected digest in the shape `fleet-status.mjs collect` writes. The
@@ -154,7 +165,15 @@ const DIGEST = {
           prerelease: false,
           html_url: 'https://github.com/octo/gamma/releases/tag/2.1.0'
         },
-        {kind: 'alerts.code_scanning', repo: 'octo/gamma', from: 3, to: 1, by_severity: {}}
+        {kind: 'alerts.code_scanning', repo: 'octo/gamma', from: 3, to: 1, by_severity: {}},
+        {
+          kind: 'package.dependents',
+          repo: 'octo/gamma',
+          package: 'gamma',
+          from: 40,
+          to: 43,
+          delta: 3
+        }
       ],
       summary: {events: 3, open_items: 0, advisories_without_cve: 1, stars: 20, forks: 3},
       errors: []
@@ -183,6 +202,23 @@ const DIGEST = {
       events: [],
       summary: {events: 0, open_items: 0, advisories_without_cve: 0, stars: 1, forks: 0},
       errors: []
+    },
+    {
+      repo: 'others/eta',
+      project: 'others-eta',
+      github: false,
+      events: [
+        {
+          kind: 'package.dependents',
+          repo: 'others/eta',
+          package: '@others/eta',
+          from: 9,
+          to: 8,
+          delta: -1
+        }
+      ],
+      summary: {events: 1},
+      errors: []
     }
   ]
 };
@@ -192,7 +228,7 @@ const EXPECTED_BRIEF = [
   '- gamma: advisory GHSA-xxxx-yyyy-zzzz (published, high) "ReDoS in the parser"; release 2.1.0',
   '- alpha: new issue #30 by rainecheck "Build fails on Corepack" — The verify step runs npm even when the package manager is pnpm, which breaks…; PR #12 "Bump the npm-deps group across 1 directory with…" +1 comment by dependabot[bot]: "Looks like these dependencies are updatable in another way, so this is no…"; PR #12 "Bump the npm-deps group across 1 directory with…" open → closed',
   '- beta: Dependabot alerts 0 → 5; CI Node.js CI: success → failure',
-  '- counters: stars +1 (beta +1); forks +1 (beta +1: forker); bots: PR alpha#13 by dependabot[bot]; alerts down (gamma code scanning 3 → 1)',
+  '- counters: stars +1 (beta +1); forks +1 (beta +1: forker); dependents +2 (gamma +3, @others/eta -1); bots: PR alpha#13 by dependabot[bot]; alerts down (gamma code scanning 3 → 1)',
   '- first run: 1 repository (baseline recorded)',
   '- errors: epsilon: HTTP 404',
   '- partial errors: 1 (details in the collected JSON)',
@@ -587,4 +623,179 @@ test('helpers match the CLI', t => {
   );
   t.equal(plural(1, 'repository', 'repositories'), '1 repository');
   t.equal(plural(2, 'repository', 'repositories'), '2 repositories');
+});
+
+const WEEKLY = Array.from({length: 52}, (_, i) => (i < 44 ? 1000 : i < 48 ? 1500 : 2000));
+const PACKAGES = {
+  collected_at: '2026-09-14T01:20:00.000Z',
+  graph: {fetched_at: '2026-09-14T00:45:00.000Z', orgs: ['octo']},
+  packages: [
+    {
+      name: 'alpha',
+      repo: 'octo/alpha',
+      published: true,
+      npm: {
+        latest: '3.1.0',
+        published_at: '2026-08-01T00:00:00.000Z',
+        deprecated: false,
+        versions: 12,
+        week: {start: '2026-09-05', end: '2026-09-11', downloads: 2000},
+        weekly: WEEKLY,
+        publishes: [['2026-08-01', '3.1.0']],
+        top_versions: [
+          ['2.4.0', 1200],
+          ['3.1.0', 500],
+          ['3.0.0', 200],
+          ['1.0.0', 60],
+          ['0.9.1', 40]
+        ],
+        versions_total: 2000,
+        by_major: {3: 700, 2: 1200, 1: 60, 0.9: 40},
+        dependents: {
+          source: 'deps.dev',
+          direct: 12,
+          by_version: {'3.1.0': [3, 4], '2.4.0': [9, 30]},
+          history: [
+            ['2026-09-01', 10],
+            ['2026-09-08', 11],
+            ['2026-09-14', 12]
+          ]
+        },
+        total: {since: '2020-01-01', through: '2026-09-08', settled: 100000, downloads: 104000}
+      },
+      fleet: {
+        repo: 'octo/alpha',
+        level: 2,
+        uses: [['beta', 'dev']],
+        used_by: [],
+        dependents_in_order: [],
+        projects: {beta: 'beta'}
+      }
+    },
+    {name: 'alpha-private', repo: 'octo/alpha', published: false, npm: null, fleet: null}
+  ]
+};
+
+test('parsePackages finds the Packages block beside the GitHub one, or alone', t => {
+  const both = STATE_DOC + '\n## Packages\n\nAuto-maintained.\n\n' + fence(PACKAGES) + '\n';
+  t.deepEqual(parsePackages(both), PACKAGES);
+  t.deepEqual(parseBaseline(both), BASELINE, 'the GitHub block still reads first');
+  const alone = '---\ntitle: x\n---\n\n## Packages\n\n' + fence(PACKAGES) + '\n';
+  t.deepEqual(parsePackages(alone), PACKAGES);
+  t.equal(parseBaseline(alone), null);
+  t.equal(parsePackages(STATE_DOC), null);
+});
+
+test('storedMovement leaves a packages-only run out of the fleet size', t => {
+  const runs = parseRuns(DIGEST_DOC);
+  const packagesRun = {
+    ...run('2026-09-07T12:00:00.000Z', 'fleet', [], {repos: 40}),
+    packages_only: true
+  };
+  const {digest} = storedMovement([packagesRun, ...runs], {cutoff: '2026-09-01T00:00:00.000Z'});
+  t.equal(digest.stored.fleet_size, 2, 'sized from the GitHub fleet run, not the 40');
+});
+
+test('brief counts a packages-only project for its counters, never as a repository', t => {
+  const m = brief(DIGEST);
+  t.ok(
+    m.counters.includes('dependents +2 (gamma +3, @others/eta -1)'),
+    'dependents fold by package'
+  );
+  t.equal(m.quiet, 1, 'eta moved but is not a repository');
+  t.notOk(
+    m.moved.some(x => x.name === 'others/eta'),
+    'a dependents change is a counter only'
+  );
+});
+
+test('package readers derive the table columns', t => {
+  const npm = PACKAGES.packages[0].npm;
+  t.deepEqual(fourWeekChange(WEEKLY), {last: 8000, prev: 6000, ratio: 1 / 3, noisy: false});
+  t.equal(fourWeekChange(WEEKLY.map(() => 100)).noisy, true, 'under the noise base');
+  t.equal(fourWeekChange([1, 2, 3]), null, 'fewer than eight weeks');
+  t.equal(latestMajorShare(npm), 0.35);
+  t.equal(latestMajorShare({...npm, by_major: null}), null, 'no split read');
+
+  t.deepEqual(
+    majorShares(npm).map(r => [r.label, r.share, r.latest]),
+    [
+      ['3.x', 0.35, true],
+      ['2.x', 0.6, false],
+      ['1.x', 0.03, false],
+      ['1 other major', 0.02, false]
+    ],
+    'the latest major plus the two heaviest, newest first, the rest folded'
+  );
+  t.deepEqual(majorShares({}), []);
+
+  const deps = npm.dependents;
+  t.deepEqual(dependentsChange(deps, '2026-09-07T12:00:00.000Z'), {
+    now: 12,
+    delta: 2,
+    since: '2026-09-01',
+    partial: false
+  });
+  t.deepEqual(
+    dependentsChange(deps, '2026-08-01T00:00:00.000Z'),
+    {now: 12, delta: 2, since: '2026-09-01', partial: true},
+    'tracking began after the cutoff'
+  );
+  t.deepEqual(
+    dependentsChange(deps),
+    {now: 12, delta: 2, since: '2026-09-01', partial: false},
+    'no cutoff measures from the first point'
+  );
+  t.equal(dependentsChange(null), null);
+
+  const ends = weekEnds(npm);
+  t.equal(ends.length, 52);
+  t.equal(ends[51], '2026-09-11');
+  t.equal(ends[0], '2025-09-19');
+
+  const rows = packageRows([
+    {project: 'alpha', packages: PACKAGES},
+    {project: 'beta', packages: null}
+  ]);
+  t.equal(rows.length, 1, 'published packages only');
+  t.match(rows[0], {
+    name: 'alpha',
+    project: 'alpha',
+    latest: '3.1.0',
+    week: {downloads: 2000},
+    latestMajorShare: 0.35,
+    total: 104000,
+    level: 2,
+    collected_at: '2026-09-14T01:20:00.000Z'
+  });
+});
+
+test('number and version helpers', t => {
+  t.equal(compact(7379090), '7.38M');
+  t.equal(compact(419018), '419K');
+  t.equal(compact(1606), '1,606');
+  t.equal(compact(20100000), '20.1M');
+  t.equal(compact(1.2e9), '1.2B');
+  t.equal(compact(undefined), '-');
+  t.equal(percent(0.35), '35%');
+  t.equal(percent(0.044), '4.4%');
+  t.equal(percent(null), '-');
+  t.equal(majorOf('2.4.0'), '2');
+  t.equal(majorOf('0.9.1'), '0.9', 'below 1.0.0 the minor is the breaking part');
+  t.ok(compareVersions('10.0.0', '9.9.9') > 0);
+  t.ok(compareVersions('2.0.0-beta.1', '2.0.0-beta.2') < 0);
+  t.equal(compareVersions('1.2.3', '1.2.3'), 0);
+});
+
+test('review fixes: section bounds, release order, unit rollover', t => {
+  const orphan =
+    '\n## GitHub\n\nhand-edited, no fence\n\n## Packages\n\n' + fence({packages: []}) + '\n';
+  t.equal(parseBaseline(orphan), null, "a heading never reads the next section's block");
+  t.deepEqual(parsePackages(orphan), {packages: []});
+  t.ok(compareVersions('1.0.0', '1.0.0-beta.1') > 0, 'a release sorts above its prerelease');
+  t.equal(compareVersions('1.2.3+build.5', '1.2.3'), 0, 'build metadata is ignored');
+  t.ok(compareVersions('2.0.0-rc.1', '1.9.9') > 0);
+  t.equal(compact(999_500), '1M', 'the unit follows the rounded value');
+  t.equal(compact(999_999_999), '1B');
+  t.equal(compact(10_000), '10K');
 });

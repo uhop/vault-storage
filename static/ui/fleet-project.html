@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <title>vault-storage — fleet project</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      main {
+        max-width: 60rem;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 0;
+        font-family: var(--mono);
+      }
+      h3 {
+        font-size: 1rem;
+        margin: 0;
+      }
+      h3 .pkg {
+        font-family: var(--mono);
+      }
+      h4 {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--muted);
+        margin: 1.2rem 0 0.4rem;
+      }
+      a {
+        color: var(--accent);
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.9em;
+      }
+      .bar {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.8rem;
+        margin-bottom: 0.6rem;
+      }
+      .meta,
+      .quiet {
+        color: var(--muted);
+      }
+      .meta {
+        font-size: 0.85rem;
+      }
+      .bar label {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      select {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 0.2rem 0.4rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--card);
+        color: var(--fg);
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.9rem 1.1rem 1rem;
+        margin-top: 1rem;
+        font-size: 0.9rem;
+      }
+      section ul {
+        margin: 0.15rem 0 0.4rem;
+        padding-left: 1.2rem;
+      }
+      .links {
+        margin-top: 0.5rem;
+        color: var(--muted);
+      }
+      .tiles {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+        gap: 0.6rem;
+        margin: 0.8rem 0 0.2rem;
+      }
+      .tile {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.5rem 0.7rem;
+      }
+      .tile .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .tile .value {
+        font-size: 1.4rem;
+        font-weight: 600;
+        margin-top: 0.1rem;
+      }
+      .tile .delta {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      .chart {
+        overflow-x: auto;
+      }
+      .chart .viz {
+        height: auto;
+      }
+      .legend {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+      table {
+        border-collapse: collapse;
+        font-size: 0.85rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.25rem 0.8rem 0.25rem 0;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      th.n,
+      td.n {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      details {
+        margin-top: 0.5rem;
+      }
+      details summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .relations {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.3rem 0.8rem;
+      }
+      .relations dt {
+        color: var(--muted);
+      }
+      .relations dd {
+        margin: 0;
+      }
+      .warn {
+        color: var(--warn);
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      .empty {
+        text-align: start;
+      }
+      .err {
+        margin-bottom: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <div id="status"></div>
+      <div class="bar">
+        <h2 id="title"></h2>
+        <span class="meta" id="links"></span>
+      </div>
+      <div class="bar">
+        <span class="meta" id="collected"></span>
+        <label
+          >movement and changes since
+          <select id="window"></select
+        ></label>
+      </div>
+      <div id="content"></div>
+    </main>
+    <div class="footer" id="footer"></div>
+
+    <script type="module">
+      import {api, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {
+        DIGEST_PATH,
+        stateDocPath,
+        parseRuns,
+        parseBaseline,
+        parsePackages,
+        parseWhen,
+        short,
+        plural,
+        compact,
+        percent,
+        weekEnds,
+        fourWeekChange,
+        majorShares,
+        dependentsChange,
+        compareVersions,
+        NOISE_BASE
+      } from '/ui/fleet-digest.js';
+      import {
+        WINDOWS,
+        WINDOW_KEY,
+        windowState,
+        isStale,
+        ext,
+        noteHref,
+        queueHref,
+        projectHref,
+        npmHref,
+        githubDetail
+      } from '/ui/fleet-view.js';
+      import {
+        weeklyBars,
+        stepLine,
+        majorRows,
+        rangeLabel,
+        dayLabel,
+        bindTips
+      } from '/ui/fleet-charts.js';
+
+      const LOADING = '<div class="empty"><span class="spinner"></span> loading…</div>';
+      const $ = sel => document.querySelector(sel);
+      const project = new URLSearchParams(location.search).get('project') ?? '';
+
+      let runs = [],
+        baseline = null,
+        packages = null;
+
+      const cutoffOf = w => (w === 'all' ? null : parseWhen(w));
+      // The section's inner width, so the charts fill it at any viewport.
+      const chartWidth = () => Math.max(320, Math.floor(($('main').clientWidth || 720) - 40));
+      const num = n => (typeof n === 'number' ? n.toLocaleString('en-US') : '-');
+      const signed = n => (n > 0 ? `+${num(n)}` : n < 0 ? `−${num(-n)}` : '0');
+      const tile = (label, value, {title = '', delta = ''} = {}) =>
+        `<div class="tile"><div class="label">${esc(label)}</div><div class="value" title="${esc(title)}">${esc(value)}</div>${delta ? `<div class="delta">${delta}</div>` : ''}</div>`;
+      const pkgLink = (name, projects) => {
+        const target = projects?.[name];
+        return target
+          ? `<a href="${projectHref(target, `pkg-${name}`)}">${esc(name)}</a>`
+          : `<code>${esc(name)}</code>`;
+      };
+      const edge = ([name, kind], projects) =>
+        `${pkgLink(name, projects)}${kind === 'dep' ? '' : ` <span class="quiet">(${esc(kind)})</span>`}`;
+
+      const renderGithub = () => {
+        if (!baseline)
+          return `<section><h3>GitHub</h3><div class="empty">No stored GitHub baseline — the project has no public fleet repository, or <code>/fleet-status</code> has not collected it yet.</div></section>`;
+        const {html, links} = githubDetail({project, baseline}, runs, cutoffOf(windowState()));
+        return `<section id="github"><h3>GitHub</h3>${html}<div class="links">${links}</div></section>`;
+      };
+
+      const renderFleet = p => {
+        const f = p.fleet;
+        if (!f)
+          return `<h4>Fleet</h4><div class="quiet">Not in the <code>fleet-deps</code> graph.</div>`;
+        const inOrder = f.dependents_in_order ?? [];
+        return `<h4>Fleet</h4><dl class="relations">
+          <dt>Update level</dt><dd>${esc(f.level ?? '-')}</dd>
+          <dt>Uses</dt><dd>${f.uses.length ? f.uses.map(e => edge(e, f.projects)).join(', ') : '<span class="quiet">no fleet packages</span>'}</dd>
+          <dt>Used by</dt><dd>${f.used_by.length ? f.used_by.map(e => edge(e, f.projects)).join(', ') : '<span class="quiet">no fleet packages</span>'}</dd>
+          ${inOrder.length ? `<dt>Dependents in update order</dt><dd>${inOrder.map(n => pkgLink(n, f.projects)).join(' → ')}</dd>` : ''}
+        </dl>`;
+      };
+
+      const renderNpm = p => {
+        const n = p.npm;
+        const cutoff = cutoffOf(windowState());
+        const weekly = n.weekly ?? [],
+          ends = weekEnds(n);
+        const change = fourWeekChange(weekly);
+        const dep = dependentsChange(n.dependents, cutoff);
+        const tiles = [
+          tile(`Downloads, ${rangeLabel(n.week?.start, n.week?.end)}`, compact(n.week?.downloads), {
+            title: `${num(n.week?.downloads)} downloads`
+          }),
+          tile(
+            'Change, last 4 weeks',
+            change?.ratio == null
+              ? '-'
+              : `${change.ratio >= 0 ? '+' : '−'}${percent(Math.abs(change.ratio))}`,
+            {
+              title: change
+                ? `${num(change.last)} against ${num(change.prev)} in the 4 weeks before`
+                : '',
+              delta: change?.noisy
+                ? `under ${num(NOISE_BASE)} before, mostly noise`
+                : change
+                  ? `${compact(change.last)} against ${compact(change.prev)}`
+                  : ''
+            }
+          ),
+          tile('Dependents', n.dependents ? num(n.dependents.direct) : '-', {
+            title: 'deps.dev direct dependents, summed over versions',
+            delta: !dep
+              ? ''
+              : dep.partial || n.dependents.history.length === 1
+                ? `${dep.delta ? `${signed(dep.delta)} ` : ''}tracked since ${esc(dayLabel(n.dependents.history[0][0]))}`
+                : `${signed(dep.delta)} since ${esc(dayLabel(dep.since))}`
+          }),
+          tile('All-time downloads', compact(n.total?.downloads), {
+            title: n.total ? `${num(n.total.downloads)} since ${dayLabel(n.total.since)}` : '',
+            delta: n.total ? `since ${esc(dayLabel(n.total.since))}` : ''
+          })
+        ].join('');
+
+        const shares = majorShares(n);
+        const byVersion = n.dependents?.by_version ?? {};
+        const top = n.top_versions ?? [];
+        const versions = top.length
+          ? `<h4>Versions, ${esc(rangeLabel(n.week?.start, n.week?.end))}</h4>${majorRows(shares)}
+            <table style="margin-top:0.6rem"><thead><tr><th>Version</th><th class="n">Downloads</th><th class="n">Share</th><th class="n">Direct dependents</th></tr></thead>
+            <tbody>${top.map(([v, c]) => `<tr><td><code>${esc(v)}</code>${v === n.latest ? ' <span class="quiet">latest</span>' : ''}</td><td class="n">${num(c)}</td><td class="n">${esc(percent(c / n.versions_total))}</td><td class="n">${num(byVersion[v]?.[0] ?? 0)}</td></tr>`).join('')}</tbody></table>`
+          : `<h4>Versions</h4><div class="quiet">${n.versions_total === null ? ((n.week?.downloads ?? 0) < 100 ? 'Under 100 downloads a week: the split by version is mirror traffic, so it is not read.' : 'The split by version was not read in the last collection.') : 'No downloads by version last week.'}</div>`;
+
+        const depVersions = Object.entries(byVersion)
+          .sort((a, b) => b[1][0] - a[1][0] || compareVersions(b[0], a[0]))
+          .slice(0, 5);
+        const history = n.dependents?.history ?? [];
+        const dependents = n.dependents
+          ? `<h4>Dependents</h4>${
+              history.length > 1
+                ? `<div class="chart">${stepLine(history, {width: chartWidth()})}</div>`
+                : `<div class="quiet">${history.length ? `One reading so far: ${num(history[0][1])} on ${esc(dayLabel(history[0][0]))}. The history grows by one point per collection day.` : 'No readings stored.'}</div>`
+            }${
+              depVersions.length
+                ? `<table style="margin-top:0.6rem"><thead><tr><th>Resolved to</th><th class="n">Direct</th><th class="n">Direct and indirect</th></tr></thead><tbody>${depVersions
+                    .map(
+                      ([v, [d, all]]) =>
+                        `<tr><td><code>${esc(v)}</code></td><td class="n">${num(d)}</td><td class="n">${num(all)}</td></tr>`
+                    )
+                    .join('')}</tbody></table>`
+                : ''
+            }`
+          : '';
+
+        const published = new Map();
+        for (const [day, version] of n.publishes ?? []) {
+          const i = ends.findIndex(end => day <= end);
+          if (i >= 0) published.set(i, [...(published.get(i) ?? []), version]);
+        }
+        const table = `<details><summary>Weekly numbers</summary><table><thead><tr><th>Week ending</th><th class="n">Downloads</th><th>Published</th></tr></thead><tbody>${weekly
+          .map((c, i) => [c, i])
+          .reverse()
+          .map(
+            ([c, i]) =>
+              `<tr><td>${esc(dayLabel(ends[i]))}</td><td class="n">${num(c)}</td><td>${esc((published.get(i) ?? []).join(', '))}</td></tr>`
+          )
+          .join('')}</tbody></table></details>`;
+
+        return `<div class="tiles">${tiles}</div>
+          <h4>Weekly downloads, ${plural(weekly.length, 'week')}</h4>
+          <div class="chart">${weeklyBars(weekly, ends, n.publishes, {width: chartWidth()})}</div>
+          <div class="legend">A tick under a week marks a publish in that week. Mirrors download each new version, so a spike after a publish is not adoption.</div>
+          ${table}${versions}${dependents}`;
+      };
+
+      const renderPackage = p => {
+        const n = p.npm;
+        const head = `<h3 id="${esc(`pkg-${p.name}`)}"><span class="pkg">${esc(p.name)}</span>${
+          n
+            ? ` <span class="quiet">${esc(n.latest ?? '')}${n.published_at ? `, published ${esc(dayLabel(n.published_at.slice(0, 10)))}` : ''}</span>${n.deprecated ? ' <span class="warn">deprecated</span>' : ''}`
+            : ` <span class="quiet">${p.published ? 'npm numbers unavailable' : 'not published'}</span>`
+        }</h3>`;
+        const links = [
+          p.published ? ext(npmHref(p.name), 'npm') : null,
+          p.published
+            ? ext(`https://deps.dev/npm/${encodeURIComponent(p.name)}`, 'deps.dev')
+            : null,
+          p.repo ? ext(`https://github.com/${p.repo}`, p.repo) : null
+        ].filter(Boolean);
+        return `<section>${head}${links.length ? `<div class="links">${links.join(' · ')}</div>` : ''}${n ? renderNpm(p) : ''}${renderFleet(p)}</section>`;
+      };
+
+      const render = () => {
+        renderedWidth = chartWidth();
+        const repo = baseline?.repo ?? packages?.packages?.find(p => p.repo)?.repo ?? null;
+        $('#title').textContent = project;
+        document.title = `vault-storage — ${project}`;
+        $('#links').innerHTML = [
+          repo ? ext(`https://github.com/${repo}`, 'GitHub') : null,
+          `<a href="${queueHref(project)}">queue</a>`,
+          `<a href="${noteHref(stateDocPath(project))}">state.md</a>`,
+          `<a href="/ui/fleet.html${packages ? '?view=packages' : ''}">fleet</a>`
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const week = packages?.packages?.find(p => p.npm?.week)?.npm.week;
+        const stamp = (label, iso) =>
+          iso
+            ? `<span class="${isStale(iso) ? 'warn' : ''}" title="${esc(iso)}">${esc(label)} collected ${esc(short(iso))}</span>`
+            : '';
+        $('#collected').innerHTML = [
+          stamp('GitHub', baseline?.collected_at),
+          stamp('npm', packages?.collected_at),
+          week ? `downloads through ${esc(dayLabel(week.end))}` : ''
+        ]
+          .filter(Boolean)
+          .join(' · ');
+        const list = [...(packages?.packages ?? [])].sort(
+          (a, b) => Number(Boolean(b.npm)) - Number(Boolean(a.npm)) || a.name.localeCompare(b.name)
+        );
+        $('#content').innerHTML = `${renderGithub()}${list.map(renderPackage).join('')}${
+          packages
+            ? ''
+            : '<section><h3>Packages</h3><div class="empty">No stored packages for this project.</div></section>'
+        }`;
+      };
+
+      const scrollToHash = () => {
+        if (!location.hash) return;
+        let id;
+        try {
+          id = decodeURIComponent(location.hash.slice(1));
+        } catch {
+          return;
+        }
+        document.getElementById(id)?.scrollIntoView();
+      };
+
+      const load = async () => {
+        if (!project) {
+          $('#status').innerHTML =
+            '<div class="err">No project named — open this page from the fleet dashboard.</div>';
+          return;
+        }
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        $('#status').innerHTML = '';
+        $('#content').innerHTML = LOADING;
+        const text = path =>
+          api(`/vault/${path}`)
+            .then(r => r.text())
+            .catch(e => {
+              if (e.message === 'not-found') return '';
+              throw e;
+            });
+        try {
+          const [digest, state] = await Promise.all([
+            text(DIGEST_PATH),
+            text(stateDocPath(encodeURIComponent(project)))
+          ]);
+          runs = parseRuns(digest);
+          baseline = parseBaseline(state);
+          packages = parsePackages(state);
+          if (!baseline && !packages) {
+            $('#title').textContent = project;
+            $('#content').innerHTML =
+              `<div class="empty">No stored fleet data in <code>${esc(stateDocPath(project))}</code>.</div>`;
+            return;
+          }
+          render();
+          scrollToHash();
+          $('#footer').textContent =
+            `${plural(packages?.packages?.length ?? 0, 'package')} · ${plural(runs.length, 'stored run')}`;
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#status').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+        }
+      };
+
+      const sel = $('#window');
+      sel.innerHTML = WINDOWS.map(([v, label]) => `<option value="${v}">${label}</option>`).join(
+        ''
+      );
+      sel.value = windowState();
+      sel.addEventListener('change', () => {
+        localStorage.setItem(WINDOW_KEY, sel.value);
+        if (baseline || packages) render();
+      });
+      bindTips($('#content'));
+      window.addEventListener('hashchange', scrollToHash);
+      let resizeTimer = null,
+        renderedWidth = 0;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          if (!(baseline || packages) || Math.abs(chartWidth() - renderedWidth) < 24) return;
+          renderedWidth = chartWidth();
+          render();
+        }, 150);
+      });
+      document.addEventListener('token-change', load);
+
+      load();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>
