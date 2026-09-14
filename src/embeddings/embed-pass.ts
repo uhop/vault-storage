@@ -46,10 +46,29 @@ interface PendingRow {
  * per-record upsert then writes within a per-batch transaction so the DB is
  * consistent at every commit boundary.
  */
-export const embedPending = async (
+export const embedPending = (
   db: DatabaseSync,
   embedder: Embedder,
   options: {batchSize?: number} = {}
+): Promise<EmbedSummary> => {
+  const run = (inFlight.get(db) ?? Promise.resolve()).then(() =>
+    runEmbedPending(db, embedder, options)
+  );
+  inFlight.set(
+    db,
+    run.catch(() => {})
+  );
+  return run;
+};
+
+// Passes on one database run one at a time: the startup pass and a watcher drain
+// that overlap would otherwise embed the same records twice.
+const inFlight = new WeakMap<DatabaseSync, Promise<unknown>>();
+
+const runEmbedPending = async (
+  db: DatabaseSync,
+  embedder: Embedder,
+  options: {batchSize?: number}
 ): Promise<EmbedSummary> => {
   const start = performance.now();
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;

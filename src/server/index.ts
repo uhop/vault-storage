@@ -3,18 +3,17 @@ import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {openDatabase} from '../db/connection.ts';
 import {runMigrations} from '../db/migrate.ts';
-import {JsonlAnomalyLogger} from '../embeddings/anomaly-log.ts';
-import {BgeEmbedder} from '../embeddings/bge.ts';
 import {embedPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
+import {ChildProcessEmbedder} from '../embeddings/child-embedder.ts';
 import {startupReindex} from '../maintenance/startup-reindex.ts';
 import {backfillChunkTextHashes} from '../maintenance/backfill-chunk-text-hashes.ts';
 import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startScanScheduler, type ScanSchedulerHandle} from '../maintenance/scan-scheduler.ts';
 import {startGitSync, type GitSyncHandle} from './git-sync.ts';
-import {startMemoryReporter, type MemoryReporterHandle} from './memory-reporter.ts';
+import {processRss, startMemoryReporter, type MemoryReporterHandle} from './memory-reporter.ts';
 import {ResolverCache} from './resolver-cache.ts';
 import {startServer} from './server.ts';
 import {startWatcher, type WatcherHandle} from './watcher.ts';
@@ -26,17 +25,16 @@ export const main = async (): Promise<void> => {
   const db = openDatabase({path: env.vaultDbPath});
   const migration = runMigrations(db);
 
-  const anomalyLogger = env.embedAnomalyLogPath
-    ? new JsonlAnomalyLogger(env.embedAnomalyLogPath)
-    : null;
-  const embedder: Embedder =
+  const childEmbedder =
     env.embedder === 'fake'
-      ? new FakeEmbedder()
-      : new BgeEmbedder({
-          anomalyLogger,
+      ? null
+      : new ChildProcessEmbedder({
+          kind: 'bge',
+          anomalyLogPath: env.embedAnomalyLogPath,
           retentionMs: env.embedderRetentionMs,
           maxBatch: env.embedderMaxBatch
         });
+  const embedder: Embedder = childEmbedder ?? new FakeEmbedder();
 
   // Shared between the HTTP layer (/resolve reads it; write handlers
   // invalidate) and the watcher (drains invalidate after disk changes).
@@ -59,8 +57,25 @@ export const main = async (): Promise<void> => {
       `(db=${env.vaultDbPath} schema=${migration.current} vault=${env.vaultDataPath})\n`
   );
 
-  // Before the watcher and git-sync: git-sync commits dirty files and advances
-  // the anchor, which would hide them from the working-tree pass.
+  // Watch from the moment requests are served: a write landing during the
+  // reindex is imported by its handler, and only a watcher drain embeds it.
+  let watcher: WatcherHandle | null = null;
+  if (env.autoWatch) {
+    watcher = startWatcher({
+      db,
+      vaultDataPath: env.vaultDataPath,
+      embedder,
+      debounceMs: env.watchDebounceMs,
+      onIndexChanged: () => resolverCache.invalidate(),
+      health
+    });
+    process.stdout.write(
+      `vault-storage: watching ${env.vaultDataPath} (debounce=${env.watchDebounceMs}ms)\n`
+    );
+  }
+
+  // Before git-sync: git-sync commits dirty files and advances the anchor,
+  // which would hide them from the working-tree pass.
   if (env.autoReindex) {
     process.stdout.write(`vault-storage: initial reindex of ${env.vaultDataPath}…\n`);
     try {
@@ -101,24 +116,15 @@ export const main = async (): Promise<void> => {
     );
   }
 
-  let watcher: WatcherHandle | null = null;
-  if (env.autoWatch) {
-    watcher = startWatcher({
-      db,
-      vaultDataPath: env.vaultDataPath,
-      embedder,
-      debounceMs: env.watchDebounceMs,
-      onIndexChanged: () => resolverCache.invalidate(),
-      health
-    });
-    process.stdout.write(
-      `vault-storage: watching ${env.vaultDataPath} (debounce=${env.watchDebounceMs}ms)\n`
-    );
-  }
-
   let memoryReporter: MemoryReporterHandle | null = null;
   if (env.memoryReportIntervalMs > 0) {
-    memoryReporter = startMemoryReporter({intervalMs: env.memoryReportIntervalMs});
+    memoryReporter = startMemoryReporter({
+      intervalMs: env.memoryReportIntervalMs,
+      embedderRss: async () => {
+        const pid = childEmbedder?.pid ?? null;
+        return pid === null ? null : processRss(pid);
+      }
+    });
   }
 
   const workHours =

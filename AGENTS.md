@@ -29,7 +29,7 @@ Start with `ARCHITECTURE.md` for the full module map. The coarse shape:
 - **`src/index.ts`** — CLI entry: `info`, `import`, `migrate`, `serve` subcommands.
 - **`src/server/`** — `node:http` server: router, bearer auth, handlers (REST surface), file-watcher with debounced reindex, git auto-commit loop, snapshot mechanics, the JSON/markdown write path with frontmatter validation.
 - **`src/importer/`** — file → record pipeline: frontmatter parse, tag import, wikilink classification, typed-edge build, suggestion filing.
-- **`src/embeddings/`** — BGE (ONNX, local CPU) and fake embedders behind one interface; paragraph-overlapped chunker; embed pass.
+- **`src/embeddings/`** — BGE (ONNX, local CPU) and fake embedders behind one interface, with the server running BGE in a child process because inference is synchronous; paragraph-overlapped chunker; embed pass (one pass per database at a time).
 - **`src/db/`** — `node:sqlite` connection (+ `sqlite-vec` extension), numbered schema migrations, vector repos.
 - **`src/records/`**, **`src/queue/`** — record/edge repositories, reservation machinery (suggestion claims, repo leases), the queue-hygiene rules `/system/lint` and `/queue/lint` run (`queue/lint.ts`), the handoff queue (`handoffs.ts` + its spool file layer `handoff-spool.ts` — files under root `handoff/` are truth, the table is rebuilt by scan on server start), and the queue-items derivative synced from `queue.md` files.
 - **`src/maintenance/`** — scans (duplicates, compaction, retention, upgrade signals), lint cleanup, incremental reindex, raw inbox.

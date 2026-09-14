@@ -2,10 +2,11 @@ import {pipeline} from '@huggingface/transformers';
 import type {FeatureExtractionPipeline} from '@huggingface/transformers';
 import {Retainer} from 'time-queues/Retainer.js';
 import {retryNonFiniteVectors, type AnomalyLogger} from './anomaly-log.ts';
+import {BGE_DIM, BGE_MODEL} from './model.ts';
 import type {Embedder} from './types.ts';
 
-const DEFAULT_MODEL = 'Xenova/bge-small-en-v1.5';
-const DEFAULT_DIM = 384;
+const DEFAULT_MODEL = BGE_MODEL;
+const DEFAULT_DIM = BGE_DIM;
 
 // BGE has a 512-token context. We truncate at character level rather than
 // running a separate tokenizer pass — the tokenizer is invoked inside the
@@ -88,6 +89,8 @@ export class BgeEmbedder implements Embedder {
       maxBatch?: number;
       anomalyLogger?: AnomalyLogger | null;
       retentionMs?: number;
+      /** Called with `true` when the model loads and `false` when it is released. */
+      onRetainedChange?: (retained: boolean) => void;
     } = {}
   ) {
     this.modelName = opts.modelName ?? DEFAULT_MODEL;
@@ -99,9 +102,17 @@ export class BgeEmbedder implements Embedder {
       throw new Error(`BgeEmbedder.maxBatch must be ≥ 1 (got ${this.maxBatch})`);
     this.anomalyLogger = opts.anomalyLogger ?? null;
     this.retentionMs = opts.retentionMs ?? DEFAULT_RETENTION_MS;
+    const onRetainedChange = opts.onRetainedChange;
     this.#retainer = new Retainer<FeatureExtractionPipeline>({
-      create: () => pipeline('feature-extraction', this.modelName),
-      destroy: pipe => pipe.dispose(),
+      create: async () => {
+        const pipe = await pipeline('feature-extraction', this.modelName);
+        onRetainedChange?.(true);
+        return pipe;
+      },
+      destroy: async pipe => {
+        await pipe.dispose();
+        onRetainedChange?.(false);
+      },
       retentionPeriod: this.retentionMs
     });
   }

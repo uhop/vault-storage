@@ -477,3 +477,25 @@ test('backfillChunkTextHashes fills hashes for chunk sets that still match their
     fx.db.close();
   }
 });
+
+test('embedPending: overlapping passes on one database run one at a time', async t => {
+  const fx = setup();
+  const embedder = new CountingEmbedder();
+  try {
+    fx.records.insert(makeRecord('topics/a.md', longBody(3)));
+    fx.records.insert(makeRecord('topics/b.md', longBody(2).replaceAll('Paragraph', 'Line')));
+    const [first, second] = await Promise.all([
+      embedPending(fx.db, embedder),
+      embedPending(fx.db, embedder)
+    ]);
+    t.equal(first.embedded, 2, 'the first pass embeds both records');
+    t.equal(second.embedded, 0, 'the second pass starts after it and finds nothing pending');
+    t.equal(
+      new Set(embedder.embedded).size,
+      embedder.embedded.length,
+      'no chunk text embedded twice'
+    );
+  } finally {
+    fx.db.close();
+  }
+});
