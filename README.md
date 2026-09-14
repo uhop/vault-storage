@@ -76,7 +76,7 @@ Environment variables:
 | `VAULT_EMBEDDER`              | no       | `bge` (default) or `fake` (skip model load — dev/test only).                                                                                                                                                                   |
 | `VAULT_EMBEDDER_RETENTION_MS` | no       | Idle window before the BGE pipeline is disposed and its ~GB ONNX arena returned to the OS. Default `1800000` (30 min); minimum `1000`. Reload on next embed adds ~1-3 s.                                                       |
 | `VAULT_EMBEDDER_MAX_BATCH`    | no       | Cap on per-ORT-inference batch size. Bounds active-peak RSS by sub-batching large inputs. Default `8` (~200-400 MB peak for BGE-small at S=512); minimum `1`. Trade-off: smaller = lower memory, more inferences per re-embed. |
-| `VAULT_AUTO_REINDEX`          | no       | Run a full reindex on startup. Default `true`.                                                                                                                                                                                 |
+| `VAULT_AUTO_REINDEX`          | no       | Reindex on startup: incremental from the last indexed commit plus uncommitted files, or a full import on a fresh database, after a migration, or after an importer change. Default `true`.                                     |
 | `VAULT_AUTO_WATCH`            | no       | Watch the vault tree and reindex incrementally. Default `true`.                                                                                                                                                                |
 | `VAULT_WATCH_DEBOUNCE_MS`     | no       | Watcher debounce window. Default `1500`.                                                                                                                                                                                       |
 | `VAULT_AUTO_COMMIT`           | no       | Periodic `git add && git commit` of the vault tree. Default `true`.                                                                                                                                                            |
@@ -262,6 +262,12 @@ It diffs `meta.last_indexed_commit..HEAD`, dispatches per-file:
 If the recorded anchor is no longer in HEAD's ancestry (force-push,
 rebase) the call falls back to a full `importVault` and re-pins HEAD.
 Force a full reindex any time with `?full=true`.
+
+The server runs the same reindex at startup, with uncommitted files
+included, so a restart imports only what changed. It listens first and
+answers from the stored index while the reindex runs. A full import
+runs instead on a fresh database, after a migration, or when the
+importer's source changed since the last one.
 
 Merge conflicts are the user's responsibility — resolve via standard
 git, then run incremental reindex. The model is "git is the

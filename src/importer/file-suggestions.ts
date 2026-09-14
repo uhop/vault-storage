@@ -308,6 +308,74 @@ const column = (key: MatchKey): string =>
 const matchClause = (keys: readonly MatchKey[]): string =>
   keys.map(k => `${column(k)} = ?`).join(' AND ');
 
+const sharedPrefixLength = (a: readonly MatchKey[], b: readonly MatchKey[]): number => {
+  let n = 0;
+  while (n < a.length && n < b.length && a[n] === b[n]) ++n;
+  return n;
+};
+
+/**
+ * The identity `WHERE` fragment for a non-symmetric spec, plus the payload keys
+ * whose values bind its placeholders, in order. Keys shared by the identity and
+ * the alternative identity are hoisted out of the OR, because SQLite uses an
+ * expression index (schema 0022) only for a top-level conjunct.
+ */
+const identityMatch = (spec: FilerSpec): {clause: string; keys: readonly MatchKey[]} => {
+  const alt = spec.altIdentity;
+  if (!alt?.length) return {clause: matchClause(spec.identity), keys: spec.identity};
+  const n = sharedPrefixLength(spec.identity, alt);
+  const shared = spec.identity.slice(0, n);
+  const rest = spec.identity.slice(n);
+  const altRest = alt.slice(n);
+  // (S ∧ R) ∨ (S ∧ R′) = S when R or R′ is empty (absorption).
+  if (!rest.length || !altRest.length) return {clause: matchClause(shared), keys: shared};
+  const either = `((${matchClause(rest)}) OR (${matchClause(altRest)}))`;
+  return {
+    clause: shared.length ? `${matchClause(shared)} AND ${either}` : either,
+    keys: [...shared, ...rest, ...altRest]
+  };
+};
+
+/**
+ * The existence check {@link SuggestionFiler.file} runs for `kind`, and the
+ * payload keys binding its identity placeholders in order (non-symmetric specs;
+ * a symmetric spec binds its pair in both orientations).
+ */
+export const findExistingQuery = (
+  kind: SuggestionKind
+): {sql: string; identityKeys: readonly MatchKey[]} => {
+  const spec = FILER_SPECS[kind];
+  let identityClause: string;
+  let identityKeys: readonly MatchKey[];
+  if (spec.symmetric) {
+    const [a, b] = spec.identity as readonly [MatchKey, MatchKey];
+    identityClause = `((${column(a)} = ? AND ${column(b)} = ?) OR (${column(a)} = ? AND ${column(b)} = ?))`;
+    if (spec.altIdentity) {
+      identityClause = `(${identityClause} OR (${matchClause(spec.altIdentity)}))`;
+    }
+    identityKeys = spec.identity;
+  } else {
+    ({clause: identityClause, keys: identityKeys} = identityMatch(spec));
+  }
+  // 'claimed' is unresolved-but-reserved (schema 0015) — it blocks and
+  // settles exactly like 'pending' everywhere in this module.
+  const blockingClause =
+    spec.blocking === 'pending-only'
+      ? ` AND status IN ('pending', 'claimed')`
+      : spec.blocking === 'pending-or-snoozed-reject'
+        ? ` AND (status IN ('pending', 'claimed') OR (status = 'rejected' AND resolved_at >= ?))`
+        : // `IS`, not `=`: 2,904 of the 3,929 rejected edge_type rows carried a NULL
+          // resolved_by, and `NOT (… AND NULL)` is NULL, which un-blocked every one
+          // of them at the next full pass (2026-09-07, 1,520 re-filed).
+          ` AND NOT (status = 'rejected' AND resolved_by IS '${LINK_REMOVED}')`;
+  return {
+    sql: `SELECT id FROM suggestions
+       WHERE kind = '${kind}' AND ${identityClause}${blockingClause}
+       LIMIT 1`,
+    identityKeys
+  };
+};
+
 /**
  * Generic suggestion filer, parameterized by kind. Idempotency key, blocking
  * scope, and subject_id source come from {@link FILER_SPECS}.
@@ -318,39 +386,18 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
   readonly #spec: FilerSpec;
   readonly #findExisting: StatementSync;
   readonly #insert: StatementSync;
+  /** Payload keys binding `#findExisting`'s identity placeholders (non-symmetric specs). */
+  readonly #identityKeys: readonly MatchKey[];
   /** Lazily prepared accept/pending statements, keyed by op + match keys. */
   readonly #prepared = new Map<string, StatementSync>();
 
   constructor(db: DatabaseSync, kind: K) {
     this.#db = db;
     this.#kind = kind;
-    const spec = (this.#spec = FILER_SPECS[kind]);
-    let identityClause: string;
-    if (spec.symmetric) {
-      const [a, b] = spec.identity as readonly [MatchKey, MatchKey];
-      identityClause = `((${column(a)} = ? AND ${column(b)} = ?) OR (${column(a)} = ? AND ${column(b)} = ?))`;
-    } else {
-      identityClause = matchClause(spec.identity);
-    }
-    if (spec.altIdentity) {
-      identityClause = `(${identityClause} OR (${matchClause(spec.altIdentity)}))`;
-    }
-    // 'claimed' is unresolved-but-reserved (schema 0015) — it blocks and
-    // settles exactly like 'pending' everywhere in this module.
-    const blockingClause =
-      spec.blocking === 'pending-only'
-        ? ` AND status IN ('pending', 'claimed')`
-        : spec.blocking === 'pending-or-snoozed-reject'
-          ? ` AND (status IN ('pending', 'claimed') OR (status = 'rejected' AND resolved_at >= ?))`
-          : // `IS`, not `=`: 2,904 of the 3,929 rejected edge_type rows carried a NULL
-            // resolved_by, and `NOT (… AND NULL)` is NULL, which un-blocked every one
-            // of them at the next full pass (2026-09-07, 1,520 re-filed).
-            ` AND NOT (status = 'rejected' AND resolved_by IS '${LINK_REMOVED}')`;
-    this.#findExisting = db.prepare(
-      `SELECT id FROM suggestions
-       WHERE kind = '${kind}' AND ${identityClause}${blockingClause}
-       LIMIT 1`
-    );
+    this.#spec = FILER_SPECS[kind];
+    const query = findExistingQuery(kind);
+    this.#identityKeys = query.identityKeys;
+    this.#findExisting = db.prepare(query.sql);
     this.#insert = db.prepare(
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
        VALUES (?, '${kind}', ?, ?, 'pending', ?)`
@@ -380,12 +427,14 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
         : spec.subject === null
           ? null
           : (fields[spec.subject] ?? null);
-    const identity = spec.identity.map(k => (k === 'subject' ? subject : (fields[k] ?? null)));
-    const params: SQLInputValue[] = spec.symmetric
-      ? [identity[0] ?? null, identity[1] ?? null, identity[1] ?? null, identity[0] ?? null]
-      : [...identity];
-    if (spec.altIdentity) {
-      params.push(...spec.altIdentity.map(k => (k === 'subject' ? subject : (fields[k] ?? null))));
+    const value = (k: MatchKey): SQLInputValue => (k === 'subject' ? subject : (fields[k] ?? null));
+    let params: SQLInputValue[];
+    if (spec.symmetric) {
+      const [a = null, b = null] = spec.identity.map(value);
+      params = [a, b, b, a];
+      if (spec.altIdentity) params.push(...spec.altIdentity.map(value));
+    } else {
+      params = this.#identityKeys.map(value);
     }
     if (spec.blocking === 'pending-or-snoozed-reject') {
       params.push(snoozeCutoff(now, opts.snoozeDays ?? DEFAULT_SNOOZE_DAYS));

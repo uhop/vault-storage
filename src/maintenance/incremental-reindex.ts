@@ -18,7 +18,7 @@ import {join} from 'node:path';
 import {buildEdges} from '../importer/build-edges.ts';
 import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
-import {importVault} from '../importer/import.ts';
+import {importVaultAsync} from '../importer/import.ts';
 import {TagsImporter} from '../importer/import-tags.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import {getCurrentHead, runGit} from '../util/git.ts';
@@ -92,14 +92,84 @@ const parseDiff = (output: string): Change[] => {
 const isMd = (path: string): boolean => path.endsWith('.md');
 
 /**
+ * Uncommitted `.md` changes as {@link Change}s, classified by what is on disk
+ * and in the index rather than by git's status letters: a path on disk is an
+ * add when no record has it and a modify otherwise; a path gone from disk is a
+ * delete when a record still has it. Only a staged rename keeps its pairing.
+ */
+const workingTreeChanges = async (db: DatabaseSync, vaultDataPath: string): Promise<Change[]> => {
+  const status = await runGit(vaultDataPath, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all'
+  ]);
+  if (status.exitCode !== 0) throw new Error(`git status failed: ${status.stderr.trim()}`);
+  const records = new RecordsRepository(db);
+  const tokens = status.stdout.split('\x00');
+  const changes: Change[] = [];
+  for (let i = 0; i < tokens.length; ++i) {
+    const entry = tokens[i];
+    if (!entry || entry.length < 4) continue;
+    const path = entry.slice(3);
+    // -z puts a rename's source in the next token, after the destination.
+    if (entry[0] === 'R') {
+      const old = tokens[++i] ?? '';
+      if (isMd(old) && records.getByPath(old)) {
+        changes.push(isMd(path) ? {kind: 'rename', old, new: path} : {kind: 'delete', path: old});
+        continue;
+      }
+    }
+    if (!isMd(path)) continue;
+    const known = records.getByPath(path) !== null;
+    if (existsSync(join(vaultDataPath, path))) {
+      changes.push({kind: known ? 'modify' : 'add', path});
+    } else if (known) {
+      changes.push({kind: 'delete', path});
+    }
+  }
+  return changes;
+};
+
+export interface IncrementalReindexOptions {
+  /**
+   * Also import uncommitted `.md` changes. Startup needs it: a file edited
+   * while the server was down is dirty, git-sync would commit it and advance
+   * the anchor past it, and no watcher saw it change.
+   */
+  workingTree?: boolean;
+}
+
+const inFlight = new WeakMap<DatabaseSync, Promise<unknown>>();
+
+/**
  * Run an incremental reindex from `last_indexed_commit` to current HEAD.
  * On history loss (commit not in ancestry) falls back to a full
  * importVault and re-pins the anchor. On any other error returns the
  * partial summary with what was completed before the failure.
+ *
+ * Calls against one database run one at a time: a full import yields, and a
+ * second reindex interleaved with it would diff an anchor about to move.
  */
-export const incrementalReindex = async (
+export const incrementalReindex = (
   db: DatabaseSync,
-  vaultDataPath: string
+  vaultDataPath: string,
+  opts: IncrementalReindexOptions = {}
+): Promise<IncrementalReindexSummary> => {
+  const run = (inFlight.get(db) ?? Promise.resolve()).then(() =>
+    runIncrementalReindex(db, vaultDataPath, opts)
+  );
+  inFlight.set(
+    db,
+    run.catch(() => {})
+  );
+  return run;
+};
+
+const runIncrementalReindex = async (
+  db: DatabaseSync,
+  vaultDataPath: string,
+  opts: IncrementalReindexOptions
 ): Promise<IncrementalReindexSummary> => {
   const start = performance.now();
   const summary: IncrementalReindexSummary = {
@@ -116,46 +186,40 @@ export const incrementalReindex = async (
   const head = await getCurrentHead(vaultDataPath);
   summary.toCommit = head;
 
-  // Bootstrap or force-rebuild path: no anchor, or no git repo at all.
-  // Run a full importVault and pin HEAD as the new anchor.
-  if (head === null || summary.fromCommit === null) {
-    const full = importVault(db, vaultDataPath);
+  const fullReindex = async (): Promise<IncrementalReindexSummary> => {
+    const full = await importVaultAsync(db, vaultDataPath);
     if (head !== null) setLastIndexedCommit(db, head);
     summary.fellBack = true;
     summary.changedFiles = full.total;
     summary.imported = full.inserted + full.updated;
     summary.durationMs = Math.round(performance.now() - start);
     return summary;
-  }
+  };
 
-  // Already up to date.
-  if (summary.fromCommit === head) {
+  // Bootstrap or force-rebuild path: no anchor, or no git repo at all.
+  if (head === null || summary.fromCommit === null) return fullReindex();
+
+  const changes: Change[] = [];
+  if (summary.fromCommit !== head) {
+    // Diff the range. -z null-separates; --find-renames detects renames.
+    const diff = await runGit(vaultDataPath, [
+      'diff',
+      '--name-status',
+      '-z',
+      '--find-renames',
+      `${summary.fromCommit}..${head}`
+    ]);
+    // History loss (e.g. force-push or rebase).
+    if (diff.exitCode !== 0) return fullReindex();
+    changes.push(...parseDiff(diff.stdout));
+  }
+  if (opts.workingTree) changes.push(...(await workingTreeChanges(db, vaultDataPath)));
+
+  if (summary.fromCommit === head && !changes.length) {
     summary.durationMs = Math.round(performance.now() - start);
     return summary;
   }
 
-  // Diff the range. -z null-separates; --find-renames detects renames;
-  // -- limits to the working tree (no submodule traversal).
-  const diff = await runGit(vaultDataPath, [
-    'diff',
-    '--name-status',
-    '-z',
-    '--find-renames',
-    `${summary.fromCommit}..${head}`
-  ]);
-
-  if (diff.exitCode !== 0) {
-    // History loss (e.g. force-push or rebase): fall back to full reindex.
-    const full = importVault(db, vaultDataPath);
-    setLastIndexedCommit(db, head);
-    summary.fellBack = true;
-    summary.changedFiles = full.total;
-    summary.imported = full.inserted + full.updated;
-    summary.durationMs = Math.round(performance.now() - start);
-    return summary;
-  }
-
-  const changes = parseDiff(diff.stdout);
   summary.changedFiles = changes.filter(c => isMd(c.kind === 'rename' ? c.new : c.path)).length;
 
   const records = new RecordsRepository(db);

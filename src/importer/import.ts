@@ -1,10 +1,11 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {setImmediate as nextTurn} from 'node:timers/promises';
 import {RecordsRepository} from '../records/repository.ts';
 import {buildEdges, type EdgeBuildSummary} from './build-edges.ts';
 import {SuggestionFiler} from './file-suggestions.ts';
 import {importFile} from './import-file.ts';
 import {TagsImporter} from './import-tags.ts';
-import {walkMarkdown} from './walk.ts';
+import {walkMarkdown, type MarkdownFile} from './walk.ts';
 
 export interface ImportSummary {
   inserted: number;
@@ -17,6 +18,70 @@ export interface ImportSummary {
   edges: EdgeBuildSummary;
 }
 
+type ImportCounts = Omit<ImportSummary, 'durationMs' | 'edges'>;
+
+/** Files per transaction, and per uninterrupted turn of the event loop in {@link importVaultAsync}. */
+export const IMPORT_BATCH_FILES = 50;
+
+/**
+ * Import every .md file under `vaultRoot`, one transaction per batch, pausing
+ * after each batch. Each file is read and upserted in one synchronous turn, so
+ * no write can land between the two.
+ */
+function* importBatches(
+  db: DatabaseSync,
+  vaultRoot: string,
+  now: string,
+  counts: ImportCounts
+): Generator<void, void, void> {
+  const records = new RecordsRepository(db);
+  const filers = {
+    tags: new TagsImporter(db),
+    agentStale: new SuggestionFiler(db, 'agent_enrichment_stale'),
+    tagSuggestion: new SuggestionFiler(db, 'tag_suggestion'),
+    archiveCandidate: new SuggestionFiler(db, 'archive_candidate')
+  };
+
+  const flush = (batch: readonly MarkdownFile[]): void => {
+    db.exec('BEGIN');
+    try {
+      for (const file of batch) {
+        ++counts.total;
+        try {
+          const result = importFile(records, file.relativePath, file.absolutePath, now, filers);
+          ++counts[result.action];
+        } catch (err) {
+          ++counts.skipped;
+          const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
+          process.stderr.write(`skip ${file.relativePath}: ${msg}\n`);
+        }
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  };
+
+  let batch: MarkdownFile[] = [];
+  for (const file of walkMarkdown(vaultRoot)) {
+    batch.push(file);
+    if (batch.length < IMPORT_BATCH_FILES) continue;
+    flush(batch);
+    batch = [];
+    yield;
+  }
+  if (batch.length) flush(batch);
+}
+
+const emptyCounts = (): ImportCounts => ({
+  inserted: 0,
+  updated: 0,
+  unchanged: 0,
+  skipped: 0,
+  total: 0
+});
+
 /**
  * Walk `vaultRoot`, parse every .md file, and upsert into records.
  *
@@ -25,55 +90,30 @@ export interface ImportSummary {
  * runs against the imported records, not at import time.
  */
 export const importVault = (db: DatabaseSync, vaultRoot: string): ImportSummary => {
-  const records = new RecordsRepository(db);
-  const tags = new TagsImporter(db);
-  const agentStale = new SuggestionFiler(db, 'agent_enrichment_stale');
-  const tagSuggestion = new SuggestionFiler(db, 'tag_suggestion');
-  const archiveCandidate = new SuggestionFiler(db, 'archive_candidate');
   const start = performance.now();
   const now = new Date().toISOString();
-
-  let inserted = 0;
-  let updated = 0;
-  let unchanged = 0;
-  let skipped = 0;
-  let total = 0;
-
-  db.exec('BEGIN');
-  try {
-    for (const file of walkMarkdown(vaultRoot)) {
-      total++;
-      try {
-        const result = importFile(records, file.relativePath, file.absolutePath, now, {
-          tags,
-          agentStale,
-          tagSuggestion,
-          archiveCandidate
-        });
-        if (result.action === 'inserted') inserted++;
-        else if (result.action === 'updated') updated++;
-        else unchanged++;
-      } catch (err) {
-        skipped++;
-        const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
-        process.stderr.write(`skip ${file.relativePath}: ${msg}\n`);
-      }
-    }
-    db.exec('COMMIT');
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
-  }
-
+  const counts = emptyCounts();
+  const steps = importBatches(db, vaultRoot, now, counts);
+  while (!steps.next().done);
   const edges = buildEdges(db, {vaultRoot, now});
+  return {...counts, durationMs: Math.round(performance.now() - start), edges};
+};
 
-  return {
-    inserted,
-    updated,
-    unchanged,
-    skipped,
-    total,
-    durationMs: Math.round(performance.now() - start),
-    edges
-  };
+/**
+ * {@link importVault} for the server: yields to the event loop between batches.
+ * The edge rebuild stays one synchronous pass, because its garbage collection
+ * deletes every edge the pass did not touch, including one an interleaved write
+ * had just added.
+ */
+export const importVaultAsync = async (
+  db: DatabaseSync,
+  vaultRoot: string
+): Promise<ImportSummary> => {
+  const start = performance.now();
+  const now = new Date().toISOString();
+  const counts = emptyCounts();
+  const steps = importBatches(db, vaultRoot, now, counts);
+  while (!steps.next().done) await nextTurn();
+  const edges = buildEdges(db, {vaultRoot, now});
+  return {...counts, durationMs: Math.round(performance.now() - start), edges};
 };

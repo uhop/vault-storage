@@ -193,3 +193,81 @@ test('incrementalReindex: skips non-md changes', async t => {
     teardown(fx);
   }
 });
+
+test('incrementalReindex: workingTree imports uncommitted edits, new files, and deletions', async t => {
+  const fx = setup();
+  try {
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A\n---\nbody A\n');
+    writeMd(fx.root, 'topics/b.md', '---\ntitle: B\n---\nbody B\n');
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m initial');
+    await incrementalReindex(fx.db, fx.root); // bootstrap
+
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A edited\n---\nbody A, edited while down\n');
+    writeMd(fx.root, 'topics/c.md', '---\ntitle: C\n---\nbody C, never committed\n');
+    rmSync(join(fx.root, 'topics/b.md'));
+
+    const repo = new RecordsRepository(fx.db);
+    const without = await incrementalReindex(fx.db, fx.root);
+    t.equal(without.changedFiles, 0, 'without the option, a clean HEAD is a no-op');
+    t.equal(repo.getByPath('topics/c.md'), null, 'untracked file not imported without the option');
+
+    const summary = await incrementalReindex(fx.db, fx.root, {workingTree: true});
+    t.equal(summary.fellBack, false, 'no full import');
+    t.equal(summary.changedFiles, 3, 'three dirty .md paths');
+    t.equal(repo.getByPath('topics/a.md')?.title, 'A edited', 'uncommitted edit imported');
+    t.ok(repo.getByPath('topics/c.md'), 'untracked file imported');
+    t.equal(repo.getByPath('topics/b.md'), null, 'deleted file removed');
+    t.equal(summary.deleted, 1, 'one deletion counted');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('incrementalReindex: concurrent calls on one database run one at a time', async t => {
+  const fx = setup();
+  try {
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A\n---\nbody A\n');
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m initial');
+
+    const [first, second] = await Promise.all([
+      incrementalReindex(fx.db, fx.root),
+      incrementalReindex(fx.db, fx.root)
+    ]);
+    t.equal(first.fellBack, true, 'the first call bootstraps');
+    t.equal(second.fellBack, false, 'the second call starts after the anchor is pinned');
+    t.equal(
+      second.fromCommit,
+      first.toCommit,
+      'the second call starts from the anchor the first one pinned'
+    );
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('incrementalReindex: workingTree keeps a staged rename record id and drops a rename away from .md', async t => {
+  const fx = setup();
+  try {
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A\n---\nbody A\n');
+    writeMd(fx.root, 'topics/b.md', '---\ntitle: B\n---\nbody B\n');
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m initial');
+    await incrementalReindex(fx.db, fx.root); // bootstrap
+    const repo = new RecordsRepository(fx.db);
+    const idA = repo.getByPath('topics/a.md')?.recordId;
+
+    git(fx.root, 'mv topics/a.md topics/renamed.md');
+    git(fx.root, 'mv topics/b.md topics/b.txt');
+
+    const summary = await incrementalReindex(fx.db, fx.root, {workingTree: true});
+    t.equal(summary.renamed, 1, 'one rename');
+    t.equal(repo.getByPath('topics/renamed.md')?.recordId, idA, 'record id kept across the rename');
+    t.equal(repo.getByPath('topics/a.md'), null, 'old path gone');
+    t.equal(repo.getByPath('topics/b.md'), null, 'renamed away from .md: record removed');
+    t.equal(summary.deleted, 1, 'one deletion');
+  } finally {
+    teardown(fx);
+  }
+});

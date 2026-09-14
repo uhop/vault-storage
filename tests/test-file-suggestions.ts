@@ -2,6 +2,7 @@ import test from 'tape-six';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {
+  findExistingQuery,
   LINK_REMOVED,
   repathPendingSuggestions,
   SuggestionFiler
@@ -255,6 +256,59 @@ test('the filer stamps payload.evidence per kind, and a caller-supplied evidence
       read('edge_type')[1],
       {source: 'lexical', asserted: true},
       'explicit evidence kept'
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('the per-file and per-link existence checks use the 0022 identity indexes', async t => {
+  const db = setup();
+  try {
+    for (const [kind, index] of [
+      ['edge_type', 'idx_suggestions_edge_type_from'],
+      ['new_tag', 'idx_suggestions_new_tag_identity'],
+      ['tag_suggestion', 'idx_suggestions_tag_suggestion_identity']
+    ] as const) {
+      const {sql} = findExistingQuery(kind);
+      const params = Array.from(sql.matchAll(/\?/g), () => 'x');
+      const plan = (
+        db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as Array<{detail: string}>
+      )
+        .map(r => r.detail)
+        .join(' | ');
+      t.ok(plan.includes(`USING INDEX ${index}`), `${kind}: ${plan}`);
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('edge_type: a row sharing only from_record does not block', async t => {
+  const db = setup();
+  try {
+    const filer = new SuggestionFiler(db, 'edge_type');
+    const payload = (toRecord: string, toPath: string) => ({
+      from_record: 'rec-a',
+      from_path: 'topics/a.md',
+      to_record: toRecord,
+      to_path: toPath,
+      classifier_type: 'cites' as const,
+      context: 'ctx'
+    });
+    t.ok(filer.file(payload('rec-b', 'topics/b.md'), NOW), 'first link files');
+    t.ok(
+      filer.file(payload('rec-c', 'topics/c.md'), NOW),
+      'another target from the same source files'
+    );
+    t.notOk(filer.file(payload('rec-c', 'topics/c.md'), NOW), 'the same pair is blocked');
+    t.notOk(
+      filer.file(payload('rec-x', 'topics/b.md'), NOW),
+      'the same source and path is blocked'
+    );
+    t.ok(
+      filer.file({...payload('rec-b', 'topics/z.md'), from_record: 'rec-other'}, NOW),
+      'the same target from another source files'
     );
   } finally {
     db.close();

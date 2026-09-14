@@ -16,13 +16,13 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 ## Entry points
 
 - **`src/index.ts`** — CLI dispatcher: `info` (schema/record counts), `import` (importVault + embedPending), `migrate` (one-time Obsidian tree transform), `serve` (delegates to the server's `main()`). `makeEmbedder()` picks `BgeEmbedder` or `FakeEmbedder` via `VAULT_EMBEDDER`.
-- **`src/server/index.ts`** — composition root: env, DB open + migrations, embedder, optional startup reindex, then server + watcher + memory reporter + git-sync + scan scheduler; SIGINT/SIGTERM graceful shutdown.
+- **`src/server/index.ts`** — composition root: env, DB open + migrations, embedder, server (listening before the reindex, answering from the stored index), optional startup reindex (`startupReindex`), then watcher + memory reporter + git-sync + scan scheduler; git-sync starts after the reindex because it commits dirty files and advances the anchor past them. SIGINT/SIGTERM graceful shutdown.
 - **`src/server/server.ts`** — `buildRouter()` registers every route against shared repositories; request pipeline: URL parse → `OPTIONS` (pre-auth method discovery) → bearer-auth gate (`/ui/*`, `/favicon.ico` public) → route match → handler.
 - **`src/server/router.ts`** — regex router; `{id}` → `([^/]+)`, `{path}` → `(.+)`. Registration order is precedence — literal routes before wildcards.
 
 ## Import pipeline (`src/importer/`)
 
-- **`import.ts`** — `importVault`: one transaction over `walkMarkdown` → per-file `importFile`, then `buildEdges`.
+- **`import.ts`** — `importVault` / `importVaultAsync`: `walkMarkdown` → per-file `importFile`, one transaction per `IMPORT_BATCH_FILES` batch, then one synchronous `buildEdges` (its GC deletes every edge the pass did not touch, so it cannot yield). The async driver yields to the event loop between batches; the server uses it.
 - **`import-file.ts`** — per-file stage: frontmatter parse, type/status/priority/date derivation, `agent:` block extraction, content hashes; skips unchanged files (hash + FM compare — dates at date granularity, see decision D3); files/auto-resolves `tag_suggestion` / `agent_enrichment_stale` / `archive_candidate`.
 - **`walk.ts`** — recursive `.md` walker (skips `.git`, `node_modules`, `.obsidian`).
 - **`type-from-path.ts`** — folder-default record-type inference (`_index.md` → index, `projects/*/state.md` → state, …).
@@ -47,7 +47,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 
 - **`connection.ts`** — `node:sqlite` `DatabaseSync` + `sqlite-vec` extension, `sha256_hex` SQL function, FK enforcement, WAL.
 - **`migrate.ts`** — applies `schema/NNNN_*.sql` in numeric order, each in its own transaction (`-- migrate:no-transaction` opt-out for table rebuilds).
-- **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index. A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
+- **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index, 0022 partial expression indexes on the suggestion identity keys (their expressions must match `column()` in `file-suggestions.ts`, or the planner scans). A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
 - **`meta.ts`** — typed KV: `schema_version`, `last_indexed_commit`, `content_generation`, git-sync failure ledger.
 
 ## Server surface (`src/server/handlers/`)
@@ -72,7 +72,7 @@ Background/lifecycle modules in `src/server/`: **`git-sync.ts`** (auto-commit lo
 
 - **`src/records/`** — closed-enum types (`types.ts`), `RecordsRepository` / `EdgesRepository`, lazy decay scoring; reservation machinery (`claims.ts` for suggestion batches, `leases.ts` for the repo-lease registry); the handoff queue (`handoffs.ts` composing the DB index with `handoff-spool.ts`, the file layer under root `handoff/<project>/<status>/<id>.md` — self-describing sidecars plus an optional `<id>.patch`/`.bundle` artifact beside them, status transitions as atomic renames over every `<id>.*` sibling, rebuild-by-scan on server start).
 - **`src/queue/`** — parse `queue.md` / `queue-archive.md` into `queue_items` rows (including `blocked-by:` refs); query-time blocker resolution + ready/blocked/cycle computation (`ready.ts`); the queue-hygiene rules (`lint.ts`) that `/system/lint` and `/queue/lint` run over every `queue.md`; watcher glue + full reindex. `queue/items.ts` locates one item by its bold title and removes or inserts it — the server side of the queue-to-archive move.
-- **`src/maintenance/`** — the find-\* scans, lint cleanups, incremental reindex, run-all bundle, scan scheduler, search-before-write propose, raw-inbox classification, doc-vec backfill.
+- **`src/maintenance/`** — the find-\* scans, lint cleanups, incremental reindex (one run per database at a time; an optional working-tree pass), startup reindex (a full import when there is no anchor, a migration ran, or the importer fingerprint changed), run-all bundle, scan scheduler, search-before-write propose, raw-inbox classification, doc-vec backfill.
 - **`src/markdown/`** — YAML frontmatter parse/serialize; wikilink extraction with code-region masking; `sections.ts` locates one ATX-heading section (fence-masked, exactly once, to the next same-or-higher heading) for the section read and `replace-section`.
 - **`src/migration/`** — one-time Obsidian → vault-storage transform: enum remaps, tag canonicalization, frontmatter backfill, oversized-file atomization, taxonomy seeding.
 - **`src/util/`** — git spawn wrapper, content/embed-input hashing, UUIDv7 ids.

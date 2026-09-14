@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
-import {importVault} from '../src/importer/import.ts';
+import {IMPORT_BATCH_FILES, importVault, importVaultAsync} from '../src/importer/import.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import {contentHash} from '../src/util/hash.ts';
 
@@ -983,6 +983,45 @@ test('out-of-taxonomy suggested tag files a companion new_tag (origin: proposed)
       .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'new_tag'`)
       .get() as {n: number};
     t.equal(after.n, 1, 're-import does not duplicate the companion');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importVaultAsync matches importVault and lets the event loop run between batches', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const files = IMPORT_BATCH_FILES * 2 + 7;
+    for (let i = 0; i < files; ++i) {
+      writeMd(
+        root,
+        `topics/note-${i}.md`,
+        `---\ntitle: Note ${i}\n---\nLinks to [[note-${(i + 1) % files}]].\n`
+      );
+    }
+    const syncDb = openDatabase({path: ':memory:'});
+    runMigrations(syncDb);
+    const expected = importVault(syncDb, root);
+    syncDb.close();
+
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    let turns = 0;
+    let running = true;
+    const spin = (): void => {
+      if (!running) return;
+      ++turns;
+      setImmediate(spin);
+    };
+    setImmediate(spin);
+    const summary = await importVaultAsync(db, root);
+    running = false;
+
+    t.equal(summary.total, expected.total, 'same file count');
+    t.equal(summary.inserted, files, 'every file inserted');
+    t.equal(summary.edges.edgesCreated, expected.edges.edgesCreated, 'same edges');
+    t.ok(turns >= 2, `other work ran during the import (${turns} turns)`);
     db.close();
   } finally {
     cleanup();

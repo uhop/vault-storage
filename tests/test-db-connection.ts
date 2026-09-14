@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    21,
-    'schema version is 21 after all migrations through the handoff touches and verifications'
+    22,
+    'schema version is 22 after all migrations through the suggestion identity indexes'
   );
   t.deepEqual(
     result.applied,
@@ -43,7 +43,8 @@ test('runs the init migration and creates required tables', t => {
       '0018_handoffs.sql',
       '0019_handoff_artifact_event.sql',
       '0020_suggestion_evidence.sql',
-      '0021_handoff_touches_verification.sql'
+      '0021_handoff_touches_verification.sql',
+      '0022_suggestion_identity_indexes.sql'
     ],
     'all migrations applied in order'
   );
@@ -78,7 +79,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 21, 'schema version stays at 21');
+  t.equal(second.current, 22, 'schema version stays at 22');
   db.close();
 });
 
@@ -132,9 +133,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0018_handoffs.sql',
       '0019_handoff_artifact_event.sql',
       '0020_suggestion_evidence.sql',
-      '0021_handoff_touches_verification.sql'
+      '0021_handoff_touches_verification.sql',
+      '0022_suggestion_identity_indexes.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0021)'
+    'migrations from schema 9 onward applied (0010–0022)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {
