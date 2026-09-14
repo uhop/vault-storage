@@ -84,18 +84,42 @@
         font-family: var(--mono);
         font-size: 0.9em;
       }
-      .brief .lead {
-        margin: 0 0 0.5rem;
-      }
-      .brief ul {
+      .glance {
+        list-style: none;
         margin: 0;
-        padding-left: 1.2rem;
+        padding: 0;
       }
-      .brief li {
-        margin: 0.3rem 0;
+      .glance li {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0.15rem 1.1rem;
+        padding: 0.35rem 0;
+        border-bottom: 1px solid var(--line);
       }
-      .brief .repo {
+      .glance .repo {
         font-family: var(--mono);
+        min-width: 13rem;
+      }
+      .glance .group {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+      }
+      .glance .label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-right: 0.35rem;
+      }
+      .quiet-list summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 0.45rem 0;
+      }
+      .quiet-list .names {
+        font-size: 0.85rem;
+        line-height: 1.8;
       }
       a.x {
         font-size: 0.75rem;
@@ -159,31 +183,9 @@
       td.name {
         font-family: var(--mono);
       }
-      tr.repo td.name {
-        color: var(--accent);
-        cursor: pointer;
-      }
-      tr.repo td.name:hover,
-      tr.repo.open td.name {
-        text-decoration: underline;
-      }
       tr.total td {
         font-weight: 600;
         border-bottom: 0;
-      }
-      tr.detail td {
-        white-space: normal;
-        background: var(--card);
-        padding: 0.6rem 0.9rem 0.7rem;
-        font-size: 0.85rem;
-      }
-      tr.detail ul {
-        margin: 0.15rem 0 0.4rem;
-        padding-left: 1.2rem;
-      }
-      .links {
-        margin-top: 0.4rem;
-        color: var(--muted);
       }
       .zero,
       .quiet {
@@ -217,23 +219,27 @@
     </header>
     <main>
       <div id="status"></div>
-      <section>
-        <div class="bar">
-          <h2>Movement</h2>
-          <label
-            >since
-            <select id="window"></select
-          ></label>
-          <span class="meta" id="runs-meta"></span>
+      <div class="bar">
+        <div class="switch" role="group" aria-label="Table">
+          <button type="button" data-view="repos">Repositories</button>
+          <button type="button" data-view="packages">Packages</button>
         </div>
-        <div class="brief" id="brief"></div>
-      </section>
+        <label
+          >activity since
+          <select id="window"></select
+        ></label>
+        <span class="meta" id="view-meta"></span>
+      </div>
       <section>
         <div class="bar">
-          <div class="switch" role="group" aria-label="Table">
-            <button type="button" data-view="repos">Repositories</button>
-            <button type="button" data-view="packages">Packages</button>
-          </div>
+          <h2>At a glance</h2>
+          <span class="meta" id="glance-meta"></span>
+        </div>
+        <div id="glance"></div>
+      </section>
+      <section id="tables">
+        <div class="bar">
+          <h2 id="table-title">Repositories</h2>
           <input type="search" id="filter" placeholder="filter packages" hidden />
           <span class="meta" id="table-meta"></span>
         </div>
@@ -245,14 +251,12 @@
     <script type="module">
       import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {
-        DIGEST_PATH,
         stateDocPath,
-        parseRuns,
         parseBaseline,
         parsePackages,
         parseWhen,
-        storedMovement,
-        brief,
+        repoGlance,
+        packageMovement,
         baselineRow,
         alertText,
         plural,
@@ -268,12 +272,10 @@
         windowState,
         isStale,
         ext,
-        renderParts,
-        queueHref,
         projectHref,
-        npmHref,
-        githubDetail
+        npmHref
       } from '/ui/fleet-view.js';
+      import {chip, bindPopovers} from '/ui/fleet-popover.js';
       import {sparkline, rangeLabel, dayLabel, monthDay} from '/ui/fleet-charts.js';
 
       const VIEW_PARAM = 'view';
@@ -282,64 +284,209 @@
       const DAY_MS = 864e5;
       const $ = sel => document.querySelector(sel);
 
-      let runs = [],
-        entries = [];
+      let entries = [];
 
       const cutoffOf = w => (w === 'all' ? null : parseWhen(w));
       const viewState = () =>
         new URLSearchParams(location.search).get(VIEW_PARAM) === 'packages' ? 'packages' : 'repos';
-      const rowId = repo => `repo-${repo.replace(/[^A-Za-z0-9]+/g, '-')}`;
-      const nameOf = entry => entry.baseline.repo ?? entry.project;
 
-      const renderBrief = () => {
-        const {
-          digest,
-          runs: selected,
-          cutoff
-        } = storedMovement(runs, {
-          cutoff: cutoffOf(windowState())
-        });
-        $('#runs-meta').textContent = runs.length
-          ? `${plural(selected.length, 'run')} in the window · ${plural(runs.length, 'run')} stored, newest ${short(runs[0].collected_at)}`
+      // ─── At a glance ─────────────────────────────────────────────────────────
+      // One line per project with something open or moving: item numbers as
+      // chips, details on hover or tap. Quiet repositories fold into one line.
+
+      const MAX_CHIPS = 6;
+      const when = iso => (iso ? dayLabel(iso.slice(0, 10)) : '');
+      const KINDS = {
+        issue: ['issue', 'issues'],
+        pr: ['PR', 'PRs'],
+        discussion: ['discussion', 'discussions']
+      };
+      const byProject = (a, b) => a.project.localeCompare(b.project);
+      const signed = n => `${n > 0 ? '+' : '−'}${Math.abs(n).toLocaleString('en-US')}`;
+
+      const itemPop = (it, kind) => {
+        const comments = (it.comments ?? 0) + (it.review_comments ?? 0),
+          reactions = (it.reactions ?? 0) + (it.comment_reactions ?? 0),
+          last = it.last_comment;
+        return {
+          title: `#${it.number} ${it.title}`,
+          lines: [
+            `${KINDS[kind][0]} by ${it.author ?? 'unknown'}${it.bot ? ' (bot)' : ''}, opened ${when(it.created_at)}${it.draft ? ', draft' : ''}${it.category ? `, ${it.category}` : ''}${it.answered ? ', answered' : ''}`,
+            comments
+              ? `${plural(comments, 'comment')}${last?.author ? `, the last by ${last.author} on ${when(last.at)}` : ''}`
+              : 'no comments',
+            ...(reactions ? [plural(reactions, 'reaction')] : []),
+            ...(it.labels?.length ? [`labels: ${it.labels.join(', ')}`] : []),
+            ...(last?.excerpt ? [`last comment: "${last.excerpt}"`] : [])
+          ],
+          quote: it.excerpt ?? '',
+          links: [{text: 'Open on GitHub', href: it.html_url ?? it.url}]
+        };
+      };
+
+      const group = (label, chips) =>
+        chips ? `<span class="group"><span class="label">${esc(label)}</span>${chips}</span>` : '';
+
+      const itemGroup = (list, kind) => {
+        if (!list.length) return '';
+        const shown = list.slice(0, MAX_CHIPS),
+          rest = list.slice(MAX_CHIPS);
+        const chips = shown
+          .map(it =>
+            chip(
+              `#${it.number}`,
+              itemPop(it, kind),
+              [it.bot && 'bot', it.draft && 'draft', it.active && 'active'].filter(Boolean)
+            )
+          )
+          .join('');
+        const more = rest.length
+          ? chip(
+              `+${rest.length}`,
+              {
+                title: `${rest.length} more ${KINDS[kind][rest.length === 1 ? 0 : 1]}`,
+                lines: rest.map(it => `#${it.number} ${it.title}`),
+                links: rest.map(it => ({text: `#${it.number}`, href: it.html_url ?? it.url}))
+              },
+              rest.some(it => it.active) ? ['active'] : []
+            )
           : '';
-        if (!runs.length) {
-          $('#brief').innerHTML =
-            `<div class="empty">No stored runs in <code>${esc(DIGEST_PATH)}</code> — run <code>/fleet-status</code>, then commit.</div>`;
-          return;
+        return group(KINDS[kind][list.length === 1 ? 0 : 1], chips + more);
+      };
+
+      // An advisory with its CVE is settled; the project page keeps the full list.
+      const securityGroup = g => {
+        const chips = g.advisories
+          .filter(a => a.noCve || a.pending)
+          .map(a =>
+            chip(
+              a.id.replace(/^(GHSA-[^-]+)-.*$/, '$1'),
+              {
+                title: a.summary ?? a.id,
+                lines: [
+                  `${a.id}: ${a.state}${a.severity ? `, ${a.severity} severity` : ''}`,
+                  a.cve_id ?? (a.state === 'published' ? 'no CVE yet' : 'not published yet'),
+                  ...(a.published_at ? [`published ${when(a.published_at)}`] : [])
+                ],
+                links: [{text: 'Open on GitHub', href: a.html_url}]
+              },
+              [(a.noCve || a.pending) && 'warn', a.active && 'active'].filter(Boolean)
+            )
+          );
+        for (const [key, label, tab] of [
+          ['dependabot', 'Dependabot', 'dependabot'],
+          ['codeScanning', 'code scanning', 'code-scanning']
+        ]) {
+          const alert = g.alerts[key];
+          if (!alert?.open) continue;
+          const count = `${alert.open}${alert.truncated ? '+' : ''}`;
+          chips.push(
+            chip(
+              `${label} ${count}`,
+              {
+                title: `${count} open ${label} alerts`,
+                lines: alert.severities,
+                links: [
+                  {
+                    text: 'Open on GitHub',
+                    href: g.html_url ? `${g.html_url}/security/${tab}` : null
+                  }
+                ]
+              },
+              ['warn']
+            )
+          );
         }
-        if (!selected.length) {
-          $('#brief').innerHTML =
-            `<div class="empty">No stored runs since ${esc(short(cutoff))}.</div>`;
-          return;
-        }
-        const m = brief(digest);
-        const stored = m.stored
-          ? ` (${plural(m.stored.runs, 'stored run')}, newest ${short(m.stored.newest)})`
+        return group('security', chips.join(''));
+      };
+
+      const ciGroup = g =>
+        g.ciFailing
+          ? group(
+              'CI',
+              chip(
+                g.ci.state,
+                {
+                  title: `${g.ci.name}: ${g.ci.state}`,
+                  lines: [`last run ${when(g.ci.updated_at)}`],
+                  links: [{text: 'Open the run', href: g.ci.html_url}]
+                },
+                ['bad']
+              )
+            )
           : '';
-        const lines = m.moved.map(
-          x =>
-            `<li><span class="repo">${ext(`https://github.com/${x.repo}`, x.name)}</span>${
-              x.project
-                ? `<a class="x" href="${queueHref(x.project)}" title="The project's queue">queue</a><a class="x" href="${projectHref(x.project)}" title="The project's GitHub and npm details">details</a>`
+
+      const npmGroups = (project, movement) =>
+        movement
+          .map(m => {
+            const details = {text: 'Package details', href: projectHref(project, `pkg-${m.name}`)};
+            const chips = [
+              ...m.publishes.map(([day, version]) =>
+                chip(version, {
+                  title: `${m.name} ${version}`,
+                  lines: [`published ${when(day)}`],
+                  links: [
+                    {text: 'npm', href: `https://www.npmjs.com/package/${m.name}/v/${version}`},
+                    details
+                  ]
+                })
+              ),
+              ...(m.dependents
+                ? [
+                    chip(`dependents ${signed(m.dependents.delta)}`, {
+                      title: `${m.name}: ${m.dependents.now.toLocaleString('en-US')} direct dependents`,
+                      lines: [
+                        `${signed(m.dependents.delta)} since ${when(m.dependents.since)}, from deps.dev`
+                      ],
+                      links: [details]
+                    })
+                  ]
+                : [])
+            ].join('');
+            return group(m.name === project ? 'npm' : `npm ${m.name}`, chips);
+          })
+          .join('');
+
+      const renderGlance = () => {
+        const cutoff = cutoffOf(windowState());
+        const wasOpen = Boolean($('#glance .quiet-list')?.open);
+        const lines = [],
+          quiet = [];
+        for (const e of [...entries].sort(byProject)) {
+          const g = e.baseline ? repoGlance(e.baseline, cutoff) : null;
+          const movement = packageMovement(e.packages, cutoff);
+          if (!g?.attention && !movement.length) {
+            if (g) quiet.push(e);
+            continue;
+          }
+          const info = g
+            ? `${plural(g.stars ?? 0, 'star')}, ${plural(g.forks ?? 0, 'fork')}, ${plural(g.watchers ?? 0, 'watcher')} · GitHub collected ${short(g.collected_at)}`
+            : 'no public fleet repository; npm only';
+          lines.push(
+            `<li><a class="repo" href="${projectHref(e.project)}" title="${esc(info)}">${esc(e.project)}</a>${
+              g && isStale(g.collected_at) ? '<span class="warn">stale</span>' : ''
+            }${
+              g
+                ? itemGroup(g.issues, 'issue') +
+                  itemGroup(g.prs, 'pr') +
+                  itemGroup(g.discussions, 'discussion') +
+                  securityGroup(g) +
+                  ciGroup(g)
                 : ''
-            }: ${x.phrases.map(renderParts).join('; ')}</li>`
-        );
-        if (m.counters.length) lines.push(`<li>counters: ${esc(m.counters.join('; '))}</li>`);
-        if (m.firstRuns.length)
-          lines.push(
-            `<li>first run: ${esc(plural(m.firstRuns.length, 'repository', 'repositories'))} (baseline recorded)</li>`
+            }${npmGroups(e.project, movement)}</li>`
           );
-        if (m.errors.length)
-          lines.push(
-            `<li>errors: ${esc(m.errors.map(e => `${e.name}: ${e.message}`).join('; '))}</li>`
-          );
-        if (m.partial)
-          lines.push(`<li>partial errors: ${m.partial} (details in the stored run)</li>`);
-        if (m.quiet > 0)
-          lines.push(`<li>quiet: ${esc(plural(m.quiet, 'repository', 'repositories'))}</li>`);
-        if (!lines.length) lines.push('<li>none</li>');
-        $('#brief').innerHTML =
-          `<p class="lead">Fleet movement since ${esc(m.stamp)} — ${esc(plural(m.repos, 'repository', 'repositories'))}, ${m.moved.length} with movement${esc(stored)}</p><ul>${lines.join('')}</ul>`;
+        }
+        $('#glance-meta').textContent = `${lines.length} with something open or moving${
+          cutoff ? ` · a dot marks activity since ${when(cutoff)}` : ''
+        }`;
+        const folded = quiet.length
+          ? `<details class="quiet-list"${wasOpen ? ' open' : ''}><summary>${esc(plural(quiet.length, 'repository', 'repositories'))} with nothing open</summary><div class="names">${quiet
+              .map(e => `<a href="${projectHref(e.project)}">${esc(e.project)}</a>`)
+              .join(' · ')}</div></details>`
+          : '';
+        $('#glance').innerHTML = lines.length
+          ? `<ul class="glance">${lines.join('')}</ul>${folded}`
+          : `<div class="empty">Nothing open or moving.</div>${folded}`;
       };
 
       // ─── Repositories ────────────────────────────────────────────────────────
@@ -363,7 +510,7 @@
       const repoEntries = () => entries.filter(e => e.baseline);
 
       const renderRepos = () => {
-        const list = repoEntries();
+        const list = repoEntries().sort(byProject);
         $('#table-meta').textContent =
           `${plural(list.length, 'repository', 'repositories')} with a stored baseline · ${plural(entries.length, 'project')} with stored fleet data`;
         if (!list.length) {
@@ -373,14 +520,13 @@
         }
         const sum = {issues: 0, prs: 0, stars: 0, forks: 0};
         const rows = list.map(entry => {
-          const r = baselineRow(entry.baseline),
-            name = nameOf(entry);
+          const r = baselineRow(entry.baseline);
           sum.issues += r.issues;
           sum.prs += r.prs;
           sum.stars += r.stars ?? 0;
           sum.forks += r.forks ?? 0;
-          return `<tr class="repo" id="${rowId(name)}" data-repo="${esc(name)}">
-            <td class="name" title="Expand the stored baseline">${esc(name)}</td>
+          return `<tr>
+            <td class="name"><a href="${projectHref(entry.project)}" title="GitHub and npm details">${esc(entry.project)}</a></td>
             ${numCell(r.issues)}${numCell(r.prs)}
             <td class="n ${r.discussions === 0 || !r.hasDiscussions ? 'zero' : ''}">${r.hasDiscussions ? r.discussions : '-'}</td>
             ${numCell(r.stars ?? '-')}${numCell(r.forks ?? '-')}
@@ -401,40 +547,6 @@
           </tr></thead>
           <tbody>${rows.join('')}</tbody>
         </table>`;
-        expandFromHash();
-      };
-
-      const detailRow = entry => {
-        const {html, links} = githubDetail(entry, runs, cutoffOf(windowState()));
-        const tr = document.createElement('tr');
-        tr.className = 'detail';
-        tr.innerHTML = `<td colspan="11">${html}<div class="links"><a href="${projectHref(entry.project)}">details</a> · ${links}</div></td>`;
-        return tr;
-      };
-
-      const toggleRow = (tr, open = !tr.classList.contains('open')) => {
-        const current = tr.nextElementSibling?.classList.contains('detail')
-          ? tr.nextElementSibling
-          : null;
-        tr.classList.toggle('open', open);
-        if (!open) {
-          current?.remove();
-          return;
-        }
-        const entry = repoEntries().find(x => nameOf(x) === tr.dataset.repo);
-        if (!entry) return;
-        if (current) current.replaceWith(detailRow(entry));
-        else tr.after(detailRow(entry));
-      };
-
-      const refreshOpenRows = () => {
-        for (const tr of document.querySelectorAll('tr.repo.open')) toggleRow(tr, true);
-      };
-
-      const expandFromHash = () => {
-        if (!location.hash) return;
-        const tr = document.getElementById(location.hash.slice(1));
-        if (tr?.classList.contains('repo')) toggleRow(tr, true);
       };
 
       // ─── Packages ────────────────────────────────────────────────────────────
@@ -544,6 +656,7 @@
         const view = viewState();
         for (const b of document.querySelectorAll('.switch button'))
           b.setAttribute('aria-pressed', String(b.dataset.view === view));
+        $('#table-title').textContent = view === 'packages' ? 'Packages' : 'Repositories';
         $('#filter').hidden = view !== 'packages';
         if (view === 'packages') renderPackages();
         else renderRepos();
@@ -555,20 +668,10 @@
           return;
         }
         $('#status').innerHTML = '';
-        $('#brief').innerHTML = LOADING;
+        $('#glance').innerHTML = LOADING;
         $('#table').innerHTML = LOADING;
         try {
-          const [text, list] = await Promise.all([
-            api(`/vault/${DIGEST_PATH}`)
-              .then(r => r.text())
-              .catch(e => {
-                if (e.message === 'not-found') return '';
-                throw e;
-              }),
-            apiJson('/vault/projects/')
-          ]);
-          runs = parseRuns(text);
-          renderBrief();
+          const list = await apiJson('/vault/projects/');
           const folders = (list.files ?? []).filter(f => f.endsWith('/')).map(f => f.slice(0, -1));
           const found = await Promise.all(
             folders.map(async project => {
@@ -584,15 +687,18 @@
               }
             })
           );
-          entries = found
-            .filter(Boolean)
-            .sort((a, b) =>
-              (a.baseline?.repo ?? a.project).localeCompare(b.baseline?.repo ?? b.project)
-            );
+          entries = found.filter(Boolean);
+          renderGlance();
           renderView();
-          const packages = packageRows(entries).length;
+          // The menu's "packages" entry means the table, which starts below the glance list.
+          if (viewState() === 'packages' && !location.hash) $('#tables').scrollIntoView();
+          const repos = repoEntries(),
+            rows = packageRows(entries);
+          const newest = list => list.filter(Boolean).sort().pop();
+          $('#view-meta').textContent =
+            `${plural(repos.length, 'repository', 'repositories')}, GitHub collected ${short(newest(repos.map(e => e.baseline.collected_at)))} · ${plural(rows.length, 'package')}, npm collected ${short(newest(rows.map(r => r.collected_at)))}`;
           $('#footer').textContent =
-            `${plural(repoEntries().length, 'baseline')} · ${plural(packages, 'package')} · ${plural(runs.length, 'stored run')}${runs.length ? ` · newest ${short(runs[0].collected_at)}` : ''}`;
+            `${plural(repos.length, 'baseline')} · ${plural(rows.length, 'package')}`;
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();
@@ -609,9 +715,8 @@
       sel.value = windowState();
       sel.addEventListener('change', () => {
         localStorage.setItem(WINDOW_KEY, sel.value);
-        renderBrief();
+        renderGlance();
         if (viewState() === 'packages') renderPackages();
-        else refreshOpenRows();
       });
 
       document.querySelector('.switch').addEventListener('click', e => {
@@ -622,7 +727,10 @@
         else url.searchParams.delete(VIEW_PARAM);
         url.hash = '';
         history.replaceState(null, '', url);
+        document.querySelector('vault-nav')?.refresh?.();
         renderView();
+        // The table sits below the glance list; a switch that changed nothing on screen reads as broken.
+        $('#tables').scrollIntoView({behavior: 'smooth', block: 'start'});
       });
       $('#filter').addEventListener('input', renderPackages);
 
@@ -635,12 +743,10 @@
         renderPackages();
       };
 
-      // Delegated: the tables and the brief re-render, their containers don't.
+      // Delegated: the table re-renders, its container doesn't.
       $('#table').addEventListener('click', e => {
         const th = e.target.closest('th[data-sort]');
-        if (th) return sortBy(th);
-        const td = e.target.closest('tr.repo td.name');
-        if (td) toggleRow(td.closest('tr'));
+        if (th) sortBy(th);
       });
       $('#table').addEventListener('keydown', e => {
         const th = e.target.closest('th[data-sort]');
@@ -649,7 +755,7 @@
           sortBy(th);
         }
       });
-      window.addEventListener('hashchange', expandFromHash);
+      bindPopovers($('#glance'));
       document.addEventListener('token-change', load);
 
       load();

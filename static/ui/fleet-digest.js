@@ -577,3 +577,103 @@ export const packageRows = entries =>
   entries.flatMap(({project, packages}) =>
     (packages?.packages ?? []).filter(p => p.npm).map(p => packageRow(project, packages, p))
   );
+
+// ─── At a glance ─────────────────────────────────────────────────────────────
+// A repository's open state from its stored baseline: the open items as
+// numbers, the advisories and alert counts worth a look, and whether the row
+// needs attention at all. `cutoff` marks items with activity since then.
+
+const SEVERITY_ORDER = [
+  'critical',
+  'high',
+  'medium',
+  'moderate',
+  'low',
+  'warning',
+  'note',
+  'error'
+];
+const severityList = bySeverity =>
+  Object.entries(bySeverity ?? {})
+    .sort(
+      ([a], [b]) => (SEVERITY_ORDER.indexOf(a) + 1 || 99) - (SEVERITY_ORDER.indexOf(b) + 1 || 99)
+    )
+    .map(([severity, n]) => `${n} ${severity}`);
+
+export const repoGlance = (b, cutoff = null) => {
+  const since = at => Boolean(cutoff) && typeof at === 'string' && at >= cutoff;
+  const active = x => since(x.updated_at) || since(x.last_comment?.at);
+  const byNumberDesc = (x, y) => y.number - x.number;
+  const open = Object.entries(b.items ?? {})
+    .filter(([, it]) => it.state === 'open')
+    .map(([number, it]) => ({...it, number: Number(number), active: active(it)}));
+  const discussions = Object.entries(b.discussions ?? {})
+    .filter(([, d]) => !d.closed)
+    .map(([number, d]) => ({...d, number: Number(number), active: active(d)}))
+    .sort(byNumberDesc);
+  const advisories = Object.entries(b.advisories ?? {})
+    .filter(([, a]) => a.state !== 'closed' && a.state !== 'withdrawn')
+    .map(([id, a]) => ({
+      ...a,
+      id,
+      noCve: a.state === 'published' && !a.cve_id,
+      pending: a.state === 'draft' || a.state === 'triage',
+      active: since(a.updated_at)
+    }))
+    .sort((x, y) => (y.published_at ?? '9999').localeCompare(x.published_at ?? '9999'));
+  const alert = kind => {
+    const a = b.alerts?.[kind];
+    return !a || a.unavailable
+      ? null
+      : {open: a.open, truncated: Boolean(a.truncated), severities: severityList(a.by_severity)};
+  };
+  const alerts = {dependabot: alert('dependabot'), codeScanning: alert('code_scanning')};
+  const row = baselineRow(b);
+  const ciFailing = Boolean(row.ci) && row.ci.state !== 'success';
+  const issues = open.filter(it => !it.is_pr).sort(byNumberDesc),
+    prs = open.filter(it => it.is_pr).sort(byNumberDesc);
+  return {
+    repo: row.repo,
+    html_url: row.html_url,
+    stars: row.stars,
+    forks: row.forks,
+    watchers: row.watchers,
+    release: baselineDetail(b).release,
+    collected_at: row.collected_at,
+    issues,
+    prs,
+    discussions,
+    advisories,
+    alerts,
+    ci: row.ci,
+    ciFailing,
+    attention:
+      issues.length > 0 ||
+      prs.length > 0 ||
+      discussions.length > 0 ||
+      advisories.some(a => a.noCve || a.pending) ||
+      (alerts.dependabot?.open ?? 0) > 0 ||
+      (alerts.codeScanning?.open ?? 0) > 0 ||
+      ciFailing
+  };
+};
+
+// What moved on npm since `cutoff`, per package: versions published and a
+// dependents count that changed. Downloads never count as movement: small
+// counts are mirror traffic and large ones move with the registry.
+export const packageMovement = (snapshot, cutoff) => {
+  if (!cutoff) return [];
+  const day = cutoff.slice(0, 10);
+  return (snapshot?.packages ?? [])
+    .filter(p => p.npm)
+    .map(p => {
+      const change = dependentsChange(p.npm.dependents, cutoff);
+      return {
+        name: p.name,
+        publishes: (p.npm.publishes ?? []).filter(([at]) => at >= day),
+        dependents: change && change.delta && !change.partial ? change : null,
+        deprecated: Boolean(p.npm.deprecated)
+      };
+    })
+    .filter(m => m.publishes.length || m.dependents);
+};

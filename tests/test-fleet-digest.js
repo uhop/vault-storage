@@ -23,7 +23,9 @@ import {
   compact,
   percent,
   majorOf,
-  compareVersions
+  compareVersions,
+  repoGlance,
+  packageMovement
 } from '/static/ui/fleet-digest.js';
 
 // A collected digest in the shape `fleet-status.mjs collect` writes. The
@@ -798,4 +800,77 @@ test('review fixes: section bounds, release order, unit rollover', t => {
   t.equal(compact(999_500), '1M', 'the unit follows the rounded value');
   t.equal(compact(999_999_999), '1B');
   t.equal(compact(10_000), '10K');
+});
+
+test('repoGlance lists the open state and marks activity since the cutoff', t => {
+  const g = repoGlance(BASELINE, '2026-08-15T00:00:00.000Z');
+  t.deepEqual(
+    g.issues.map(it => [it.number, it.active]),
+    [[30, false]],
+    'updated before the cutoff'
+  );
+  t.deepEqual(
+    g.prs.map(it => [it.number, it.draft, it.active]),
+    [[31, true, true]],
+    'a merged PR is not open'
+  );
+  t.deepEqual(
+    g.discussions.map(d => [d.number, d.active]),
+    [[5, true]],
+    'closed discussions drop'
+  );
+  t.deepEqual(
+    g.advisories.map(a => [a.id, a.noCve, a.pending]),
+    [
+      ['GHSA-cccc', false, true],
+      ['GHSA-bbbb', true, false],
+      ['GHSA-aaaa', false, false]
+    ],
+    'the undated draft first, then newest published'
+  );
+  t.deepEqual(g.alerts.dependabot, {
+    open: 100,
+    truncated: true,
+    severities: ['60 high', '40 moderate']
+  });
+  t.equal(g.alerts.codeScanning, null, 'an unavailable feature is not an alert');
+  t.equal(g.ciFailing, false);
+  t.equal(g.attention, true);
+  t.equal(repoGlance(BASELINE).prs[0].active, false, 'no cutoff marks nothing');
+
+  const quiet = {
+    repo: 'octo/quiet',
+    items: {7: {is_pr: false, state: 'closed', updated_at: '2026-09-01T00:00:00Z'}},
+    advisories: {'GHSA-dddd': {state: 'published', cve_id: 'CVE-2026-2'}},
+    ci: {name: 'CI', conclusion: 'success'}
+  };
+  t.equal(
+    repoGlance(quiet).attention,
+    false,
+    'closed items and a CVE-backed advisory need nothing'
+  );
+  t.equal(
+    repoGlance({...quiet, ci: {name: 'CI', conclusion: 'failure'}}).attention,
+    true,
+    'a failing CI does'
+  );
+});
+
+test('packageMovement reports publishes and dependents changes in the window', t => {
+  t.deepEqual(
+    packageMovement(PACKAGES, '2026-07-30T00:00:00.000Z'),
+    [{name: 'alpha', publishes: [['2026-08-01', '3.1.0']], dependents: null, deprecated: false}],
+    'tracking began after the cutoff, so no dependents change is claimed'
+  );
+  t.deepEqual(packageMovement(PACKAGES, '2026-09-07T12:00:00.000Z'), [
+    {
+      name: 'alpha',
+      publishes: [],
+      dependents: {now: 12, delta: 2, since: '2026-09-01', partial: false},
+      deprecated: false
+    }
+  ]);
+  t.deepEqual(packageMovement(PACKAGES, '2026-09-20T00:00:00.000Z'), [], 'nothing since');
+  t.deepEqual(packageMovement(PACKAGES, null), [], 'no window, no movement');
+  t.deepEqual(packageMovement(null, '2026-09-01T00:00:00.000Z'), []);
 });
