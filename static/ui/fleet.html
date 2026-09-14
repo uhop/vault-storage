@@ -111,6 +111,36 @@
         font-size: 0.8rem;
         margin-right: 0.35rem;
       }
+      .legend {
+        position: relative;
+        margin-left: auto;
+        font-size: 0.85rem;
+      }
+      .legend summary {
+        cursor: pointer;
+        color: var(--muted);
+      }
+      .legend-panel {
+        position: absolute;
+        right: 0;
+        top: 1.6rem;
+        z-index: 40;
+        display: grid;
+        grid-template-columns: max-content minmax(12rem, 26rem);
+        gap: 0.45rem 0.8rem;
+        align-items: baseline;
+        width: max-content;
+        max-width: calc(100vw - 32px);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+        padding: 0.7rem 0.9rem;
+      }
+      .legend-panel .chip {
+        cursor: default;
+        justify-self: start;
+      }
       .quiet-list summary {
         cursor: pointer;
         color: var(--muted);
@@ -220,24 +250,58 @@
     <main>
       <div id="status"></div>
       <div class="bar">
-        <div class="switch" role="group" aria-label="Table">
+        <div class="switch" role="group" aria-label="View">
+          <button type="button" data-view="glance">At a glance</button>
           <button type="button" data-view="repos">Repositories</button>
           <button type="button" data-view="packages">Packages</button>
         </div>
-        <label
+        <label id="window-label"
           >activity since
           <select id="window"></select
         ></label>
         <span class="meta" id="view-meta"></span>
       </div>
-      <section>
+      <section id="glance-view">
         <div class="bar">
           <h2>At a glance</h2>
           <span class="meta" id="glance-meta"></span>
+          <details class="legend" id="legend">
+            <summary>Legend</summary>
+            <div class="legend-panel">
+              <span class="chip">#12</span
+              ><span
+                >An open issue, PR, or discussion. Hover or tap it for details; click it to keep
+                them open.</span
+              >
+              <span class="chip active">#12</span
+              ><span
+                >Updated within the activity window: a comment, an edit, a label, or a state
+                change.</span
+              >
+              <span class="chip bot">#12</span><span>Opened by a bot, such as Dependabot.</span>
+              <span class="chip draft">#12</span><span>A draft PR.</span>
+              <span class="chip">+4</span
+              ><span>More of the same kind; hover or tap it for the list.</span>
+              <span class="chip warn">GHSA-1234</span
+              ><span>A security advisory without a CVE, or not yet published.</span>
+              <span class="chip warn">Dependabot 3</span
+              ><span
+                >Open alerts. ≥100 means at least 100: the collector reads one page of 100.</span
+              >
+              <span class="chip bad">failure</span
+              ><span>The last CI run on the default branch did not succeed.</span>
+              <span class="chip">1.8.1</span
+              ><span>An npm version published within the activity window.</span>
+              <span class="chip">dependents +3</span
+              ><span>A change in deps.dev direct dependents within the activity window.</span>
+              <span class="warn">stale</span
+              ><span>The stored GitHub data is more than 7 days old.</span>
+            </div>
+          </details>
         </div>
         <div id="glance"></div>
       </section>
-      <section id="tables">
+      <section id="tables" hidden>
         <div class="bar">
           <h2 id="table-title">Repositories</h2>
           <input type="search" id="filter" placeholder="filter packages" hidden />
@@ -287,8 +351,11 @@
       let entries = [];
 
       const cutoffOf = w => (w === 'all' ? null : parseWhen(w));
-      const viewState = () =>
-        new URLSearchParams(location.search).get(VIEW_PARAM) === 'packages' ? 'packages' : 'repos';
+      const VIEWS = ['glance', 'repos', 'packages'];
+      const viewState = () => {
+        const v = new URLSearchParams(location.search).get(VIEW_PARAM);
+        return VIEWS.includes(v) ? v : 'glance';
+      };
 
       // ─── At a glance ─────────────────────────────────────────────────────────
       // One line per project with something open or moving: item numbers as
@@ -379,7 +446,7 @@
         ]) {
           const alert = g.alerts[key];
           if (!alert?.open) continue;
-          const count = `${alert.open}${alert.truncated ? '+' : ''}`;
+          const count = `${alert.truncated ? '≥' : ''}${alert.open}`;
           chips.push(
             chip(
               `${label} ${count}`,
@@ -491,7 +558,9 @@
 
       // ─── Repositories ────────────────────────────────────────────────────────
 
-      const numCell = (n, cls = '') => `<td class="n ${n === 0 ? 'zero' : cls}">${esc(n)}</td>`;
+      // A zero count prints nothing: an empty cell reads as "none" without adding ink.
+      const count = n => (n === 0 ? '&nbsp;' : esc(n));
+      const numCell = (n, cls = '') => `<td class="n ${cls}">${count(n)}</td>`;
       const alertCell = a =>
         `<td class="n ${!a ? 'zero' : a.open > 0 ? 'warn' : ''}" title="${esc(
           a
@@ -499,7 +568,7 @@
                 .map(([k, n]) => `${n} ${k}`)
                 .join(', ') || 'no open alerts'
             : 'not available'
-        )}">${esc(alertText(a))}</td>`;
+        )}">${a?.open === 0 ? '&nbsp;' : esc(alertText(a))}</td>`;
       const ciClass = ci =>
         !ci ? 'zero' : ci.state === 'success' ? 'ok' : ci.state === 'failure' ? 'bad' : 'warn';
       const ciCell = ci =>
@@ -528,9 +597,9 @@
           return `<tr>
             <td class="name"><a href="${projectHref(entry.project)}" title="GitHub and npm details">${esc(entry.project)}</a></td>
             ${numCell(r.issues)}${numCell(r.prs)}
-            <td class="n ${r.discussions === 0 || !r.hasDiscussions ? 'zero' : ''}">${r.hasDiscussions ? r.discussions : '-'}</td>
+            <td class="n ${r.hasDiscussions ? '' : 'zero'}">${r.hasDiscussions ? count(r.discussions) : '-'}</td>
             ${numCell(r.stars ?? '-')}${numCell(r.forks ?? '-')}
-            <td class="n ${r.advisories === 0 ? 'zero' : r.noCve ? 'warn' : ''}">${r.advisories}${r.noCve ? ` (${r.noCve} no CVE)` : ''}</td>
+            <td class="n ${r.noCve ? 'warn' : ''}">${count(r.advisories)}${r.noCve ? ` (${r.noCve} no CVE)` : ''}</td>
             ${alertCell(r.dependabot)}${alertCell(r.codeScanning)}
             ${ciCell(r.ci)}
             <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(r.collected_at ?? '')}">${esc(short(r.collected_at))}</td>
@@ -630,11 +699,11 @@
             <td class="name"><a href="${projectHref(r.project, `pkg-${r.name}`)}" title="GitHub and npm details">${esc(r.name)}</a><a class="x" href="${esc(npmHref(r.name))}" target="_blank" rel="noopener">npm</a>${r.deprecated ? ' <span class="warn">deprecated</span>' : ''}</td>
             <td><a href="${projectHref(r.project)}">${esc(r.project)}</a></td>
             <td title="${esc(r.published_at ? `published ${dayLabel(r.published_at.slice(0, 10))}` : '')}">${esc(r.latest ?? '-')} <span class="quiet">${esc(ageText(r.published_at))}</span></td>
-            <td class="n" title="${esc(r.week ? `${r.week.downloads.toLocaleString('en-US')} downloads, ${rangeLabel(r.week.start, r.week.end)}` : '')}">${esc(compact(r.week?.downloads))}</td>
+            <td class="n" title="${esc(r.week ? `${r.week.downloads.toLocaleString('en-US')} downloads, ${rangeLabel(r.week.start, r.week.end)}` : '')}">${r.week?.downloads === 0 ? '&nbsp;' : esc(compact(r.week?.downloads))}</td>
             <td>${sparkline(trend, {label: `Weekly downloads, last ${trend.length} weeks, ending ${r.week ? dayLabel(r.week.end) : ''}`})}</td>
             <td class="n ${!r.change || r.change.noisy ? 'quiet' : ''}" title="${esc(r.change ? `${r.change.last.toLocaleString('en-US')} in the last 4 weeks against ${r.change.prev.toLocaleString('en-US')} before${r.change.noisy ? ' — under 5,000, mostly noise' : ''}` : '')}">${esc(signedPercent(r.change?.ratio))}</td>
             <td class="n ${r.latestMajorShare === null ? 'quiet' : ''}" title="${r.latestMajorShare === null ? ((r.week?.downloads ?? 0) < 100 ? 'under 100 downloads a week: the version split is not read' : 'no version split stored for this week') : ''}">${esc(percent(r.latestMajorShare))}</td>
-            <td class="n" title="${esc(change ? `deps.dev direct dependents; ${change.delta >= 0 ? '+' : ''}${change.delta} since ${dayLabel(change.since)}${change.partial ? ' (tracking began then)' : ''}` : '')}">${esc(r.dependents ? r.dependents.direct.toLocaleString('en-US') : '-')}${change?.delta ? ` <span class="quiet">${change.delta > 0 ? '+' : '−'}${Math.abs(change.delta)}</span>` : ''}</td>
+            <td class="n" title="${esc(change ? `deps.dev direct dependents; ${change.delta >= 0 ? '+' : ''}${change.delta} since ${dayLabel(change.since)}${change.partial ? ' (tracking began then)' : ''}` : '')}">${r.dependents ? count(r.dependents.direct) : '-'}${change?.delta ? ` <span class="quiet">${change.delta > 0 ? '+' : '−'}${Math.abs(change.delta)}</span>` : ''}</td>
             <td class="n">${esc(r.level ?? '-')}</td>
             <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(short(r.collected_at))}">${esc(monthDay(r.collected_at?.slice(0, 10)))}</td>
           </tr>`;
@@ -656,9 +725,13 @@
         const view = viewState();
         for (const b of document.querySelectorAll('.switch button'))
           b.setAttribute('aria-pressed', String(b.dataset.view === view));
+        $('#glance-view').hidden = view !== 'glance';
+        $('#tables').hidden = view === 'glance';
+        $('#window-label').hidden = view === 'repos';
         $('#table-title').textContent = view === 'packages' ? 'Packages' : 'Repositories';
         $('#filter').hidden = view !== 'packages';
-        if (view === 'packages') renderPackages();
+        if (view === 'glance') renderGlance();
+        else if (view === 'packages') renderPackages();
         else renderRepos();
       };
 
@@ -688,10 +761,7 @@
             })
           );
           entries = found.filter(Boolean);
-          renderGlance();
           renderView();
-          // The menu's "packages" entry means the table, which starts below the glance list.
-          if (viewState() === 'packages' && !location.hash) $('#tables').scrollIntoView();
           const repos = repoEntries(),
             rows = packageRows(entries);
           const newest = list => list.filter(Boolean).sort().pop();
@@ -715,22 +785,19 @@
       sel.value = windowState();
       sel.addEventListener('change', () => {
         localStorage.setItem(WINDOW_KEY, sel.value);
-        renderGlance();
-        if (viewState() === 'packages') renderPackages();
+        renderView();
       });
 
       document.querySelector('.switch').addEventListener('click', e => {
         const b = e.target.closest('button[data-view]');
         if (!b) return;
         const url = new URL(location.href);
-        if (b.dataset.view === 'packages') url.searchParams.set(VIEW_PARAM, 'packages');
-        else url.searchParams.delete(VIEW_PARAM);
+        if (b.dataset.view === 'glance') url.searchParams.delete(VIEW_PARAM);
+        else url.searchParams.set(VIEW_PARAM, b.dataset.view);
         url.hash = '';
         history.replaceState(null, '', url);
         document.querySelector('vault-nav')?.refresh?.();
         renderView();
-        // The table sits below the glance list; a switch that changed nothing on screen reads as broken.
-        $('#tables').scrollIntoView({behavior: 'smooth', block: 'start'});
       });
       $('#filter').addEventListener('input', renderPackages);
 
@@ -756,6 +823,10 @@
         }
       });
       bindPopovers($('#glance'));
+      document.addEventListener('click', e => {
+        const legend = $('#legend');
+        if (legend.open && !legend.contains(e.target)) legend.open = false;
+      });
       document.addEventListener('token-change', load);
 
       load();

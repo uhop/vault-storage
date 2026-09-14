@@ -373,7 +373,7 @@ const alertOf = a =>
   !a || a.unavailable
     ? null
     : {open: a.open, truncated: Boolean(a.truncated), by_severity: a.by_severity ?? {}};
-export const alertText = a => (a ? `${a.open}${a.truncated ? '+' : ''}` : 'off');
+export const alertText = a => (a ? `${a.truncated ? '≥' : ''}${a.open}` : 'off');
 
 export const baselineRow = b => {
   const open = Object.values(b.items ?? {}).filter(i => i.state === 'open');

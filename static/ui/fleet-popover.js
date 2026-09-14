@@ -7,7 +7,7 @@ import {esc} from '/ui/api.js';
 const STYLE = `
 .chip { font: inherit; font-family: var(--mono); font-size: 0.8rem; line-height: 1.3; padding: 0 0.35em; margin: 0.1rem 0.15rem 0.1rem 0; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--fg); cursor: pointer; position: relative; vertical-align: baseline; }
 .chip:hover, .chip[aria-expanded='true'] { border-color: var(--accent); }
-.chip.bot { color: var(--muted); }
+.chip.bot { color: light-dark(#6f42c1, #b392f0); border-color: light-dark(#c9b3ee, #5e4b8b); }
 .chip.draft { border-style: dashed; }
 .chip.warn { color: var(--warn); border-color: var(--warn); }
 .chip.bad { color: var(--bad); border-color: var(--bad); }

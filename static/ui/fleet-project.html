@@ -333,7 +333,7 @@
         const versions = top.length
           ? `<h4>Versions, ${esc(rangeLabel(n.week?.start, n.week?.end))}</h4>${majorRows(shares)}
             <table style="margin-top:0.6rem"><thead><tr><th>Version</th><th class="n">Downloads</th><th class="n">Share</th><th class="n">Direct dependents</th></tr></thead>
-            <tbody>${top.map(([v, c]) => `<tr><td><code>${esc(v)}</code>${v === n.latest ? ' <span class="quiet">latest</span>' : ''}</td><td class="n">${num(c)}</td><td class="n">${esc(percent(c / n.versions_total))}</td><td class="n">${num(byVersion[v]?.[0] ?? 0)}</td></tr>`).join('')}</tbody></table>`
+            <tbody>${top.map(([v, c]) => `<tr><td><code>${esc(v)}</code>${v === n.latest ? ' <span class="quiet">latest</span>' : ''}</td><td class="n">${num(c)}</td><td class="n">${esc(percent(c / n.versions_total))}</td><td class="n">${byVersion[v]?.[0] ? num(byVersion[v][0]) : '&nbsp;'}</td></tr>`).join('')}</tbody></table>`
           : `<h4>Versions</h4><div class="quiet">${n.versions_total === null ? ((n.week?.downloads ?? 0) < 100 ? 'Under 100 downloads a week: the split by version is mirror traffic, so it is not read.' : 'The split by version was not read in the last collection.') : 'No downloads by version last week.'}</div>`;
 
         const depVersions = Object.entries(byVersion)

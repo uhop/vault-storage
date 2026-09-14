@@ -562,7 +562,7 @@ test('baselineRow counts the standing state the way the CLI table does', t => {
   t.deepEqual([r.stars, r.forks, r.watchers], [7, 1, 2]);
   t.equal(r.advisories, 2, 'published only');
   t.equal(r.noCve, 1);
-  t.equal(alertText(r.dependabot), '100+');
+  t.equal(alertText(r.dependabot), '≥100');
   t.equal(alertText(r.codeScanning), 'off');
   t.deepEqual(r.dependabot.by_severity, {high: 60, moderate: 40});
   t.deepEqual(r.ci, {
