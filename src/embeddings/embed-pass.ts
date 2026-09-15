@@ -34,6 +34,8 @@ export interface EmbedOptions {
    * replaced whole. Default: no limit.
    */
   maxEmbeds?: number;
+  /** Clock for the retry backoff of incomplete records; tests pass their own. */
+  now?: () => number;
 }
 
 /**
@@ -43,6 +45,26 @@ export interface EmbedOptions {
 export const EMBED_ROUND = 64;
 
 const DEFAULT_BATCH_SIZE = 32;
+
+/**
+ * A record some of whose vectors came back non-finite is stored under this hash
+ * instead of its own: its finite vectors still serve search, lint reports it as
+ * embedding drift, and it is pending again once its backoff runs out.
+ */
+const INCOMPLETE = '';
+const RETRY_FIRST_MS = 60_000;
+const RETRY_MAX_MS = 3_600_000;
+
+interface Failure {
+  contentHash: string;
+  attempts: number;
+  retryAt: number;
+}
+
+// Per process: the non-finite vectors seen on croc came in bursts that retrying
+// within the same batch did not clear, while the same texts embedded later came
+// back finite, so a failed record waits before it is taken again.
+const failures = new WeakMap<DatabaseSync, Map<string, Failure>>();
 
 const isAllFinite = (v: Float32Array): boolean => {
   for (let i = 0; i < v.length; ++i) if (!Number.isFinite(v[i]!)) return false;
@@ -133,6 +155,12 @@ const runEmbedPending = async (
   const start = performance.now();
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const maxEmbeds = options.maxEmbeds ?? Infinity;
+  const now = (options.now ?? Date.now)();
+  let failed = failures.get(db);
+  if (!failed) {
+    failed = new Map();
+    failures.set(db, failed);
+  }
 
   const totalRow = db.prepare('SELECT COUNT(*) AS n FROM records').get() as Record<
     string,
@@ -148,7 +176,7 @@ const runEmbedPending = async (
   const pending = (
     db
       .prepare(
-        `SELECT r.record_id
+        `SELECT r.record_id, r.content_hash
            FROM records r
           WHERE NOT EXISTS (
                   SELECT 1 FROM chunks c
@@ -159,8 +187,13 @@ const runEmbedPending = async (
                     WHERE s.record_id = r.record_id AND s.content_hash = r.content_hash))
           ORDER BY r.modified_at DESC, r.record_id`
       )
-      .all() as {record_id: string}[]
-  ).map(r => r.record_id);
+      .all() as {record_id: string; content_hash: string}[]
+  )
+    .filter(r => {
+      const f = failed.get(r.record_id);
+      return !f || f.contentHash !== r.content_hash || f.retryAt <= now;
+    })
+    .map(r => r.record_id);
   const rowStmt = db.prepare(
     'SELECT record_id, body, content_hash, agent_summary FROM records WHERE record_id = ?'
   );
@@ -201,58 +234,49 @@ const runEmbedPending = async (
     db.exec('BEGIN');
     try {
       for (const p of buf) {
+        const id = p.row.record_id;
         for (const i of p.missing) p.vectors[i] = flatVecs[idx++]!;
-        if (p.summary === null) {
-          summaries.delete(p.row.record_id);
+        const summaryVector = p.summary === null ? null : (p.summary.vector ?? flatVecs[idx++]!);
+        const vecs_ = p.vectors as Float32Array[];
+        // Non-finite chunk vectors are not stored beside finite ones: one NaN in
+        // the mean pool makes the doc vector NaN, and sqlite-vec then returns null
+        // for every neighbour distance. Hashes drop in step with their vectors.
+        const kept = vecs_.flatMap((v, i) => (isAllFinite(v) ? [i] : []));
+        const summaryFinite = summaryVector === null || isAllFinite(summaryVector);
+        const complete = kept.length === vecs_.length && summaryFinite;
+        const hash = complete ? p.row.content_hash : INCOMPLETE;
+        if (complete) {
+          failed.delete(id);
         } else {
-          const vector = p.summary.vector ?? flatVecs[idx++]!;
-          // A non-finite vector is stored without its text hash: never reused,
-          // and the record stops being pending instead of looping every round.
-          const finite = isAllFinite(vector);
-          if (!finite) {
-            console.warn(`[embed] non-finite summary vector for record ${p.row.record_id}`);
-          }
-          summaries.set(
-            p.row.record_id,
-            p.row.content_hash,
-            finite ? p.summary.hash : null,
-            vector
+          const prior = failed.get(id);
+          const attempts = prior?.contentHash === p.row.content_hash ? prior.attempts + 1 : 1;
+          const delay = Math.min(RETRY_FIRST_MS * 2 ** (attempts - 1), RETRY_MAX_MS);
+          failed.set(id, {contentHash: p.row.content_hash, attempts, retryAt: now + delay});
+          console.warn(
+            `[embed] record ${id}: ${vecs_.length - kept.length} of ${vecs_.length} chunk vector(s)` +
+              `${summaryFinite ? '' : ' and the summary vector'} non-finite; ` +
+              `stored incomplete, retry ${attempts} in ${delay / 1000} s`
           );
+        }
+        if (p.summary === null) {
+          summaries.delete(id);
+        } else {
+          // A non-finite vector keeps no text hash, so a retry never reuses it.
+          summaries.set(id, hash, summaryFinite ? p.summary.hash : null, summaryVector!);
           ++summaryVecsWritten;
         }
-        const vecs_ = p.vectors as Float32Array[];
-        // BGE / transformers.js occasionally produces a NaN chunk vector on
-        // otherwise normal inputs (caught 2026-05-03 — 2 of 5701 live chunks
-        // affected; root cause unknown, suspected tokenizer/ONNX edge case).
-        // Drop the bad vectors here so neither record_vec nor record_doc_vec
-        // ever stores NaN — a single NaN chunk poisons the mean-pool sum and
-        // produces an all-NaN doc-vec, which sqlite-vec then returns as null
-        // distance on every neighbour query. Hashes are dropped in step, so a
-        // kept vector stays paired with the text it embeds.
-        const kept = vecs_.flatMap((v, i) => (isAllFinite(v) ? [i] : []));
-        const dropped = vecs_.length - kept.length;
-        if (dropped > 0) {
-          console.warn(
-            `[embed] dropped ${dropped} non-finite chunk vector(s) of ${vecs_.length} for record ${p.row.record_id}`
-          );
-        }
         if (kept.length === 0) {
-          // All chunks NaN — write the original anyway so we don't loop on
-          // re-embed every pass; downstream consumers will see no doc-vec
-          // (skipped below) and treat the record as not-similar to anything.
-          // Loud warning so the situation gets investigated.
-          console.warn(
-            `[embed] every chunk for record ${p.row.record_id} was non-finite; persisting anyway to avoid re-embed loop`
-          );
-          vecs.setChunks(p.row.record_id, p.row.content_hash, vecs_);
+          // Stored anyway, without a doc vector, so the record reads as incomplete
+          // rather than as never embedded.
+          vecs.setChunks(id, hash, vecs_);
           ++embedded;
           chunksWritten += vecs_.length;
           continue;
         }
         const cleanVecs = kept.map(i => vecs_[i]!);
         vecs.setChunks(
-          p.row.record_id,
-          p.row.content_hash,
+          id,
+          hash,
           cleanVecs,
           kept.map(i => p.hashes[i]!)
         );
@@ -261,7 +285,7 @@ const runEmbedPending = async (
         // record_vec stays the source of truth for chunk-level retrieval.
         const doc = meanPoolNormalize(cleanVecs);
         if (doc !== null) {
-          docVecs.setDocVec(p.row.record_id, p.row.content_hash, doc);
+          docVecs.setDocVec(id, hash, doc);
           docVecsWritten++;
         }
         embedded++;

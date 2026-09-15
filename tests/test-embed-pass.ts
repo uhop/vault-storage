@@ -457,21 +457,100 @@ test('embedPending reuses the vectors of unchanged chunks', async t => {
     }
   });
 
-  await t.test('a non-finite summary vector does not keep its record pending', async t => {
+  await t.test(
+    'a non-finite summary vector leaves its record incomplete until a retry',
+    async t => {
+      const fx = setup();
+      const embedder = new CountingEmbedder();
+      let clock = 0;
+      const now = (): number => clock;
+      try {
+        const body = 'body';
+        const a = {...makeRecord('topics/a.md', body), agentSummary: 'poisoned summary'};
+        a.contentHash = embedInputHash(body, a.agentSummary);
+        fx.records.insert(a);
+        embedder.poison = text => text === 'poisoned summary';
+        await embedPending(fx.db, embedder, {now});
+        const stored = new RecordSummaryVecRepository(fx.db).get(a.recordId);
+        t.equal(stored?.textHash, null, 'stored without a text hash, so never reused');
+        t.equal(fx.vecs.getRecordContentHash(a.recordId), '', 'the record is marked incomplete');
+
+        embedder.poison = () => false;
+        embedder.embedded.length = 0;
+        clock = 60_000;
+        const retry = await embedPending(fx.db, embedder, {now});
+        t.equal(retry.embedded, 1, 'retried once the backoff ran out');
+        t.deepEqual(embedder.embedded, ['poisoned summary'], 'only the summary went to the model');
+        t.equal(
+          fx.vecs.getRecordContentHash(a.recordId),
+          a.contentHash,
+          'and the record is current'
+        );
+      } finally {
+        fx.db.close();
+      }
+    }
+  );
+
+  await t.test(
+    'a record with a non-finite chunk waits out a doubling backoff between retries',
+    async t => {
+      const fx = setup();
+      const embedder = new CountingEmbedder();
+      let clock = 0;
+      const now = (): number => clock;
+      try {
+        const body = longBody(3);
+        const bad = chunkBody(body)[1]!;
+        embedder.poison = text => text === bad;
+        const a = makeRecord('topics/long.md', body);
+        fx.records.insert(a);
+
+        const first = await embedAllPending(fx.db, embedder, {now});
+        t.equal(first.remaining, 0, 'one pass leaves nothing pending');
+        t.equal(fx.vecs.getRecordContentHash(a.recordId), '', 'stored incomplete');
+        t.equal(
+          fx.vecs.getChunks(a.recordId).length,
+          chunkBody(body).length - 1,
+          'the finite chunks still serve search'
+        );
+
+        const attempt = async (at: number): Promise<number> => {
+          clock = at;
+          embedder.embedded.length = 0;
+          await embedPending(fx.db, embedder, {now});
+          return embedder.embedded.length;
+        };
+        t.equal(await attempt(59_999), 0, 'not before the first minute');
+        t.equal(await attempt(60_000), 1, 'then retried, with only the failed chunk sent');
+        t.equal(await attempt(60_000 + 119_999), 0, 'the next wait is two minutes');
+        embedder.poison = () => false;
+        t.equal(await attempt(60_000 + 120_000), 1, 'retried again after it');
+        t.equal(fx.vecs.getRecordContentHash(a.recordId), a.contentHash, 'and complete this time');
+        t.equal(await attempt(10 * 60_000), 0, 'a complete record is not retried');
+      } finally {
+        fx.db.close();
+      }
+    }
+  );
+
+  await t.test('an edit to a record in backoff is embedded at once', async t => {
     const fx = setup();
     const embedder = new CountingEmbedder();
+    const now = (): number => 0;
     try {
-      const body = 'body';
-      const a = {...makeRecord('topics/a.md', body), agentSummary: 'poisoned summary'};
-      a.contentHash = embedInputHash(body, a.agentSummary);
+      const body = 'the SENTINEL body';
+      embedder.poison = text => text.includes('SENTINEL');
+      const a = makeRecord('topics/a.md', body);
       fx.records.insert(a);
-      embedder.poison = text => text === 'poisoned summary';
-      await embedPending(fx.db, embedder);
-      const stored = new RecordSummaryVecRepository(fx.db).get(a.recordId);
-      t.equal(stored?.textHash, null, 'stored without a text hash, so never reused');
+      await embedPending(fx.db, embedder, {now});
+      t.equal(fx.vecs.getRecordContentHash(a.recordId), '', 'stored incomplete');
 
-      const again = await embedPending(fx.db, embedder);
-      t.equal(again.embedded, 0, 'the next pass finds nothing pending');
+      const edited = 'an edited body';
+      fx.records.upsertByPath({...a, body: edited, contentHash: contentHash(edited)});
+      const pass = await embedPending(fx.db, embedder, {now});
+      t.equal(pass.embedded, 1, 'the new content is not held by the old backoff');
+      t.equal(fx.vecs.getRecordContentHash(a.recordId), contentHash(edited), 'and it is current');
     } finally {
       fx.db.close();
     }
