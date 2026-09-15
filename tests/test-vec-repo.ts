@@ -157,36 +157,44 @@ const dot = (a: Float32Array, b: Float32Array): number => {
   return s;
 };
 
-test("nearest blends each record's best chunk with its summary", async t => {
+// A unit vector at the given cosine to axis 0, the tests' query.
+const at = (cosine: number, axis: number): Float32Array => {
+  const v = new Float32Array(384);
+  v[0] = cosine;
+  v[axis] = Math.sqrt(1 - cosine * cosine);
+  return v;
+};
+
+test('nearest scores a record by the better of its best chunk and its summary', async t => {
   const fx = setup();
   try {
     const summaries = new RecordSummaryVecRepository(fx.db);
-    const query = await fx.embedder.embed('the query');
-    const chunk = await fx.embedder.embed('some chunk');
-    const [withSummary, without, exact] = [uuidv7(), uuidv7(), uuidv7()];
+    const query = at(1, 1);
+    const [bySummary, byChunk, neither] = [uuidv7(), uuidv7(), uuidv7()];
     for (const [id, path] of [
-      [withSummary, 'topics/with-summary.md'],
-      [without, 'topics/without.md'],
-      [exact, 'topics/exact.md']
+      [bySummary, 'topics/by-summary.md'],
+      [byChunk, 'topics/by-chunk.md'],
+      [neither, 'topics/neither.md']
     ] as const) {
       fx.records.insert(makeRecord(id, path));
     }
-    fx.vecs.setChunks(withSummary, 'h', [chunk]);
-    summaries.set(withSummary, 'h', 'summary-hash', query);
-    fx.vecs.setChunks(without, 'h', [chunk]);
-    fx.vecs.setChunks(exact, 'h', [query]);
+    fx.vecs.setChunks(bySummary, 'h', [at(0.2, 10)]);
+    summaries.set(bySummary, 'h', null, at(0.9, 20));
+    fx.vecs.setChunks(byChunk, 'h', [at(0.8, 11)]);
+    summaries.set(byChunk, 'h', null, at(0.1, 21));
+    fx.vecs.setChunks(neither, 'h', [at(0.5, 12)]);
 
     const hits = fx.vecs.nearest(query, 3);
     t.deepEqual(
       hits.map(h => h.recordId),
-      [exact, withSummary, without],
-      'a matching summary lifts a record, and a matching chunk still wins'
+      [bySummary, byChunk, neither],
+      'a summary at 0.9 beats a chunk at 0.8, and a weak summary costs nothing'
     );
-    const similarity = recordSimilarity(dot(chunk, query), 1);
     t.ok(
-      Math.abs(hits[1]!.distance - Math.sqrt(2 - 2 * similarity)) < 1e-5,
-      'the distance is that of the blended similarity'
+      Math.abs(hits[0]!.distance - Math.sqrt(2 - 2 * 0.9)) < 1e-5,
+      'the distance is that of the summary similarity'
     );
+    t.equal(hits[0]!.chunkIndex, 0, 'with the index of its best chunk');
   } finally {
     fx.db.close();
   }
@@ -238,17 +246,10 @@ test('nearest matches a brute-force ranking when its candidate lists are short',
   }
 });
 
-test('nearest reads the chunks of a record its summary alone brings in', async t => {
+test('nearest ranks a record its summary alone brings in', async t => {
   const fx = setup();
   try {
     const summaries = new RecordSummaryVecRepository(fx.db);
-    // A unit vector at the given cosine to the query, which is axis 0.
-    const at = (cosine: number, axis: number): Float32Array => {
-      const v = new Float32Array(384);
-      v[0] = cosine;
-      v[axis] = Math.sqrt(1 - cosine * cosine);
-      return v;
-    };
     const query = at(1, 1);
     const add = (path: string, chunk: Float32Array, summary: Float32Array | null): string => {
       const id = uuidv7();
@@ -257,14 +258,16 @@ test('nearest reads the chunks of a record its summary alone brings in', async t
       if (summary) summaries.set(id, 'h', null, summary);
       return id;
     };
-    // With chunkK 2, the chunk list is `lead` and `cut`, the summary list `onTopic` and `lead`.
-    const lead = add('topics/lead.md', at(0.92, 10), at(0.95, 20)); // 0.6·0.92 + 0.4·0.95 = 0.932
-    add('topics/cut.md', at(0.9, 11), null); // 0.9
-    const onTopic = add('topics/on-topic.md', at(0.89, 12), query); // 0.6·0.89 + 0.4 = 0.934
+    // With chunkK 2, the chunk list is `lead` and `cut`, the summary list `onTopic` and `lead`,
+    // so every record outside both lists is bounded by 0.9, below lead's 0.92, and nothing widens.
+    const lead = add('topics/lead.md', at(0.92, 10), at(0.3, 20));
+    add('topics/cut.md', at(0.9, 11), null);
+    const onTopic = add('topics/on-topic.md', at(0.5, 12), at(0.99, 21));
 
     const hits = fx.vecs.nearest(query, 1, {chunkK: 2});
-    t.equal(hits[0]?.recordId, onTopic, 'the summary-only record, read and ranked');
+    t.equal(hits[0]?.recordId, onTopic, 'the summary-only record, ranked by its summary');
     t.notEqual(hits[0]?.recordId, lead, 'not the best record of the chunk list');
+    t.equal(hits[0]?.chunkIndex, 0, 'its chunk index read once it made the top k');
   } finally {
     fx.db.close();
   }

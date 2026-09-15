@@ -55,6 +55,48 @@ test('chunkBody', async t => {
     t.ok(bbbCount >= 2 || cccCount >= 2, 'a middle paragraph appears in adjacent chunks (overlap)');
   });
 
+  await t.test('an overlap that would push the next block past 1,500 characters is dropped', t => {
+    const first = 'a'.repeat(1000);
+    const second = 'b'.repeat(1100);
+    const out = chunkBody(`## S\n\n${first}\n\n${second}`);
+    t.deepEqual(
+      out,
+      [`S\n\n${first}`, `S\n\n${second}`],
+      'two chunks, the second without the first paragraph'
+    );
+  });
+
+  await t.test('an overlap that fits is kept', t => {
+    const out = chunkBody(`## S\n\n${'a'.repeat(700)}\n\n${'b'.repeat(600)}`);
+    t.equal(out.length, 2, 'the pair exceeds the 1,200-character target');
+    t.ok(out[1]!.includes('a'.repeat(700)), 'the second chunk repeats the first paragraph');
+  });
+
+  await t.test('no chunk exceeds 1,500 characters, whatever the paragraph sizes or maxChars', t => {
+    let seed = 11;
+    const random = (): number => {
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return seed / 4294967296;
+    };
+    for (let round = 0; round < 200; ++round) {
+      const sections = Array.from({length: 1 + Math.floor(random() * 3)}, (_, i) => {
+        const paragraphs = Array.from({length: 1 + Math.floor(random() * 8)}, () =>
+          'w '.repeat(Math.floor(random() * 900))
+        );
+        return `## Section ${i}\n\n${paragraphs.join('\n\n')}`;
+      });
+      const body = sections.join('\n\n');
+      for (const maxChars of [undefined, 800, 2000]) {
+        const longest = Math.max(...chunkBody(body, {maxChars}).map(c => c.length));
+        if (longest > 1500) {
+          t.fail(`round ${round}, maxChars ${maxChars}: a chunk of ${longest} characters`);
+          return;
+        }
+      }
+    }
+    t.pass('200 random bodies at three maxChars settings');
+  });
+
   await t.test('overlap does NOT cross a header boundary', t => {
     const body = `## A\n\n${'a'.repeat(600)}\n\n## B\n\n${'b'.repeat(600)}`;
     const out = chunkBody(body, {maxChars: 800});

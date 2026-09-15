@@ -1,7 +1,8 @@
 // Query-document retrieval check for `agent.summary`: prefixed to every chunk
 // (A, production from schema 5 to D45), left out (B), or embedded once as its
-// own vector and scored with the best body chunk, as their maximum (C) or as
-// the server's `recordSimilarity` blend (D, D45).
+// own vector and scored with the best body chunk, as the server's
+// `recordSimilarity`, their maximum (C), or as 0.6 of the chunk plus 0.4 of the
+// summary (D, the weight D45 first chose).
 //
 //   node eval/embedding-summary-query-ab.ts --db <vault.sqlite> --cache <dir> [--vectors-from <vault.sqlite>] [--sample N] [--seed S]
 //
@@ -358,8 +359,8 @@ interface Mode {
 const MODES: Mode[] = [
   {name: 'A', score: a => a},
   {name: 'B', score: (_, b) => b},
-  {name: 'C', score: (_, b, s) => (s === null ? b : Math.max(b, s))},
-  {name: 'D', score: (_, b, s) => recordSimilarity(b, s)}
+  {name: 'C', score: (_, b, s) => recordSimilarity(b, s)},
+  {name: 'D', score: (_, b, s) => (s === null ? b : 0.6 * b + 0.4 * s)}
 ];
 
 const mulberry32 = (seed: number): (() => number) => {
@@ -495,8 +496,8 @@ const main = async (): Promise<void> => {
     `records ${records.length}, enriched ${enriched.length}, sampled ${sampled.length} ` +
       `(${noSentence} without a usable sentence), embedded now ${embeddedNow}\n` +
       `rows: A ${matrixA.owner.length}, B ${matrixB.owner.length}, summaries ${matrixS.owner.length}\n` +
-      'A = summary prefixed to every chunk; B = body chunks only; C = max(best chunk, summary); ' +
-      'D = recordSimilarity(best chunk, summary)\n\n'
+      'A = summary prefixed to every chunk; B = body chunks only; ' +
+      'C = recordSimilarity(best chunk, summary), their max; D = 0.6 chunk + 0.4 summary\n\n'
   );
 
   const ranks = queries.map(q => {

@@ -15,16 +15,13 @@ export interface NearestHit {
 const toBlob = (vec: Float32Array): Uint8Array =>
   new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
 
-/** Weight of the summary vector in {@link recordSimilarity}. */
-export const SUMMARY_WEIGHT = 0.4;
-
 /**
- * A record's similarity to a query from its best chunk and, when it has one,
- * its summary. The weight is the smallest that kept title queries at the old
- * summary prefix's level (D45, `eval/embedding-summary-query-ab.ts`).
+ * A record's similarity to a query: the better of its best chunk and, when it
+ * has one, its summary. Max over a 0.6/0.4 blend keeps a large note findable by
+ * one passage its summary does not describe (D45, `eval/embedding-summary-query-ab.ts`).
  */
 export const recordSimilarity = (bestChunk: number, summary: number | null): number =>
-  summary === null ? bestChunk : (1 - SUMMARY_WEIGHT) * bestChunk + SUMMARY_WEIGHT * summary;
+  summary === null ? bestChunk : Math.max(bestChunk, summary);
 
 // Unit vectors: L2² = 2 − 2·cosine.
 const similarityOf = (distance: number): number => 1 - (distance * distance) / 2;
@@ -236,10 +233,11 @@ export class RecordVecRepository {
   /**
    * Top-k records by {@link recordSimilarity} to a query, exact. Candidates
    * come from a chunk KNN and a summary KNN of `chunkK` rows each. A record
-   * found only by its summary has no chunk above the chunk list's last row, so
-   * its chunks are read only while that bound could still reach the k-th score;
-   * a record in neither list is bounded by both lists' last rows, and while that
-   * bound beats the k-th score the lists widen.
+   * found only by its summary has no chunk above the chunk list's last row: at
+   * or above that row its summary is its score, below it its chunks are read
+   * while they could still reach the k-th score. A record in neither list is
+   * bounded by both lists' last rows, and while that bound beats the k-th score
+   * the lists widen.
    */
   nearest(query: Float32Array, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
     const blob = toBlob(query);
@@ -267,9 +265,10 @@ export class RecordVecRepository {
         }
       }
 
-      const scored: {recordId: string; similarity: number; chunkIndex: number}[] = [];
+      // A null chunkIndex is read only if the record makes the top k.
+      const scored: {recordId: string; similarity: number; chunkIndex: number | null}[] = [];
       const kth = (): number => (scored.length >= k ? scored[k - 1]!.similarity : -Infinity);
-      const add = (recordId: string, similarity: number, chunkIndex: number): void => {
+      const add = (recordId: string, similarity: number, chunkIndex: number | null): void => {
         scored.push({recordId, similarity, chunkIndex});
         scored.sort((a, b) => b.similarity - a.similarity);
       };
@@ -285,19 +284,22 @@ export class RecordVecRepository {
         if (best.has(recordId)) continue;
         // Summary rows arrive in descending similarity, so no later bound is higher.
         if (!(recordSimilarity(chunkCut, summary) > kth())) break;
+        if (summary >= chunkCut) {
+          add(recordId, summary, null);
+          continue;
+        }
         const chunk = this.#bestChunk(recordId, query);
         if (chunk !== null)
           add(recordId, recordSimilarity(chunk.similarity, summary), chunk.chunkIndex);
       }
 
-      // Both lists exhausted: both cuts are -Infinity, so unseen is too.
-      const unseen = Math.max(chunkCut, recordSimilarity(chunkCut, summaryCut));
-      if (!(unseen > kth())) {
-        return scored.slice(0, k).map(h => ({
-          recordId: h.recordId,
-          distance: distanceOf(h.similarity),
-          chunkIndex: h.chunkIndex
-        }));
+      // Both lists exhausted: both cuts are -Infinity, and so is their bound.
+      if (!(recordSimilarity(chunkCut, summaryCut) > kth())) {
+        return scored.slice(0, k).flatMap(h => {
+          const chunkIndex = h.chunkIndex ?? this.#bestChunk(h.recordId, query)?.chunkIndex;
+          if (chunkIndex === undefined) return [];
+          return [{recordId: h.recordId, distance: distanceOf(h.similarity), chunkIndex}];
+        });
       }
     }
   }

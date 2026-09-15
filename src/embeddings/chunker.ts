@@ -8,7 +8,8 @@
 // overlap). This avoids losing context that crosses a chunk boundary — a
 // concept introduced at the end of chunk N and developed at the start of
 // chunk N+1 stays connected. Overlap never crosses a header boundary; a new
-// section starts fresh. For hard-split single paragraphs, overlap is char-
+// section starts fresh; and it is dropped when it would push the next chunk
+// past HARD_CAP, so no chunk runs past what the embedder reads. For hard-split single paragraphs, overlap is char-
 // level (last `charOverlap` characters of the previous piece).
 
 const DEFAULT_MAX_CHARS = 1200; // soft target — paragraphs may push slightly past
@@ -101,7 +102,7 @@ export const chunkBody = (
   body: string,
   opts: {maxChars?: number; charOverlap?: number; overlap?: boolean} = {}
 ): string[] => {
-  const max = opts.maxChars ?? DEFAULT_MAX_CHARS;
+  const max = Math.min(opts.maxChars ?? DEFAULT_MAX_CHARS, HARD_CAP);
   const charOverlap = opts.charOverlap ?? DEFAULT_CHAR_OVERLAP;
   const overlapEnabled = opts.overlap !== false;
   if (!body || body.length <= max) return [body];
@@ -124,8 +125,8 @@ export const chunkBody = (
     bufLen = 0;
   };
 
-  const seedOverlap = (): void => {
-    if (!overlapEnabled || !lastBlockText) return;
+  const seedOverlap = (room: number): void => {
+    if (!overlapEnabled || !lastBlockText || lastBlockText.length + 2 > room) return;
     buf.push(lastBlockText);
     bufLen = lastBlockText.length;
   };
@@ -155,7 +156,7 @@ export const chunkBody = (
     if (bufLen > 0 && prefixLen + bufLen + 2 + blockLen > max) {
       flush();
       currentPath = block.headerPath;
-      seedOverlap();
+      seedOverlap(HARD_CAP - prefixLen - blockLen);
     }
     buf.push(block.text);
     bufLen += (bufLen > 0 ? 2 : 0) + blockLen;
