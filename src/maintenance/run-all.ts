@@ -17,7 +17,7 @@ export const SCAN_LAST_PASS_GENERATION_KEY = 'scan_last_pass_generation';
 export const SCAN_LAST_PASS_AT_KEY = 'scan_last_pass_at';
 
 export interface RunAllScansSummary {
-  duplicates: ReturnType<typeof findDuplicates>;
+  duplicates: Awaited<ReturnType<typeof findDuplicates>>;
   compaction: ReturnType<typeof findCompactionCandidates>;
   retention: ReturnType<typeof findRetentionCandidates>;
   upgrade: ReturnType<typeof findUpgradeSignals>;
@@ -33,13 +33,12 @@ export const recordScanPass = (db: DatabaseSync, generation: number, atIso: stri
   setMetaValue(db, SCAN_LAST_PASS_AT_KEY, atIso);
 };
 
-export const runAllScans = (db: DatabaseSync): RunAllScansSummary => {
+export const runAllScans = async (db: DatabaseSync): Promise<RunAllScansSummary> => {
   const start = Date.now();
-  // Capture the generation before scanning: the scans are synchronous, so
-  // nothing can change mid-pass, but "before" stays correct if that ever
-  // loosens — a write racing the pass re-arms the next tick.
+  // Captured before scanning: the duplicate scan yields, so a write can land
+  // mid-pass, and recording the generation from before it re-arms the next tick.
   const generation = getContentGeneration(db);
-  const duplicates = findDuplicates(db, {
+  const duplicates = await findDuplicates(db, {
     maxDistance: 0.1,
     perRecord: 10,
     minBodyLength: 200

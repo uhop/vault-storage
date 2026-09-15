@@ -513,6 +513,108 @@ test('PUT /vault/{path} rejects serialized-null overwrites (null body / null fro
   }
 });
 
+test('PUT /vault/{path} rejects frontmatter wrapping a {frontmatter, body} envelope', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const markdown = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: [
+          '---',
+          'frontmatter:',
+          '  title: Alpha',
+          '  type: permanent',
+          'body: "Alpha topic body."',
+          '---',
+          'Alpha topic body.',
+          ''
+        ].join('\n')
+      });
+      t.equal(markdown.status, 400, '400 on the envelope parsed as markdown frontmatter');
+      t.equal(
+        (markdown.body as {code: string}).code,
+        'wrapped_frontmatter',
+        'code=wrapped_frontmatter'
+      );
+
+      const json = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {title: 'Alpha', body: 'x'}, body: 'Real body.'})
+      });
+      t.equal(json.status, 400, '400 on a body key in JSON frontmatter too');
+
+      const onDisk = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      t.notOk(onDisk.includes('frontmatter:'), 'nothing written');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('a note already carrying the envelope keys can still be edited, and repaired with the unset sentinel', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const damaged = [
+      '---',
+      'frontmatter:',
+      '  title: Damaged',
+      'body: A second copy of the body.',
+      'created: 2026-09-01',
+      '---',
+      'A second copy of the body.',
+      ''
+    ].join('\n');
+    writeMd(root, 'topics/damaged.md', damaged);
+    const ctx = await startTestServer(root);
+    try {
+      const append = await fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: 'topics/damaged.md', op: 'append', text: 'Appended.\n'})
+      });
+      t.equal(append.status, 200, 'an append round-trips the stored keys');
+
+      const roundTrip = await fetchAuthed(`${ctx.url}/vault/topics/damaged.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: readFileSync(join(root, 'topics/damaged.md'), 'utf8')
+      });
+      t.equal(roundTrip.status, 204, 'so does a verbatim markdown round-trip');
+
+      const changed = await fetchAuthed(`${ctx.url}/vault/topics/damaged.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({frontmatter: {body: 'A different copy.'}, body: 'Real body.'})
+      });
+      t.equal(changed.status, 400, 'changing a stored envelope key is refused');
+
+      const repair = await fetchAuthed(`${ctx.url}/vault/topics/damaged.md`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          frontmatter: {title: 'Damaged', frontmatter: '__unset__', body: '__unset__'},
+          body: 'A second copy of the body.\nAppended.\n'
+        })
+      });
+      t.equal(repair.status, 204, 'the unset sentinel removes both keys');
+      const onDisk = readFileSync(join(root, 'topics/damaged.md'), 'utf8');
+      t.notOk(/^(frontmatter|body):/m.test(onDisk.split('---')[1] ?? ''), 'no envelope key left');
+      t.ok(onDisk.includes('title: Damaged'), 'the lifted title is top level');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} rejects an empty body, exempting an already-empty document', async t => {
   const {root, cleanup} = setupVault();
   try {

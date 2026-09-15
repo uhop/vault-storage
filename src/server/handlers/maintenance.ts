@@ -68,7 +68,7 @@ const parsePositiveInt = (raw: string | undefined, fallback: number): number | n
  */
 export const findDuplicatesHandler =
   (deps: MaintenanceDeps): Handler =>
-  ctx => {
+  async ctx => {
     if (
       !rejectUnknownParams(ctx, new Set(['limit', 'max_distance', 'min_body_length', 'per_record']))
     )
@@ -99,7 +99,7 @@ export const findDuplicatesHandler =
       limit = parsed;
     }
 
-    const summary = findDuplicates(deps.db, {maxDistance, perRecord, limit, minBodyLength});
+    const summary = await findDuplicates(deps.db, {maxDistance, perRecord, limit, minBodyLength});
     sendJson(ctx.res, 200, summary);
   };
 
@@ -237,9 +237,9 @@ export const incrementalReindexHandler =
  */
 export const runAllScansHandler =
   (deps: MaintenanceDeps): Handler =>
-  ctx => {
+  async ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
-    sendJson(ctx.res, 200, runAllScans(deps.db));
+    sendJson(ctx.res, 200, await runAllScans(deps.db));
   };
 
 /**

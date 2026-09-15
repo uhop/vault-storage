@@ -41,7 +41,7 @@ test('findDuplicates files suggestions for high-similarity pairs', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.scanned, 3, 'all three records scanned');
     t.equal(summary.skippedUnembedded, 0, 'all embedded');
     t.equal(summary.pairsFound, 1, 'A↔B is the only pair under threshold');
@@ -91,7 +91,7 @@ test('two-phase: doc prefilter excludes obviously-distant pairs without chunk wo
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {
+    const summary = await findDuplicates(fx.db, {
       maxDistance: 0.1,
       prefilterMaxDistance: 0.05,
       minBodyLength: 0
@@ -118,7 +118,7 @@ test('two-phase: prefilter-passing pair gets confirmed at chunk-level', async t 
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(summary.candidatePairs, 1, 'one pair survived prefilter');
     t.equal(summary.pairsFound, 1, 'and chunk-level confirmed');
     t.equal(summary.filed, 1);
@@ -136,10 +136,10 @@ test('findDuplicates is idempotent across runs', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const first = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const first = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(first.filed, 1);
 
-    const second = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const second = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(second.pairsFound, 1, 'pair still found');
     t.equal(second.filed, 0, 'no new suggestion filed (existing covers the pair)');
 
@@ -164,7 +164,7 @@ test('findDuplicates respects maxDistance threshold', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(summary.pairsFound, 0, 'no pairs under tight threshold');
     t.equal(summary.filed, 0, 'nothing to file');
   } finally {
@@ -180,7 +180,7 @@ test('findDuplicates skips unembedded records cleanly', async t => {
     importVault(fx.db, fx.root);
     // Skip embedPending — records exist but have no chunks in record_vec.
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(summary.scanned, 0);
     t.equal(summary.skippedUnembedded, 2);
     t.equal(summary.filed, 0);
@@ -201,13 +201,97 @@ test('findDuplicates honors limit cap', async t => {
     await embedPending(fx.db, new FakeEmbedder());
 
     // Without limit: 4 records pairwise → C(4,2) = 6 pairs.
-    const unlimited = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const unlimited = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(unlimited.filed, 6, 'all pairs filed');
 
     // Reset suggestions and re-run with limit.
     fx.db.exec(`DELETE FROM suggestions WHERE kind = 'duplicate'`);
-    const capped = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0, limit: 3});
+    const capped = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0, limit: 3});
     t.equal(capped.filed, 3, 'capped at limit');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('findDuplicates yields to other work while it scans', async t => {
+  const fx = await setup();
+  try {
+    writeMd(fx.root, 'a.md', '---\n---\nthe same body\n');
+    writeMd(fx.root, 'b.md', '---\n---\nthe same body\n');
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+    let ran = false;
+    setImmediate(() => {
+      ran = true;
+    });
+    await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    t.ok(ran, 'a callback queued before the scan ran before it finished');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('findDuplicates does not file a pair whose record was deleted while it yielded', async t => {
+  const fx = await setup();
+  try {
+    for (const name of ['a', 'b', 'c']) writeMd(fx.root, `${name}.md`, '---\n---\nthe same body\n');
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+    const count = fx.db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = 'duplicate'`);
+    // Once a's two pairs are filed, c's chunks are cached; delete c before b's turn.
+    let deleted = false;
+    const poll = (): void => {
+      if ((count.get() as {n: number}).n >= 2) {
+        fx.db.prepare(`DELETE FROM records WHERE file_path = 'c.md'`).run();
+        deleted = true;
+        return;
+      }
+      setImmediate(poll);
+    };
+    setImmediate(poll);
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0, sliceMs: 0});
+    t.ok(deleted, 'c was deleted mid-scan');
+    t.equal(summary.filed, 2, 'a↔b and a↔c, but not b↔c');
+    const paths = (
+      fx.db
+        .prepare(
+          `SELECT json_extract(payload, '$.a_path') AS a, json_extract(payload, '$.b_path') AS b
+             FROM suggestions WHERE kind = 'duplicate' AND status = 'pending'`
+        )
+        .all() as {a: string; b: string}[]
+    ).map(r => `${r.a}+${r.b}`);
+    t.notOk(paths.includes('b.md+c.md'), 'no pending pair names the deleted record');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('findDuplicates measures minBodyLength in string length, whatever the byte count', async t => {
+  const fx = await setup();
+  try {
+    // 199 characters in 299 bytes, and 200 characters (100 surrogate pairs) in 400 bytes:
+    // both byte counts sit in the range where only the body can decide.
+    const short = `${'é'.repeat(100)}${'x'.repeat(99)}`;
+    const long = '😀'.repeat(100);
+    writeMd(fx.root, 'short-1.md', `---\ntitle: short-1\n---\n${short}`);
+    writeMd(fx.root, 'short-2.md', `---\ntitle: short-2\n---\n${short}`);
+    writeMd(fx.root, 'long-1.md', `---\ntitle: long-1\n---\n${long}`);
+    writeMd(fx.root, 'long-2.md', `---\ntitle: long-2\n---\n${long}`);
+    importVault(fx.db, fx.root);
+    await embedPending(fx.db, new FakeEmbedder());
+    const bodies = fx.db.prepare('SELECT file_path, body FROM records').all() as {
+      file_path: string;
+      body: string;
+    }[];
+    for (const {file_path, body} of bodies) {
+      const expectShort = file_path.startsWith('short');
+      t.equal(body.length < 200, expectShort, `${file_path}: ${body.length} characters`);
+      t.ok(Buffer.byteLength(body) >= 200, `${file_path}: ${Buffer.byteLength(body)} bytes`);
+    }
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 200});
+    t.equal(summary.skippedShort, 2, 'the 199-character bodies are short');
+    t.equal(summary.scanned, 2, 'the 200-character bodies are scanned');
+    t.equal(summary.filed, 1, 'and paired');
   } finally {
     teardown(fx);
   }
@@ -228,13 +312,13 @@ test('findDuplicates skips records with bodies under minBodyLength', async t => 
     await embedPending(fx.db, new FakeEmbedder());
 
     // Default minBodyLength = 200: both records skipped, no pair filed.
-    const filtered = findDuplicates(fx.db, {maxDistance: 0.1});
+    const filtered = await findDuplicates(fx.db, {maxDistance: 0.1});
     t.equal(filtered.skippedShort, 2, 'both records skipped as too-short');
     t.equal(filtered.scanned, 0, 'no record scanned');
     t.equal(filtered.filed, 0, 'no pair filed');
 
     // With minBodyLength = 0 the same fixture finds the pair.
-    const allowed = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const allowed = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(allowed.filed, 1, 'with filter disabled, the pair is filed');
   } finally {
     teardown(fx);
@@ -262,7 +346,7 @@ test('findDuplicates skips records of skipped types', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(summary.skippedByType, 2, 'both state.md records skipped by type');
     t.equal(summary.filed, 0, 'no suggestion filed');
   } finally {
@@ -287,11 +371,15 @@ test('findDuplicates skips records under skipPathPrefixes', async t => {
     // prefix never gets a say — real records under `logs/sync/` are all
     // `type: log`, which makes the prefix defence-in-depth rather than the
     // thing doing the work.
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0, skipTypes: []});
+    const summary = await findDuplicates(fx.db, {
+      maxDistance: 0.1,
+      minBodyLength: 0,
+      skipTypes: []
+    });
     t.equal(summary.skippedByPath, 2, 'both sync logs skipped by path prefix');
     t.equal(summary.filed, 0);
 
-    const byDefaults = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const byDefaults = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(byDefaults.skippedByType, 2, 'and by type under the defaults');
     t.equal(byDefaults.filed, 0, 'excluded either way');
   } finally {
@@ -317,7 +405,7 @@ test('pair damping: same-project role files are never duplicates (sub-pattern a)
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.filed, 0, 'nothing filed');
     t.equal(summary.pairsExcluded, 1, 'one pair excluded');
     t.equal(summary.pairsExcludedBy.project_structure, 1, 'excluded as project_structure');
@@ -345,7 +433,7 @@ test('pair damping: sibling projects sharing a role file are excluded (sub-patte
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.filed, 0, 'nothing filed');
     t.equal(summary.pairsExcludedBy.project_structure, 1, 'excluded as project_structure');
   } finally {
@@ -371,7 +459,7 @@ test('pair damping: old-style atomized queue items count as structure files (sub
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.filed, 0, 'nothing filed');
     t.equal(summary.pairsExcludedBy.project_structure, 1, 'excluded as project_structure');
   } finally {
@@ -397,7 +485,7 @@ test('pair damping: structural types only pair with themselves (sub-pattern d)',
     // what excludes it. Under the defaults `log` is skipped a stage earlier
     // (2026-08-03), which would make this pass for the wrong reason — the
     // pair would never form at all.
-    const summary = findDuplicates(fx.db, {
+    const summary = await findDuplicates(fx.db, {
       maxDistance: 0.1,
       perRecord: 5,
       minBodyLength: 0,
@@ -431,7 +519,7 @@ test('pair damping: _summary compaction slices are excluded (template rule)', as
     // Same isolation as the type_mismatch case: `log` is a default skip type
     // since 2026-08-03, so without this the pair never forms and the template
     // rule would go untested.
-    const summary = findDuplicates(fx.db, {
+    const summary = await findDuplicates(fx.db, {
       maxDistance: 0.1,
       perRecord: 5,
       minBodyLength: 0,
@@ -462,7 +550,7 @@ test('pair damping: knowledge types stay mutually compatible (fleeting ↔ perma
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.pairsExcluded, 0, 'no pair excluded');
     t.equal(summary.filed, 1, 'raw note vs compiled topic still files — the real-duplicate case');
   } finally {
@@ -488,7 +576,7 @@ test('pair damping: non-role project files still pair normally', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.pairsExcluded, 0, 'design notes are not role files');
     t.equal(summary.filed, 1, 'genuine same-type project pair still files');
   } finally {
@@ -569,7 +657,11 @@ test('findDuplicates — the prefilter no longer cuts tighter than maxDistance',
   await t.test('a pair inside the chunk ceiling is filed under the derived default', async t => {
     const fx = await schedFixture();
     try {
-      const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 200});
+      const summary = await findDuplicates(fx.db, {
+        maxDistance: 0.1,
+        perRecord: 5,
+        minBodyLength: 200
+      });
       t.equal(summary.scanned, 2, 'both notes scanned');
       t.equal(summary.pairsFound, 1, 'the pair survives phase 1 and passes phase 2');
       t.equal(summary.filed, 1, 'and is filed');
@@ -583,7 +675,7 @@ test('findDuplicates — the prefilter no longer cuts tighter than maxDistance',
   await t.test('the old flat 0.30 prefilter excluded that same pair', async t => {
     const fx = await schedFixture();
     try {
-      const summary = findDuplicates(fx.db, {
+      const summary = await findDuplicates(fx.db, {
         maxDistance: 0.1,
         perRecord: 5,
         minBodyLength: 200,
@@ -617,7 +709,7 @@ test('findDuplicates skips dated and structural series by default', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, minBodyLength: 0});
     t.equal(summary.skippedByType, 2, 'both logs skipped by type');
     t.equal(summary.filed, 1, 'only the knowledge pair is filed');
 
@@ -667,7 +759,7 @@ test('pair damping: two dated files are a series, not duplicates', async t => {
     importVault(fx.db, fx.root);
     await embedPending(fx.db, new FakeEmbedder());
 
-    const summary = findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
+    const summary = await findDuplicates(fx.db, {maxDistance: 0.1, perRecord: 5, minBodyLength: 0});
     t.equal(summary.pairsExcludedBy.dated_series, 1, 'the two dated reports are damped');
     t.equal(summary.filed, 2, 'each report still pairs with the undated topic note');
 

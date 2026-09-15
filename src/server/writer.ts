@@ -1,5 +1,6 @@
 import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
+import {isDeepStrictEqual} from 'node:util';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
 import {contentHash} from '../util/hash.ts';
 import {normalizeTag} from '../migration/tags.ts';
@@ -11,6 +12,8 @@ import {
   STATUS_ALIASES,
   type VaultRecord
 } from '../records/types.ts';
+
+const ENVELOPE_KEYS = ['frontmatter', 'body'] as const;
 
 /**
  * Frontmatter keys the API rejects on PUT/PATCH because they are DB-only.
@@ -329,6 +332,12 @@ export const parseWriteRequest = (
  *   {@link FM_UNSET_SENTINEL} (`"__unset__"`), valid at top level only.
  * - The unset sentinel below top level is rejected — nested values are
  *   replaced wholesale, so it would be stored as a literal string.
+ * - Top-level `frontmatter` or `body` keys are rejected unless the stored
+ *   document already carries them with the same value: a `{frontmatter,
+ *   body}` envelope parsed as frontmatter hid the metadata of 7 notes and
+ *   stored each body a second time (repaired 2026-09-08). `storedFrontmatter`
+ *   lets a verbatim round-trip of such a note still write; the unset sentinel
+ *   always passes, since it is the repair.
  * - Auto-managed keys (`record_id`, `content_hash`, …) are rejected.
  * - Closed-enum fields (`status`, `type`, `priority`): canonical values
  *   and known aliases pass; anything else 400s so authoring typos surface
@@ -339,7 +348,8 @@ export const parseWriteRequest = (
 export const validateWritePayload = (
   frontmatter: Record<string, unknown>,
   body: string,
-  storedBody?: string
+  storedBody?: string,
+  storedFrontmatter?: Record<string, unknown>
 ): void => {
   const strippedBody = body.trim();
   if (strippedBody === 'null' || strippedBody === 'undefined') {
@@ -377,6 +387,20 @@ export const validateWritePayload = (
         400
       );
     }
+  }
+
+  const wrapped = ENVELOPE_KEYS.filter(
+    key =>
+      Object.hasOwn(frontmatter, key) &&
+      frontmatter[key] !== FM_UNSET_SENTINEL &&
+      (!storedFrontmatter || !isDeepStrictEqual(storedFrontmatter[key], frontmatter[key]))
+  );
+  if (wrapped.length > 0) {
+    throw new WriterError(
+      `frontmatter has a top-level ${wrapped.map(k => `\`${k}\``).join(' and ')} key — a {frontmatter, body} payload parsed as frontmatter, which hides the real metadata and stores the body twice. Send the envelope with Content-Type: application/json, or a markdown document whose frontmatter block holds the metadata itself. To remove such a key from a stored note, set it to "${FM_UNSET_SENTINEL}".`,
+      'wrapped_frontmatter',
+      400
+    );
   }
 
   if (looksLikeAnotherFmBlock(body)) {
@@ -541,14 +565,15 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   // — reusing it for `existingFm` below would swallow the throw that a
   // corrupt stored document is supposed to raise.
   let storedBody: string | undefined;
+  let storedFrontmatter: Record<string, unknown> | undefined;
   if (onDisk !== null) {
     try {
-      storedBody = parseFrontmatter(onDisk).body;
+      ({body: storedBody, data: storedFrontmatter} = parseFrontmatter(onDisk));
     } catch {
       storedBody = onDisk;
     }
   }
-  validateWritePayload(frontmatter, body, storedBody);
+  validateWritePayload(frontmatter, body, storedBody, storedFrontmatter);
 
   const requestFm = frontmatter;
   const requestBody = body;

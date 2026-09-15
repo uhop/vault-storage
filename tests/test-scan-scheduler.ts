@@ -167,7 +167,7 @@ test('scheduler: work-hours window gates ticks; force bypasses it', async t => {
 test('runAllScans records the pass marker, so a manual run pushes back the scheduler', async t => {
   const db = makeDb();
   try {
-    const summary = runAllScans(db);
+    const summary = await runAllScans(db);
     t.equal(typeof summary.durationMs, 'number', 'summary shape intact');
     t.equal(
       getMetaValue(db, SCAN_LAST_PASS_GENERATION_KEY),

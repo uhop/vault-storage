@@ -90,10 +90,10 @@
 //     where this deliberately differs from vault-lint's record-level skip.
 
 import type {DatabaseSync} from 'node:sqlite';
+import {setImmediate as nextTurn} from 'node:timers/promises';
 import {RecordDocVecRepository} from '../db/doc-vec-repo.ts';
 import {RecordVecRepository} from '../db/vec-repo.ts';
 import {SuggestionFiler} from '../importer/file-suggestions.ts';
-import {RecordsRepository} from '../records/repository.ts';
 import type {RecordType, VaultRecord} from '../records/types.ts';
 
 /**
@@ -192,7 +192,10 @@ const DATED_BASENAME_RE = /\d{4}-\d{2}-\d{2}/;
  * chunk-level confirmation. See the header § Pair-level damping for the
  * incident history behind each rule.
  */
-export const pairExclusionReason = (a: VaultRecord, b: VaultRecord): PairExclusionReason | null => {
+export const pairExclusionReason = (
+  a: Pick<VaultRecord, 'type' | 'filePath'>,
+  b: Pick<VaultRecord, 'type' | 'filePath'>
+): PairExclusionReason | null => {
   if (typeGroup(a.type) !== typeGroup(b.type)) return 'type_mismatch';
   if (isProjectStructureFile(a.filePath) && isProjectStructureFile(b.filePath)) {
     return 'project_structure';
@@ -278,6 +281,8 @@ export interface FindDuplicatesOptions {
   skipPathPrefixes?: readonly string[];
   /** Override the timestamp written to suggestion rows (test injection). */
   now?: string;
+  /** Longest stretch between yields to the event loop. Default {@link SLICE_MS}; tests pass 0. */
+  sliceMs?: number;
 }
 
 export interface FindDuplicatesSummary {
@@ -341,12 +346,38 @@ const minPairwiseChunkDistance = (
  * exclusion, chunk-level pairwise min cosine for precise inclusion.
  * Pairs are unordered: a record's nearest neighbour gets canonicalized
  * to `(min, max)` before lookup, so each pair is considered exactly
- * once per pass.
+ * once per pass. The scan yields to the event loop every {@link SLICE_MS}
+ * and between its reads; scans of one database run one at a time.
  */
 export const findDuplicates = (
   db: DatabaseSync,
   options: FindDuplicatesOptions = {}
-): FindDuplicatesSummary => {
+): Promise<FindDuplicatesSummary> => {
+  const run = (inFlight.get(db) ?? Promise.resolve()).then(() => scan(db, options));
+  inFlight.set(
+    db,
+    run.catch(() => {})
+  );
+  return run;
+};
+
+const inFlight = new WeakMap<DatabaseSync, Promise<unknown>>();
+
+interface ScanRecord {
+  recordId: string;
+  filePath: string;
+  type: RecordType;
+  /** Body shorter than `minBodyLength`, in JavaScript string length. */
+  short: boolean;
+}
+
+/** Longest stretch the prefilter runs before yielding to the event loop. */
+const SLICE_MS = 20;
+
+const scan = async (
+  db: DatabaseSync,
+  options: FindDuplicatesOptions
+): Promise<FindDuplicatesSummary> => {
   const maxDistance = options.maxDistance ?? 0.1;
   // Derived, not a constant: the L2 twin of maxDistance (L2² = 2·cosine on
   // unit vectors), so phase 1 can never cut tighter than phase 2 accepts.
@@ -358,13 +389,37 @@ export const findDuplicates = (
   const skipPathPrefixes = options.skipPathPrefixes ?? DEFAULT_SKIP_PATH_PREFIXES;
   const now = options.now ?? new Date().toISOString();
 
-  const records = new RecordsRepository(db);
+  const exists = db.prepare('SELECT 1 AS x FROM records WHERE record_id = ?');
   const docVecs = new RecordDocVecRepository(db);
   const chunkVecs = new RecordVecRepository(db);
   const filer = new SuggestionFiler(db, 'duplicate');
 
-  const all = records.listAll();
-  const byId = new Map<string, VaultRecord>();
+  // Bodies are read only where their byte count cannot settle `minBodyLength`:
+  // a JavaScript length is at most the UTF-8 byte count and at least a third of
+  // it. Reading every body made this list the scan's longest block (110 ms).
+  const all = (
+    db
+      .prepare(
+        `SELECT record_id, file_path, type, length(CAST(body AS BLOB)) AS bytes,
+                CASE WHEN length(CAST(body AS BLOB)) >= ? AND length(CAST(body AS BLOB)) < ?
+                     THEN body END AS body
+           FROM records
+          ORDER BY file_path`
+      )
+      .all(minBodyLength, 3 * minBodyLength) as unknown[] as {
+      record_id: string;
+      file_path: string;
+      type: RecordType;
+      bytes: number;
+      body: string | null;
+    }[]
+  ).map((row): ScanRecord => ({
+    recordId: row.record_id,
+    filePath: row.file_path,
+    type: row.type,
+    short: row.body === null ? row.bytes < minBodyLength : row.body.length < minBodyLength
+  }));
+  const byId = new Map<string, ScanRecord>();
   for (const r of all) byId.set(r.recordId, r);
 
   const summary: FindDuplicatesSummary = {
@@ -388,47 +443,93 @@ export const findDuplicates = (
   const start = performance.now();
   const seenPairs = new Set<string>();
 
-  // Bulk-load every record's chunks in one query. Per-call
-  // `getChunks(recordId)` is indexed since schema 0010, but the scan
-  // touches most records anyway, so one bulk load beats ~150 round-trips
-  // and gives O(1) lookups for the rest of the pass.
-  const allChunks = chunkVecs.getAllChunks();
-  const getChunks = (recordId: string): Float32Array[] => allChunks.get(recordId) ?? [];
+  // Chunks load per record, for the pairs that reach phase 2: 94 of croc's
+  // 424 candidate pairs survive the exclusions, so a bulk load of all 23,587
+  // chunk vectors (560 ms a pass) read mostly vectors no pair needed.
+  const chunkCache = new Map<string, Float32Array[]>();
+  const getChunks = (recordId: string): Float32Array[] => {
+    let chunks = chunkCache.get(recordId);
+    if (chunks === undefined) {
+      chunks = chunkVecs.getChunks(recordId);
+      chunkCache.set(recordId, chunks);
+    }
+    return chunks;
+  };
 
-  // Bulk-load every record's doc vector in a single record_doc_vec scan,
-  // then drive the phase-1 prefilter as an in-memory pairwise scan
-  // instead of one sqlite-vec NN MATCH per outer record. Profiled
-  // 2026-05-04: 881 per-record MATCH calls cost ~1.5s; one bulk load
-  // (~13ms) + 881² JS L2² distances over 384-dim Float32Arrays is ~540ms
-  // (~2.8× faster) and produces an identical candidate set.
-  //
   // Metric note: vec0 with `FLOAT[N]` columns and no explicit
-  // `distance_metric` returns **L2 distance** (not cosine — verified
-  // empirically 2026-05-04 against the live DB). We compute L2² here for
-  // speed (no sqrt in the hot loop) and compare against
-  // `prefilterMaxDistance²` to match sqlite-vec's filtering exactly.
-  // `prefilterMaxDistance` is therefore in L2 units; the default derives it
-  // from `maxDistance` (cosine) via L2² = 2·cosine, so the two phases are
-  // finally expressed on the same scale. The old flat 0.30 was cosine 0.045
-  // — three times tighter than the 0.10 it was gating.
+  // `distance_metric` returns **L2 distance**, so phase 1 compares L2² of
+  // the mean-pool centroids against `prefilterMaxDistance²`; the default
+  // derives it from `maxDistance` (cosine) via L2² = 2·cosine, so the two
+  // phases are expressed on the same scale.
+  await nextTurn();
   const allDocVecs = docVecs.getAllDocVecs();
+  await nextTurn();
   const prefilterL2Sq = prefilterMaxDistance * prefilterMaxDistance;
 
   // Returns true when the record should NOT participate in the scan as either
   // outer or inner side. Counters distinguish causes for observability.
-  const shouldSkip = (
-    r: VaultRecord
-  ): {skip: boolean; reason: 'short' | 'type' | 'path' | null} => {
+  const shouldSkip = (r: ScanRecord): {skip: boolean; reason: 'short' | 'type' | 'path' | null} => {
     if (skipTypes.has(r.type)) return {skip: true, reason: 'type'};
     if (skipPathPrefixes.some(p => r.filePath.startsWith(p))) return {skip: true, reason: 'path'};
-    if (r.body.length < minBodyLength) return {skip: true, reason: 'short'};
+    if (r.short) return {skip: true, reason: 'short'};
     return {skip: false, reason: null};
   };
 
+  // Phase 1: doc-level prefilter. Each pair of centroids is compared once and
+  // credited to whichever sides are scanned; a sum stops as soon as it passes
+  // the cutoff, since only pairs under it matter. `index` is the position in
+  // `allDocVecs`, the tie order of the one-sided scan this replaced.
+  const docIds = [...allDocVecs.keys()];
+  const docList = [...allDocVecs.values()];
+  const scanned = new Set(
+    all.filter(r => allDocVecs.has(r.recordId) && !shouldSkip(r).skip).map(r => r.recordId)
+  );
+  const neighbours = new Map<string, {recordId: string; distance: number; index: number}[]>();
+  const credit = (to: string, recordId: string, distance: number, index: number): void => {
+    let list = neighbours.get(to);
+    if (list === undefined) {
+      list = [];
+      neighbours.set(to, list);
+    }
+    list.push({recordId, distance, index});
+  };
+  const sliceMs = options.sliceMs ?? SLICE_MS;
+  let slice = performance.now();
+  const yieldIfDue = async (): Promise<void> => {
+    if (performance.now() - slice <= sliceMs) return;
+    await nextTurn();
+    slice = performance.now();
+  };
+  for (let a = 0; a < docList.length; ++a) {
+    await yieldIfDue();
+    const aId = docIds[a]!;
+    const aVec = docList[a]!;
+    const aScanned = scanned.has(aId);
+    const dim = aVec.length;
+    for (let b = a + 1; b < docList.length; ++b) {
+      const bId = docIds[b]!;
+      const bScanned = scanned.has(bId);
+      if (!aScanned && !bScanned) continue;
+      const bVec = docList[b]!;
+      let l2sq = 0;
+      for (let i = 0; i < dim; ++i) {
+        const d = aVec[i]! - bVec[i]!;
+        l2sq += d * d;
+        // NaN never compares greater, so a non-finite sum runs to the end and
+        // is dropped by the isFinite check below.
+        if ((i & 31) === 31 && l2sq > prefilterL2Sq) break;
+      }
+      if (!Number.isFinite(l2sq) || l2sq > prefilterL2Sq) continue;
+      const distance = Math.sqrt(l2sq);
+      if (aScanned) credit(aId, bId, distance, b);
+      if (bScanned) credit(bId, aId, distance, a);
+    }
+  }
+
   for (const r of all) {
     if (limit !== undefined && summary.filed >= limit) break;
-    const ownVec = allDocVecs.get(r.recordId);
-    if (!ownVec) {
+    await yieldIfDue();
+    if (!allDocVecs.has(r.recordId)) {
       summary.skippedUnembedded++;
       continue;
     }
@@ -441,38 +542,11 @@ export const findDuplicates = (
     }
     summary.scanned++;
 
-    // Phase 1: doc-level prefilter — in-memory pairwise L2² over the
-    // bulk-loaded centroid map. Inner loop is ~881 records × 384-dim
-    // (subtract + square + sum) per outer, ~300 µs per outer at the
-    // current corpus size. Filter on L2² to skip the sqrt; collect
-    // L2 distance only for survivors so downstream code sees the same
-    // distance scale sqlite-vec was returning.
-    const dim = ownVec.length;
-    const candidates: Array<{recordId: string; distance: number}> = [];
-    for (const [otherId, otherVec] of allDocVecs) {
-      if (otherId === r.recordId) continue;
-      let l2sq = 0;
-      for (let i = 0; i < dim; ++i) {
-        const d = ownVec[i]! - otherVec[i]!;
-        l2sq += d * d;
-      }
-      // NaN > anything is false, so a non-finite l2sq survives the ceiling
-      // check; explicit isFinite catches it. A non-finite centroid means
-      // the embedder produced a NaN that the mean-pool filter didn't —
-      // phase 2 may still surface the pair on the next clean re-embed.
-      if (!Number.isFinite(l2sq) || l2sq > prefilterL2Sq) continue;
-      candidates.push({recordId: otherId, distance: Math.sqrt(l2sq)});
-    }
-    candidates.sort((a, b) => a.distance - b.distance);
+    const candidates = neighbours.get(r.recordId) ?? [];
+    candidates.sort((x, y) => x.distance - y.distance || x.index - y.index);
     if (candidates.length > perRecord) candidates.length = perRecord;
 
     for (const cand of candidates) {
-      // Distance is already finite and ≤ prefilterMaxDistance — both
-      // checked inside the inner loop above. Kept for parity with the
-      // pre-bulk-load shape (cheap, defensive).
-      if (!Number.isFinite(cand.distance)) continue;
-      if (cand.distance > prefilterMaxDistance) break;
-
       const nRec = byId.get(cand.recordId);
       if (!nRec) continue;
       // Inner-side filter — skip boilerplate / skipped types / skipped
@@ -501,14 +575,14 @@ export const findDuplicates = (
       }
 
       // Phase 2: chunk-level pairwise min cosine — precise threshold.
-      const aChunks = getChunks(aId);
-      const bChunks = getChunks(bId);
-      const distance = minPairwiseChunkDistance(aChunks, bChunks);
+      const distance = minPairwiseChunkDistance(getChunks(aId), getChunks(bId));
       if (!Number.isFinite(distance)) continue; // unembedded → infinity
       if (distance > maxDistance) continue;
 
       summary.pairsFound++;
       if (limit !== undefined && summary.filed >= limit) break;
+      // The scan yielded, so either record may have been deleted since the list was read.
+      if (!exists.get(aId) || !exists.get(bId)) continue;
       const filed = filer.file(
         {a_record: aId, a_path: aRec.filePath, b_record: bId, b_path: bRec.filePath, distance},
         now
