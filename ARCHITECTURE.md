@@ -8,7 +8,7 @@ AI-agent-first knowledge base over a markdown tree. The markdown files (the priv
 markdown tree (source of truth)
   → walk / importFile   → records (+ tags, chunks)
   → buildEdges          → edges (+ review suggestions)
-  → embedPending        → record_vec / record_doc_vec
+  → embedPending        → record_vec / record_doc_vec / record_summary_vec
 ```
 
 Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and FTS5. Writes-in (`PUT /vault/{path}`, `PUT /sections/{id}`) land on disk first, then re-import inline. Background loops keep everything converged: the watcher (disk → DB), git-sync (tree → commits), the scan scheduler (periodic maintenance → suggestions), and incremental reindex (post-`git pull`). The MCP adapter and the static UI are pure REST clients.
@@ -16,7 +16,7 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 ## Entry points
 
 - **`src/index.ts`** — CLI dispatcher: `info` (schema/record counts), `import` (importVault + embedPending), `migrate` (one-time Obsidian tree transform), `serve` (delegates to the server's `main()`). `makeEmbedder()` picks `BgeEmbedder` or `FakeEmbedder` via `VAULT_EMBEDDER`.
-- **`src/server/index.ts`** — composition root: env, DB open + migrations, embedder (a `ChildProcessEmbedder` unless `VAULT_EMBEDDER=fake`), server (listening before the reindex, answering from the stored index), watcher (also before the reindex: a write landing during it is imported by its handler, and only a watcher drain embeds it), optional startup reindex (`startupReindex`), then memory reporter + git-sync + scan scheduler; git-sync starts after the reindex because it commits dirty files and advances the anchor past them. SIGINT/SIGTERM graceful shutdown.
+- **`src/server/index.ts`** — composition root: env, DB open + migrations, embedder (a `ChildProcessEmbedder` unless `VAULT_EMBEDDER=fake`), server (listening before the reindex, answering from the stored index), watcher (also before the reindex: a write landing during it is imported by its handler, and only a watcher drain embeds it), optional startup reindex (`startupReindex`), then memory reporter + git-sync, the startup embed (`embedAllPending`, not awaited: a backlog such as D45's re-chunk of every summarized note outlasts any startup wait, and runs in rounds a watcher drain can cut between), and the scan scheduler; git-sync starts after the reindex because it commits dirty files and advances the anchor past them. SIGINT/SIGTERM graceful shutdown.
 - **`src/server/server.ts`** — `buildRouter()` registers every route against shared repositories; request pipeline: URL parse → `OPTIONS` (pre-auth method discovery) → bearer-auth gate (`/ui/*`, `/favicon.ico` public) → route match → handler.
 - **`src/server/router.ts`** — regex router; `{id}` → `([^/]+)`, `{path}` → `(.+)`. Registration order is precedence — literal routes before wildcards.
 
@@ -39,17 +39,17 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 - **`fake.ts`** — deterministic sha256-seeded unit vectors; used by tests and `VAULT_EMBEDDER=fake`.
 - **`child-embedder.ts`** / **`embed-child.ts`** — `ChildProcessEmbedder`: the server's embedder, running `BgeEmbedder` in a forked child over advanced-serialization IPC, so inference never blocks the event loop (D44). Not a worker thread: onnxruntime-node's binding loads once per process, so a second thread or a restarted worker fails with "Module did not self-register". Mirrors `retained` from the child, restarts it on the next call after an exit, and exposes `pid` for the memory line. The CLI keeps `BgeEmbedder` in-process.
 - **`model.ts`** — the model name and dimension, shared so the server never loads transformers.js on its main thread.
-- **`chunker.ts`** — markdown-aware chunking: header-path prefixes, paragraph/char overlap, optional `agent.summary` prefix (HyDE anchor).
-- **`embed-pass.ts`** — `embedPending`: re-embeds records whose content hash drifted; reuses the stored vector of every chunk whose text hash (schema 0023) is unchanged, so an edit sends only its changed chunks to the model; batch-embeds outside the transaction, writes per batch. ONNX inference itself runs synchronously on the main thread (onnxruntime-node wraps `session.run` in `setImmediate`), so each model call blocks the loop.
+- **`chunker.ts`** — markdown-aware chunking: header-path prefixes, paragraph/char overlap. The `agent.summary` is in no chunk; it has its own vector (D45).
+- **`embed-pass.ts`** — `embedPending`: embeds the records whose chunks or summary vector carry a stale content hash, most recently modified first; reuses the stored vector of every chunk whose text hash (schema 0023) is unchanged and embeds the `agent.summary` on its own (D45), so an edit sends only its changed chunks to the model and a summary refresh sends one text; batch-embeds outside the transaction, writes per batch. `maxEmbeds` makes a call one round (`EMBED_ROUND` for the server's callers); `embedAllPending` loops rounds, each queued anew, so another pass runs between them. In-process, as in the CLI, each model call blocks the loop: onnxruntime-node wraps a synchronous `session.run` in `setImmediate`.
 - **`anomaly-log.ts`** — append-only JSONL log of non-finite-vector events.
 
-Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record MIN chunk distance) and **`src/db/doc-vec-repo.ts`** (one mean-pooled vector per record; drives duplicate detection).
+Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors; `nearest` ranks records by `recordSimilarity`, the best chunk blended with the summary vector at `SUMMARY_WEIGHT`, exact through widening candidate lists; `nearestToRecord` by best chunk alone), **`src/db/summary-vec-repo.ts`** (one `agent.summary` vector per record, schema 0024), and **`src/db/doc-vec-repo.ts`** (one mean-pooled chunk vector per record; drives duplicate detection).
 
 ## DB layer (`src/db/`)
 
 - **`connection.ts`** — `node:sqlite` `DatabaseSync` + `sqlite-vec` extension, `sha256_hex` SQL function, FK enforcement, WAL.
 - **`migrate.ts`** — applies `schema/NNNN_*.sql` in numeric order, each in its own transaction (`-- migrate:no-transaction` opt-out for table rebuilds). A migration carrying a `-- migrate:no-reindex` line changes nothing the importer derives, so it does not force the startup full import; `MigrationResult.reindex` lists the ones that do.
-- **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index, 0023 `chunks.text_hash` (filled for existing chunk sets by `backfillChunkTextHashes` at startup), 0022 partial expression indexes on the suggestion identity keys (their expressions must match `column()` in `file-suggestions.ts`, or the planner scans). A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
+- **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index, 0023 `chunks.text_hash` (filled for existing chunk sets of unsummarized records by `backfillChunkTextHashes` at startup), 0024 `record_summary_vec`, 0022 partial expression indexes on the suggestion identity keys (their expressions must match `column()` in `file-suggestions.ts`, or the planner scans). A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
 - **`meta.ts`** — typed KV: `schema_version`, `last_indexed_commit`, `content_generation`, git-sync failure ledger.
 
 ## Server surface (`src/server/handlers/`)
@@ -57,7 +57,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors, KNN via per-record 
 - **`records.ts`** — `GET /sections` (list/filter/paginate), record reads, FM PATCH, tag membership endpoints.
 - **`records-write.ts`** — `PUT /sections/{id}`: write to disk at the record's path, re-import inline.
 - **`vault.ts`** — path-addressed content API: `GET/PUT/DELETE /vault/{path}`, folder listing, `POST /vault/edit` (atomic append / asserted-replace / replace-section / remove-item / insert-item body edits; `GET …?section=` reads one section), `POST /vault/move-item` (one queue item between documents or sections, destination written first), `POST /vault/move|supersede|propose`.
-- **`search.ts`** — `POST /search/simple`: FTS5 bm25 + title boost (lexical) blended with chunk-KNN (semantic).
+- **`search.ts`** — `POST /search/simple`: FTS5 bm25 + title boost (lexical, the default) or `recordSimilarity` over chunk and summary vectors (semantic).
 - **`similar.ts`**, **`edges.ts`** — nearest-neighbour records; typed-edge neighborhood (depth ≤ 5) + backlinks.
 - **`suggestions.ts`** — the agent review queue: list/summary/accept/reject/reopen.
 - **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds.
@@ -101,4 +101,4 @@ Vanilla-JS page set under `static/ui/` (public shell; API calls carry the user's
 - **`bin/update.sh`** — update a deployed instance; **`bin/vault-curl`** — authenticated curl wrapper for the REST API.
 - **`scripts/probe-unresolved.ts`**, **`scripts/scan-promotable-edges.ts`** — one-off DB probes; **`scripts/ui-style-snapshot.mjs`** — computed-style snapshot of every UI page over a fixture vault, and the diff of two snapshots (the rendered-comparison gate for CSS changes).
 - **`skills/`** — Claude Code vault skills (see `skills/README.md`).
-- **`eval/`** — retrieval-quality harnesses over an imported DB: baseline report, `agent.summary`-prefix A/B, related-candidate proposals, alternate-model trials.
+- **`eval/`** — retrieval-quality harnesses over an imported DB: baseline report, the `agent.summary` query A/B (prefix, bare chunks, summary vector; D45), related-candidate proposals, alternate-model trials.

@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    23,
-    'schema version is 23 after all migrations through the chunk text hash'
+    24,
+    'schema version is 24 after all migrations through the summary vector'
   );
   t.deepEqual(
     result.applied,
@@ -45,14 +45,17 @@ test('runs the init migration and creates required tables', t => {
       '0020_suggestion_evidence.sql',
       '0021_handoff_touches_verification.sql',
       '0022_suggestion_identity_indexes.sql',
-      '0023_chunk_text_hash.sql'
+      '0023_chunk_text_hash.sql',
+      '0024_record_summary_vec.sql'
     ],
     'all migrations applied in order'
   );
   t.deepEqual(
     result.reindex,
-    result.applied.filter(name => name !== '0023_chunk_text_hash.sql'),
-    'every migration forces a full import except the one marked no-reindex'
+    result.applied.filter(
+      name => name !== '0023_chunk_text_hash.sql' && name !== '0024_record_summary_vec.sql'
+    ),
+    'every migration forces a full import except the ones marked no-reindex'
   );
 
   const names = (
@@ -85,7 +88,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 23, 'schema version stays at 23');
+  t.equal(second.current, 24, 'schema version stays at 24');
   db.close();
 });
 
@@ -141,9 +144,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0020_suggestion_evidence.sql',
       '0021_handoff_touches_verification.sql',
       '0022_suggestion_identity_indexes.sql',
-      '0023_chunk_text_hash.sql'
+      '0023_chunk_text_hash.sql',
+      '0024_record_summary_vec.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0023)'
+    'migrations from schema 9 onward applied (0010–0024)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {

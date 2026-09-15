@@ -2,7 +2,8 @@ import test from 'tape-six';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
-import {RecordVecRepository} from '../src/db/vec-repo.ts';
+import {RecordSummaryVecRepository} from '../src/db/summary-vec-repo.ts';
+import {RecordVecRepository, recordSimilarity} from '../src/db/vec-repo.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import type {VaultRecord} from '../src/records/types.ts';
@@ -138,6 +139,146 @@ test('nearest returns closest record (best chunk) ordered by distance', async t 
         );
       }
     });
+  } finally {
+    fx.db.close();
+  }
+});
+
+const unit = (v: Float32Array): Float32Array => {
+  let norm = 0;
+  for (const x of v) norm += x * x;
+  norm = Math.sqrt(norm);
+  return v.map(x => x / norm);
+};
+
+const dot = (a: Float32Array, b: Float32Array): number => {
+  let s = 0;
+  for (let i = 0; i < a.length; ++i) s += a[i]! * b[i]!;
+  return s;
+};
+
+test("nearest blends each record's best chunk with its summary", async t => {
+  const fx = setup();
+  try {
+    const summaries = new RecordSummaryVecRepository(fx.db);
+    const query = await fx.embedder.embed('the query');
+    const chunk = await fx.embedder.embed('some chunk');
+    const [withSummary, without, exact] = [uuidv7(), uuidv7(), uuidv7()];
+    for (const [id, path] of [
+      [withSummary, 'topics/with-summary.md'],
+      [without, 'topics/without.md'],
+      [exact, 'topics/exact.md']
+    ] as const) {
+      fx.records.insert(makeRecord(id, path));
+    }
+    fx.vecs.setChunks(withSummary, 'h', [chunk]);
+    summaries.set(withSummary, 'h', 'summary-hash', query);
+    fx.vecs.setChunks(without, 'h', [chunk]);
+    fx.vecs.setChunks(exact, 'h', [query]);
+
+    const hits = fx.vecs.nearest(query, 3);
+    t.deepEqual(
+      hits.map(h => h.recordId),
+      [exact, withSummary, without],
+      'a matching summary lifts a record, and a matching chunk still wins'
+    );
+    const similarity = recordSimilarity(dot(chunk, query), 1);
+    t.ok(
+      Math.abs(hits[1]!.distance - Math.sqrt(2 - 2 * similarity)) < 1e-5,
+      'the distance is that of the blended similarity'
+    );
+  } finally {
+    fx.db.close();
+  }
+});
+
+test('nearest matches a brute-force ranking when its candidate lists are short', async t => {
+  const fx = setup();
+  try {
+    let seed = 7;
+    const random = (): number => {
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return seed / 4294967296 - 0.5;
+    };
+    const centers = Array.from({length: 4}, () => unit(new Float32Array(384).map(random)));
+    const near = (center: Float32Array): Float32Array => unit(center.map(x => x + 0.08 * random()));
+    const summaries = new RecordSummaryVecRepository(fx.db);
+    const corpus: {id: string; chunks: Float32Array[]; summary: Float32Array | null}[] = [];
+    for (let i = 0; i < 40; ++i) {
+      const id = uuidv7();
+      const chunks = Array.from({length: 1 + (i % 4)}, (_, j) => near(centers[(i + j) % 4]!));
+      const summary = i % 3 === 0 ? null : near(centers[(i * 7) % 4]!);
+      fx.records.insert(makeRecord(id, `topics/r${i}.md`));
+      fx.vecs.setChunks(id, 'h', chunks);
+      if (summary) summaries.set(id, 'h', null, summary);
+      corpus.push({id, chunks, summary});
+    }
+
+    for (let q = 0; q < 8; ++q) {
+      const query = near(centers[q % 4]!);
+      const expected = corpus
+        .map(r => ({
+          id: r.id,
+          similarity: recordSimilarity(
+            Math.max(...r.chunks.map(c => dot(c, query))),
+            r.summary ? dot(r.summary, query) : null
+          )
+        }))
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 5)
+        .map(r => r.id);
+      t.deepEqual(
+        fx.vecs.nearest(query, 5, {chunkK: 2}).map(h => h.recordId),
+        expected,
+        `query ${q}: the top 5 of a full scan`
+      );
+    }
+  } finally {
+    fx.db.close();
+  }
+});
+
+test('nearest reads the chunks of a record its summary alone brings in', async t => {
+  const fx = setup();
+  try {
+    const summaries = new RecordSummaryVecRepository(fx.db);
+    // A unit vector at the given cosine to the query, which is axis 0.
+    const at = (cosine: number, axis: number): Float32Array => {
+      const v = new Float32Array(384);
+      v[0] = cosine;
+      v[axis] = Math.sqrt(1 - cosine * cosine);
+      return v;
+    };
+    const query = at(1, 1);
+    const add = (path: string, chunk: Float32Array, summary: Float32Array | null): string => {
+      const id = uuidv7();
+      fx.records.insert(makeRecord(id, path));
+      fx.vecs.setChunks(id, 'h', [chunk]);
+      if (summary) summaries.set(id, 'h', null, summary);
+      return id;
+    };
+    // With chunkK 2, the chunk list is `lead` and `cut`, the summary list `onTopic` and `lead`.
+    const lead = add('topics/lead.md', at(0.92, 10), at(0.95, 20)); // 0.6·0.92 + 0.4·0.95 = 0.932
+    add('topics/cut.md', at(0.9, 11), null); // 0.9
+    const onTopic = add('topics/on-topic.md', at(0.89, 12), query); // 0.6·0.89 + 0.4 = 0.934
+
+    const hits = fx.vecs.nearest(query, 1, {chunkK: 2});
+    t.equal(hits[0]?.recordId, onTopic, 'the summary-only record, read and ranked');
+    t.notEqual(hits[0]?.recordId, lead, 'not the best record of the chunk list');
+  } finally {
+    fx.db.close();
+  }
+});
+
+test('deleting a record deletes its summary vector', async t => {
+  const fx = setup();
+  try {
+    const id = uuidv7();
+    fx.records.insert(makeRecord(id, 'topics/a.md'));
+    const summaries = new RecordSummaryVecRepository(fx.db);
+    summaries.set(id, 'h', 'text-hash', await fx.embedder.embed('summary'));
+    fx.records.delete(id);
+    t.equal(summaries.get(id), null, 'the schema-0024 trigger removed it');
   } finally {
     fx.db.close();
   }

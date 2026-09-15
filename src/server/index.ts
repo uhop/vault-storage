@@ -3,7 +3,7 @@ import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {openDatabase} from '../db/connection.ts';
 import {runMigrations} from '../db/migrate.ts';
-import {embedPending} from '../embeddings/embed-pass.ts';
+import {embedAllPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {ChildProcessEmbedder} from '../embeddings/child-embedder.ts';
@@ -82,14 +82,12 @@ export const main = async (): Promise<void> => {
       const summary = await startupReindex(db, env.vaultDataPath, {
         reindexMigrations: migration.reindex
       });
-      const embed = await embedPending(db, embedder);
       resolverCache.invalidate();
       health.recordReindex({ok: true});
       process.stdout.write(
         `vault-storage: reindex done — ${summary.reason ? `full (${summary.reason})` : 'incremental'}, ` +
           `${summary.changedFiles} files, ${summary.imported} imported, ${summary.deleted} deleted, ` +
-          `${summary.renamed} renamed, ${embed.embedded} embedded ` +
-          `(${summary.durationMs}+${embed.durationMs} ms)\n`
+          `${summary.renamed} renamed (${summary.durationMs} ms)\n`
       );
     } catch (err) {
       health.recordReindex({ok: false, error: err instanceof Error ? err.message : String(err)});
@@ -151,6 +149,23 @@ export const main = async (): Promise<void> => {
         : `${env.commitIntervalMs}ms`;
     const window = workHours ? ` work-hours=${workHours.start}–${workHours.end}` : '';
     process.stdout.write(`vault-storage: git-sync ${backoff} (push=${env.autoPush})${window}\n`);
+  }
+
+  // Last and not awaited: a backlog (every note, after a chunker change) takes
+  // hours on croc, and nothing above may wait for it. Rounds let watcher drains
+  // embed their edits in between.
+  if (env.autoReindex) {
+    embedAllPending(db, embedder).then(
+      embed =>
+        process.stdout.write(
+          `vault-storage: startup embed done — ${embed.embedded} embedded, ` +
+            `${embed.chunksReused} chunks reused (${embed.durationMs} ms)\n`
+        ),
+      err => {
+        health.recordReindex({ok: false, error: err instanceof Error ? err.message : String(err)});
+        process.stderr.write(`vault-storage: startup embed failed: ${String(err)}\n`);
+      }
+    );
   }
 
   let scanScheduler: ScanSchedulerHandle | null = null;

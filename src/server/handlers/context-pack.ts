@@ -82,9 +82,8 @@ const bestSegmentByTerms = (segments: string[], terms: string[]): number => {
  * - `record_id` — the anchor's nearest records by chunk embeddings, each
  *   contributing its closest chunk; graph context rooted at the anchor.
  *
- * Chunk text is reproduced via `chunkBody(body, {summary: null})` — the bare
- * segmentation the stored vectors index (minus the HyDE summary prefix), so
- * `chunk_index` is meaningful against the embedding tables. The whole
+ * Chunk text is reproduced via `chunkBody(body)`, the segmentation the stored
+ * vectors index, so `chunk_index` is meaningful against the embedding tables. The whole
  * serialized response is byte-budgeted, chunks-first: the neighborhood trims
  * before any chunk drops, then lowest-ranked chunks go, all reported —
  * never silent. Inbound neighborhood entries are the backlinks (deduped,
@@ -199,7 +198,7 @@ export const contextPackHandler =
     const chunks: Record<string, unknown>[] = [];
     for (const c of ranked) {
       if (chunks.length >= k) break;
-      const segments = chunkBody(c.record.body, {summary: null});
+      const segments = chunkBody(c.record.body);
       let index = c.chunkIndex ?? bestSegmentByTerms(segments, terms);
       // The stored chunk set can outrun the current body (edited since the
       // last embed pass) — clamp rather than 500 or silently skip.

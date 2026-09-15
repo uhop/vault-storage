@@ -1519,25 +1519,17 @@ test('PUT /vault/{path}?check=true blocks naked write near a seeded record', asy
       t.equal(r.status, 409, '409 conflict');
       const body = r.body as {
         code: string;
-        candidates: {
-          file_path: string;
-          distance: number;
-          bare_distance: number;
-          summary_corrected: boolean;
-        }[];
+        candidates: Record<string, unknown>[];
         threshold: number;
       };
       t.equal(body.code, 'dedup_conflict', 'dedup_conflict code');
       t.equal(body.threshold, 0.1, 'default threshold 0.1');
       t.ok(body.candidates.length >= 1, 'candidates present');
       t.equal(body.candidates[0]?.file_path, 'topics/vector-store.md', 'seeded record cited');
-      // The seed carries no `agent.summary`, so its chunks were never decorated
-      // and the bare distance is already the symmetric one — no re-embed.
-      t.equal(body.candidates[0]?.summary_corrected, false, 'no correction needed');
-      t.equal(
-        body.candidates[0]?.bare_distance,
-        body.candidates[0]?.distance,
-        'bare and reported distances coincide for an undecorated record'
+      t.deepEqual(
+        Object.keys(body.candidates[0] ?? {}).sort(),
+        ['agent_summary', 'distance', 'file_path', 'record_id'],
+        'a candidate carries one distance'
       );
     } finally {
       await teardown(ctx);
@@ -1609,6 +1601,28 @@ test('POST /vault/propose 400 on the removed prefilter_max_distance', async t =>
       const body = r.body as {code: string; error: string};
       t.equal(body.code, 'bad_request', 'bad_request code');
       t.ok(body.error.includes('max_distance'), 'names the replacement parameter');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/propose 400 on the removed agent_summary', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/vault/propose`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({body: PROPOSE_LONG_BODY, agent_summary: 'a summary'})
+      });
+      t.equal(r.status, 400, '400 rather than a silent no-op');
+      const body = r.body as {code: string; error: string};
+      t.equal(body.code, 'bad_request', 'bad_request code');
+      t.ok(body.error.includes('D45'), 'names the decision that removed it');
     } finally {
       await teardown(ctx);
     }

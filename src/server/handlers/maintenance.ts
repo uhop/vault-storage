@@ -12,7 +12,7 @@ import {clearLastIndexedCommit, incrementalReindex} from '../../maintenance/incr
 import {runAllScans} from '../../maintenance/run-all.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {listFolder} from '../../maintenance/folder-listing.ts';
-import {embedPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
+import {embedAllPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {snapshotDb} from '../snapshot.ts';
@@ -395,9 +395,8 @@ export const cleanupTagAliasesHandler =
  * first imported. Idempotent — a no-op when nothing's pending.
  *
  * Concurrent manual calls coalesce onto the same in-flight pass, so the
- * UI button can be mashed safely. The watcher pass remains independent;
- * a rare race could double-embed a record briefly, but the writes are
- * consistent (drift detection catches any TOCTOU on body change).
+ * UI button can be mashed safely. The pass runs in rounds queued with the
+ * watcher's, so a drain embeds its edit between rounds of a long backlog.
  */
 let embedInFlight: Promise<EmbedSummary> | null = null;
 
@@ -406,7 +405,7 @@ export const embedPendingHandler =
   async ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     if (!embedInFlight) {
-      embedInFlight = embedPending(deps.db, deps.embedder).finally(() => {
+      embedInFlight = embedAllPending(deps.db, deps.embedder).finally(() => {
         embedInFlight = null;
       });
     }

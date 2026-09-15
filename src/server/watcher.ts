@@ -10,7 +10,7 @@ import type {HealthMonitor} from './health.ts';
 import {watch, statSync, type FSWatcher} from 'node:fs';
 import {join, sep} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
-import {embedPending} from '../embeddings/embed-pass.ts';
+import {EMBED_ROUND, embedPending} from '../embeddings/embed-pass.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges} from '../importer/build-edges.ts';
 import {SuggestionFiler} from '../importer/file-suggestions.ts';
@@ -91,17 +91,30 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
   const pending = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
   let inFlight: Promise<void> = Promise.resolve();
+  // Records left pending by the last round: the next drain embeds another
+  // round even when no file changed.
+  let embedBacklog = false;
+
+  const embedRound = async (): Promise<number> => {
+    const embed = await embedPending(db, embedder, {maxEmbeds: EMBED_ROUND});
+    embedBacklog = embed.remaining > 0;
+    if (embedBacklog) schedule();
+    return embed.embedded;
+  };
 
   const drain = async (): Promise<FlushSummary> => {
-    if (pending.size === 0)
-      return {
-        imported: 0,
-        deleted: 0,
-        errors: 0,
-        edgesCreated: 0,
-        embedded: 0,
-        queueItemsTouched: 0
-      };
+    const idle = {
+      imported: 0,
+      deleted: 0,
+      errors: 0,
+      edgesCreated: 0,
+      embedded: 0,
+      queueItemsTouched: 0
+    };
+    if (pending.size === 0) {
+      if (!embedBacklog) return idle;
+      return {...idle, embedded: await embedRound()};
+    }
     const batch = [...pending];
     pending.clear();
 
@@ -188,11 +201,11 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       now,
       ...(scoped ? {scope: changedRecordIds} : {})
     });
-    const embed = await embedPending(db, embedder);
+    const embedded = await embedRound();
 
     log(
       `reindex: imported=${imported} deleted=${deleted} errors=${errors} ` +
-        `edges=${edges.edgesCreated} embed=${embed.embedded} queue_items=${queueItemsTouched}`
+        `edges=${edges.edgesCreated} embed=${embedded} queue_items=${queueItemsTouched}`
     );
     opts.health?.recordReindex({
       ok: errors === 0,
@@ -204,7 +217,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       deleted,
       errors,
       edgesCreated: edges.edgesCreated,
-      embedded: embed.embedded,
+      embedded,
       queueItemsTouched
     };
   };

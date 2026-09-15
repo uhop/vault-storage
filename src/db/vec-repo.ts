@@ -1,15 +1,40 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
+import {RecordSummaryVecRepository} from './summary-vec-repo.ts';
 
 export interface NearestHit {
   recordId: string;
-  /** Cosine distance of the record's BEST chunk. 0 = identical, 2 = opposite. */
+  /**
+   * L2 distance between unit vectors, 0 = identical, 2 = opposite: of the best
+   * chunk from `nearestToRecord`, of {@link recordSimilarity} from `nearest`.
+   */
   distance: number;
-  /** Index of that best chunk — resolves to text via `chunkBody(body, {summary: null})[chunkIndex]`. */
+  /** Index of the record's best chunk — resolves to text via `chunkBody(body)[chunkIndex]`. */
   chunkIndex: number;
 }
 
 const toBlob = (vec: Float32Array): Uint8Array =>
   new Uint8Array(vec.buffer, vec.byteOffset, vec.byteLength);
+
+/** Weight of the summary vector in {@link recordSimilarity}. */
+export const SUMMARY_WEIGHT = 0.4;
+
+/**
+ * A record's similarity to a query from its best chunk and, when it has one,
+ * its summary. The weight is the smallest that kept title queries at the old
+ * summary prefix's level (D45, `eval/embedding-summary-query-ab.ts`).
+ */
+export const recordSimilarity = (bestChunk: number, summary: number | null): number =>
+  summary === null ? bestChunk : (1 - SUMMARY_WEIGHT) * bestChunk + SUMMARY_WEIGHT * summary;
+
+// Unit vectors: L2² = 2 − 2·cosine.
+const similarityOf = (distance: number): number => 1 - (distance * distance) / 2;
+const distanceOf = (similarity: number): number => Math.sqrt(Math.max(0, 2 - 2 * similarity));
+
+const dot = (a: Float32Array, b: Float32Array): number => {
+  let s = 0;
+  for (let i = 0; i < a.length; ++i) s += a[i]! * b[i]!;
+  return s;
+};
 
 /**
  * CRUD + nearest-record over the chunk embeddings. One row per chunk;
@@ -40,8 +65,10 @@ export class RecordVecRepository {
   readonly #chunksForRecord: StatementSync;
   readonly #allChunks: StatementSync;
   readonly #vectorsByTextHash: StatementSync;
+  readonly #summaries: RecordSummaryVecRepository;
 
   constructor(db: DatabaseSync) {
+    this.#summaries = new RecordSummaryVecRepository(db);
     this.#insertMeta = db.prepare(
       `INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash, text_hash)
        VALUES (?, ?, ?, ?, ?)`
@@ -207,29 +234,96 @@ export class RecordVecRepository {
   }
 
   /**
-   * Top-k records by cosine distance, where each record's score is the
-   * min-distance over its chunks. Fetches a wider chunk-level top-N (default
-   * 5×k) and aggregates; `chunkK` lets a caller widen further if records
-   * average many chunks.
+   * Top-k records by {@link recordSimilarity} to a query, exact. Candidates
+   * come from a chunk KNN and a summary KNN of `chunkK` rows each. A record
+   * found only by its summary has no chunk above the chunk list's last row, so
+   * its chunks are read only while that bound could still reach the k-th score;
+   * a record in neither list is bounded by both lists' last rows, and while that
+   * bound beats the k-th score the lists widen.
    */
   nearest(query: Float32Array, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
-    const chunkK = opts.chunkK ?? Math.max(k * 5, 20);
-    const rows = this.#nearestChunks.all(toBlob(query), chunkK) as unknown[] as {
-      record_id: string;
-      chunk_index: number;
-      distance: number;
-    }[];
-    const best = new Map<string, {distance: number; chunkIndex: number}>();
-    for (const r of rows) {
-      const cur = best.get(r.record_id);
-      if (cur === undefined || r.distance < cur.distance) {
-        best.set(r.record_id, {distance: r.distance, chunkIndex: r.chunk_index});
+    const blob = toBlob(query);
+    // A KNN costs its scan, barely its k (126 ms at k 100, 190 ms at 4,096 on croc's
+    // data), so a wide first list is cheaper than the second scan a narrow one needs.
+    for (let chunkK = opts.chunkK ?? Math.max(k * 20, 200); ; chunkK *= 4) {
+      const chunkRows = this.#nearestChunks.all(blob, chunkK) as unknown[] as {
+        record_id: string;
+        chunk_index: number;
+        distance: number;
+      }[];
+      const summaryRows = this.#summaries.nearest(query, chunkK);
+      const chunkCut =
+        chunkRows.length < chunkK ? -Infinity : similarityOf(chunkRows.at(-1)!.distance);
+      const summaryCut =
+        summaryRows.length < chunkK ? -Infinity : similarityOf(summaryRows.at(-1)!.distance);
+
+      const best = new Map<string, {similarity: number; chunkIndex: number}>();
+      for (const r of chunkRows) {
+        if (!Number.isFinite(r.distance)) continue;
+        const similarity = similarityOf(r.distance);
+        const cur = best.get(r.record_id);
+        if (cur === undefined || similarity > cur.similarity) {
+          best.set(r.record_id, {similarity, chunkIndex: r.chunk_index});
+        }
+      }
+
+      const scored: {recordId: string; similarity: number; chunkIndex: number}[] = [];
+      const kth = (): number => (scored.length >= k ? scored[k - 1]!.similarity : -Infinity);
+      const add = (recordId: string, similarity: number, chunkIndex: number): void => {
+        scored.push({recordId, similarity, chunkIndex});
+        scored.sort((a, b) => b.similarity - a.similarity);
+      };
+      const summaries = new Map<string, number>();
+      for (const r of summaryRows) {
+        if (Number.isFinite(r.distance)) summaries.set(r.recordId, similarityOf(r.distance));
+      }
+      for (const [recordId, chunk] of best) {
+        const summary = summaries.get(recordId) ?? this.#summarySimilarity(recordId, query);
+        add(recordId, recordSimilarity(chunk.similarity, summary), chunk.chunkIndex);
+      }
+      for (const [recordId, summary] of summaries) {
+        if (best.has(recordId)) continue;
+        // Summary rows arrive in descending similarity, so no later bound is higher.
+        if (!(recordSimilarity(chunkCut, summary) > kth())) break;
+        const chunk = this.#bestChunk(recordId, query);
+        if (chunk !== null)
+          add(recordId, recordSimilarity(chunk.similarity, summary), chunk.chunkIndex);
+      }
+
+      // Both lists exhausted: both cuts are -Infinity, so unseen is too.
+      const unseen = Math.max(chunkCut, recordSimilarity(chunkCut, summaryCut));
+      if (!(unseen > kth())) {
+        return scored.slice(0, k).map(h => ({
+          recordId: h.recordId,
+          distance: distanceOf(h.similarity),
+          chunkIndex: h.chunkIndex
+        }));
       }
     }
-    return [...best.entries()]
-      .map(([recordId, b]) => ({recordId, distance: b.distance, chunkIndex: b.chunkIndex}))
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, k);
+  }
+
+  #bestChunk(
+    recordId: string,
+    query: Float32Array
+  ): {similarity: number; chunkIndex: number} | null {
+    const chunks = this.getChunks(recordId);
+    let chunkIndex = -1;
+    let similarity = -Infinity;
+    for (let i = 0; i < chunks.length; ++i) {
+      const s = dot(chunks[i]!, query);
+      if (s > similarity) {
+        similarity = s;
+        chunkIndex = i;
+      }
+    }
+    return chunkIndex < 0 ? null : {similarity, chunkIndex};
+  }
+
+  #summarySimilarity(recordId: string, query: Float32Array): number | null {
+    const stored = this.#summaries.get(recordId);
+    if (!stored) return null;
+    const similarity = dot(stored.embedding, query);
+    return Number.isFinite(similarity) ? similarity : null;
   }
 
   /**

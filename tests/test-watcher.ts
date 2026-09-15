@@ -4,7 +4,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {RecordVecRepository} from '../src/db/vec-repo.ts';
+import {EMBED_ROUND} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import {importVault} from '../src/importer/import.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import {startWatcher} from '../src/server/watcher.ts';
 
@@ -186,6 +189,42 @@ test('watcher: content-only edit takes the scoped edge rebuild', async t => {
       'stale alpha→gamma edge GCd by the scoped pass'
     );
     t.equal(edges.listOutbound(alpha.recordId).length, 1, 'alpha keeps its beta edge');
+  } finally {
+    watcher.close();
+    teardown(fx);
+  }
+});
+
+test('watcher: a drain embeds one round and the next drain continues the backlog', async t => {
+  const fx = setup();
+  const backlog = EMBED_ROUND + 6;
+  for (let i = 0; i < backlog; ++i) {
+    writeMd(fx.root, `topics/backlog-${i}.md`, `---\ntitle: B${i}\n---\nbacklog body ${i}\n`);
+  }
+  importVault(fx.db, fx.root);
+  const watcher = startWatcher({
+    db: fx.db,
+    vaultDataPath: fx.root,
+    embedder: fx.embedder,
+    debounceMs: 60_000,
+    log: () => {}
+  });
+  try {
+    writeMd(fx.root, 'topics/edit.md', '---\ntitle: Edit\n---\nthe edit\n');
+    await sleep(150); // let fs.watch fire
+
+    const first = await watcher.flush();
+    t.equal(first.imported, 1, 'the drain imports the edit');
+    t.equal(first.embedded, EMBED_ROUND, 'and embeds one round');
+    t.ok(
+      new RecordVecRepository(fx.db).hasRecord(fx.records.getByPath('topics/edit.md')!.recordId),
+      'the edit first'
+    );
+    const second = await watcher.flush();
+    t.equal(second.imported, 0, 'no file changed since');
+    t.equal(second.embedded, backlog + 1 - EMBED_ROUND, 'the next drain embeds the rest');
+    const third = await watcher.flush();
+    t.equal(third.embedded, 0, 'then nothing is left');
   } finally {
     watcher.close();
     teardown(fx);

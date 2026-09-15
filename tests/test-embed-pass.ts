@@ -2,9 +2,10 @@ import test from 'tape-six';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {RecordSummaryVecRepository} from '../src/db/summary-vec-repo.ts';
 import {RecordVecRepository} from '../src/db/vec-repo.ts';
 import {chunkBody} from '../src/embeddings/chunker.ts';
-import {embedPending} from '../src/embeddings/embed-pass.ts';
+import {embedAllPending, embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import type {Embedder} from '../src/embeddings/types.ts';
 import {backfillChunkTextHashes} from '../src/maintenance/backfill-chunk-text-hashes.ts';
@@ -139,7 +140,7 @@ test('embedPending', async t => {
     }
   });
 
-  await t.test('agent.summary is embedded into chunk text', async t => {
+  await t.test('agent.summary gets its own vector and stays out of chunk text', async t => {
     const fx = setup();
     try {
       const summary = 'TLDR — three sentences distilling the doc.';
@@ -150,36 +151,23 @@ test('embedPending', async t => {
       r.contentHash = embedInputHash(body, summary);
       fx.records.insert(r);
 
-      await embedPending(fx.db, fx.embedder);
+      const pass = await embedPending(fx.db, fx.embedder);
+      t.equal(pass.summaryVecsWritten, 1, 'one summary vector written');
 
-      // The fake embedder is deterministic per-input. Embedding the
-      // summary-prepended chunk text should match the on-disk vector;
-      // embedding body alone should NOT.
-      const expectedVec = await fx.embedder.embed(`${summary}\n\n${body}`);
-      const bodyOnlyVec = await fx.embedder.embed(body);
-
-      const stored = fx.db
-        .prepare(
-          `SELECT v.embedding AS embedding
-             FROM chunks c JOIN record_vec v ON v.chunk_id = c.chunk_id
-            WHERE c.record_id = ?`
-        )
-        .get(r.recordId) as {embedding: Uint8Array};
-      const storedFloats = new Float32Array(
-        stored.embedding.buffer,
-        stored.embedding.byteOffset,
-        stored.embedding.byteLength / 4
-      );
+      const [chunk] = fx.vecs.getChunks(r.recordId);
       t.deepEqual(
-        Array.from(storedFloats),
-        Array.from(expectedVec),
-        'stored chunk vector matches summary+body'
+        Array.from(chunk!),
+        Array.from(await fx.embedder.embed(body)),
+        'the chunk vector embeds the body alone'
       );
-      t.notDeepEqual(
-        Array.from(storedFloats),
-        Array.from(bodyOnlyVec),
-        'stored chunk vector differs from body-only embedding'
+      const stored = new RecordSummaryVecRepository(fx.db).get(r.recordId);
+      t.deepEqual(
+        Array.from(stored!.embedding),
+        Array.from(await fx.embedder.embed(summary)),
+        'the summary vector embeds the summary alone'
       );
+      t.equal(stored!.contentHash, r.contentHash, 'it carries the record content_hash');
+      t.equal(stored!.textHash, contentHash(summary), 'and the hash of its text');
     } finally {
       fx.db.close();
     }
@@ -207,6 +195,7 @@ test('embedPending', async t => {
 
       const second = await embedPending(fx.db, fx.embedder);
       t.equal(second.embedded, 1, 'summary-only edit triggers re-embed');
+      t.equal(second.summaryVecsWritten, 1, 'of the summary vector');
       t.equal(fx.vecs.getRecordContentHash(r.recordId), updated.contentHash, 'new hash recorded');
     } finally {
       fx.db.close();
@@ -319,12 +308,14 @@ class CountingEmbedder implements Embedder {
   readonly inner = new FakeEmbedder();
   readonly embedded: string[] = [];
   poison: (text: string) => boolean = () => false;
+  beforeBatch: (texts: string[]) => void = () => {};
 
   async embed(text: string): Promise<Float32Array> {
     return (await this.embedBatch([text]))[0]!;
   }
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
+    this.beforeBatch(texts);
     this.embedded.push(...texts);
     const out = await this.inner.embedBatch(texts);
     return out.map((v, i) => (this.poison(texts[i]!) ? new Float32Array(v.length).fill(NaN) : v));
@@ -383,7 +374,7 @@ test('embedPending reuses the vectors of unchanged chunks', async t => {
     }
   });
 
-  await t.test('a summary change re-embeds every chunk', async t => {
+  await t.test('a summary change embeds the summary and reuses every chunk', async t => {
     const fx = setup();
     const embedder = new CountingEmbedder();
     try {
@@ -392,7 +383,12 @@ test('embedPending reuses the vectors of unchanged chunks', async t => {
       a.contentHash = embedInputHash(body, a.agentSummary);
       fx.records.insert(a);
       await embedPending(fx.db, embedder);
-      const chunks = embedder.embedded.length;
+      const chunks = chunkBody(body).length;
+      t.equal(
+        embedder.embedded.length,
+        chunks + 1,
+        'the first pass embeds every chunk and the summary'
+      );
 
       embedder.embedded.length = 0;
       const refreshed = {
@@ -402,8 +398,73 @@ test('embedPending reuses the vectors of unchanged chunks', async t => {
       };
       fx.records.upsertByPath(refreshed);
       const second = await embedPending(fx.db, embedder);
-      t.equal(embedder.embedded.length, chunks, 'every chunk re-embedded');
-      t.equal(second.chunksReused, 0, 'nothing reused');
+      t.deepEqual(embedder.embedded, ['second summary'], 'only the new summary went to the model');
+      t.equal(second.chunksReused, chunks, 'every chunk reused');
+      t.equal(
+        fx.vecs.getRecordContentHash(a.recordId),
+        refreshed.contentHash,
+        'the chunks carry the new content_hash'
+      );
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('a record whose summary vector is missing is pending', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const body = longBody(2);
+      const a = {...makeRecord('topics/long.md', body), agentSummary: 'the summary'};
+      a.contentHash = embedInputHash(body, a.agentSummary);
+      fx.records.insert(a);
+      await embedPending(fx.db, embedder);
+      new RecordSummaryVecRepository(fx.db).delete(a.recordId);
+
+      embedder.embedded.length = 0;
+      const pass = await embedPending(fx.db, embedder);
+      t.equal(pass.embedded, 1, 'the record is picked up again');
+      t.deepEqual(embedder.embedded, ['the summary'], 'and only its summary is embedded');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('removing the summary removes its vector', async t => {
+    const fx = setup();
+    try {
+      const body = 'body';
+      const a = {...makeRecord('topics/a.md', body), agentSummary: 'the summary'};
+      a.contentHash = embedInputHash(body, a.agentSummary);
+      fx.records.insert(a);
+      await embedPending(fx.db, fx.embedder);
+      fx.records.upsertByPath({...a, agentSummary: null, contentHash: contentHash(body)});
+      await embedPending(fx.db, fx.embedder);
+      t.equal(
+        new RecordSummaryVecRepository(fx.db).get(a.recordId),
+        null,
+        'no summary vector left'
+      );
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('a non-finite summary vector does not keep its record pending', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const body = 'body';
+      const a = {...makeRecord('topics/a.md', body), agentSummary: 'poisoned summary'};
+      a.contentHash = embedInputHash(body, a.agentSummary);
+      fx.records.insert(a);
+      embedder.poison = text => text === 'poisoned summary';
+      await embedPending(fx.db, embedder);
+      const stored = new RecordSummaryVecRepository(fx.db).get(a.recordId);
+      t.equal(stored?.textHash, null, 'stored without a text hash, so never reused');
+
+      const again = await embedPending(fx.db, embedder);
+      t.equal(again.embedded, 0, 'the next pass finds nothing pending');
     } finally {
       fx.db.close();
     }
@@ -495,6 +556,90 @@ test('embedPending: overlapping passes on one database run one at a time', async
       embedder.embedded.length,
       'no chunk text embedded twice'
     );
+  } finally {
+    fx.db.close();
+  }
+});
+
+const setModified = (db: DatabaseSync, recordId: string, at: string): void => {
+  db.prepare('UPDATE records SET modified_at = ? WHERE record_id = ?').run(at, recordId);
+};
+
+test('embedPending with maxEmbeds runs one round', async t => {
+  await t.test('stops after the record that reaches the budget and reports the rest', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      for (let i = 0; i < 3; ++i) fx.records.insert(makeRecord(`topics/${i}.md`, `body-${i}`));
+      const first = await embedPending(fx.db, embedder, {maxEmbeds: 2});
+      t.equal(first.embedded, 2, 'two single-chunk records fill the budget');
+      t.equal(first.remaining, 1, 'one record left');
+      t.equal(first.upToDate, 0, 'neither embedded nor remaining counts as up to date');
+      const second = await embedPending(fx.db, embedder, {maxEmbeds: 2});
+      t.equal(second.embedded, 1, 'the next round takes the rest');
+      t.equal(second.remaining, 0, 'nothing left');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('takes the most recently modified record first', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const old = makeRecord('topics/old.md', 'old body');
+      const recent = makeRecord('topics/recent.md', 'recent body');
+      fx.records.insert(old);
+      fx.records.insert(recent);
+      setModified(fx.db, old.recordId, '2026-09-15T10:00:00.000Z');
+      setModified(fx.db, recent.recordId, '2026-09-15T09:00:00.000Z');
+      await embedPending(fx.db, embedder, {maxEmbeds: 1});
+      t.deepEqual(embedder.embedded, ['old body'], 'the later modified_at goes first');
+    } finally {
+      fx.db.close();
+    }
+  });
+
+  await t.test('completes a record larger than the budget', async t => {
+    const fx = setup();
+    const embedder = new CountingEmbedder();
+    try {
+      const body = longBody(4);
+      const a = makeRecord('topics/long.md', body);
+      fx.records.insert(a);
+      const round = await embedPending(fx.db, embedder, {maxEmbeds: 1});
+      t.equal(round.embedded, 1, 'the record is embedded');
+      t.equal(embedder.embedded.length, chunkBody(body).length, 'with every chunk');
+      t.equal(round.remaining, 0, 'nothing left');
+    } finally {
+      fx.db.close();
+    }
+  });
+});
+
+test('embedAllPending lets another pass run between its rounds', async t => {
+  const fx = setup();
+  const embedder = new CountingEmbedder();
+  try {
+    for (let i = 0; i < 4; ++i) {
+      const r = makeRecord(`topics/${i}.md`, `backlog-${i}`);
+      fx.records.insert(r);
+      setModified(fx.db, r.recordId, `2026-09-15T0${i}:00:00.000Z`);
+    }
+    let drain: Promise<unknown> | null = null;
+    embedder.beforeBatch = () => {
+      if (drain) return;
+      const edit = makeRecord('topics/edit.md', 'the edit');
+      fx.records.insert(edit);
+      setModified(fx.db, edit.recordId, '2026-09-15T12:00:00.000Z');
+      drain = embedPending(fx.db, embedder, {maxEmbeds: 1});
+    };
+    const all = await embedAllPending(fx.db, embedder, {maxEmbeds: 1});
+    await drain;
+    t.equal(embedder.embedded[1], 'the edit', 'the edit is embedded right after the first round');
+    t.equal(all.embedded, 4, 'the backlog finishes');
+    t.equal(all.remaining, 0, 'nothing left');
+    t.equal(new Set(embedder.embedded).size, 5, 'no text embedded twice');
   } finally {
     fx.db.close();
   }

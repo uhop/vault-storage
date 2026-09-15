@@ -1,7 +1,9 @@
 // Fill `chunks.text_hash` (schema 0023) for records embedded before the column
 // existed, so their next edit reuses unchanged chunks' vectors. Sound only for a
-// chunk set whose `content_hash` equals the record's: the chunker's output last
-// changed with the summary prefix (2026-04-30), which changed that hash too.
+// chunk set whose `content_hash` equals the record's, of a record with no
+// `agent.summary`: through D44 a summarized record's chunks embed the summary
+// prefix, so the hash of a bare chunk would pair with the wrong vector. Every
+// pass since D45 writes the hashes itself.
 
 import type {DatabaseSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
@@ -12,7 +14,7 @@ export interface ChunkTextHashBackfillSummary {
   /** Records whose chunks carried no text hash. */
   candidates: number;
   written: number;
-  /** Candidates whose chunks no longer match the record, or whose count differs from the chunker's. */
+  /** Candidates with a summary, whose chunks no longer match the record, or whose count differs from the chunker's. */
   skipped: number;
   durationMs: number;
 }
@@ -66,10 +68,11 @@ export const backfillChunkTextHashes = async (
           | undefined;
         const matches =
           row !== undefined &&
+          !row.agent_summary &&
           row.unhashed === row.chunks &&
           row.lo === row.content_hash &&
           row.hi === row.content_hash;
-        const texts = matches ? chunkBody(row.body, {summary: row.agent_summary}) : [];
+        const texts = matches ? chunkBody(row.body) : [];
         if (!matches || texts.length !== row.chunks) {
           ++summary.skipped;
           continue;

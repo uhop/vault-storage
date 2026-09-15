@@ -93,29 +93,21 @@ const hardSplit = (text: string, cap: number, overlap: number): string[] => {
  * chunk; in-section continuation uses paragraph-level overlap so concepts
  * crossing a chunk boundary remain connected.
  *
- * `summary` (optional): when set, prepended to every emitted chunk as a
- * HyDE-style retrieval anchor. Per `[[projects/vault-storage/design/agent-
- * frontmatter-enrichment]]` the LLM-derived summary lives in the source
- * frontmatter under `agent.summary`; surfacing it in chunk text lifts
- * recall on documents whose body alone reads narrowly. The summary itself
- * is short (1–2 sentences per design); chunk-budget impact is small and
- * uniform, so it counts against `maxChars` like any other content.
+ * The `agent.summary` is not part of any chunk: it gets its own vector
+ * (D45), so a summary refresh leaves every chunk's text, and its stored
+ * vector, unchanged.
  */
 export const chunkBody = (
   body: string,
-  opts: {maxChars?: number; charOverlap?: number; overlap?: boolean; summary?: string | null} = {}
+  opts: {maxChars?: number; charOverlap?: number; overlap?: boolean} = {}
 ): string[] => {
   const max = opts.maxChars ?? DEFAULT_MAX_CHARS;
   const charOverlap = opts.charOverlap ?? DEFAULT_CHAR_OVERLAP;
   const overlapEnabled = opts.overlap !== false;
-  const summary = opts.summary && opts.summary.length > 0 ? opts.summary : null;
-  const summaryPrefix = summary ? `${summary}\n\n` : '';
-  const decorate = (chunks: string[]): string[] =>
-    summary ? chunks.map(c => summaryPrefix + c) : chunks;
-  if (!body || body.length <= max) return decorate([body]);
+  if (!body || body.length <= max) return [body];
 
   const blocks = splitBlocks(body);
-  if (blocks.length === 0) return decorate([body.slice(0, HARD_CAP)]);
+  if (blocks.length === 0) return [body.slice(0, HARD_CAP)];
 
   const chunks: string[] = [];
   let currentPath: HeaderFrame[] | null = null;
@@ -169,5 +161,5 @@ export const chunkBody = (
     bufLen += (bufLen > 0 ? 2 : 0) + blockLen;
   }
   flush();
-  return decorate(chunks);
+  return chunks;
 };

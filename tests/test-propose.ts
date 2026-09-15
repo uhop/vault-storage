@@ -55,7 +55,7 @@ const pathsOf = (r: {candidates: {filePath: string}[]}) => r.candidates.map(c =>
 test('proposeNearest finds a long note that matches on a single section', async t => {
   const fx = await setup();
   try {
-    const r = await proposeNearest(fx.db, fx.embedder, SHARED, null);
+    const r = await proposeNearest(fx.db, fx.embedder, SHARED);
 
     // The regression this pins: topics/long.md holds a chunk identical to the
     // proposal, but its mean-pool centroid is smeared across four
@@ -88,14 +88,14 @@ test('proposeNearest maxDistance filters the metric it reports', async t => {
   const fx = await setup();
   try {
     await t.test('uncapped returns the unrelated note as well', async t => {
-      const r = await proposeNearest(fx.db, fx.embedder, SHARED, null);
+      const r = await proposeNearest(fx.db, fx.embedder, SHARED);
       t.ok(pathsOf(r).includes('topics/other.md'), 'unrelated note present when uncapped');
       const other = r.candidates.find(c => c.filePath === 'topics/other.md');
       t.ok(other!.distance > 0.5, 'and it really is far away');
     });
 
     await t.test('a cap drops everything above it', async t => {
-      const r = await proposeNearest(fx.db, fx.embedder, SHARED, null, {maxDistance: 0.5});
+      const r = await proposeNearest(fx.db, fx.embedder, SHARED, {maxDistance: 0.5});
       t.deepEqual(
         pathsOf(r).sort(),
         ['topics/long.md', 'topics/short.md'],
@@ -106,7 +106,7 @@ test('proposeNearest maxDistance filters the metric it reports', async t => {
     });
 
     await t.test('a cap below every distance yields nothing, not an error', async t => {
-      const r = await proposeNearest(fx.db, fx.embedder, UNRELATED, null, {maxDistance: 1e-9});
+      const r = await proposeNearest(fx.db, fx.embedder, UNRELATED, {maxDistance: 1e-9});
       t.deepEqual(pathsOf(r), [], 'no candidates');
       t.equal(r.candidatesScreened, 3, 'still compared everything — the emptiness is real');
     });
@@ -122,7 +122,7 @@ test('proposeNearest excludeRecordId drops the self-match', async t => {
     const shortRec = records.getByPath('topics/short.md');
     t.ok(shortRec, 'fixture record resolved');
 
-    const r = await proposeNearest(fx.db, fx.embedder, SHARED, null, {
+    const r = await proposeNearest(fx.db, fx.embedder, SHARED, {
       excludeRecordId: shortRec!.recordId
     });
     t.notOk(pathsOf(r).includes('topics/short.md'), 'excluded record absent');
@@ -141,7 +141,7 @@ test('proposeNearest excludeRecordId drops the self-match', async t => {
 test('proposeNearest does not special-case a whitespace-only body', async t => {
   const fx = await setup();
   try {
-    const r = await proposeNearest(fx.db, fx.embedder, '   ', null);
+    const r = await proposeNearest(fx.db, fx.embedder, '   ');
     t.equal(r.proposedChunks, 1, 'whitespace still chunks and embeds');
     t.equal(r.candidatesScreened, 3, 'and is compared against everything');
     t.ok(
@@ -153,23 +153,23 @@ test('proposeNearest does not special-case a whitespace-only body', async t => {
   }
 });
 
-// --- findDuplicateBlockers: the summary-decoration correction ------------
+// --- findDuplicateBlockers -------------------------------------------------
 
-// FakeEmbedder cannot exercise this. It hashes the whole string, so prepending
-// a summary moves the vector to a near-orthogonal one — a decoration shift of
-// ~1.0, where the real BGE shift measured 0.048–0.113. A bag-of-words embedder
-// reproduces the property that matters: a shared body dominates the vector and
-// a prefix perturbs it by an amount proportional to the prefix's weight.
+// FakeEmbedder hashes the whole string, so any two distinct texts sit
+// near-orthogonal. A bag-of-words embedder gives partial overlap a partial
+// distance, which the decoy below needs.
 class BagOfWordsEmbedder implements Embedder {
   // 384 to match the vec0 column width the schema fixes for embeddings.
   readonly dim = 384;
   readonly modelName = 'bag-of-words-test';
   readonly retained = false;
+  readonly embedded: string[] = [];
 
   async embed(text: string): Promise<Float32Array> {
-    return this.#vec(text);
+    return (await this.embedBatch([text]))[0]!;
   }
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
+    this.embedded.push(...texts);
     return texts.map(t => this.#vec(t));
   }
   async releaseRetained(): Promise<void> {}
@@ -193,10 +193,6 @@ class BagOfWordsEmbedder implements Embedder {
   }
 }
 
-// Sized so the decoration shift lands above the 0.10 gate default but inside
-// DECORATION_SLACK — the band where the uncorrected gate misses a verbatim copy
-// and the corrected one catches it. Each test asserts that precondition, so a
-// fixture that drifts out of the band fails loudly instead of passing vacuously.
 const DEC_BODY =
   'Pattern for handling retry storms via careful queue management. ' +
   'The consumer drains steadily once the window exceeds the interval and the workers settle. '.repeat(
@@ -206,11 +202,8 @@ const DEC_SUMMARY =
   'Retry storms tamed by exponential backoff with jitter sized above the retry interval, drained predictably. '.repeat(
     2
   );
-// Partially overlapping with DEC_BODY on purpose: it has to land *inside* the
-// shortlist band (bare ≈ 0.22 against its decorated chunks) so the correction
-// actually runs on it, while its true body distance (≈ 0.19) stays well clear
-// of the 0.10 threshold. A wholly disjoint decoy sits outside the shortlist and
-// proves nothing.
+// Overlaps DEC_BODY on purpose, and carries the same summary: close enough to
+// be a neighbour, far enough (≈ 0.19) not to be a duplicate.
 const DEC_DECOY =
   'The consumer drains steadily once the window exceeds the interval and the workers settle. '.repeat(
     3
@@ -236,11 +229,6 @@ const decSetup = async () => {
     'topics/decorated.md',
     `---\ntitle: Decorated\ntype: permanent\nagent:\n  summary: "${DEC_SUMMARY.trim()}"\n---\n${DEC_BODY}\n`
   );
-  // A second *summarized* record with unrelated content. Without it the
-  // false-positive mode is untestable — and that is exactly the gap that let a
-  // wrong correction (decorating the proposal with the candidate's summary,
-  // where the shared prefix dominates instead of cancelling) pass this suite
-  // and then block nearly every write against the live vault.
   writeMd(
     root,
     'topics/decorated-unrelated.md',
@@ -256,35 +244,32 @@ const decSetup = async () => {
 test('findDuplicateBlockers catches a verbatim copy of a summarized note', async t => {
   const fx = await decSetup();
   try {
+    fx.embedder.embedded.length = 0;
     const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_BODY, {threshold: 0.1});
-    t.equal(blockers.length, 1, 'exactly one blocker — the decorated twin, nothing else');
-
-    const b = blockers[0]!;
-    t.equal(b.filePath, 'topics/decorated.md', 'the right record');
-    t.ok(b.corrected, 'the stored side was re-embedded undecorated');
-    // The precondition — without the correction this copy would have slipped.
-    t.ok(b.bareDistance > 0.1, `bare distance ${b.bareDistance.toFixed(4)} misses the gate`);
-    t.ok(b.distance < 1e-6, `corrected distance ${b.distance.toFixed(4)} is ~0`);
+    t.deepEqual(
+      blockers.map(b => b.filePath),
+      ['topics/decorated.md'],
+      'exactly one blocker, the summarized twin'
+    );
+    t.ok(blockers[0]!.distance < 1e-6, `at distance ${blockers[0]!.distance.toFixed(4)}`);
+    t.deepEqual(fx.embedder.embedded, [DEC_BODY], 'only the proposal was embedded');
   } finally {
     teardown(fx);
   }
 });
 
-// The regression for the shared-prefix domination bug: a summarized record with
-// unrelated content sits inside the shortlist (so the correction really does
-// run on it) and must still not block.
-test('findDuplicateBlockers does not block on a summarized but unrelated note', async t => {
+test('findDuplicateBlockers does not block on a note that shares only its summary', async t => {
   const fx = await decSetup();
   try {
-    const shortlist = await proposeNearest(fx.db, fx.embedder, DEC_BODY, null, {maxDistance: 0.25});
-    const decoy = shortlist.candidates.find(c => c.filePath === 'topics/decorated-unrelated.md');
-    t.ok(decoy, 'the unrelated summarized note is inside the shortlist band');
-    t.ok(decoy!.distance > 0.1, `and above the gate at ${decoy!.distance.toFixed(4)}`);
+    const nearest = await proposeNearest(fx.db, fx.embedder, DEC_BODY, {maxDistance: 0.25});
+    const decoy = nearest.candidates.find(c => c.filePath === 'topics/decorated-unrelated.md');
+    t.ok(decoy, 'the decoy is a neighbour');
+    t.ok(decoy!.distance > 0.1, `above the gate at ${decoy!.distance.toFixed(4)}`);
 
     const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_BODY, {threshold: 0.1});
     t.notOk(
       blockers.some(b => b.filePath === 'topics/decorated-unrelated.md'),
-      'sharing a summary prefix does not make it a duplicate'
+      'sharing a summary does not make it a duplicate'
     );
   } finally {
     teardown(fx);
@@ -307,16 +292,16 @@ test('findDuplicateBlockers does not invent blockers for unrelated content', asy
   }
 });
 
-test('findDuplicateBlockers skips the re-embed when a record has no summary', async t => {
+test('findDuplicateBlockers catches a verbatim copy of a note without a summary', async t => {
   const fx = await decSetup();
   try {
     const blockers = await findDuplicateBlockers(fx.db, fx.embedder, DEC_OTHER, {threshold: 0.1});
-    t.equal(blockers.length, 1, 'the undecorated note still blocks');
-
-    const b = blockers[0]!;
-    t.equal(b.filePath, 'topics/plain.md', 'the right record');
-    t.notOk(b.corrected, 'no correction needed — its chunks were never decorated');
-    t.equal(b.bareDistance, b.distance, 'bare and corrected distances coincide');
+    t.deepEqual(
+      blockers.map(b => b.filePath),
+      ['topics/plain.md'],
+      'the right record'
+    );
+    t.ok(blockers[0]!.distance < 1e-6, 'at distance ~0');
   } finally {
     teardown(fx);
   }

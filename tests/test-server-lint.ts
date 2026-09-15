@@ -111,6 +111,16 @@ const insertVecChunk = (
   );
 };
 
+const insertSummaryVec = (db: DatabaseSync, recordId: string, contentHash: string): void => {
+  db.prepare(
+    'INSERT INTO record_summaries (record_id, content_hash, text_hash) VALUES (?, ?, NULL)'
+  ).run(recordId, contentHash);
+  db.prepare('INSERT INTO record_summary_vec (record_id, embedding) VALUES (?, ?)').run(
+    recordId,
+    new Float32Array(384)
+  );
+};
+
 test('GET /system/lint on empty DB: ok=true, all checks 0', async t => {
   await withServer(async url => {
     const {status, body} = await fetchJson(`${url}/system/lint`);
@@ -149,6 +159,7 @@ test('GET /system/lint enrichment coverage: actionable headline excludes archive
     });
     enrich.run('a derived summary', 'p-enriched');
     insertVecChunk(db, {chunk_id: 'c-p-enr', record_id: 'p-enriched', content_hash: 'hash-fresh'});
+    insertSummaryVec(db, 'p-enriched', 'hash-fresh');
     insertRecord(db, {record_id: 'p-bare', file_path: 'topics/p-bare.md', type: 'permanent'});
     insertVecChunk(db, {chunk_id: 'c-p-bare', record_id: 'p-bare', content_hash: 'hash-fresh'});
     insertRecord(db, {
@@ -182,6 +193,7 @@ test('GET /system/lint enrichment coverage: actionable headline excludes archive
     });
     enrich.run('archived summary', 'arch');
     insertVecChunk(db, {chunk_id: 'c-arch', record_id: 'arch', content_hash: 'hash-fresh'});
+    insertSummaryVec(db, 'arch', 'hash-fresh');
 
     const {body} = await fetchJson(`${url}/system/lint`);
     const r = body as {
@@ -269,6 +281,27 @@ test('GET /system/lint detects embedding_hash_drift', async t => {
       r.checks['records_without_embeddings']?.count,
       0,
       'no records-without-embeddings (chunk exists)'
+    );
+  });
+});
+
+test('GET /system/lint counts a stale or missing summary vector as embedding_hash_drift', async t => {
+  await withServer(async (url, db) => {
+    const enrich = db.prepare('UPDATE records SET agent_summary = ? WHERE record_id = ?');
+    for (const id of ['rec-current', 'rec-stale', 'rec-missing']) {
+      insertRecord(db, {record_id: id, file_path: `topics/${id}.md`, content_hash: 'hash-NEW'});
+      enrich.run('a summary', id);
+      insertVecChunk(db, {chunk_id: `chunk-${id}`, record_id: id, content_hash: 'hash-NEW'});
+    }
+    insertSummaryVec(db, 'rec-current', 'hash-NEW');
+    insertSummaryVec(db, 'rec-stale', 'hash-OLD');
+
+    const {body} = await fetchJson(`${url}/system/lint`);
+    const r = body as {checks: Record<string, {count: number; samples: {id: string}[]}>};
+    t.deepEqual(
+      r.checks['embedding_hash_drift']?.samples.map(sample => sample.id).sort(),
+      ['rec-missing', 'rec-stale'],
+      'the stale and the missing summary vector drift; the current one does not'
     );
   });
 });

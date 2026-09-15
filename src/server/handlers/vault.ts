@@ -271,29 +271,13 @@ export const getVaultRootHandler =
   };
 
 /**
- * Extract `agent.summary` from a frontmatter object if present, returning
- * null otherwise. Mirrors the indexer's lookup so the dedup check uses
- * the same chunk-prefix the eventual stored record will.
- */
-const extractAgentSummary = (frontmatter: Record<string, unknown>): string | null => {
-  const agent = frontmatter['agent'];
-  if (!agent || typeof agent !== 'object' || Array.isArray(agent)) return null;
-  const summary = (agent as Record<string, unknown>)['summary'];
-  return typeof summary === 'string' && summary.length > 0 ? summary : null;
-};
-
-/**
  * PUT /vault/{path} — create or replace a file.
  *
  * `?check=true` opts into the search-before-write dedup gate: the
  * proposed body is scored against existing records by
  * {@link findDuplicateBlockers}, and any candidate within
  * `check_threshold` (default 0.10) blocks the write with a 409 carrying
- * the offending candidates. Each reports `bare_distance` alongside
- * `distance` and a `summary_corrected` flag, since the two differ
- * whenever the candidate carries an `agent.summary` — see
- * findDuplicateBlockers for why comparing a bare body against decorated
- * chunks needs the second pass. Without the query param, behavior is
+ * the offending candidates. Without the query param, behavior is
  * unchanged — naked PUT remains the existing contract.
  *
  * `X-Vault-Dedup: skip` short-circuits the check when the caller has
@@ -390,14 +374,10 @@ export const putVaultHandler =
         threshold = n;
       }
 
-      // Pull the body+summary from the parsed write — the same content
-      // that's about to be persisted, so the dedup result reflects what
-      // would actually land.
+      // The body about to be persisted, so the dedup result reflects what would land.
       let bodyForCheck: string;
-      let summaryForCheck: string | null;
       if (parsed.kind === 'json') {
         bodyForCheck = parsed.body;
-        summaryForCheck = extractAgentSummary(parsed.frontmatter);
       } else {
         // Same YAML-syntax guard the writer applies downstream — without it
         // a malformed FM block on a `?check=true` PUT throws past the
@@ -416,13 +396,8 @@ export const putVaultHandler =
           return;
         }
         bodyForCheck = fm.body;
-        summaryForCheck = extractAgentSummary(fm.data);
       }
 
-      // `summaryForCheck` is deliberately unused for the comparison: the gate
-      // asks whether this *body* is already stored, and the symmetric pass
-      // decorates the proposal with each candidate's summary, not its own.
-      void summaryForCheck;
       const tooClose = await findDuplicateBlockers(deps.db, deps.embedder, bodyForCheck, {
         threshold,
         ...(existing?.recordId !== undefined ? {excludeRecordId: existing.recordId} : {})
@@ -437,8 +412,6 @@ export const putVaultHandler =
             record_id: c.recordId,
             file_path: c.filePath,
             distance: c.distance,
-            bare_distance: c.bareDistance,
-            summary_corrected: c.corrected,
             agent_summary: c.agentSummary
           }))
         });
@@ -1407,16 +1380,17 @@ interface ProposeBody {
 /**
  * POST /vault/propose
  *
- * Search-before-write surface. Body: `{body, path?, agent_summary?,
- * k?, max_distance?}`. Embeds `body` (chunk-level + summary-decorated,
- * same pipeline as ingest) and returns the top-K nearest existing records
- * sorted by min cosine distance over chunk pairs. `max_distance` is in
- * that same metric; omit it and `k` alone bounds the result.
+ * Search-before-write surface. Body: `{body, path?, k?, max_distance?}`.
+ * Embeds `body` chunk-level, the same pipeline as ingest, and returns the
+ * top-K nearest existing records sorted by min cosine distance over chunk
+ * pairs. `max_distance` is in that same metric; omit it and `k` alone
+ * bounds the result.
  *
- * `prefilter_max_distance` (removed 2026-08-03) is rejected rather than
- * ignored — it named an L2-on-centroid ceiling whose default silently
- * capped results at 0.125 cosine, so accepting it as a no-op would leave
- * callers believing a screen was applied. See propose.ts for the removal.
+ * Removed parameters are rejected rather than ignored, so a caller never
+ * believes they applied: `prefilter_max_distance` (2026-08-03) named an
+ * L2-on-centroid ceiling whose default silently capped results at 0.125
+ * cosine, and `agent_summary` (D45) decorated chunks that no longer carry
+ * a summary.
  *
  * When `path` is supplied AND there's already a record at that path,
  * that record is excluded from results — without this, a small FM-only
@@ -1467,10 +1441,15 @@ export const proposeVaultHandler =
       sendError(ctx.res, 400, 'bad_request', 'path must be a string when provided');
       return;
     }
-    const agentSummary =
-      typeof parsed.agent_summary === 'string' && parsed.agent_summary.length > 0
-        ? parsed.agent_summary
-        : null;
+    if (parsed.agent_summary !== undefined) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'agent_summary was removed 2026-09-15 (D45): stored chunks no longer carry the summary, so the proposal is compared body to body. Send the body alone.'
+      );
+      return;
+    }
     const k =
       typeof parsed.k === 'number' && Number.isInteger(parsed.k) && parsed.k > 0
         ? parsed.k
@@ -1503,7 +1482,7 @@ export const proposeVaultHandler =
       if (existing) excludeRecordId = existing.recordId;
     }
 
-    const result = await proposeNearest(deps.db, deps.embedder, parsed.body, agentSummary, {
+    const result = await proposeNearest(deps.db, deps.embedder, parsed.body, {
       k,
       maxDistance,
       excludeRecordId

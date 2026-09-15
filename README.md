@@ -9,7 +9,7 @@ An AI-agent-first persistent knowledge base. Markdown files are the source of tr
 - **Content** lives in a separate **private** git repo: [`vault-data`](https://github.com/uhop/vault-data). Plain markdown with YAML frontmatter, organized into `topics/`, `projects/`, `queries/`, `logs/`, `raw/`. This is the source of truth.
 - **Index** is SQLite + [`sqlite-vec`](https://github.com/asg017/sqlite-vec), accessed via the built-in `node:sqlite`. The DB is fully derivable from the content repo; on total DB loss, a rebuild from `git clone` works.
 - **Server** is Node 26 + TypeScript on `node:http`, with bearer-token auth on every endpoint. Speaks REST; the `mcp/` sub-package adapts the same surface for MCP clients (Claude Code et al.).
-- **Embeddings** are `Xenova/bge-small-en-v1.5` (384-dim float32, CLS pooling, paragraph-overlapped chunking, ONNX via `@huggingface/transformers`, runs on local CPU).
+- **Embeddings** are `Xenova/bge-small-en-v1.5` (384-dim float32, CLS pooling, paragraph-overlapped chunking with the `agent.summary` embedded as its own vector, ONNX via `@huggingface/transformers`, runs on local CPU).
 - **Sync between machines** is `git pull` / `git push` against `vault-data`. Per-machine local DB; per-user state stays local; shared content syncs via git.
 
 ## Repositories

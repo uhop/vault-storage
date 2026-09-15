@@ -568,10 +568,6 @@ export const registerTools = (mcp, client) => {
           .string()
           .optional()
           .describe('Target path; the record there (if any) is excluded from results'),
-        agent_summary: z
-          .string()
-          .optional()
-          .describe('Proposed agent.summary; decorates the embedding as at ingest'),
         k: z.number().int().min(1).optional().describe('Candidates to return (default 10)'),
         max_distance: z
           .number()
@@ -580,11 +576,10 @@ export const registerTools = (mcp, client) => {
           .describe('Cap on the returned distance, same cosine metric as `distance`')
       }
     },
-    wrap(async ({body, path, agent_summary, k, max_distance}) =>
+    wrap(async ({body, path, k, max_distance}) =>
       client.postJson('/vault/propose', {
         body,
         ...(path ? {path} : {}),
-        ...(agent_summary ? {agent_summary} : {}),
         ...(k !== undefined ? {k} : {}),
         ...(max_distance !== undefined ? {max_distance} : {})
       })

@@ -112,17 +112,25 @@ export const queueHygieneFindings = (db: DatabaseSync): QueueHygieneFinding[] =>
 export const computeLintReport = (db: DatabaseSync): LintReport => {
   const checks: Record<string, LintCheck> = {};
 
-  // Embedding chunks whose recorded content_hash drifted from the
-  // record's current hash. embedPending re-embeds when these mismatch;
+  // Embedded records whose chunks, or summary vector (D45), carry a
+  // content_hash other than the record's. embedPending re-embeds these;
   // persistent drift means the pass didn't run (or crashed) since the
-  // body changed.
+  // record changed.
   {
     const rows = db
       .prepare(
         `SELECT DISTINCT c.record_id, r.file_path
              FROM chunks c
              JOIN records r ON r.record_id = c.record_id
-            WHERE c.content_hash != r.content_hash`
+            WHERE c.content_hash != r.content_hash
+           UNION
+           SELECT r.record_id, r.file_path
+             FROM records r
+            WHERE r.agent_summary IS NOT NULL AND r.agent_summary != ''
+              AND EXISTS (SELECT 1 FROM chunks c WHERE c.record_id = r.record_id)
+              AND NOT EXISTS (
+                    SELECT 1 FROM record_summaries s
+                     WHERE s.record_id = r.record_id AND s.content_hash = r.content_hash)`
       )
       .all() as {record_id: string; file_path: string}[];
     checks['embedding_hash_drift'] = {
