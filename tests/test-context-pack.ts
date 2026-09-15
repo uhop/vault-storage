@@ -57,11 +57,13 @@ interface ServerCtx {
   url: string;
 }
 
-const startTestServer = async (vaultRoot: string): Promise<ServerCtx> => {
+const startTestServer = async (
+  vaultRoot: string,
+  embedder: FakeEmbedder = new FakeEmbedder()
+): Promise<ServerCtx> => {
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   importVault(db, vaultRoot);
-  const embedder = new FakeEmbedder();
   await embedPending(db, embedder);
   const handle = await startServer({
     db,
@@ -319,6 +321,31 @@ test('POST /context-pack — record_id mode anchors on the record', async t => {
       for (const c of pack.chunks) {
         t.deepEqual(c.sources, ['semantic'], 'record mode is semantic-only');
       }
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /context-pack — a query anchor is embedded as a query', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seed(root);
+    const queries: string[] = [];
+    const embedder = new (class extends FakeEmbedder {
+      override embedQuery(text: string): Promise<Float32Array> {
+        queries.push(text);
+        return super.embedQuery(text);
+      }
+    })();
+    const ctx = await startTestServer(root, embedder);
+    try {
+      await fetchAuthed(`${ctx.url}/context-pack?query=${encodeURIComponent('alpha things')}`, {
+        method: 'POST'
+      });
+      t.deepEqual(queries, ['alpha things'], 'through embedQuery, where BGE adds its instruction');
     } finally {
       await teardown(ctx);
     }

@@ -44,6 +44,10 @@ const makeEmbedder = async (): Promise<Embedder> => {
       busyWait(blockMs);
       return fake.embedBatch(texts);
     },
+    embedQuery: async text => {
+      busyWait(blockMs);
+      return fake.embedQuery(text);
+    },
     releaseRetained: () => fake.releaseRetained()
   };
 };

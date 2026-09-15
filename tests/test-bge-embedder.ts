@@ -1,5 +1,6 @@
 import test from 'tape-six';
 import {BgeEmbedder} from '../src/embeddings/bge.ts';
+import {BGE_QUERY_INSTRUCTION} from '../src/embeddings/model.ts';
 
 // Slow on first run: downloads ~33 MB of model files into the transformers.js
 // cache. Subsequent runs hit the cache and complete in under two seconds.
@@ -15,6 +16,14 @@ test('BgeEmbedder (real model)', async t => {
     const v = await embedder.embed('hello vault');
     t.ok(v instanceof Float32Array, 'Float32Array');
     t.equal(v.length, 384, 'dim is 384');
+  });
+
+  await t.test('embedQuery adds the BGE retrieval instruction, and embed does not', async t => {
+    const query = await embedder.embedQuery('where do embeddings live');
+    const instructed = await embedder.embed(`${BGE_QUERY_INSTRUCTION}where do embeddings live`);
+    const plain = await embedder.embed('where do embeddings live');
+    t.deepEqual(Array.from(query), Array.from(instructed), 'the query carries the instruction');
+    t.notDeepEqual(Array.from(query), Array.from(plain), 'which changes its vector');
   });
 
   await t.test('vectors are L2-normalized to unit length', async t => {

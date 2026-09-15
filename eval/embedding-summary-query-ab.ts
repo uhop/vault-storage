@@ -2,9 +2,10 @@
 // (A, production from schema 5 to D45), left out (B), or embedded once as its
 // own vector and scored with the best body chunk, as the server's
 // `recordSimilarity`, their maximum (C), or as 0.6 of the chunk plus 0.4 of the
-// summary (D, the weight D45 first chose).
+// summary (D, the weight D45 first chose). With `--instruction TEXT`, mode E is
+// C with TEXT prefixed to every query, as BGE's card suggests for short queries.
 //
-//   node eval/embedding-summary-query-ab.ts --db <vault.sqlite> --cache <dir> [--vectors-from <vault.sqlite>] [--sample N] [--seed S]
+//   node eval/embedding-summary-query-ab.ts --db <vault.sqlite> --cache <dir> [--vectors-from <vault.sqlite>] [--instruction TEXT] [--sample N] [--seed S]
 //
 // Query sets: `paraphrase`, 30 hand-curated short queries with a known target
 // (2026-05-01); `sentence`, one sentence lifted from the body of each sampled
@@ -40,10 +41,11 @@ interface Args {
   sample: number;
   seed: number;
   vectorsFrom: string;
+  instruction: string;
 }
 
 const parseArgs = (argv: string[]): Args => {
-  const args: Args = {db: '', cache: '', vectorsFrom: '', sample: 0, seed: 1};
+  const args: Args = {db: '', cache: '', vectorsFrom: '', instruction: '', sample: 0, seed: 1};
   for (let i = 0; i < argv.length; ++i) {
     const a = argv[i];
     if (a === '--db') args.db = argv[++i] ?? '';
@@ -51,6 +53,7 @@ const parseArgs = (argv: string[]): Args => {
     else if (a === '--sample') args.sample = Number.parseInt(argv[++i] ?? '0', 10);
     else if (a === '--seed') args.seed = Number.parseInt(argv[++i] ?? '1', 10);
     else if (a === '--vectors-from') args.vectorsFrom = argv[++i] ?? '';
+    else if (a === '--instruction') args.instruction = argv[++i] ?? '';
     else {
       process.stderr.write(`unknown argument: ${a}\n`);
       process.exit(2);
@@ -58,7 +61,7 @@ const parseArgs = (argv: string[]): Args => {
   }
   if (!args.db || !args.cache) {
     process.stderr.write(
-      'usage: embedding-summary-query-ab.ts --db <path> --cache <dir> [--vectors-from <path>] [--sample N] [--seed S]\n'
+      'usage: embedding-summary-query-ab.ts --db <path> --cache <dir> [--vectors-from <path>] [--instruction TEXT] [--sample N] [--seed S]\n'
     );
     process.exit(2);
   }
@@ -353,6 +356,7 @@ const rankIn = (scores: ArrayLike<number>, target: number): number => {
 
 interface Mode {
   name: string;
+  instructed?: boolean;
   score: (chunkA: number, chunkB: number, summary: number | null) => number;
 }
 
@@ -476,7 +480,13 @@ const main = async (): Promise<void> => {
   const embedder = new BgeEmbedder();
   const summaries = records.flatMap(r => summaryOf(r) ?? []);
   const embeddedNow = await cache.fill(
-    [...textsA.flat(), ...textsB.flat(), ...summaries, ...queries.map(q => q.query)],
+    [
+      ...textsA.flat(),
+      ...textsB.flat(),
+      ...summaries,
+      ...queries.map(q => q.query),
+      ...(args.instruction ? queries.map(q => args.instruction + q.query) : [])
+    ],
     embedder
   );
   await embedder.releaseRetained();
@@ -490,29 +500,42 @@ const main = async (): Promise<void> => {
     return s === null ? [] : vecsOf([s]);
   });
   const matrixS = buildMatrix(summaryVecs);
-  const modes = MODES;
+  const modes: Mode[] = args.instruction
+    ? [...MODES, {name: 'E', instructed: true, score: (_, b, s) => recordSimilarity(b, s)}]
+    : MODES;
 
   process.stdout.write(
     `records ${records.length}, enriched ${enriched.length}, sampled ${sampled.length} ` +
       `(${noSentence} without a usable sentence), embedded now ${embeddedNow}\n` +
       `rows: A ${matrixA.owner.length}, B ${matrixB.owner.length}, summaries ${matrixS.owner.length}\n` +
       'A = summary prefixed to every chunk; B = body chunks only; ' +
-      'C = recordSimilarity(best chunk, summary), their max; D = 0.6 chunk + 0.4 summary\n\n'
+      'C = recordSimilarity(best chunk, summary), their max; D = 0.6 chunk + 0.4 summary' +
+      (args.instruction
+        ? `; E = C with queries prefixed by ${JSON.stringify(args.instruction)}`
+        : '') +
+      '\n\n'
   );
 
+  const scoresFor = (text: string) => {
+    const vec = cache.get(text);
+    return {
+      chunkA: bestPerRecord(matrixA, vec, records.length),
+      chunkB: bestPerRecord(matrixB, vec, records.length),
+      summary: bestPerRecord(matrixS, vec, records.length)
+    };
+  };
   const ranks = queries.map(q => {
-    const vec = cache.get(q.query);
-    const chunkA = bestPerRecord(matrixA, vec, records.length);
-    const chunkB = bestPerRecord(matrixB, vec, records.length);
-    const summary = bestPerRecord(matrixS, vec, records.length);
-    return modes.map(m =>
-      rankIn(
+    const plain = scoresFor(q.query);
+    const instructed = args.instruction ? scoresFor(args.instruction + q.query) : plain;
+    return modes.map(m => {
+      const {chunkA, chunkB, summary} = m.instructed ? instructed : plain;
+      return rankIn(
         records.map((_, i) =>
           m.score(chunkA[i]!, chunkB[i]!, summary[i] === -Infinity ? null : summary[i]!)
         ),
         q.target
-      )
-    );
+      );
+    });
   });
 
   const report = (label: string, picked: number[]): void => {
@@ -531,13 +554,15 @@ const main = async (): Promise<void> => {
           `${String(median).padEnd(8)}${mean.toFixed(1)}\n`
       );
     });
-    for (const [x, y] of [
+    const pairs: [number, number][] = [
       [0, 1],
       [1, 2],
       [2, 3],
       [0, 2],
       [0, 3]
-    ] as const) {
+    ];
+    if (modes.length > 4) pairs.push([2, 4]);
+    for (const [x, y] of pairs) {
       let xWins = 0;
       let yWins = 0;
       for (const q of picked) {
@@ -582,7 +607,7 @@ const main = async (): Promise<void> => {
   }
 
   process.stdout.write(
-    '=== per-query ranks: paraphrase and probe ===\nA      B      C      D      target\n'
+    `=== per-query ranks: paraphrase and probe ===\n${modes.map(m => m.name.padEnd(7)).join('')}target\n`
   );
   for (const i of indicesWhere(q => q.set === 'paraphrase' || q.set === 'probe')) {
     process.stdout.write(

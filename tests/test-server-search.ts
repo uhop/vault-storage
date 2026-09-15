@@ -56,11 +56,14 @@ interface ServerCtx {
   url: string;
 }
 
-const startTestServer = async (vaultRoot: string, embedAfterImport = false): Promise<ServerCtx> => {
+const startTestServer = async (
+  vaultRoot: string,
+  embedAfterImport = false,
+  embedder: FakeEmbedder = new FakeEmbedder()
+): Promise<ServerCtx> => {
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   importVault(db, vaultRoot);
-  const embedder = new FakeEmbedder();
   if (embedAfterImport) {
     await embedPending(db, embedder);
   }
@@ -275,6 +278,35 @@ test('POST /search/simple/ is case-insensitive (uppercase query matches lowercas
       const hits = r.body as Array<{filename: string}>;
       const filenames = new Set(hits.map(h => h.filename));
       t.ok(filenames.has('topics/docker-networking.md'), 'uppercase query matched the note');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+class QueryRecordingEmbedder extends FakeEmbedder {
+  readonly queries: string[] = [];
+  override embedQuery(text: string): Promise<Float32Array> {
+    this.queries.push(text);
+    return super.embedQuery(text);
+  }
+}
+
+test('POST /search/simple/?mode=semantic embeds the query as a query', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const embedder = new QueryRecordingEmbedder();
+    const ctx = await startTestServer(root, true, embedder);
+    try {
+      await fetchAuthed(`${ctx.url}/search/simple/?query=docker&mode=semantic`, {method: 'POST'});
+      t.deepEqual(
+        embedder.queries,
+        ['docker'],
+        'through embedQuery, where BGE adds its instruction'
+      );
     } finally {
       await teardown(ctx);
     }

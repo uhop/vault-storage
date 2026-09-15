@@ -28,6 +28,10 @@ export class FakeEmbedder implements Embedder {
     return this.#embedSync(text);
   }
 
+  async embedQuery(text: string): Promise<Float32Array> {
+    return this.#embedSync(text);
+  }
+
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     return texts.map(t => this.#embedSync(t));
   }

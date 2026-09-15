@@ -158,7 +158,7 @@ export const contextPackHandler =
         .filter((c): c is Candidate => c !== null);
     } else {
       terms = queryTerms(query!);
-      const vec = await deps.embedder.embed(query!);
+      const vec = await deps.embedder.embedQuery(query!);
       const semantic = vecRepo.nearest(vec, Math.max(k, 10));
       const lexical = lexicalSearch(deps.db, query!, LEXICAL_POOL);
 

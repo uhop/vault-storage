@@ -1,6 +1,6 @@
 import {fork, type ChildProcess} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {BGE_DIM, BGE_MODEL} from './model.ts';
+import {BGE_DIM, BGE_MODEL, BGE_QUERY_INSTRUCTION} from './model.ts';
 import type {Embedder} from './types.ts';
 
 export type EmbedChildConfig =
@@ -69,6 +69,10 @@ export class ChildProcessEmbedder implements Embedder {
   async embed(text: string): Promise<Float32Array> {
     const [vector] = await this.embedBatch([text]);
     return vector!;
+  }
+
+  embedQuery(text: string): Promise<Float32Array> {
+    return this.embed(this.#config.kind === 'bge' ? BGE_QUERY_INSTRUCTION + text : text);
   }
 
   embedBatch(texts: string[]): Promise<Float32Array[]> {

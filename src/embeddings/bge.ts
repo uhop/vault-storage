@@ -2,7 +2,7 @@ import {pipeline} from '@huggingface/transformers';
 import type {FeatureExtractionPipeline} from '@huggingface/transformers';
 import {Retainer} from 'time-queues/Retainer.js';
 import {retryNonFiniteVectors, type AnomalyLogger} from './anomaly-log.ts';
-import {BGE_DIM, BGE_MODEL} from './model.ts';
+import {BGE_DIM, BGE_MODEL, BGE_QUERY_INSTRUCTION} from './model.ts';
 import type {Embedder} from './types.ts';
 
 const DEFAULT_MODEL = BGE_MODEL;
@@ -123,6 +123,10 @@ export class BgeEmbedder implements Embedder {
 
   #cap(text: string): string {
     return text.length > this.maxChars ? text.slice(0, this.maxChars) : text;
+  }
+
+  embedQuery(text: string): Promise<Float32Array> {
+    return this.embed(BGE_QUERY_INSTRUCTION + text);
   }
 
   async embed(text: string): Promise<Float32Array> {

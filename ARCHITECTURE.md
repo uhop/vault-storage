@@ -34,7 +34,7 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 
 ## Embeddings (`src/embeddings/`)
 
-- **`types.ts`** — the `Embedder` interface.
+- **`types.ts`** — the `Embedder` interface: `embed` and `embedBatch` for passages, `embedQuery` for search queries, where BGE adds its retrieval instruction (`BGE_QUERY_INSTRUCTION` in `model.ts`, D47).
 - **`bge.ts`** — `Xenova/bge-small-en-v1.5` (384-dim, CLS-pool, L2-norm) via `@huggingface/transformers` ONNX on CPU; held by a `time-queues` Retainer that frees the ~GB arena after idle; `maxBatch` sub-batching; NaN-vector retry + logging.
 - **`fake.ts`** — deterministic sha256-seeded unit vectors; used by tests and `VAULT_EMBEDDER=fake`.
 - **`child-embedder.ts`** / **`embed-child.ts`** — `ChildProcessEmbedder`: the server's embedder, running `BgeEmbedder` in a forked child over advanced-serialization IPC, so inference never blocks the event loop (D44). Not a worker thread: onnxruntime-node's binding loads once per process, so a second thread or a restarted worker fails with "Module did not self-register". Mirrors `retained` from the child, restarts it on the next call after an exit, and exposes `pid` for the memory line. The CLI keeps `BgeEmbedder` in-process.

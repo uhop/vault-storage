@@ -32,6 +32,19 @@ test('ChildProcessEmbedder returns what the embedder inside it returns', async t
   }
 });
 
+test('ChildProcessEmbedder adds the query instruction for BGE only', async t => {
+  const fake = new ChildProcessEmbedder({kind: 'fake'});
+  try {
+    t.deepEqual(
+      Array.from(await fake.embedQuery('a query')),
+      Array.from(await fake.embed('a query')),
+      'a fake child embeds the query as given'
+    );
+  } finally {
+    await fake.terminate();
+  }
+});
+
 test('ChildProcessEmbedder resolves concurrent calls to their own results', async t => {
   const embedder = new ChildProcessEmbedder({kind: 'fake'});
   const local = new FakeEmbedder();

@@ -231,6 +231,9 @@ test('embedPending', async t => {
       async embedBatch(texts: string[]): Promise<Float32Array[]> {
         return Promise.all(texts.map(t => this.embed(t)));
       }
+      embedQuery(text: string): Promise<Float32Array> {
+        return this.embed(text);
+      }
       async releaseRetained(): Promise<void> {}
     }
 
@@ -312,6 +315,10 @@ class CountingEmbedder implements Embedder {
 
   async embed(text: string): Promise<Float32Array> {
     return (await this.embedBatch([text]))[0]!;
+  }
+
+  embedQuery(text: string): Promise<Float32Array> {
+    return this.embed(text);
   }
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {

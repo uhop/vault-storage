@@ -13,6 +13,8 @@ export interface Embedder {
   embed(text: string): Promise<Float32Array>;
   /** Embed many texts. Implementations may batch internally for throughput. */
   embedBatch(texts: string[]): Promise<Float32Array[]>;
+  /** Embed a search query; a model that wants a query instruction adds it here, and passages never get one. */
+  embedQuery(text: string): Promise<Float32Array>;
   /**
    * True when the embedder is currently holding a loaded model (or other
    * heavyweight native resource) in memory. False right after construction

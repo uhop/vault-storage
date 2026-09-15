@@ -512,6 +512,9 @@ class BagOfWordsEmbedder implements Embedder {
   async embed(text: string): Promise<Float32Array> {
     return this.#vec(text);
   }
+  async embedQuery(text: string): Promise<Float32Array> {
+    return this.#vec(text);
+  }
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     return texts.map(t => this.#vec(t));
   }
