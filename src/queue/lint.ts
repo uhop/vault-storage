@@ -4,8 +4,11 @@
 // § Archiving mechanics and § Malformations the parser can't warn about: the
 // queue_items parser (`parse.ts`) reads only the three schema H2s and drops
 // the rest without a word, an item edited to say SHIPPED is still an open
-// item to every queue view, and a heading glued to the previous line is a
-// paragraph. Ported 2026-09-06 from claude-config's
+// item to every queue view, a heading glued to the previous line is a
+// paragraph, a bold-led paragraph with no item above it is not an item to the
+// parser or the item ops (below an item it is that item's prose), and a
+// placeholder other than the bare `(empty)` is prose the archive should hold
+// (2026-09-16). Ported 2026-09-06 from claude-config's
 // `skills/vault-lint/queue-lint.mjs`, calibrated there on all 53 fleet queues
 // (claude-config D16); the fixture in `tests/test-queue-lint.ts` pins the
 // port. Structural detection mirrors `parse.ts` — same masking, same bullet
@@ -31,6 +34,8 @@ const H2_RE = /^##\s+(.+?)\s*$/;
 // bullets); the same rule here keeps the server comparison exact.
 const BULLET_RE = /^[-*+][ \t]+(?:\[([ xX~])\][ \t]+)?(.*)$/;
 const TITLE_RE = /^\*\*(.+?)\*\*/;
+const PLACEHOLDER_RE = /^\(empty\b/;
+const BARE_PLACEHOLDER = '(empty)';
 const GLUED_RE = /\S\s*#{2,3} +(Active|Backlog|Watching)\b/;
 
 export interface QueueLintItem {
@@ -43,12 +48,23 @@ export interface QueueLintItem {
   first: string;
 }
 
+/** A column-0 paragraph start: what a bold-led "item" or an `(empty…)` placeholder is to the parser. */
+export interface QueueLintParagraph {
+  /** 1-based line within the body. */
+  line: number;
+  /** The paragraph's first line as the author wrote it, trimmed. */
+  first: string;
+  /** No item above it in its section: nothing owns it, so the parser drops it. */
+  orphan: boolean;
+}
+
 export interface QueueLintSection {
   heading: string | null;
   line: number;
   known: boolean;
   prose: boolean;
   items: QueueLintItem[];
+  paragraphs: QueueLintParagraph[];
 }
 
 export interface ParsedQueueLint {
@@ -66,45 +82,55 @@ export const parseQueue = (body: string): ParsedQueueLint => {
     line: 0,
     known: false,
     prose: false,
-    items: []
+    items: [],
+    paragraphs: []
   };
   const sections: QueueLintSection[] = [];
   const glued: Array<{line: number; text: string}> = [];
   let current = preamble;
   const raw = body.split('\n');
-  maskCodeRegions(body)
-    .split('\n')
-    .forEach((line, i) => {
-      const h2 = H2_RE.exec(line);
-      if (h2) {
-        const heading = h2[1] ?? '';
-        current = {
-          heading,
-          line: i + 1,
-          known: isSchema(heading),
-          prose: PROSE_H2.some(re => re.test(heading)),
-          items: []
-        };
-        sections.push(current);
-        return;
-      }
-      if (/^#{1,6}\s/.test(line)) return;
-      if (GLUED_RE.test(line)) glued.push({line: i + 1, text: (raw[i] ?? '').trim()});
-      const b = BULLET_RE.exec(line);
-      if (!b) return;
-      const rest = b[2] ?? '';
-      if (rest.trim().length === 0) return; // parse.ts skips a bullet with no content
-      // Structure comes from the masked line; the title shown is the author's,
-      // with its code spans (masking preserves length, so the slice aligns).
-      const t = TITLE_RE.exec(rest);
-      const first = BULLET_RE.exec(raw[i] ?? '')?.[2] ?? rest;
-      current.items.push({
+  const masked = maskCodeRegions(body).split('\n');
+  masked.forEach((line, i) => {
+    const h2 = H2_RE.exec(line);
+    if (h2) {
+      const heading = h2[1] ?? '';
+      current = {
+        heading,
         line: i + 1,
-        checkbox: b[1] ?? null,
-        title: t ? first.slice(2, 2 + (t[1] ?? '').length) : null,
-        first
-      });
+        known: isSchema(heading),
+        prose: PROSE_H2.some(re => re.test(heading)),
+        items: [],
+        paragraphs: []
+      };
+      sections.push(current);
+      return;
+    }
+    if (/^#{1,6}\s/.test(line)) return;
+    if (GLUED_RE.test(line)) glued.push({line: i + 1, text: (raw[i] ?? '').trim()});
+    const b = BULLET_RE.exec(line);
+    if (!b) {
+      const prev = masked[i - 1] ?? '';
+      if (/^\S/.test(line) && (/^\s*$/.test(prev) || /^#{1,6}\s/.test(prev)))
+        current.paragraphs.push({
+          line: i + 1,
+          first: (raw[i] ?? '').trim(),
+          orphan: current.items.length === 0
+        });
+      return;
+    }
+    const rest = b[2] ?? '';
+    if (rest.trim().length === 0) return; // parse.ts skips a bullet with no content
+    // Structure comes from the masked line; the title shown is the author's,
+    // with its code spans (masking preserves length, so the slice aligns).
+    const t = TITLE_RE.exec(rest);
+    const first = BULLET_RE.exec(raw[i] ?? '')?.[2] ?? rest;
+    current.items.push({
+      line: i + 1,
+      checkbox: b[1] ?? null,
+      title: t ? first.slice(2, 2 + (t[1] ?? '').length) : null,
+      first
     });
+  });
   return {preamble, sections, glued};
 };
 
@@ -163,6 +189,22 @@ export const queueFindings = (parsed: ParsedQueueLint): string[] => {
     if (plain.length)
       out.push(
         `${s.heading}: ${plural(plain.length, 'unbolded column-0 bullet')} counted as ${plain.length === 1 ? 'an item' : 'items'}, first "${short(plain[0]?.first ?? '')}" — bold a title, or indent detail under its item`
+      );
+    const boldLed = s.paragraphs.filter(p => p.orphan && TITLE_RE.test(p.first));
+    if (boldLed.length)
+      out.push(
+        `${s.heading}: ${plural(boldLed.length, 'bold-led paragraph')} with no item above ${boldLed.length === 1 ? 'it' : 'them'} — the parser drops it and the item ops cannot find it, first "${short(boldLed[0]?.first ?? '')}" — start the line with "- "`
+      );
+    const placeholders = s.paragraphs.filter(p => PLACEHOLDER_RE.test(p.first));
+    for (const p of placeholders) {
+      if (p.first !== BARE_PLACEHOLDER)
+        out.push(
+          `${s.heading}: placeholder is not the bare "(empty)" — "${short(p.first)}" — write the bare form; the prose belongs in queue-archive`
+        );
+    }
+    if (s.items.length && placeholders.length)
+      out.push(
+        `${s.heading}: ${plural(s.items.length, 'item')} and an "(empty…)" placeholder together — remove the placeholder`
       );
   }
   for (const g of parsed.glued)

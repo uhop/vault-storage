@@ -116,6 +116,17 @@ test('insertItem: start and end, the (empty) placeholder, and a created section'
       !active.body.includes('(empty)'),
     'placeholder replaced'
   );
+  const embellished = DOC.replace(
+    '(empty)',
+    '(empty — last shipped 1.2.2 on 2026-07-10; see the archive.)'
+  );
+  const intoEmbellished = insertItem(embellished, '## Active', '- **Now.** Started.', 'end', false);
+  t.ok(
+    intoEmbellished.ok &&
+      intoEmbellished.body.includes('## Active\n\n- **Now.** Started.\n\n## Backlog') &&
+      !intoEmbellished.body.includes('(empty'),
+    'an embellished placeholder is replaced too'
+  );
   t.deepEqual(
     insertItem(DOC, '## Nope', '- **X.**', 'end', false),
     {ok: false, occurrences: 0},
@@ -155,4 +166,60 @@ test('withTrail: after the bold title, one space, continuation kept', async t =>
     '- **Title.** **Shipped.** trail Desc.\n  more'
   );
   t.equal(withTrail('- plain bullet', 'x'), '- plain bullet', 'no bold title: unchanged');
+});
+
+// The witness apodictum 0379391a51b8 served against the first isPlaceholder (2026-09-16):
+// "no blank line inside" is a proxy for "one paragraph", and a column-0 item glued right
+// under the placeholder line passed it — insert-item then replaced the section, item and all.
+test('insertItem: a placeholder is one paragraph — a glued item, an empty section, and a blank-line tail', t => {
+  const glued = '## Active\n\n(empty)\n- **Glued.** x\n\n## Backlog\n\n- **B.** y\n';
+  const kept = insertItem(glued, '## Active', '- **New.** z', 'end', false);
+  t.ok(
+    kept.ok && kept.body.includes('- **Glued.** x') && kept.body.includes('- **New.** z'),
+    'an item glued under the placeholder line survives the insert'
+  );
+  const embellishedGlued = glued.replace('(empty)', '(empty — last shipped 1.0.0.)');
+  const keptToo = insertItem(embellishedGlued, '## Active', '- **New.** z', 'end', false);
+  t.ok(keptToo.ok && keptToo.body.includes('- **Glued.** x'), 'and under an embellished one');
+  const fenced = '## Active\n\n(empty)\n```\ncode\n```\n\n## Backlog\n\n- **B.** y\n';
+  const keptFence = insertItem(fenced, '## Active', '- **New.** z', 'end', false);
+  t.ok(keptFence.ok && keptFence.body.includes('```\ncode\n```'), 'a glued fence survives too');
+
+  const empty = '## Active\n\n## Backlog\n\n- **B.** y\n';
+  const intoEmpty = insertItem(empty, '## Active', '- **New.** z', 'end', false);
+  t.equal(
+    intoEmpty.ok ? intoEmpty.body : '',
+    '## Active\n\n- **New.** z\n\n## Backlog\n\n- **B.** y\n',
+    'an empty section takes the item framed by blank lines'
+  );
+
+  const tail = '## Active\n\n(empty)\n\nProse after a blank line.\n\n## Backlog\n\n- **B.** y\n';
+  const withTail = insertItem(tail, '## Active', '- **New.** z', 'end', false);
+  t.ok(
+    withTail.ok &&
+      withTail.body.includes('(empty)') &&
+      withTail.body.includes('Prose after a blank line.\n\n- **New.** z'),
+    'a placeholder followed by a second block is not a placeholder-only section'
+  );
+
+  // The three regions the apodictum audit (c1f687a4c290, 409ef47f9eee) found no test reaching.
+  const watching = insertItem(DOC, '## Watching', '- **New.** z', 'end', false);
+  t.ok(
+    watching.ok && watching.body.includes('- **Watched.** Upstream.\n\n- **New.** z'),
+    'a one-line section that is not a placeholder keeps its line'
+  );
+  const lazy =
+    '## Active\n\n(empty — last shipped 1.0\non 2026-09-01.)\n\n## Backlog\n\n- **B.** y\n';
+  const lazyReplaced = insertItem(lazy, '## Active', '- **New.** z', 'end', false);
+  t.equal(
+    lazyReplaced.ok ? lazyReplaced.body : '',
+    '## Active\n\n- **New.** z\n\n## Backlog\n\n- **B.** y\n',
+    'a placeholder wrapped over two lines is still one paragraph'
+  );
+  const heading = '## Active\n\n(empty)\n### Sub\n- **Glued.** x\n\n## Backlog\n\n- **B.** y\n';
+  const headingKept = insertItem(heading, '## Active', '- **New.** z', 'end', false);
+  t.ok(
+    headingKept.ok && headingKept.body.includes('(empty)\n### Sub\n- **Glued.** x\n\n- **New.** z'),
+    'a heading glued under the placeholder line ends the paragraph'
+  );
 });

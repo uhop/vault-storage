@@ -61,8 +61,10 @@ export interface QueueHygieneFinding {
 /**
  * Queue hygiene over every `projects/<name>/queue.md`: the convention's
  * malformations the parser cannot warn about (items under a non-schema H2,
- * completion markers on open items, unbolded column-0 bullets, a heading
- * glued to prose), plus the served `queue_items` count against the markdown —
+ * completion markers on open items, unbolded column-0 bullets, bold-led
+ * paragraphs nothing owns, placeholders other than the bare `(empty)` or beside an item,
+ * a heading glued to prose), plus the served `queue_items` count against the
+ * markdown —
  * a mismatch is a stale slice or parser drift. One entry per defect; the
  * resume brief filters it to the session's project.
  */

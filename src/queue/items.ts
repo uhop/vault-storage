@@ -89,11 +89,27 @@ export const withTrail = (item: string, trail: string): string => {
 export type InsertOutcome =
   {ok: true; body: string; created: boolean} | {ok: false; occurrences: number};
 
-const EMPTY_PLACEHOLDER = /^\s*\(empty\)\s*$/;
+// The bare `(empty)`, or the embellished paragraph agents write when a section
+// empties (`(empty — last shipped …)`, node-re2 2026-09-08): one paragraph
+// opening that way is the placeholder, and its prose belongs in the archive.
+// One paragraph: no later line is blank or opens a column-0 bullet, a heading,
+// or a fence — a glued item is an item, not placeholder prose (apodictum
+// 0379391a51b8, 2026-09-16); an indented bullet continues the paragraph, as
+// it does for every item in this file.
+const FENCE_RE = /^(?:```|~~~)/;
+const isPlaceholder = (inner: string): boolean => {
+  const [first = '', ...rest] = inner.split('\n');
+  return (
+    first.trimStart().startsWith('(empty') &&
+    rest.every(
+      l => l.trim().length > 0 && !BULLET_RE.test(l) && !HEADING_RE.test(l) && !FENCE_RE.test(l)
+    )
+  );
+};
 
 /**
  * Put `item` at the start or end of the section under `heading`, framed by
- * blank lines; an `(empty)` placeholder is replaced. With `createSection`
+ * blank lines; an `(empty)` placeholder, bare or embellished, is replaced. With `createSection`
  * a missing heading is added before the first heading of the same level
  * (a newest-first archive's new date block), or at the end when none exists.
  */
@@ -128,7 +144,7 @@ export const insertItem = (
   const inner = content.replace(/^\n+/, '').replace(/\s+$/, '');
   const last = span.end === body.length;
   let merged: string;
-  if (inner.length === 0 || EMPTY_PLACEHOLDER.test(inner)) merged = block;
+  if (inner.length === 0 || isPlaceholder(inner)) merged = block;
   else merged = position === 'start' ? `${block}\n\n${inner}` : `${inner}\n\n${block}`;
   const framed = last ? `\n\n${merged}\n` : `\n\n${merged}\n\n`;
   return {ok: true, body: before + framed + after, created: false};

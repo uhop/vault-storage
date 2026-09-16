@@ -161,3 +161,74 @@ test('queue lint: a clean queue has no findings and an exact count', t => {
     /^queue_items holds 5 items, the markdown 2 column-0 bullets/
   );
 });
+
+// The two shapes found on 2026-09-08 (blog's bold-led Active paragraphs, node-re2's
+// embellished placeholder under a filed item) and the tape-six-puppeteer prose placeholder.
+const PARAGRAPHS = `Intro paragraph.
+
+## Active
+
+(empty — last shipped 1.26.1 on 2026-07-21: the release notes carry the rest.)
+
+- **Review item filed into the embellished section.** Body.
+
+## Backlog
+
+**_Series hub_ — traffic follow-up, open.** A bold-led paragraph, not a bullet.
+
+- **Real item.** With a body.
+
+Plain prose under the item, at column 0, is not a finding.
+
+**Amended 2026-09-16 — still open.** A bold-led amendment below an item is that item's prose.
+
+\`\`\`
+**Fenced bold.** Not a paragraph.
+(empty — fenced)
+\`\`\`
+
+## Watching
+
+(empty)
+`;
+
+test('queue lint: bold-led paragraphs, and placeholders that are not the bare (empty) or sit beside an item', t => {
+  const parsed = parseQueue(PARAGRAPHS);
+  const out = queueFindings(parsed);
+  const has = (re: RegExp): void => {
+    t.ok(
+      out.some(d => re.test(d)),
+      `missing ${re}\n${out.join('\n')}`
+    );
+  };
+  has(/^Active: placeholder is not the bare "\(empty\)" — "\(empty — last shipped 1\.26\.1/);
+  has(/^Active: 1 item and an "\(empty…\)" placeholder together/);
+  has(/^Backlog: 1 bold-led paragraph with no item above it — .* first "\*\*_Series hub_/);
+  t.notOk(
+    out.some(d => /Watching|Plain prose|Real item|Amended|Fenced|fenced/.test(d)),
+    out.join('\n')
+  );
+  t.equal(out.length, 3, out.join('\n'));
+  t.equal(itemCount(parsed), 2, 'the bold-led paragraph is not an item; the bullets are');
+});
+
+// The two paragraph-start worlds no fixture above reaches (apodictum audit 5b0015b94b26).
+test('queue lint: a paragraph starts after a heading, and a second column-0 line does not start one', t => {
+  const underHeading = parseQueue(
+    '## Active\n(empty — glued under the heading)\n\n## Backlog\n\n- **B.** y\n'
+  );
+  t.equal(underHeading.sections[0]?.paragraphs.length, 1, 'a paragraph right under its heading');
+  t.ok(
+    queueFindings(underHeading).some(d => /^Active: placeholder is not the bare/.test(d)),
+    'and the embellished placeholder is reported there'
+  );
+  const twoLines = parseQueue(
+    '## Backlog\n\n**Two-line bold-led.** first line\nsecond line at column 0\n\n- **B.** y\n'
+  );
+  t.equal(twoLines.sections[0]?.paragraphs.length, 1, 'a continuation line is not a new paragraph');
+  t.equal(
+    queueFindings(twoLines).filter(d => /bold-led paragraph/.test(d)).length,
+    1,
+    'one finding for the one paragraph'
+  );
+});
