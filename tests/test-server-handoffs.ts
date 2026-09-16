@@ -248,7 +248,7 @@ test('handoffs: touches are declared, validated, echoed, and reported as overlap
   }
 });
 
-test('handoffs: verification is bound to the artifact base sha; stale shows, resolved refuses', async t => {
+test('handoffs: verification is bound to the artifact on record; stale shows, resolved refuses', async t => {
   const ctx = await startCtx();
   try {
     const created = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-v1'));
@@ -262,17 +262,23 @@ test('handoffs: verification is bound to the artifact base sha; stale shows, res
       by: 'mba/session-b'
     });
     t.equal(early.status, 200);
+    t.equal(early.body.handoff.verifications[0].artifact_sha256, null, 'no artifact on record');
     t.equal(
       early.body.handoff.verifications[0].stale,
       null,
       'no artifact yet: nothing to judge against'
     );
 
-    const put = await fetch(`${ctx.url}/handoffs/${id}/artifact?ext=patch&actor=mba`, {
-      method: 'PUT',
-      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/octet-stream'},
-      body: PATCH_WITH_BASE
-    });
+    const putArtifact = (body: string) =>
+      fetch(`${ctx.url}/handoffs/${id}/artifact?ext=patch&actor=mba`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${TEST_TOKEN}`,
+          'Content-Type': 'application/octet-stream'
+        },
+        body
+      });
+    const put = await putArtifact(PATCH_WITH_BASE);
     t.equal(put.status, 200);
     const afterPut = await api(`${ctx.url}/handoffs/${id}`, 'GET');
     t.equal(
@@ -280,16 +286,43 @@ test('handoffs: verification is bound to the artifact base sha; stale shows, res
       '0123456789abcdef0123456789abcdef01234567',
       'base-commit parsed'
     );
-    t.equal(afterPut.body.verifications[0].stale, true, 'the earlier pass ran on another sha');
+    t.equal(afterPut.body.verifications[0].stale, true, 'the earlier pass predates the artifact');
 
     const fresh = await api(`${ctx.url}/handoffs/verify`, 'POST', {
       id,
       check: 'npm test',
-      sha: '0123456789abcdef0123456789abcdef01234567',
+      sha: 'fedcba9',
       exit: 0,
       by: 'mba/session-b'
     });
-    t.equal(fresh.body.handoff.verifications[1].stale, false, 'a pass on the base sha is current');
+    t.equal(
+      fresh.body.handoff.verifications[1].artifact_sha256,
+      afterPut.body.artifact.sha256,
+      'bound to the artifact on record'
+    );
+    t.equal(
+      fresh.body.handoff.verifications[1].stale,
+      false,
+      'current whatever its sha: a head commit is never the base'
+    );
+
+    const reput = await putArtifact(PATCH_WITH_BASE.replace('fix the matcher', 'fix it again'));
+    t.equal(reput.status, 200);
+    const afterReput = await api(`${ctx.url}/handoffs/${id}`, 'GET');
+    t.equal(afterReput.body.verifications[1].stale, true, 'a resubmitted artifact stales the pass');
+
+    const again = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'npm test',
+      sha: '9876543',
+      exit: 0,
+      by: 'nuke/owner'
+    });
+    t.equal(
+      again.body.handoff.verifications[2].stale,
+      false,
+      'a pass on the new artifact is current'
+    );
 
     const badSha = await api(`${ctx.url}/handoffs/verify`, 'POST', {
       id,
@@ -336,11 +369,15 @@ test('handoffs: verification is bound to the artifact base sha; stale shows, res
       archive.includes('- base: `0123456789abcdef0123456789abcdef01234567`'),
       'archive carries the base sha'
     );
+    const verified = archive.split('\n').filter(line => line.startsWith('- verified: '));
+    t.equal(verified.length, 3, 'archive carries every verification');
     t.ok(
-      archive.includes('- verified: `npm test` at `abc1234` exit 0 by `mba/session-b`'),
-      'archive carries the verification'
+      verified[0]!.includes('`npm test` at `abc1234` exit 0 by `mba/session-b`') &&
+        verified[0]!.endsWith('— stale'),
+      'and marks the pass that predates the artifact stale'
     );
-    t.ok(archive.includes('— stale'), 'and marks the stale one');
+    t.ok(verified[1]!.endsWith('— stale'), 'and the pass on the replaced artifact');
+    t.ok(!verified[2]!.endsWith('— stale'), 'but not the pass on the artifact that landed');
   } finally {
     await stopCtx(ctx);
   }
@@ -371,6 +408,20 @@ test('handoffs: resubmit replaces touches, and a restart rebuilds them from the 
     });
     t.equal(re.status, 200);
     t.equal(re.body.handoff.touches.length, 2, 'touches replaced whole');
+    const put = await fetch(`${ctx.url}/handoffs/${id}/artifact?ext=patch&actor=mba`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/octet-stream'},
+      body: PATCH_WITH_BASE
+    });
+    t.equal(put.status, 200);
+    const verified = await api(`${ctx.url}/handoffs/verify`, 'POST', {
+      id,
+      check: 'npm test',
+      sha: 'abc1234',
+      exit: 0,
+      by: 'mba/session-b'
+    });
+    t.equal(verified.body.handoff.verifications[0].stale, false, 'bound to the artifact');
 
     const root = ctx.root;
     await stopCtx(ctx, true);
@@ -378,6 +429,12 @@ test('handoffs: resubmit replaces touches, and a restart rebuilds them from the 
     try {
       const row = await api(`${again.url}/handoffs/${id}`, 'GET');
       t.equal(row.body.touches.length, 2, 'rebuilt from the sidecar');
+      t.equal(
+        row.body.verifications[0].artifact_sha256,
+        row.body.artifact.sha256,
+        'the verification came back with its artifact binding'
+      );
+      t.equal(row.body.verifications[0].stale, false, 'and is still current');
     } finally {
       await stopCtx(again);
     }

@@ -59,7 +59,14 @@ export interface SpoolSidecar {
   result?: Record<string, unknown>;
   notes: {author: string; at: string; text: string}[];
   touches?: {kind: string; key: string; operation: string}[];
-  verifications?: {check: string; sha: string; exit: number; at: string; by: string}[];
+  verifications?: {
+    check: string;
+    sha: string;
+    exit: number;
+    at: string;
+    by: string;
+    artifact_sha256?: string | null;
+  }[];
   base_sha?: string;
 }
 

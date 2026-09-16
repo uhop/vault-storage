@@ -70,8 +70,10 @@ export interface HandoffTouch {
 
 /**
  * A gate somebody ran, bound to the sha it ran on: the submitter at export,
- * the owner after apply. Judged stale against the artifact's `base-commit`,
- * never trusted across a changed patch.
+ * the owner after apply. Judged stale against the artifact it was recorded
+ * under (`artifact_sha256`, null before any upload), never against the sha:
+ * a patch's base is not what a gate ran on, and the owner's applied commit
+ * is not in the artifact at all (2026-09-16).
  */
 export interface HandoffVerification {
   check: string;
@@ -79,7 +81,11 @@ export interface HandoffVerification {
   exit: number;
   at: string;
   by: string;
+  artifact_sha256: string | null;
 }
+
+export const verificationStale = (h: Handoff, v: HandoffVerification): boolean | null =>
+  h.artifact === null ? null : v.artifact_sha256 !== h.artifact.sha256;
 
 export {HANDOFF_STATUSES, type HandoffStatus};
 
@@ -240,7 +246,10 @@ const toHandoff = (row: HandoffRow): Handoff => ({
   result: row.result === null ? null : (JSON.parse(row.result) as Record<string, unknown>),
   notes: JSON.parse(row.notes) as HandoffNote[],
   touches: JSON.parse(row.touches ?? '[]') as HandoffTouch[],
-  verifications: JSON.parse(row.verifications ?? '[]') as HandoffVerification[],
+  verifications: (JSON.parse(row.verifications ?? '[]') as HandoffVerification[]).map(v => ({
+    ...v,
+    artifact_sha256: v.artifact_sha256 ?? null
+  })),
   baseSha: row.base_sha ?? null,
   artifact: null
 });
@@ -587,7 +596,11 @@ export class HandoffsRepository {
     if (current.status === 'done' || current.status === 'rejected') {
       return {status: 'resolved', current};
     }
-    const entry: HandoffVerification = {...record, at};
+    const entry: HandoffVerification = {
+      ...record,
+      at,
+      artifact_sha256: current.artifact?.sha256 ?? null
+    };
     const next: Handoff = {
       ...current,
       updated: at,

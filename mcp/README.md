@@ -105,8 +105,8 @@ The tools map to the REST surface, grouped by purpose:
   (`done`/`rejected` archive into the project's `handoff-archive.md`;
   `returned` reopens the same record with a mandatory critique note),
   `vault_handoff_resubmit`, `vault_handoff_note`, `vault_handoff_verify` (a
-  gate's result bound to the sha it ran on, shown `stale` against the
-  artifact's base sha), `vault_handoff_events`,
+  gate's result bound to the sha it ran on and to the artifact on record,
+  shown `stale` once that artifact is replaced), `vault_handoff_events`,
   `vault_handoff_put_artifact` / `vault_handoff_get_artifact` (the transported
   work — a `git format-patch` series or a bundle, 10 MB cap; the getter
   returns metadata unless `include_content` is set)

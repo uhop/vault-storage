@@ -23,6 +23,7 @@ import {
   MAX_CLAIM_TTL_SECONDS,
   MIN_CLAIM_TTL_SECONDS,
   SPOOL_REF_TYPE,
+  verificationStale,
   type Handoff,
   type HandoffKind,
   type HandoffRefType,
@@ -62,11 +63,7 @@ const toApi = (h: Handoff): Record<string, unknown> => ({
   notes: h.notes,
   touches: h.touches,
   base_sha: h.baseSha,
-  // A verification is trusted only against the artifact it ran on.
-  verifications: h.verifications.map(v => ({
-    ...v,
-    stale: h.baseSha === null ? null : v.sha !== h.baseSha
-  })),
+  verifications: h.verifications.map(v => ({...v, stale: verificationStale(h, v)})),
   artifact: h.artifact
 });
 
@@ -603,10 +600,10 @@ export const resubmitHandoffHandler =
 
 /**
  * POST /handoffs/verify — record a gate's result bound to the sha it ran on:
- * `{id, check, sha, exit, by}`. Append-only; the response (and every read)
- * shows each verification with `stale`, judged against the artifact's
- * `base-commit`, so a pass on an older patch is shown as such rather than
- * trusted.
+ * `{id, check, sha, exit, by}`. Append-only; the record carries the sha256 of
+ * the artifact present when it was made, and the response (and every read)
+ * shows each verification with `stale` once the artifact differs, so a pass
+ * on an older patch is shown as such rather than trusted.
  */
 export const verifyHandoffHandler =
   (deps: HandoffDeps): Handler =>
@@ -856,7 +853,7 @@ export const completeHandoffArchival = (
     }
     if (handoff.baseSha !== null) lines.push(`- base: \`${handoff.baseSha}\``);
     for (const v of handoff.verifications) {
-      const stale = handoff.baseSha !== null && v.sha !== handoff.baseSha ? ' — stale' : '';
+      const stale = verificationStale(handoff, v) === true ? ' — stale' : '';
       lines.push(
         `- verified: \`${v.check}\` at \`${v.sha}\` exit ${v.exit} by \`${v.by}\` (${v.at})${stale}`
       );

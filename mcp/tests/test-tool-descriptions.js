@@ -24,7 +24,7 @@ const REQUIRED_MENTIONS = {
   vault_move_item: ['trail', 'item_assert_failed', 'etag'],
   vault_insert_item: ['etag', 'created', 'section_assert_failed'],
   vault_remove_item: ['etag', 'removed', 'item_assert_failed'],
-  vault_handoff_verify: ['stale', 'base_sha', 'handoff_resolved'],
+  vault_handoff_verify: ['stale', 'artifact_sha256', 'base_sha', 'handoff_resolved'],
   vault_create_suggestion: ['evidence', 'invalid_enum_value'],
   vault_read_suggestion: ['evidence', 'asserted'],
   vault_search: ['as_of'],

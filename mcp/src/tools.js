@@ -1006,7 +1006,7 @@ export const registerTools = (mcp, client) => {
     operation: z.enum(['add', 'extend', 'modify', 'replace', 'remove', 'rename'])
   });
   const HANDOFF_SHAPE =
-    '{id, idempotency_key, project, to, kind, ref: {type, value} | null, from: {host, session, repo}, body, status, created, updated, claimed_by, claimed_at, claim_expires, result, notes: [{author, at, text}], touches: [{kind, key, operation}], base_sha, verifications: [{check, sha, exit, at, by, stale}]}';
+    '{id, idempotency_key, project, to, kind, ref: {type, value} | null, from: {host, session, repo}, body, status, created, updated, claimed_by, claimed_at, claim_expires, result, notes: [{author, at, text}], touches: [{kind, key, operation}], base_sha, verifications: [{check, sha, exit, at, by, artifact_sha256, stale}]}';
 
   mcp.registerTool(
     'vault_handoff_list',
@@ -1182,7 +1182,7 @@ export const registerTools = (mcp, client) => {
     'vault_handoff_verify',
     {
       description:
-        'Record that a gate ran on a handoff, bound to the sha it ran on: {id, check, sha, exit, by} — the submitter after export (the check name, the exit code, the commit the patch was cut from), the owner after apply. Append-only; refused with 409 handoff_resolved once the handoff is done or rejected. Every read of the handoff shows each verification with stale: true when its sha is not the artifact\'s base_sha (parsed from the format-patch base-commit trailer), null when there is no artifact to judge against — a pass on an older patch is shown, never trusted. Returns {status: "ok", handoff}.',
+        'Record that a gate ran on a handoff, bound to the sha it ran on: {id, check, sha, exit, by} — the submitter after export (the check name, the exit code, the head commit the gates ran on), the owner after apply (the applied commit). Append-only; refused with 409 handoff_resolved once the handoff is done or rejected. The record carries artifact_sha256, the artifact present when it was made (null before any upload), and every read of the handoff shows each verification with stale: true once the artifact differs from that one (a resubmitted patch), false while it is the same, null when there is no artifact to judge against — a pass on an older patch is shown, never trusted. The sha is informational and never compared with base_sha, the base-commit trailer of a patch. Returns {status: "ok", handoff}.',
       inputSchema: {
         id: z.string().min(1),
         check: z.string().min(1).describe('The gate, e.g. "npm test" or "ts-check"'),
