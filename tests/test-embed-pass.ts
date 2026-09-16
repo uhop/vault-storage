@@ -5,7 +5,7 @@ import {runMigrations} from '../src/db/migrate.ts';
 import {RecordSummaryVecRepository} from '../src/db/summary-vec-repo.ts';
 import {RecordVecRepository} from '../src/db/vec-repo.ts';
 import {chunkBody} from '../src/embeddings/chunker.ts';
-import {embedAllPending, embedPending} from '../src/embeddings/embed-pass.ts';
+import {countEmbedPending, embedAllPending, embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import type {Embedder} from '../src/embeddings/types.ts';
 import {backfillChunkTextHashes} from '../src/maintenance/backfill-chunk-text-hashes.ts';
@@ -657,13 +657,16 @@ test('embedPending with maxEmbeds runs one round', async t => {
     const embedder = new CountingEmbedder();
     try {
       for (let i = 0; i < 3; ++i) fx.records.insert(makeRecord(`topics/${i}.md`, `body-${i}`));
+      t.equal(countEmbedPending(fx.db), 3, 'every record is pending before the first round');
       const first = await embedPending(fx.db, embedder, {maxEmbeds: 2});
+      t.equal(countEmbedPending(fx.db), 1, 'the count is what the round reports as remaining');
       t.equal(first.embedded, 2, 'two single-chunk records fill the budget');
       t.equal(first.remaining, 1, 'one record left');
       t.equal(first.upToDate, 0, 'neither embedded nor remaining counts as up to date');
       const second = await embedPending(fx.db, embedder, {maxEmbeds: 2});
       t.equal(second.embedded, 1, 'the next round takes the rest');
       t.equal(second.remaining, 0, 'nothing left');
+      t.equal(countEmbedPending(fx.db), 0, 'and the count agrees');
     } finally {
       fx.db.close();
     }

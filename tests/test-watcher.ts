@@ -230,3 +230,43 @@ test('watcher: a drain embeds one round and the next drain continues the backlog
     teardown(fx);
   }
 });
+
+test('watcher: a backlog-only drain logs its round, and the reindex line carries the remainder', async t => {
+  const fx = setup();
+  const backlog = EMBED_ROUND + 3;
+  for (let i = 0; i < backlog; ++i) {
+    writeMd(fx.root, `topics/backlog-${i}.md`, `---\ntitle: B${i}\n---\nbacklog body ${i}\n`);
+  }
+  importVault(fx.db, fx.root);
+  const lines: string[] = [];
+  const watcher = startWatcher({
+    db: fx.db,
+    vaultDataPath: fx.root,
+    embedder: fx.embedder,
+    debounceMs: 60_000,
+    log: msg => lines.push(msg)
+  });
+  try {
+    writeMd(fx.root, 'topics/edit.md', '---\ntitle: Edit\n---\nthe edit\n');
+    await sleep(150); // let fs.watch fire
+    await watcher.flush();
+    const left = backlog + 1 - EMBED_ROUND;
+    t.ok(
+      lines.some(
+        l => l.startsWith('reindex: ') && l.includes(` embed=${EMBED_ROUND} remaining=${left} `)
+      ),
+      'the reindex line says how much of the backlog is left'
+    );
+    await watcher.flush();
+    t.ok(
+      lines.includes(`embed: backlog embedded=${left} remaining=0`),
+      'a drain with no file change logs the round it embedded'
+    );
+    const before = lines.length;
+    await watcher.flush();
+    t.equal(lines.length, before, 'and an idle drain logs nothing');
+  } finally {
+    watcher.close();
+    teardown(fx);
+  }
+});

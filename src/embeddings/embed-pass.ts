@@ -71,6 +71,43 @@ const isAllFinite = (v: Float32Array): boolean => {
   return true;
 };
 
+// Records whose chunks or summary vector are missing or stale. A record's
+// chunks share one content_hash (set atomically together). `r.content_hash`
+// incorporates `agent_summary` (see `embedInputHash`), so a summary-only edit
+// is pending too, and reuses every chunk. Ids only, bodies per record: a
+// round reads the pending list again, and a backlog's bodies are megabytes.
+const PENDING_SQL = `SELECT r.record_id, r.content_hash
+   FROM records r
+  WHERE NOT EXISTS (
+          SELECT 1 FROM chunks c
+           WHERE c.record_id = r.record_id AND c.content_hash = r.content_hash)
+     OR (r.agent_summary IS NOT NULL AND r.agent_summary != ''
+         AND NOT EXISTS (
+           SELECT 1 FROM record_summaries s
+            WHERE s.record_id = r.record_id AND s.content_hash = r.content_hash))
+  ORDER BY r.modified_at DESC, r.record_id`;
+
+const failuresOf = (db: DatabaseSync): Map<string, Failure> => {
+  let failed = failures.get(db);
+  if (!failed) {
+    failed = new Map();
+    failures.set(db, failed);
+  }
+  return failed;
+};
+
+const pendingRecordIds = (db: DatabaseSync, failed: Map<string, Failure>, now: number): string[] =>
+  (db.prepare(PENDING_SQL).all() as {record_id: string; content_hash: string}[])
+    .filter(r => {
+      const f = failed.get(r.record_id);
+      return !f || f.contentHash !== r.content_hash || f.retryAt <= now;
+    })
+    .map(r => r.record_id);
+
+/** The records a pass would take now: pending, and not in retry backoff. */
+export const countEmbedPending = (db: DatabaseSync, now: number = Date.now()): number =>
+  pendingRecordIds(db, failuresOf(db), now).length;
+
 interface PendingRow {
   record_id: string;
   body: string;
@@ -156,11 +193,7 @@ const runEmbedPending = async (
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const maxEmbeds = options.maxEmbeds ?? Infinity;
   const now = (options.now ?? Date.now)();
-  let failed = failures.get(db);
-  if (!failed) {
-    failed = new Map();
-    failures.set(db, failed);
-  }
+  const failed = failuresOf(db);
 
   const totalRow = db.prepare('SELECT COUNT(*) AS n FROM records').get() as Record<
     string,
@@ -168,32 +201,7 @@ const runEmbedPending = async (
   > as {n: number};
   const total = totalRow.n;
 
-  // Records whose chunks or summary vector are missing or stale. A record's
-  // chunks share one content_hash (set atomically together). `r.content_hash`
-  // incorporates `agent_summary` (see `embedInputHash`), so a summary-only edit
-  // is pending too, and reuses every chunk. Ids only, bodies per record: a
-  // round reads the pending list again, and a backlog's bodies are megabytes.
-  const pending = (
-    db
-      .prepare(
-        `SELECT r.record_id, r.content_hash
-           FROM records r
-          WHERE NOT EXISTS (
-                  SELECT 1 FROM chunks c
-                   WHERE c.record_id = r.record_id AND c.content_hash = r.content_hash)
-             OR (r.agent_summary IS NOT NULL AND r.agent_summary != ''
-                 AND NOT EXISTS (
-                   SELECT 1 FROM record_summaries s
-                    WHERE s.record_id = r.record_id AND s.content_hash = r.content_hash))
-          ORDER BY r.modified_at DESC, r.record_id`
-      )
-      .all() as {record_id: string; content_hash: string}[]
-  )
-    .filter(r => {
-      const f = failed.get(r.record_id);
-      return !f || f.contentHash !== r.content_hash || f.retryAt <= now;
-    })
-    .map(r => r.record_id);
+  const pending = pendingRecordIds(db, failed, now);
   const rowStmt = db.prepare(
     'SELECT record_id, body, content_hash, agent_summary FROM records WHERE record_id = ?'
   );

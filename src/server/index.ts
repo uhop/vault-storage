@@ -3,7 +3,7 @@ import {mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {openDatabase} from '../db/connection.ts';
 import {runMigrations} from '../db/migrate.ts';
-import {embedAllPending} from '../embeddings/embed-pass.ts';
+import {countEmbedPending, embedAllPending} from '../embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {ChildProcessEmbedder} from '../embeddings/child-embedder.ts';
@@ -153,13 +153,20 @@ export const main = async (): Promise<void> => {
 
   // Last and not awaited: a backlog (every note, after a chunker change) takes
   // hours on croc, and nothing above may wait for it. Rounds let watcher drains
-  // embed their edits in between.
+  // embed their edits in between — and drain the backlog too, so the summary
+  // counts only this pass's rounds; the pending counts before and after are
+  // the whole drain.
   if (env.autoReindex) {
+    const pendingAtStart = countEmbedPending(db);
+    if (pendingAtStart > 0) {
+      process.stdout.write(`vault-storage: startup embed: ${pendingAtStart} pending\n`);
+    }
     embedAllPending(db, embedder).then(
       embed =>
         process.stdout.write(
           `vault-storage: startup embed done — ${embed.embedded} embedded, ` +
-            `${embed.chunksReused} chunks reused (${embed.durationMs} ms)\n`
+            `${embed.chunksReused} chunks reused, ${countEmbedPending(db)} still pending ` +
+            `(${embed.durationMs} ms)\n`
         ),
       err => {
         health.recordReindex({ok: false, error: err instanceof Error ? err.message : String(err)});

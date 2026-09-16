@@ -95,11 +95,11 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
   // round even when no file changed.
   let embedBacklog = false;
 
-  const embedRound = async (): Promise<number> => {
+  const embedRound = async (): Promise<{embedded: number; remaining: number}> => {
     const embed = await embedPending(db, embedder, {maxEmbeds: EMBED_ROUND});
     embedBacklog = embed.remaining > 0;
     if (embedBacklog) schedule();
-    return embed.embedded;
+    return {embedded: embed.embedded, remaining: embed.remaining};
   };
 
   const drain = async (): Promise<FlushSummary> => {
@@ -113,7 +113,11 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     };
     if (pending.size === 0) {
       if (!embedBacklog) return idle;
-      return {...idle, embedded: await embedRound()};
+      // The one drain that would otherwise leave no trace: the startup pass
+      // logs only its own rounds, and this one shares its queue.
+      const embed = await embedRound();
+      log(`embed: backlog embedded=${embed.embedded} remaining=${embed.remaining}`);
+      return {...idle, embedded: embed.embedded};
     }
     const batch = [...pending];
     pending.clear();
@@ -201,11 +205,12 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       now,
       ...(scoped ? {scope: changedRecordIds} : {})
     });
-    const embedded = await embedRound();
+    const embed = await embedRound();
 
     log(
       `reindex: imported=${imported} deleted=${deleted} errors=${errors} ` +
-        `edges=${edges.edgesCreated} embed=${embedded} queue_items=${queueItemsTouched}`
+        `edges=${edges.edgesCreated} embed=${embed.embedded} remaining=${embed.remaining} ` +
+        `queue_items=${queueItemsTouched}`
     );
     opts.health?.recordReindex({
       ok: errors === 0,
@@ -217,7 +222,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
       deleted,
       errors,
       edgesCreated: edges.edgesCreated,
-      embedded,
+      embedded: embed.embedded,
       queueItemsTouched
     };
   };
