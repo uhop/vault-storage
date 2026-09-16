@@ -1686,6 +1686,69 @@ test('POST /tags/taxonomy adds canonical and auto-resolves pending new_tag sugge
   }
 });
 
+test('PATCH /tags/taxonomy/{tag} rewrites the description and nothing else', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db
+        .prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)')
+        .run('harness', 'Claude Code harness', '2026-04-30');
+      const aliased = await fetchAuthed(`${ctx.url}/tags/aliases`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({alias: 'harnesses', canonical: 'harness'})
+      });
+      t.equal(aliased.status, 200, 'alias in place');
+      const patch = (tag: string, body: unknown) =>
+        fetchAuthed(`${ctx.url}/tags/taxonomy/${tag}`, {
+          method: 'PATCH',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+
+      const r = await patch('harness', {
+        description: 'Agent harnesses: Claude Code, OpenCode, and peers'
+      });
+      t.equal(r.status, 200);
+      t.deepEqual(r.body, {
+        tag: 'harness',
+        description: 'Agent harnesses: Claude Code, OpenCode, and peers'
+      });
+      const row = ctx.db
+        .prepare('SELECT description, added FROM tags_taxonomy WHERE tag = ?')
+        .get('harness') as {description: string | null; added: string};
+      t.equal(row.description, 'Agent harnesses: Claude Code, OpenCode, and peers', 'stored');
+      t.equal(row.added, '2026-04-30', 'the added date is untouched');
+      const viaAlias = await fetchAuthed(`${ctx.url}/tags/harnesses`);
+      t.equal(
+        (viaAlias.body as {description: string}).description,
+        'Agent harnesses: Claude Code, OpenCode, and peers',
+        'the alias reads the new description'
+      );
+
+      const cleared = await patch('harness', {description: null});
+      t.equal(cleared.status, 200);
+      t.equal((cleared.body as {description: string | null}).description, null, 'null clears it');
+
+      const missing = await patch('harness', {});
+      t.equal(missing.status, 400, 'a body without a description is refused');
+      const wrongType = await patch('harness', {description: 3});
+      t.equal(wrongType.status, 400, 'and so is a non-string');
+      const alias = await patch('harnesses', {description: 'x'});
+      t.equal(alias.status, 404, 'an alias is not a taxonomy row');
+      t.equal((alias.body as {code: string}).code, 'tag_not_found');
+      const unknown = await patch('nope', {description: 'x'});
+      t.equal(unknown.status, 404);
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('POST /tags/taxonomy returns 409 on duplicate', async t => {
   const {root, cleanup} = setup();
   try {

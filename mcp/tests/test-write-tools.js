@@ -46,10 +46,23 @@ test('the safe write tools are registered', t => {
     'vault_remove_item',
     'vault_insert_item',
     'vault_move_item',
-    'vault_patch_fm'
+    'vault_patch_fm',
+    'vault_tag_update'
   ]) {
     t.ok(tool(name), `${name} registered`);
   }
+});
+
+test('vault_tag_update → PATCH /tags/taxonomy/{tag} with the description', async t => {
+  const {call, getCaptured} = setup();
+  await call('vault_tag_update', {tag: 'harness', description: 'Agent harnesses'});
+  const captured = getCaptured();
+  t.equal(captured.init.method, 'PATCH');
+  t.equal(captured.url, 'http://test/tags/taxonomy/harness');
+  t.deepEqual(bodyOf(captured), {description: 'Agent harnesses'});
+  await call('vault_tag_update', {tag: 'a/b', description: null});
+  t.equal(getCaptured().url, 'http://test/tags/taxonomy/a%2Fb', 'the tag is path-encoded');
+  t.deepEqual(bodyOf(getCaptured()), {description: null}, 'null clears');
 });
 
 test('vault_append → POST /vault/edit with op=append', async t => {

@@ -68,7 +68,8 @@ import {
   addTaxonomyHandler,
   listTagsHandler,
   recordsByTagHandler,
-  tagInfoHandler
+  tagInfoHandler,
+  updateTaxonomyHandler
 } from './handlers/tags.ts';
 import {
   deleteVaultHandler,
@@ -196,6 +197,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/tags/{tag}/records', recordsByTagHandler(tagsDeps));
   router.get('/tags/{tag}', tagInfoHandler(tagsDeps));
   router.post('/tags/taxonomy', addTaxonomyHandler(tagsDeps));
+  router.patch('/tags/taxonomy/{tag}', updateTaxonomyHandler(tagsDeps));
   router.post('/tags/aliases', addAliasHandler(tagsDeps));
 
   const suggestionsDeps = {db: opts.db};

@@ -60,7 +60,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors; `nearest` ranks rec
 - **`search.ts`** — `POST /search/simple`: FTS5 bm25 + title boost (lexical, the default) or `recordSimilarity` over chunk and summary vectors (semantic).
 - **`similar.ts`**, **`edges.ts`** — nearest-neighbour records; typed-edge neighborhood (depth ≤ 5) + backlinks.
 - **`suggestions.ts`** — the agent review queue: list/summary/accept/reject/reopen.
-- **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds.
+- **`tags.ts`** — taxonomy listing + single-tag info (`GET /tags/{tag}`: description, aliases, count) + per-tag records + taxonomy/alias adds + the description rewrite (`PATCH /tags/taxonomy/{tag}`, the one field a mint leaves permanent otherwise).
 - **`maintenance.ts`** — `POST /maintenance/*`: scans (duplicates, compaction, retention, upgrade signals), cleanups, embed-pending, incremental reindex, snapshots, raw inbox.
 - **`queue.ts`** — queue-item slices (top, by-section, by-priority, per-project) plus the dependency views (`/queue/ready`, `/queue/blocked`) over query-time `blocked-by:` resolution.
 - **`leases.ts`** — the repo-lease registry (agent coordination, D21/D23): list/events reads, atomic claim/renew/release/transfer with the human > cwd-agent > side-agent precedence lattice. Leases are ephemeral — cleared on every server start and not restored, since a lock has no on-disk artifact to rebuild from.

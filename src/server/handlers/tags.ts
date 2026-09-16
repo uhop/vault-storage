@@ -179,6 +179,10 @@ interface AddTaxonomyBody {
   description?: string;
 }
 
+interface UpdateTaxonomyBody {
+  description?: unknown;
+}
+
 interface AddAliasBody {
   alias?: string;
   canonical?: string;
@@ -308,6 +312,52 @@ export const addTaxonomyHandler =
         `failed to add taxonomy entry: ${(err as Error).message}`
       );
     }
+  };
+
+/**
+ * PATCH /tags/taxonomy/{tag} {description}
+ * Rewrite a canonical tag's description, the one field a mint leaves
+ * permanent otherwise (an alias that broadens what the tag covers had no
+ * route to say so, 2026-09-16). `null` clears it; nothing else on the row
+ * moves. An alias is not a row: 404.
+ *
+ * 400 — description missing, or neither a string nor null.
+ * 404 — tag not in the taxonomy.
+ */
+export const updateTaxonomyHandler =
+  (deps: TagsDeps): Handler =>
+  async ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    const tag = ctx.params['tag'];
+    if (!tag) {
+      sendError(ctx.res, 400, 'bad_request', 'missing tag');
+      return;
+    }
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    const body = await parseJsonObject<UpdateTaxonomyBody>(raw);
+    if (typeof body === 'string') {
+      sendError(ctx.res, 400, 'bad_request', body);
+      return;
+    }
+    const description = body.description;
+    if (description !== null && typeof description !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', 'description must be a string, or null to clear it');
+      return;
+    }
+    const result = deps.db
+      .prepare('UPDATE tags_taxonomy SET description = ? WHERE tag = ?')
+      .run(description, tag);
+    if (Number(result.changes) === 0) {
+      sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
+      return;
+    }
+    sendJson(ctx.res, 200, {tag, description});
   };
 
 /**

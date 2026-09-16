@@ -687,6 +687,21 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_tag_update',
+    {
+      description:
+        'Rewrite the description of a canonical tag — the one way to revise it after minting, e.g. when an alias broadens what the tag covers: {tag, description}, null to clear. PATCH /tags/taxonomy/{tag}; nothing else on the row changes. Returns {tag, description}. 404 tag_not_found when the tag is not a canonical taxonomy entry (an alias has no description of its own — update its canonical).',
+      inputSchema: {
+        tag: z.string().min(1).describe('The canonical tag'),
+        description: z.string().nullable().describe('The new description; null clears it')
+      }
+    },
+    wrap(async ({tag, description}) =>
+      client.patchJson(`/tags/taxonomy/${encodeURIComponent(tag)}`, {description})
+    )
+  );
+
+  mcp.registerTool(
     'vault_records_by_tag',
     {
       description:

@@ -77,7 +77,8 @@ The tools map to the REST surface, grouped by purpose:
   `vault_incremental_reindex` (catch up after a `git pull` from another
   machine), `vault_run_scans` (all four suggestion-filing scans in one
   pass)
-- **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`
+- **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`,
+  `vault_tag_update` (rewrite a description after minting)
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
 - **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
   per-item record briefs + tag taxonomy info), `vault_read_suggestion`,

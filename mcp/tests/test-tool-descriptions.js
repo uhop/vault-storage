@@ -62,6 +62,7 @@ const REQUIRED_MENTIONS = {
   // absent from a canonical-name probe, so only source review finds them.
   vault_records_by_tag: ['as_of', 'items', 'offset', 'limit', 'total', 'alias_for', 'requested'],
   vault_tag_info: ['aliases', 'record_count', 'requested'],
+  vault_tag_update: ['description', 'tag_not_found'],
   vault_list_tags: ['as_of', 'record_count', 'offset', 'total'],
   vault_list_pieces: ['fields', 'as_of', 'items', 'offset', 'limit', 'total'],
   vault_list_suggestions: [
