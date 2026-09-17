@@ -69,7 +69,7 @@ Runtime dependencies are deliberately few (fleet minimal-dependencies policy); j
 - UI: `static/`
 - Vault skills: `skills/`
 - Embedding eval harness: `eval/`
-- Operational scripts: `bin/` (update.sh, vault-curl); one-off DB probes and the release gates: `scripts/` (`ui-style-snapshot.mjs` for CSS changes, `mcp-smoke.mjs` for the adapter before a publish)
+- Operational scripts: `bin/` (update.sh, vault-curl); one-off DB probes and the release gates: `scripts/` (`ui-style-snapshot.mjs` for CSS changes, `ui-preview.mjs` to see a UI change on live data at any width, `mcp-smoke.mjs` for the adapter before a publish)
 
 ## When reading the codebase
 
