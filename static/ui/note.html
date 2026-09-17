@@ -441,50 +441,20 @@
         color: var(--fg);
         margin-bottom: 0.6rem;
       }
-      .wiki-results {
-        list-style: none;
-        padding: 0;
-        margin: 0 0 0.8rem;
+      #wiki-results {
         max-height: 50vh;
-        overflow-y: auto;
       }
-      .wiki-results li {
-        padding: 0;
-        margin: 0.15rem 0;
-      }
-      .wiki-results .item {
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-        padding: 0.55rem 0.7rem;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .wiki-results .item:hover,
-      .wiki-results .item.active {
+      #wiki-results a.active,
+      #wiki-results a:hover {
         background: rgba(127, 127, 127, 0.18);
       }
-      .wiki-results .title {
-        font-weight: 600;
-        font-size: 0.9rem;
-      }
-      .wiki-results .path {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
+      #wiki-results small {
         word-break: break-all;
       }
-      .wiki-results .snippet {
+      .snippet {
         font-size: 0.8rem;
         color: var(--muted);
-        margin-top: 0.15rem;
         word-break: break-word;
-      }
-      .wiki-results .empty {
-        padding: 0.8rem;
-        color: var(--muted);
-        text-align: center;
-        font-size: 0.9rem;
       }
     </style>
   </head>
@@ -589,7 +559,7 @@
         spellcheck="false"
         class="wiki-search"
       />
-      <ul id="wiki-results" class="wiki-results"></ul>
+      <div id="wiki-results" class="fmw-records"></div>
       <div class="row">
         <button id="wiki-cancel">Cancel</button>
       </div>
@@ -901,7 +871,7 @@ ready: false
 
       const openWikiPicker = () => {
         $('#wiki-search').value = '';
-        $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
+        $('#wiki-results').innerHTML = '<div class="empty">Type to search the vault.</div>';
         wikiResults = [];
         wikiSelected = -1;
         $('#wiki-dlg').showModal();
@@ -910,24 +880,22 @@ ready: false
 
       const renderWikiResults = items => {
         if (items.length === 0) {
-          $('#wiki-results').innerHTML = '<li class="empty">No matches.</li>';
+          $('#wiki-results').innerHTML = '<div class="empty">No matches.</div>';
           return;
         }
         $('#wiki-results').innerHTML = items
           .map(
             (r, i) => `
-    <li>
-      <div class="item ${i === wikiSelected ? 'active' : ''}" data-idx="${i}">
-        <span class="title">${esc(r.title)}</span>
-        <span class="path">${esc(r.filename)}</span>
-        ${r.snippet ? `<span class="snippet">… ${esc(r.snippet)} …</span>` : ''}
-      </div>
-    </li>
+    <a href="#" class="${i === wikiSelected ? 'active' : ''}" data-idx="${i}">
+      <b>${esc(r.title)}</b>
+      <small>${esc(r.filename)}</small>
+      ${r.snippet ? `<span class="snippet">… ${esc(r.snippet)} …</span>` : ''}
+    </a>
   `
           )
           .join('');
         if (wikiSelected >= 0) {
-          const active = $('#wiki-results .item.active');
+          const active = $('#wiki-results a.active');
           if (active) active.scrollIntoView({block: 'nearest'});
         }
       };
@@ -954,7 +922,8 @@ ready: false
           renderWikiResults(items);
         } catch (e) {
           if (e.name === 'AbortError') return;
-          $('#wiki-results').innerHTML = `<li class="empty">Search failed: ${esc(e.message)}</li>`;
+          $('#wiki-results').innerHTML =
+            `<div class="empty">Search failed: ${esc(e.message)}</div>`;
         }
       };
 
@@ -1151,7 +1120,7 @@ ready: false
         if (q.length < 2) {
           wikiResults = [];
           wikiSelected = -1;
-          $('#wiki-results').innerHTML = '<li class="empty">Type to search the vault.</li>';
+          $('#wiki-results').innerHTML = '<div class="empty">Type to search the vault.</div>';
           return;
         }
         wikiSearchTimer = setTimeout(() => wikiSearchOnce(q), 150);
@@ -1180,8 +1149,9 @@ ready: false
       });
 
       $('#wiki-results').addEventListener('click', e => {
-        const item = e.target.closest('.item[data-idx]');
+        const item = e.target.closest('a[data-idx]');
         if (!item) return;
+        e.preventDefault();
         const idx = Number(item.dataset.idx);
         if (Number.isFinite(idx) && wikiResults[idx]) {
           insertWikilink(wikiResults[idx].filename);
