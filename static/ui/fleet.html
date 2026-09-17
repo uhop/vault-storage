@@ -22,15 +22,24 @@
         font-size: 1rem;
         margin: 0;
       }
-      section + section {
-        margin-top: 1.6rem;
-      }
       .bar {
         display: flex;
         align-items: baseline;
         flex-wrap: wrap;
         gap: 0.8rem;
         margin-bottom: 0.6rem;
+      }
+      /* One view shows at a time, so nothing a view hides may move the rest: the
+         top bar centers its controls and text, a heading row reserves the filter
+         input's height, and the input stays out of the heading's baseline group. */
+      main > .bar {
+        align-items: center;
+      }
+      section > .bar {
+        min-height: 2rem;
+      }
+      #filter {
+        align-self: center;
       }
       .bar .meta {
         color: var(--muted);
@@ -52,7 +61,6 @@
       }
       .switch {
         display: inline-flex;
-        align-self: center;
         background: var(--bg);
         border: 1px solid var(--line);
         border-radius: 4px;
