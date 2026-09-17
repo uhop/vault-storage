@@ -13,10 +13,10 @@ const TABLE_MARKS = {
     '>off<',
     'no CVE',
     '≥',
-    'cell ok',
-    'cell bad',
-    'cell warn',
-    'cell quiet',
+    'cell fmw-ok',
+    'cell fmw-bad',
+    'cell fmw-warn',
+    'cell fmw-quiet',
     '▲'
   ],
   packages: [
@@ -26,11 +26,11 @@ const TABLE_MARKS = {
     'deprecated',
     '≤',
     '<svg',
-    'cell quiet',
-    'cell warn',
+    'cell fmw-quiet',
+    'cell fmw-warn',
     '▲'
   ],
-  project: ['deprecated', '<svg', 'warn']
+  project: ['deprecated', '<svg', 'fmw-warn']
 };
 
 const mount = view => {
@@ -115,8 +115,14 @@ test('vault-legend takes a view set before the upgrade and keeps the accessor', 
   const el = document.createElement('vault-legend');
   // The own data property a page creates by assigning `.view` before the module defines the element.
   Object.defineProperty(el, 'view', {value: 'repos', writable: true, configurable: true});
+  // An exception inside a lifecycle callback is reported, never thrown to the caller.
+  const errors = [];
+  const onError = e => errors.push(e.message);
+  window.addEventListener('error', onError);
   document.body.appendChild(el);
+  window.removeEventListener('error', onError);
   try {
+    t.deepEqual(errors, [], 'the upgrade reports no error');
     t.equal(el.getAttribute('view'), 'repos', 'the early value reaches the attribute');
     t.equal(el.querySelectorAll('.panel > span').length, 2 * legendEntries('repos').length);
     el.view = 'packages';

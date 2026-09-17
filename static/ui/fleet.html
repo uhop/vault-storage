@@ -22,43 +22,6 @@
         font-size: 1rem;
         margin: 0;
       }
-      .bar {
-        display: flex;
-        align-items: baseline;
-        flex-wrap: wrap;
-        gap: 0.8rem;
-        margin-bottom: 0.6rem;
-      }
-      /* One view shows at a time, so nothing a view hides may move the rest: the
-         top bar centers its controls and text, a heading row reserves the filter
-         input's height, and the input stays out of the heading's baseline group. */
-      main > .bar {
-        align-items: center;
-      }
-      section > .bar {
-        min-height: 2rem;
-      }
-      #filter {
-        align-self: center;
-      }
-      .bar .meta {
-        color: var(--muted);
-        font-size: 0.85rem;
-      }
-      .bar label {
-        font-size: 0.85rem;
-        color: var(--muted);
-      }
-      select,
-      input[type='search'] {
-        font: inherit;
-        font-size: 0.85rem;
-        padding: 0.2rem 0.4rem;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: var(--card);
-        color: var(--fg);
-      }
       .switch {
         display: inline-flex;
         background: var(--bg);
@@ -84,9 +47,6 @@
       .switch button[aria-pressed='true'] {
         background: var(--card);
         color: var(--fg);
-      }
-      a {
-        color: var(--accent);
       }
       code {
         font-family: var(--mono);
@@ -162,23 +122,6 @@
       .scroll {
         overflow-x: auto;
       }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.9rem;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 0.35rem 0.6rem;
-        border-bottom: 1px solid var(--line);
-        vertical-align: middle;
-        white-space: nowrap;
-      }
-      th {
-        color: var(--muted);
-        font-weight: 500;
-      }
       th.sortable {
         cursor: pointer;
         user-select: none;
@@ -199,30 +142,8 @@
         font-size: 0.75rem;
         font-weight: 400;
       }
-      th.n,
-      td.n {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
-      }
       td.name {
         font-family: var(--mono);
-      }
-      tr.total td {
-        font-weight: 600;
-        border-bottom: 0;
-      }
-      .zero,
-      .quiet {
-        color: var(--muted);
-      }
-      .warn {
-        color: var(--warn);
-      }
-      .bad {
-        color: var(--bad);
-      }
-      .ok {
-        color: var(--ok);
       }
       .empty {
         padding: 0.8rem 0;
@@ -233,7 +154,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="fmw">
     <header>
       <h1><a href="/ui/">vault-storage</a></h1>
       <vault-nav></vault-nav>
@@ -243,7 +164,7 @@
     </header>
     <main>
       <div id="status"></div>
-      <div class="bar">
+      <div class="fmw-bar controls">
         <div class="switch" role="group" aria-label="View">
           <button type="button" data-view="glance">At a glance</button>
           <button type="button" data-view="repos">Repositories</button>
@@ -253,21 +174,21 @@
           >activity since
           <select id="window"></select
         ></label>
-        <span class="meta" id="view-meta"></span>
+        <small id="view-meta"></small>
       </div>
       <section id="glance-view">
-        <div class="bar">
+        <div class="fmw-bar">
           <h2>At a glance</h2>
-          <span class="meta" id="glance-meta"></span>
+          <small id="glance-meta"></small>
           <vault-legend view="glance"></vault-legend>
         </div>
         <div id="glance"></div>
       </section>
       <section id="tables" hidden>
-        <div class="bar">
+        <div class="fmw-bar">
           <h2 id="table-title">Repositories</h2>
           <input type="search" id="filter" placeholder="filter packages" hidden />
-          <span class="meta" id="table-meta"></span>
+          <small id="table-meta"></small>
           <vault-legend id="table-legend" view="repos"></vault-legend>
         </div>
         <div class="scroll" id="table"></div>
@@ -524,7 +445,7 @@
           lines.push({
             fresh,
             html: `<li${fresh ? ' class="fresh"' : ''}><a class="repo" href="${projectHref(e.project)}" title="${esc(info)}">${esc(e.project)}</a>${
-              g && isStale(g.collected_at) ? '<span class="warn">stale</span>' : ''
+              g && isStale(g.collected_at) ? '<span class="fmw-warn">stale</span>' : ''
             }${
               g
                 ? itemGroup(g.issues, 'issue') +
@@ -559,7 +480,7 @@
       const count = n => (n === 0 ? '&nbsp;' : esc(n));
       const numCell = (n, cls = '') => `<td class="n ${cls}">${count(n)}</td>`;
       const alertCell = a =>
-        `<td class="n ${!a ? 'zero' : a.open > 0 ? 'warn' : ''}" title="${esc(
+        `<td class="n ${!a ? 'fmw-quiet' : a.open > 0 ? 'fmw-warn' : ''}" title="${esc(
           a
             ? (a.truncated ? `counting stopped at ${a.open}: ` : '') +
                 (Object.entries(a.by_severity)
@@ -568,7 +489,13 @@
             : 'not available'
         )}">${a?.open === 0 ? '&nbsp;' : esc(alertText(a))}</td>`;
       const ciClass = ci =>
-        !ci ? 'zero' : ci.state === 'success' ? 'ok' : ci.state === 'failure' ? 'bad' : 'warn';
+        !ci
+          ? 'fmw-quiet'
+          : ci.state === 'success'
+            ? 'fmw-ok'
+            : ci.state === 'failure'
+              ? 'fmw-bad'
+              : 'fmw-warn';
       const ciCell = ci =>
         `<td class="${ciClass(ci)}" title="${esc(ci ? `${ci.name}, ${short(ci.updated_at)}` : 'no workflow run recorded')}">${
           ci ? (ci.html_url ? ext(ci.html_url, ci.state, ciClass(ci)) : esc(ci.state)) : 'none'
@@ -600,19 +527,19 @@
           return `<tr>
             <td class="name"><a href="${projectHref(entry.project)}" title="GitHub and npm details">${esc(entry.project)}</a></td>
             ${numCell(r.issues)}${numCell(r.prs)}
-            <td class="n ${r.hasDiscussions ? '' : 'zero'}">${r.hasDiscussions ? count(r.discussions) : '-'}</td>
+            <td class="n ${r.hasDiscussions ? '' : 'fmw-quiet'}">${r.hasDiscussions ? count(r.discussions) : '-'}</td>
             ${numCell(r.stars ?? '-')}${numCell(r.forks ?? '-')}
-            <td class="n ${r.noCve ? 'warn' : ''}">${count(r.advisories)}${r.noCve ? ` (${r.noCve} no CVE)` : ''}</td>
+            <td class="n ${r.noCve ? 'fmw-warn' : ''}">${count(r.advisories)}${r.noCve ? ` (${r.noCve} no CVE)` : ''}</td>
             ${alertCell(r.dependabot)}${alertCell(r.codeScanning)}
             ${ciCell(r.ci)}
-            <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(r.collected_at ?? '')}">${esc(short(r.collected_at))}</td>
+            <td class="${isStale(r.collected_at) ? 'fmw-warn' : ''}" title="${esc(r.collected_at ?? '')}">${esc(short(r.collected_at))}</td>
           </tr>`;
         });
         rows.push(
           `<tr class="total"><td>Total (${list.length})</td>${numCell(sum.issues)}${numCell(sum.prs)}<td></td>${numCell(sum.stars)}${numCell(sum.forks)}<td colspan="5"></td></tr>`
         );
         $('#table').innerHTML =
-          `<table><thead><tr>${headRow('repos', sort)}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+          `<table class="fmw-table wide"><thead><tr>${headRow('repos', sort)}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
       };
 
       // ─── Packages ────────────────────────────────────────────────────────────
@@ -652,14 +579,14 @@
           : 'no version split stored for this week';
       const majorCell = r => {
         const share = r.latestMajorShare;
-        if (share === null) return `<td class="n quiet" title="${esc(splitNote(r))}">-</td>`;
+        if (share === null) return `<td class="n fmw-quiet" title="${esc(splitNote(r))}">-</td>`;
         if (wholeShare(share))
           return `<td class="n" title="${esc(`${majorOf(r.latest)}.x carries all downloads, to the nearest percent`)}">&nbsp;</td>`;
         return `<td class="n">${esc(percent(share))}</td>`;
       };
       const versionCell = r => {
         const v = r.latestVersionShare;
-        if (v === null) return `<td class="n quiet" title="${esc(splitNote(r))}">-</td>`;
+        if (v === null) return `<td class="n fmw-quiet" title="${esc(splitNote(r))}">-</td>`;
         if (v.share === 0)
           return `<td class="n" title="${esc(`no downloads of ${r.latest} that week`)}">&nbsp;</td>`;
         const title = v.atMost
@@ -776,17 +703,17 @@
           const change = dependentsChange(r.dependents, cutoff);
           const trend = r.weekly.slice(-26);
           return `<tr>
-            <td class="name"><a href="${projectHref(r.project, `pkg-${r.name}`)}" title="GitHub and npm details">${esc(r.name)}</a><a class="x" href="${esc(npmHref(r.name))}" target="_blank" rel="noopener">npm</a>${r.deprecated ? ' <span class="warn">deprecated</span>' : ''}</td>
+            <td class="name"><a href="${projectHref(r.project, `pkg-${r.name}`)}" title="GitHub and npm details">${esc(r.name)}</a><a class="x" href="${esc(npmHref(r.name))}" target="_blank" rel="noopener">npm</a>${r.deprecated ? ' <span class="fmw-warn">deprecated</span>' : ''}</td>
             <td><a href="${projectHref(r.project)}">${esc(r.project)}</a></td>
-            <td title="${esc(r.published_at ? `published ${dayLabel(r.published_at.slice(0, 10))}` : '')}">${esc(r.latest ?? '-')} <span class="quiet">${esc(ageText(r.published_at))}</span></td>
+            <td title="${esc(r.published_at ? `published ${dayLabel(r.published_at.slice(0, 10))}` : '')}">${esc(r.latest ?? '-')} <span class="fmw-quiet">${esc(ageText(r.published_at))}</span></td>
             <td class="n" title="${esc(r.week ? `${r.week.downloads.toLocaleString('en-US')} downloads, ${rangeLabel(r.week.start, r.week.end)}` : '')}">${r.week?.downloads === 0 ? '&nbsp;' : esc(compact(r.week?.downloads))}</td>
             <td>${sparkline(trend, {label: `Weekly downloads, last ${trend.length} weeks, ending ${r.week ? dayLabel(r.week.end) : ''}`})}</td>
-            <td class="n ${!r.change || r.change.noisy ? 'quiet' : ''}" title="${esc(r.change ? `${r.change.last.toLocaleString('en-US')} in the last 4 weeks against ${r.change.prev.toLocaleString('en-US')} before${r.change.noisy ? ' — under 5,000, mostly noise' : ''}` : '')}">${esc(signedPercent(r.change?.ratio))}</td>
+            <td class="n ${!r.change || r.change.noisy ? 'fmw-quiet' : ''}" title="${esc(r.change ? `${r.change.last.toLocaleString('en-US')} in the last 4 weeks against ${r.change.prev.toLocaleString('en-US')} before${r.change.noisy ? ' — under 5,000, mostly noise' : ''}` : '')}">${esc(signedPercent(r.change?.ratio))}</td>
             ${majorCell(r)}
             ${versionCell(r)}
-            <td class="n" title="${esc(change ? `deps.dev direct dependents; ${change.delta >= 0 ? '+' : ''}${change.delta} since ${dayLabel(change.since)}${change.partial ? ' (tracking began then)' : ''}` : '')}">${r.dependents ? count(r.dependents.direct) : '-'}${change?.delta ? ` <span class="quiet">${change.delta > 0 ? '+' : '−'}${Math.abs(change.delta)}</span>` : ''}</td>
+            <td class="n" title="${esc(change ? `deps.dev direct dependents; ${change.delta >= 0 ? '+' : ''}${change.delta} since ${dayLabel(change.since)}${change.partial ? ' (tracking began then)' : ''}` : '')}">${r.dependents ? count(r.dependents.direct) : '-'}${change?.delta ? ` <span class="fmw-quiet">${change.delta > 0 ? '+' : '−'}${Math.abs(change.delta)}</span>` : ''}</td>
             <td class="n">${esc(r.level ?? '-')}</td>
-            <td class="${isStale(r.collected_at) ? 'warn' : ''}" title="${esc(short(r.collected_at))}">${esc(monthDay(r.collected_at?.slice(0, 10)))}</td>
+            <td class="${isStale(r.collected_at) ? 'fmw-warn' : ''}" title="${esc(short(r.collected_at))}">${esc(monthDay(r.collected_at?.slice(0, 10)))}</td>
           </tr>`;
         });
         body.push(
@@ -798,7 +725,7 @@
             : ''
         );
         $('#table').innerHTML =
-          `<table><thead><tr>${head}</tr></thead><tbody>${body.join('')}</tbody></table>`;
+          `<table class="fmw-table wide"><thead><tr>${head}</tr></thead><tbody>${body.join('')}</tbody></table>`;
       };
 
       // ─── Views ───────────────────────────────────────────────────────────────

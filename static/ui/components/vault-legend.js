@@ -94,7 +94,7 @@ const ENTRIES = [
     mark: chip('dependents +3'),
     text: 'A change in deps.dev direct dependents within the activity window.'
   },
-  {views: ['glance'], mark: '<span class="warn">stale</span>', text: STALE},
+  {views: ['glance'], mark: '<span class="fmw-warn">stale</span>', text: STALE},
   // The tables
   {
     views: ['repos', 'packages'],
@@ -103,34 +103,38 @@ const ENTRIES = [
   },
   {
     views: ['repos', 'packages'],
-    mark: cell('-', 'quiet'),
+    mark: cell('-', 'fmw-quiet'),
     text: 'Not available, as opposed to zero: discussions turned off, no version split read, no reading stored, or a package outside the fleet graph.'
   },
-  {views: ['repos'], mark: cell('off', 'quiet'), text: 'Alerts are turned off for the repository.'},
   {
     views: ['repos'],
-    mark: cell('3 (2 no CVE)', 'warn'),
+    mark: cell('off', 'fmw-quiet'),
+    text: 'Alerts are turned off for the repository.'
+  },
+  {
+    views: ['repos'],
+    mark: cell('3 (2 no CVE)', 'fmw-warn'),
     text: 'Published advisories, and how many of them have no CVE yet.'
   },
   {
     views: ['repos'],
-    mark: cell('≥100', 'warn'),
+    mark: cell('≥100', 'fmw-warn'),
     text: 'Open alerts; hover for the count by severity. A ≥ before the number means the collector stopped counting there, so the repository has at least that many.'
   },
   {
     views: ['repos'],
-    mark: `${cell('success', 'ok')} ${cell('failure', 'bad')} ${cell('cancelled', 'warn')} ${cell('none', 'quiet')}`,
+    mark: `${cell('success', 'fmw-ok')} ${cell('failure', 'fmw-bad')} ${cell('cancelled', 'fmw-warn')} ${cell('none', 'fmw-quiet')}`,
     text: 'The last CI run on the default branch, linked to the run; none when no run is recorded.'
   },
   {views: ['packages'], mark: '<a class="x">npm</a>', text: 'Opens the package on npm.'},
   {
     views: ['packages', 'project'],
-    mark: '<span class="warn">deprecated</span>',
+    mark: '<span class="fmw-warn">deprecated</span>',
     text: 'The package is deprecated on npm.'
   },
   {
     views: ['packages'],
-    mark: '4.2.5 <span class="quiet">3 mo</span>',
+    mark: '4.2.5 <span class="fmw-quiet">3 mo</span>',
     text: 'The latest version and how long ago it was published.'
   },
   {
@@ -140,7 +144,7 @@ const ENTRIES = [
   },
   {
     views: ['packages'],
-    mark: cell('−18%', 'quiet'),
+    mark: cell('−18%', 'fmw-quiet'),
     text: 'The change of the last 4 weeks against the 4 before, muted when the earlier 4 weeks had under 5,000 downloads, where the ratio is mostly noise.'
   },
   {
@@ -150,7 +154,7 @@ const ENTRIES = [
   },
   {
     views: ['packages'],
-    mark: cell('335 <span class="quiet">+1</span>'),
+    mark: cell('335 <span class="fmw-quiet">+1</span>'),
     text: 'Direct dependents on deps.dev, and their change within the activity window.'
   },
   {
@@ -158,9 +162,9 @@ const ENTRIES = [
     mark: '<span class="sort">Stars ▲</span>',
     text: 'Click a column header to sort by it; the arrow shows the direction, remembered per table.'
   },
-  {views: ['repos', 'packages'], mark: cell('Sep 2', 'warn'), text: STALE},
+  {views: ['repos', 'packages'], mark: cell('Sep 2', 'fmw-warn'), text: STALE},
   // The project page
-  {views: ['project'], mark: '<span class="warn">collected Sep 2 18:41</span>', text: STALE},
+  {views: ['project'], mark: '<span class="fmw-warn">collected Sep 2 18:41</span>', text: STALE},
   {
     views: ['project'],
     mark: BARS,
@@ -191,13 +195,6 @@ class VaultLegend extends HTMLElement {
 
   connectedCallback() {
     if (!this._ready) {
-      this._ready = true;
-      // A `view` set before the element upgraded is an own property shadowing the accessor.
-      if (Object.hasOwn(this, 'view')) {
-        const v = this.view;
-        delete this.view;
-        this.view = v;
-      }
       this._details = document.createElement('details');
       const summary = document.createElement('summary');
       summary.textContent = 'Legend';
@@ -211,6 +208,14 @@ class VaultLegend extends HTMLElement {
       this._escape = e => {
         if (e.key === 'Escape') this._details.open = false;
       };
+      // A `view` set before the element upgraded is an own property shadowing the accessor;
+      // the panel exists by now, and _ready is still unset so the attribute callback stays quiet.
+      if (Object.hasOwn(this, 'view')) {
+        const v = this.view;
+        delete this.view;
+        this.view = v;
+      }
+      this._ready = true;
       this.render();
     }
     document.addEventListener('click', this._close);

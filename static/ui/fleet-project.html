@@ -36,39 +36,9 @@
         color: var(--muted);
         margin: 1.2rem 0 0.4rem;
       }
-      a {
-        color: var(--accent);
-      }
       code {
         font-family: var(--mono);
         font-size: 0.9em;
-      }
-      .bar {
-        display: flex;
-        align-items: baseline;
-        flex-wrap: wrap;
-        gap: 0.8rem;
-        margin-bottom: 0.6rem;
-      }
-      .meta,
-      .quiet {
-        color: var(--muted);
-      }
-      .meta {
-        font-size: 0.85rem;
-      }
-      .bar label {
-        font-size: 0.85rem;
-        color: var(--muted);
-      }
-      select {
-        font: inherit;
-        font-size: 0.85rem;
-        padding: 0.2rem 0.4rem;
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        background: var(--card);
-        color: var(--fg);
       }
       section {
         background: var(--card);
@@ -86,55 +56,14 @@
         margin-top: 0.5rem;
         color: var(--muted);
       }
-      .tiles {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-        gap: 0.6rem;
+      .fmw-tiles {
         margin: 0.8rem 0 0.2rem;
-      }
-      .tile {
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 0.5rem 0.7rem;
-      }
-      .tile .label {
-        color: var(--muted);
-        font-size: 0.8rem;
-      }
-      .tile .value {
-        font-size: 1.4rem;
-        font-weight: 600;
-        margin-top: 0.1rem;
-      }
-      .tile .delta {
-        color: var(--muted);
-        font-size: 0.8rem;
       }
       .chart {
         overflow-x: auto;
       }
       .chart .viz {
         height: auto;
-      }
-      table {
-        border-collapse: collapse;
-        font-size: 0.85rem;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 0.25rem 0.8rem 0.25rem 0;
-        border-bottom: 1px solid var(--line);
-        white-space: nowrap;
-      }
-      th {
-        color: var(--muted);
-        font-weight: 500;
-      }
-      th.n,
-      td.n {
-        text-align: right;
-        font-variant-numeric: tabular-nums;
       }
       details {
         margin-top: 0.5rem;
@@ -155,15 +84,6 @@
       .relations dd {
         margin: 0;
       }
-      .warn {
-        color: var(--warn);
-      }
-      .ok {
-        color: var(--ok);
-      }
-      .bad {
-        color: var(--bad);
-      }
       .empty {
         text-align: start;
       }
@@ -172,7 +92,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="fmw">
     <header>
       <h1><a href="/ui/">vault-storage</a></h1>
       <vault-nav></vault-nav>
@@ -182,13 +102,13 @@
     </header>
     <main>
       <div id="status"></div>
-      <div class="bar">
+      <div class="fmw-bar">
         <h2 id="title"></h2>
-        <span class="meta" id="links"></span>
+        <small id="links"></small>
         <vault-legend view="project"></vault-legend>
       </div>
-      <div class="bar">
-        <span class="meta" id="collected"></span>
+      <div class="fmw-bar controls">
+        <small id="collected"></small>
         <label
           >movement and changes since
           <select id="window"></select
@@ -255,7 +175,7 @@
       const num = n => (typeof n === 'number' ? n.toLocaleString('en-US') : '-');
       const signed = n => (n > 0 ? `+${num(n)}` : n < 0 ? `−${num(-n)}` : '0');
       const tile = (label, value, {title = '', delta = ''} = {}) =>
-        `<div class="tile"><div class="label">${esc(label)}</div><div class="value" title="${esc(title)}">${esc(value)}</div>${delta ? `<div class="delta">${delta}</div>` : ''}</div>`;
+        `<div class="fmw-tile"><small>${esc(label)}</small><b title="${esc(title)}">${esc(value)}</b>${delta ? `<small>${delta}</small>` : ''}</div>`;
       const pkgLink = (name, projects) => {
         const target = projects?.[name];
         return target
@@ -263,7 +183,7 @@
           : `<code>${esc(name)}</code>`;
       };
       const edge = ([name, kind], projects) =>
-        `${pkgLink(name, projects)}${kind === 'dep' ? '' : ` <span class="quiet">(${esc(kind)})</span>`}`;
+        `${pkgLink(name, projects)}${kind === 'dep' ? '' : ` <span class="fmw-quiet">(${esc(kind)})</span>`}`;
 
       const renderGithub = () => {
         if (!baseline)
@@ -275,12 +195,12 @@
       const renderFleet = p => {
         const f = p.fleet;
         if (!f)
-          return `<h4>Fleet</h4><div class="quiet">Not in the <code>fleet-deps</code> graph.</div>`;
+          return `<h4>Fleet</h4><div class="fmw-quiet">Not in the <code>fleet-deps</code> graph.</div>`;
         const inOrder = f.dependents_in_order ?? [];
         return `<h4>Fleet</h4><dl class="relations">
           <dt>Update level</dt><dd>${esc(f.level ?? '-')}</dd>
-          <dt>Uses</dt><dd>${f.uses.length ? f.uses.map(e => edge(e, f.projects)).join(', ') : '<span class="quiet">no fleet packages</span>'}</dd>
-          <dt>Used by</dt><dd>${f.used_by.length ? f.used_by.map(e => edge(e, f.projects)).join(', ') : '<span class="quiet">no fleet packages</span>'}</dd>
+          <dt>Uses</dt><dd>${f.uses.length ? f.uses.map(e => edge(e, f.projects)).join(', ') : '<span class="fmw-quiet">no fleet packages</span>'}</dd>
+          <dt>Used by</dt><dd>${f.used_by.length ? f.used_by.map(e => edge(e, f.projects)).join(', ') : '<span class="fmw-quiet">no fleet packages</span>'}</dd>
           ${inOrder.length ? `<dt>Dependents in update order</dt><dd>${inOrder.map(n => pkgLink(n, f.projects)).join(' → ')}</dd>` : ''}
         </dl>`;
       };
@@ -331,9 +251,9 @@
         const top = n.top_versions ?? [];
         const versions = top.length
           ? `<h4>Versions, ${esc(rangeLabel(n.week?.start, n.week?.end))}</h4>${majorRows(shares)}
-            <table style="margin-top:0.6rem"><thead><tr><th>Version</th><th class="n">Downloads</th><th class="n">Share</th><th class="n">Direct dependents</th></tr></thead>
-            <tbody>${top.map(([v, c]) => `<tr><td><code>${esc(v)}</code>${v === n.latest ? ' <span class="quiet">latest</span>' : ''}</td><td class="n">${num(c)}</td><td class="n">${esc(percent(c / n.versions_total))}</td><td class="n">${byVersion[v]?.[0] ? num(byVersion[v][0]) : '&nbsp;'}</td></tr>`).join('')}</tbody></table>`
-          : `<h4>Versions</h4><div class="quiet">${n.versions_total === null ? ((n.week?.downloads ?? 0) < 100 ? 'Under 100 downloads a week: the split by version is mirror traffic, so it is not read.' : 'The split by version was not read in the last collection.') : 'No downloads by version last week.'}</div>`;
+            <table class="fmw-table dense small" style="margin-top:0.6rem"><thead><tr><th>Version</th><th class="n">Downloads</th><th class="n">Share</th><th class="n">Direct dependents</th></tr></thead>
+            <tbody>${top.map(([v, c]) => `<tr><td><code>${esc(v)}</code>${v === n.latest ? ' <span class="fmw-quiet">latest</span>' : ''}</td><td class="n">${num(c)}</td><td class="n">${esc(percent(c / n.versions_total))}</td><td class="n">${byVersion[v]?.[0] ? num(byVersion[v][0]) : '&nbsp;'}</td></tr>`).join('')}</tbody></table>`
+          : `<h4>Versions</h4><div class="fmw-quiet">${n.versions_total === null ? ((n.week?.downloads ?? 0) < 100 ? 'Under 100 downloads a week: the split by version is mirror traffic, so it is not read.' : 'The split by version was not read in the last collection.') : 'No downloads by version last week.'}</div>`;
 
         const depVersions = Object.entries(byVersion)
           .sort((a, b) => b[1][0] - a[1][0] || compareVersions(b[0], a[0]))
@@ -343,10 +263,10 @@
           ? `<h4>Dependents</h4>${
               history.length > 1
                 ? `<div class="chart">${stepLine(history, {width: chartWidth()})}</div>`
-                : `<div class="quiet">${history.length ? `One reading so far: ${num(history[0][1])} on ${esc(dayLabel(history[0][0]))}. The history grows by one point per collection day.` : 'No readings stored.'}</div>`
+                : `<div class="fmw-quiet">${history.length ? `One reading so far: ${num(history[0][1])} on ${esc(dayLabel(history[0][0]))}. The history grows by one point per collection day.` : 'No readings stored.'}</div>`
             }${
               depVersions.length
-                ? `<table style="margin-top:0.6rem"><thead><tr><th>Resolved to</th><th class="n">Direct</th><th class="n">Direct and indirect</th></tr></thead><tbody>${depVersions
+                ? `<table class="fmw-table dense small" style="margin-top:0.6rem"><thead><tr><th>Resolved to</th><th class="n">Direct</th><th class="n">Direct and indirect</th></tr></thead><tbody>${depVersions
                     .map(
                       ([v, [d, all]]) =>
                         `<tr><td><code>${esc(v)}</code></td><td class="n">${num(d)}</td><td class="n">${num(all)}</td></tr>`
@@ -361,7 +281,7 @@
           const i = ends.findIndex(end => day <= end);
           if (i >= 0) published.set(i, [...(published.get(i) ?? []), version]);
         }
-        const table = `<details><summary>Weekly numbers</summary><table><thead><tr><th>Week ending</th><th class="n">Downloads</th><th>Published</th></tr></thead><tbody>${weekly
+        const table = `<details><summary>Weekly numbers</summary><table class="fmw-table dense small"><thead><tr><th>Week ending</th><th class="n">Downloads</th><th>Published</th></tr></thead><tbody>${weekly
           .map((c, i) => [c, i])
           .reverse()
           .map(
@@ -370,7 +290,7 @@
           )
           .join('')}</tbody></table></details>`;
 
-        return `<div class="tiles">${tiles}</div>
+        return `<div class="fmw-tiles">${tiles}</div>
           <h4>Weekly downloads, ${plural(weekly.length, 'week')}</h4>
           <div class="chart">${weeklyBars(weekly, ends, n.publishes, {width: chartWidth()})}</div>
           ${table}${versions}${dependents}`;
@@ -380,8 +300,8 @@
         const n = p.npm;
         const head = `<h3 id="${esc(`pkg-${p.name}`)}"><span class="pkg">${esc(p.name)}</span>${
           n
-            ? ` <span class="quiet">${esc(n.latest ?? '')}${n.published_at ? `, published ${esc(dayLabel(n.published_at.slice(0, 10)))}` : ''}</span>${n.deprecated ? ' <span class="warn">deprecated</span>' : ''}`
-            : ` <span class="quiet">${p.published ? 'npm numbers unavailable' : 'not published'}</span>`
+            ? ` <span class="fmw-quiet">${esc(n.latest ?? '')}${n.published_at ? `, published ${esc(dayLabel(n.published_at.slice(0, 10)))}` : ''}</span>${n.deprecated ? ' <span class="fmw-warn">deprecated</span>' : ''}`
+            : ` <span class="fmw-quiet">${p.published ? 'npm numbers unavailable' : 'not published'}</span>`
         }</h3>`;
         const links = [
           p.published ? ext(npmHref(p.name), 'npm') : null,
@@ -409,7 +329,7 @@
         const week = packages?.packages?.find(p => p.npm?.week)?.npm.week;
         const stamp = (label, iso) =>
           iso
-            ? `<span class="${isStale(iso) ? 'warn' : ''}" title="${esc(iso)}">${esc(label)} collected ${esc(short(iso))}</span>`
+            ? `<span class="${isStale(iso) ? 'fmw-warn' : ''}" title="${esc(iso)}">${esc(label)} collected ${esc(short(iso))}</span>`
             : '';
         $('#collected').innerHTML = [
           stamp('GitHub', baseline?.collected_at),

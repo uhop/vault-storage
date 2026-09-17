@@ -210,7 +210,8 @@ const diff = (a, b, ignore) => {
       }
       const changed = [];
       for (const k of new Set([...Object.keys(x.css), ...Object.keys(y.css)])) {
-        if (!ignore.has(k) && x.css[k] !== y.css[k])
+        // A custom property shows in every element; its effect shows in the properties that use it.
+        if (!ignore.has(k) && !k.startsWith('--') && x.css[k] !== y.css[k])
           changed.push(`${k}: ${x.css[k]} → ${y.css[k]}`);
       }
       if (x.rect.join() !== y.rect.join())

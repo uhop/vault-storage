@@ -29,6 +29,10 @@
   --ok: light-dark(#1a7f37, #58c47b);
   --hl: light-dark(rgba(255, 200, 0, 0.35), rgba(255, 200, 0, 0.25));
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-s: 4px;
+  --radius: 6px;
+  --text-s: 0.85rem;
+  --text-xs: 0.8rem;
 }
 :root[data-theme='light'] {
   color-scheme: light;
@@ -311,4 +315,126 @@ dialog .dlg-row {
   gap: 0.5rem;
   justify-content: flex-end;
   margin-top: 0.8rem;
+}
+
+/* ─── The framework ───────────────────────────────────────────────────────
+   Page-agnostic parts, prefixed fmw-, consuming the tokens above by name; a
+   page opts in with class="fmw" on <body>. The block a separated sheet would
+   take whole: projects/vault-storage/design/ui-css-component-system. */
+
+/* Links are technical (menus, sections, navigation), so no visited color; an
+   external link keeps a subtle one. :where() keeps element specificity, so a
+   page still overrides by restating. */
+:where(body.fmw) a {
+  color: var(--accent);
+}
+:where(body.fmw) a[target='_blank']:visited {
+  color: color-mix(in srgb, var(--accent) 65%, var(--muted));
+}
+
+.fmw-warn {
+  color: var(--warn);
+}
+.fmw-bad {
+  color: var(--bad);
+}
+.fmw-ok {
+  color: var(--ok);
+}
+.fmw-quiet {
+  color: var(--muted);
+}
+
+/* .fmw-bar: a heading row — a heading, <small> metadata, controls, a legend —
+   on the baseline, reserving a control's height so a control a view shows or
+   hides moves nothing; .controls is a row of controls, centered. */
+.fmw-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.8rem;
+  min-height: 2rem;
+  margin-bottom: 0.6rem;
+}
+.fmw-bar.controls {
+  align-items: center;
+  min-height: 0;
+}
+.fmw-bar small,
+.fmw-bar label {
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+.fmw-bar select,
+.fmw-bar input {
+  align-self: center;
+  font: inherit;
+  font-size: var(--text-s);
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--card);
+  color: var(--fg);
+}
+
+/* .fmw-table: a data table with .n numeric cells and a tr.total sum row;
+   .wide fills the container, .dense tightens the rows, .small shrinks the text. */
+.fmw-table {
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.fmw-table.wide {
+  width: 100%;
+}
+.fmw-table.small {
+  font-size: var(--text-s);
+}
+.fmw-table th,
+.fmw-table td {
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.fmw-table.dense th,
+.fmw-table.dense td {
+  padding: 0.25rem 0.8rem 0.25rem 0;
+}
+.fmw-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+.fmw-table th.n,
+.fmw-table td.n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.fmw-table tr.total td {
+  font-weight: 600;
+  border-bottom: 0;
+}
+
+/* .fmw-tiles: a grid of stat tiles; a tile is <small> label, <b> value, and an
+   optional <small> note. */
+.fmw-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.6rem;
+}
+.fmw-tile {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.7rem;
+}
+.fmw-tile small {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.fmw-tile b {
+  display: block;
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-top: 0.1rem;
 }
