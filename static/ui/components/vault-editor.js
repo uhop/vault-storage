@@ -12,6 +12,8 @@
 // a <div> boundary), so `_segments()` — not a raw text walk — is the one place
 // that turns the DOM into text + offsets.
 
+import {mark, perfOn, time} from '../perf.js';
+
 const HL_ALL = 'vault-find';
 const HL_CUR = 'vault-find-current';
 const supportsHighlight = typeof Highlight !== 'undefined' && !!(window.CSS && CSS.highlights);
@@ -47,7 +49,10 @@ class VaultEditor extends HTMLElement {
 
     if (!this.hasAttribute('role')) this.setAttribute('role', 'textbox');
     this.setAttribute('aria-multiline', 'true');
-    if (!this.hasAttribute('spellcheck')) this.setAttribute('spellcheck', 'true');
+    // Off unless the page asks for it: checking a large body can cost more
+    // than the entire load, and the engine does it even while this surface is
+    // hidden. The page turns it on when someone starts editing.
+    if (!this.hasAttribute('spellcheck')) this.setAttribute('spellcheck', 'false');
 
     // execCommand('insertText') is deprecated but is the one call that inserts
     // text while preserving the native undo stack (direct DOM mutation loses it).
@@ -83,8 +88,9 @@ class VaultEditor extends HTMLElement {
   }
 
   set value(v) {
-    this.textContent = v;
-    this._reflectEmpty();
+    time('editor: set textContent', () => (this.textContent = v), `${v.length} chars`);
+    time('editor: reflectEmpty (builds .value)', () => this._reflectEmpty());
+    if (perfOn) time('editor: forced layout', () => this.getBoundingClientRect().height);
   }
 
   get selectionStart() {
@@ -165,6 +171,15 @@ class VaultEditor extends HTMLElement {
   // produces the text and the offset map together so `value` and the
   // selection/highlight offsets can never disagree about where a break sits.
   _segments() {
+    if (!perfOn) return this._walkSegments();
+    const start = performance.now();
+    const out = this._walkSegments();
+    const ms = performance.now() - start;
+    if (ms > 5) mark('editor: _segments walk', `${ms.toFixed(0)}ms, ${out.length} segments`);
+    return out;
+  }
+
+  _walkSegments() {
     const segments = [];
     let length = 0;
     let started = false;

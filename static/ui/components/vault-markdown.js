@@ -24,6 +24,7 @@
 // project's single-user single-token convention). If absent, wikilink
 // resolution is skipped — links render as raw <a> elements without href.
 
+import {mark, perfOn, time} from '../perf.js';
 import {marked} from '../vendor/marked.esm.js';
 
 const esc = s =>
@@ -108,14 +109,18 @@ class VaultMarkdown extends HTMLElement {
     const {fm, body} = splitFrontmatter(text);
     let html = '';
     if (showFm && fm) html = `<pre class="frontmatter">${esc(fm)}</pre>`;
-    html += marked.parse(body);
-    this.innerHTML = html;
+    html += time('preview: marked.parse', () => marked.parse(body), `${body.length} chars`);
+    time('preview: set innerHTML', () => (this.innerHTML = html), `${html.length} chars`);
+    if (perfOn) time('preview: forced layout', () => this.getBoundingClientRect().height);
     this.#renderToken++;
     this.#decorateWikilinks(this.#renderToken);
   }
 
   async #decorateWikilinks(token) {
-    const links = [...this.querySelectorAll('a.wikilink')].filter(a => a.dataset.wikilink);
+    const links = time('preview: collect wikilinks', () =>
+      [...this.querySelectorAll('a.wikilink')].filter(a => a.dataset.wikilink)
+    );
+    mark('preview: wikilinks found', `${links.length} links`);
     if (links.length === 0) return;
     const auth = localStorage.getItem('vault.token');
     if (!auth) return;

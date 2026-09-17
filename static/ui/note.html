@@ -510,7 +510,7 @@
       <div class="panes">
         <vault-editor
           id="editor"
-          spellcheck="true"
+          spellcheck="false"
           data-placeholder="Start typing… frontmatter at the top, body below."
         ></vault-editor>
         <vault-markdown class="preview" id="preview" show-frontmatter></vault-markdown>
@@ -591,6 +591,7 @@
     </dialog>
 
     <script type="module">
+      import {mark, perfOn, time, timeAsync} from '/ui/perf.js';
       import '/ui/components/vault-markdown.js';
       import '/ui/components/vault-editor.js';
       import '/ui/components/vault-toolbar.js';
@@ -627,7 +628,8 @@ ready: false
       const state = {
         path: params.get('path') ?? null, // null = new capture
         serverContent: '', // last-known server content
-        dirty: false, // editor != serverContent
+        body: '', // the document text, whoever is holding it
+        dirty: false, // body != serverContent
         saveTimer: null,
         lastSavedAt: null
       };
@@ -646,6 +648,41 @@ ready: false
       const stageDraft = body => localStorage.setItem(draftKey(), body);
       const dropDraft = () => localStorage.removeItem(draftKey());
       const loadDraft = () => localStorage.getItem(draftKey());
+
+      // Laziness, because both surfaces are expensive on a large note: the
+      // editor holds the whole document in a contenteditable, the preview
+      // parses it. Neither happens until something on screen needs it, so
+      // `state.body` is the text until a surface takes it.
+      let editorFilled = false;
+
+      const editorOnScreen = () => viewMode !== 'preview';
+      const previewOnScreen = () =>
+        viewMode === 'preview' ||
+        (viewMode === 'split' && window.matchMedia('(min-width: 768px)').matches);
+
+      /** Fill the editor because something is about to read or write its DOM. */
+      const ensureEditor = () => {
+        const ed = $('#editor');
+        if (!editorFilled) {
+          editorFilled = true;
+          time('editor: fill', () => (ed.value = state.body), `${state.body.length} chars`);
+        }
+        return ed;
+      };
+
+      /** Fill it only when it is actually on screen. */
+      const syncEditor = () => {
+        if (editorOnScreen()) ensureEditor();
+      };
+
+      /** The document text, from whichever side is holding it. */
+      const docText = () => (editorFilled ? $('#editor').value : state.body);
+
+      /** Replace the document text, wherever it currently lives. */
+      const setDocText = v => {
+        state.body = v;
+        if (editorFilled) $('#editor').value = v;
+      };
 
       // load / capture init ---------------------------------------------
       async function init() {
@@ -669,28 +706,41 @@ ready: false
       }
 
       async function loadExisting(path) {
+        mark('loadExisting: start', `${path}, view=${document.body.dataset.view}`);
         toolbar.path = path;
         $('#del').hidden = false;
         $('#editor').disabled = true;
         setStatus('saving', 'loading…');
         try {
-          const res = await api(`/vault/${encodePath(path)}`);
-          const text = await res.text();
-          const draft = loadDraft();
-          if (draft && draft !== text) {
+          const res = await timeAsync('fetch: note', () => api(`/vault/${encodePath(path)}`));
+          const text = await timeAsync('fetch: read body', () => res.text());
+          mark('body in hand', `${text.length} chars`);
+          const draft = time('draft: localStorage read', () => loadDraft());
+          const restore = time(
+            'draft: compare',
+            () => Boolean(draft) && draft !== text,
+            `${draft ? draft.length : 0} chars`
+          );
+          state.serverContent = text;
+          // Through the setter: the view-mode setup may have filled the editor
+          // before the note arrived, and then the DOM needs the text too.
+          setDocText(restore ? draft : text);
+          state.dirty = restore;
+          if (restore) {
             // Recover from a previous session that didn't reach the server.
-            state.serverContent = text;
-            $('#editor').value = draft;
-            state.dirty = true;
             setStatus('offline', 'unsynced draft restored');
           } else {
-            state.serverContent = text;
-            $('#editor').value = text;
             setStatus('saved', `loaded ${fmtTime(new Date())}`);
           }
-          $('#editor').disabled = false;
-          $('#editor').focus();
-          fetchBacklinks();
+          time('editor: enable', () => ($('#editor').disabled = false));
+          syncEditor();
+          if (editorOnScreen()) time('editor: focus', () => $('#editor').focus());
+          timeAsync('backlinks', () => fetchBacklinks());
+          mark('loadExisting: done');
+          if (perfOn) {
+            requestAnimationFrame(() => mark('first frame after load'));
+            setTimeout(() => mark('first macrotask after load'), 0);
+          }
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();
@@ -705,14 +755,15 @@ ready: false
         $('#del').hidden = true;
         $('#recent').hidden = false;
         const draft = loadDraft();
-        $('#editor').value = draft ?? STARTER_TEMPLATE;
         state.serverContent = '';
+        setDocText(draft ?? STARTER_TEMPLATE);
         state.dirty = !!draft;
         setStatus('editing', state.dirty ? 'unsaved draft restored' : 'new note');
-        $('#editor').focus();
+        // A new note is written, not read, so the editor is wanted right away.
+        const ed = ensureEditor();
+        ed.focus();
         // Place cursor at end so the user starts typing body content after the FM.
-        const v = $('#editor').value;
-        $('#editor').setSelectionRange(v.length, v.length);
+        ed.setSelectionRange(state.body.length, state.body.length);
       }
 
       // Outline ----------------------------------------------------------
@@ -745,7 +796,7 @@ ready: false
       };
 
       const jumpInEditor = offset => {
-        const ta = $('#editor');
+        const ta = ensureEditor();
         ta.focus();
         ta.setSelectionRange(offset, offset);
         ta.scrollToOffset(offset);
@@ -767,8 +818,8 @@ ready: false
         // session), fall back to scrolling the editor.
         const previewMode = document.body.dataset.view;
         if (previewMode === 'preview') {
-          // Trigger a render in case it's stale, then jump.
-          $('#preview').value = $('#editor').value;
+          // Jumping is a request to see it, so render even if gated.
+          renderPreview(docText());
           requestAnimationFrame(() => jumpInPreview(index));
         } else if (previewMode === 'edit') {
           jumpInEditor(offset);
@@ -780,7 +831,7 @@ ready: false
       };
 
       const openOutline = () => {
-        const headings = parseHeadings($('#editor').value);
+        const headings = parseHeadings(docText());
         const list = $('#outline-list');
         $('#outline-count').textContent =
           headings.length === 0
@@ -863,7 +914,7 @@ ready: false
       let wikiAbort = null;
 
       const insertAtCursor = text => {
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const start = ta.selectionStart;
         const end = ta.selectionEnd;
         ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
@@ -989,7 +1040,8 @@ ready: false
         localStorage.setItem(VIEW_KEY, mode);
         document.body.dataset.view = mode;
         toolbar.mode = mode;
-        if (mode !== 'edit') schedulePreview();
+        syncEditor();
+        schedulePreview();
       };
 
       let previewTimer = null;
@@ -1004,7 +1056,9 @@ ready: false
             : `${(n / 1_000_000).toFixed(1)}M`;
 
       const renderPreview = text => {
-        previewRendered = true;
+        // An empty render is not one: the debounce can fire before the note
+        // body has arrived, and that must not read back as "out of date".
+        previewRendered = text.length > 0;
         $('#preview-gate').hidden = true;
         $('#preview').hidden = false;
         $('#preview').value = text;
@@ -1023,10 +1077,11 @@ ready: false
       };
 
       const schedulePreview = () => {
-        if (viewMode === 'edit') return;
+        if (!previewOnScreen()) return;
         if (previewTimer) clearTimeout(previewTimer);
         previewTimer = setTimeout(() => {
-          const text = $('#editor').value;
+          mark('preview: debounce fired');
+          const text = time('preview: read document', () => docText());
           if (!previewManual && text.length > PREVIEW_AUTO_MAX_CHARS) {
             armPreviewGate(text.length);
             return;
@@ -1037,12 +1092,26 @@ ready: false
 
       $('#preview-render').addEventListener('click', () => {
         previewManual = true;
-        renderPreview($('#editor').value);
+        mark('preview: render asked for');
+        renderPreview(time('preview: read document', () => docText()));
+        mark('preview: render returned');
       });
+
+      // Spellcheck stays off until someone actually edits. Checking a large
+      // body can cost more than the whole load, and the engine does it even
+      // while the editor sits hidden behind the preview.
+      const armSpellcheck = () => {
+        if ($('#editor').spellcheck) return;
+        time('editor: spellcheck on', () => ($('#editor').spellcheck = true));
+      };
+      for (const evt of ['pointerdown', 'keydown']) {
+        $('#editor').addEventListener(evt, armSpellcheck, {once: true});
+      }
 
       // edit + autosave -------------------------------------------------
       function onInput() {
         const body = $('#editor').value;
+        state.body = body;
         state.dirty = body !== state.serverContent;
         previewManual = false;
         schedulePreview();
@@ -1066,7 +1135,7 @@ ready: false
           clearTimeout(state.saveTimer);
           state.saveTimer = null;
         }
-        const body = $('#editor').value;
+        const body = docText();
         if (!state.dirty && state.path) return;
         if (!state.path) state.path = newCapturePath();
         setStatus('saving', '');
@@ -1077,6 +1146,7 @@ ready: false
             body
           });
           state.serverContent = body;
+          state.body = body;
           state.dirty = false;
           state.lastSavedAt = new Date();
           // Clear both the per-path draft and the capture-mode "new" key — on a
@@ -1208,13 +1278,20 @@ ready: false
         }
       });
 
+      // Split hides the preview under 768px, so crossing the breakpoint can
+      // reveal a surface that was never filled.
+      window.matchMedia('(min-width: 768px)').addEventListener('change', () => {
+        syncEditor();
+        schedulePreview();
+      });
+
       // View-mode toggle (Edit / Split / Preview).
       toolbar.addEventListener('mode-change', e => setViewMode(e.detail.mode));
       setViewMode(viewMode);
 
       // Mobile insert-row -----------------------------------------------
       const insertWrap = (open, close) => {
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const start = ta.selectionStart;
         const end = ta.selectionEnd;
         const before = ta.value.slice(0, start);
@@ -1232,7 +1309,7 @@ ready: false
       };
 
       const insertPrefix = prefix => {
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const cursor = ta.selectionStart;
         const lineStart = ta.value.lastIndexOf('\n', cursor - 1) + 1;
         ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart);
@@ -1300,7 +1377,7 @@ ready: false
       };
 
       const selectCurrentMatch = () => {
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const len = $('#find-input').value.length;
         // Paint every match (current one distinctly) via the Custom Highlight API —
         // no DOM mutation, so editor focus/caret/undo are untouched and Enter keeps
@@ -1313,7 +1390,7 @@ ready: false
       };
 
       const recomputeFind = () => {
-        const ta = $('#editor');
+        const ta = ensureEditor();
         findMatches = findAll(ta.value, $('#find-input').value, findState.caseSensitive);
         if (findMatches.length === 0) {
           findState.idx = -1;
@@ -1335,7 +1412,7 @@ ready: false
 
       const replaceOne = () => {
         if (findState.idx < 0) return;
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const start = findMatches[findState.idx];
         const rep = $('#replace-input').value;
         ta.value =
@@ -1347,7 +1424,7 @@ ready: false
 
       const replaceAll = () => {
         const q = $('#find-input').value;
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const matches = findAll(ta.value, q, findState.caseSensitive);
         if (!matches.length) return;
         const rep = $('#replace-input').value;
@@ -1366,7 +1443,7 @@ ready: false
 
       const openFind = focusReplace => {
         if (document.body.dataset.view === 'preview') return false;
-        const ta = $('#editor');
+        const ta = ensureEditor();
         const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
         if (sel && !sel.includes('\n')) $('#find-input').value = sel;
         findState.anchor = ta.selectionStart || 0;
@@ -1382,7 +1459,7 @@ ready: false
         if ($('#find-bar').hidden) return;
         $('#find-bar').hidden = true;
         $('#find-input').classList.remove('no-match');
-        const ta = $('#editor');
+        const ta = ensureEditor();
         ta.clearHighlights();
         ta.focus();
         if (findState.idx >= 0 && findMatches[findState.idx] != null) {
