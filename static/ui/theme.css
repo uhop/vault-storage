@@ -101,6 +101,15 @@ button.primary {
   color: #fff;
   border-color: var(--accent);
 }
+button.danger {
+  background: var(--bad);
+  color: #fff;
+  border-color: var(--bad);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .err {
   color: var(--bad);
   padding: 0.8rem 1rem;
@@ -380,7 +389,8 @@ dialog .dlg-row {
 }
 
 /* .fmw-table: a data table with .n numeric cells and a tr.total sum row;
-   .wide fills the container, .dense tightens the rows, .small shrinks the text. */
+   .wide fills the container, .dense tightens the rows, .small shrinks the
+   text, .wrap lets cells wrap instead of the table scrolling. */
 .fmw-table {
   border-collapse: collapse;
   font-size: 0.9rem;
@@ -402,6 +412,14 @@ dialog .dlg-row {
 .fmw-table.dense th,
 .fmw-table.dense td {
   padding: 0.25rem 0.8rem 0.25rem 0;
+}
+.fmw-table.wrap th,
+.fmw-table.wrap td {
+  white-space: normal;
+}
+/* .fmw-scroll: the container a wide table scrolls in at a narrow width. */
+.fmw-scroll {
+  overflow-x: auto;
 }
 .fmw-table th {
   color: var(--muted);
@@ -601,4 +619,16 @@ dialog .dlg-row {
 .fmw-pill:hover {
   color: var(--fg);
   border-color: var(--muted);
+}
+
+/* .fmw-notice: a status box beside the chrome's .err, in the ok ink with .ok. */
+.fmw-notice {
+  padding: 0.6rem 1rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+}
+.fmw-notice.ok {
+  color: var(--ok);
 }

@@ -29,15 +29,6 @@
         padding: 0.35rem 0.75rem;
         font-size: 0.85rem;
       }
-      button.danger {
-        background: var(--bad);
-        color: #fff;
-        border-color: var(--bad);
-      }
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
       .why {
         color: var(--muted);
         font-size: 0.85rem;
@@ -47,43 +38,29 @@
         font-family: var(--mono);
         font-size: 0.9em;
       }
-      .row {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 0.8rem 1rem;
+      #content > .fmw-card {
         margin-bottom: 0.8rem;
       }
-      .row.resolved {
+      .resolved {
         opacity: 0.5;
       }
-      .row-head {
-        display: flex;
-        align-items: baseline;
-        gap: 1rem;
-        flex-wrap: wrap;
-      }
-      .row-head .path {
+      .fmw-card .path {
         font-family: var(--mono);
         font-size: 0.9rem;
         word-break: break-all;
         flex: 1;
         min-width: 16rem;
       }
-      .row-head .path a {
-        color: var(--accent);
+      .fmw-card .path a {
         text-decoration: none;
       }
-      .row-head .path a:hover {
+      .fmw-card .path a:hover {
         text-decoration: underline;
       }
-      .row-head .meta {
-        font-family: var(--mono);
-        font-size: 0.8rem;
-        color: var(--muted);
+      .fmw-card header small {
         white-space: nowrap;
       }
-      .row-head .meta .tag {
+      .tag {
         padding: 0 0.35rem;
         border-radius: 3px;
         background: var(--bg);
@@ -120,15 +97,6 @@
         font-family: var(--mono);
         margin-right: auto;
       }
-      .row-status.ok {
-        color: var(--ok);
-      }
-      .row-status.err {
-        color: var(--bad);
-      }
-      .row-status.warn {
-        color: var(--bad);
-      }
       .empty {
         padding: 2rem 1rem;
         font-size: 0.95rem;
@@ -136,25 +104,8 @@
       .err {
         margin-bottom: 1rem;
       }
-      .ok {
-        color: var(--ok);
-        padding: 0.6rem 1rem;
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        margin-bottom: 1rem;
-        font-size: 0.9rem;
-      }
       dialog {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 1.2rem;
-        background: var(--card);
-        color: var(--fg);
         max-width: 28rem;
-      }
-      dialog p.warn {
-        color: var(--bad);
       }
     </style>
   </head>
@@ -177,7 +128,7 @@
     <dialog id="confirm-dlg">
       <h2 id="confirm-title">Confirm</h2>
       <p id="confirm-body"></p>
-      <p id="confirm-warn" class="warn" hidden></p>
+      <p id="confirm-warn" class="fmw-bad" hidden></p>
       <div class="dlg-row">
         <button id="confirm-cancel">Cancel</button>
         <button id="confirm-ok" class="danger">Delete</button>
@@ -194,7 +145,7 @@
           el.innerHTML = '';
           return;
         }
-        el.innerHTML = `<div class="${kind}">${msg}</div>`;
+        el.innerHTML = `<div class="${kind === 'ok' ? 'fmw-notice ok' : kind}">${msg}</div>`;
       };
 
       const confirmDialog = (title, body, warn) =>
@@ -278,7 +229,7 @@
       const rowStatus = (suggId, kind, msg) => {
         const el = document.querySelector(`[data-sugg-id="${suggId}"] .row-status`);
         if (!el) return;
-        el.className = 'row-status ' + kind;
+        el.className = `row-status ${kind === 'ok' ? 'fmw-ok' : 'fmw-bad'}`;
         el.textContent = msg;
       };
 
@@ -416,15 +367,15 @@
       const renderRow = item => {
         const p = item.payload;
         return `
-    <div class="row" data-sugg-id="${esc(item.id)}" data-record-id="${esc(item.subject_id)}" data-path="${esc(p.file_path)}">
-      <div class="row-head">
+    <div class="fmw-card" data-sugg-id="${esc(item.id)}" data-record-id="${esc(item.subject_id)}" data-path="${esc(p.file_path)}">
+      <header>
         <div class="path"><a href="/ui/note.html?path=${encodeURIComponent(p.file_path)}">${esc(p.file_path)}</a></div>
-        <div class="meta">
+        <small>
           <span class="tag">${esc(p.type)}</span>
           <span class="tag">${ageBadge(p.age_days)}</span>
           <span class="tag">${esc(p.rule)}</span>
-        </div>
-      </div>
+        </small>
+      </header>
       <div class="row-excerpt"><span class="spinner"></span> loading…</div>
       <div class="row-actions">
         <span class="row-status"></span>

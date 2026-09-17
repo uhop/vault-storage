@@ -25,52 +25,17 @@
       h2:first-child {
         margin-top: 0;
       }
-      button.danger {
-        background: var(--bad);
-        color: #fff;
-        border-color: var(--bad);
-      }
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .section {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 0.8rem 1rem;
+      section.fmw-card {
         margin-bottom: 1rem;
       }
-      .section .why {
+      .fmw-card .why {
         color: var(--muted);
         font-size: 0.85rem;
         margin-bottom: 0.8rem;
       }
-      .section .why code {
+      .fmw-card .why code {
         font-family: var(--mono);
         font-size: 0.85em;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.85rem;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 0.35rem 0.5rem;
-        vertical-align: top;
-      }
-      th {
-        font-weight: 600;
-        color: var(--muted);
-        border-bottom: 1px solid var(--line);
-      }
-      tbody tr {
-        border-bottom: 1px solid var(--line);
-      }
-      tbody tr:last-child {
-        border-bottom: none;
       }
       td.id,
       td.path {
@@ -91,9 +56,6 @@
         color: var(--muted);
         white-space: nowrap;
       }
-      td.stamp.bad {
-        color: var(--bad);
-      }
       .actions {
         margin-top: 0.8rem;
         display: flex;
@@ -111,15 +73,6 @@
       }
       .err {
         margin-bottom: 1rem;
-      }
-      .ok {
-        color: var(--ok);
-        padding: 0.6rem 1rem;
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        margin-bottom: 1rem;
-        font-size: 0.9rem;
       }
     </style>
   </head>
@@ -150,7 +103,7 @@
           el.innerHTML = '';
           return;
         }
-        el.innerHTML = `<div class="${kind}">${msg}</div>`;
+        el.innerHTML = `<div class="${kind === 'ok' ? 'fmw-notice ok' : kind}">${msg}</div>`;
       };
 
       const renderEmpty = () => {
@@ -175,17 +128,17 @@
           )
           .join('');
         return `
-    <section class="section" data-section="aliases">
+    <section class="fmw-card" data-section="aliases">
       <h2>Dangling tag aliases <span class="fmw-count">${samples.length}</span></h2>
       <div class="why">
         Aliases pointing to a canonical tag that's missing from the taxonomy. The alias was authored
         manually — pick which to drop. Server check: each selected alias is verified as still dangling
         before <code>DELETE</code>; live aliases are skipped.
       </div>
-      <table>
+      <div class="fmw-scroll"><table class="fmw-table wide small wrap">
         <thead><tr><th style="width:2rem"></th><th>alias</th><th>canonical (missing)</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>
+      </table></div>
       ${moreNote}
       <div class="actions">
         <span class="selected-count" id="aliases-selected">0 selected</span>
@@ -219,23 +172,23 @@
       <td class="id">${esc(s.id)}</td>
       <td class="path"><a href="/ui/note.html?path=${encodeURIComponent(s.file_path)}">${esc(s.file_path)}</a></td>
       <td class="stamp">${esc(s.created ?? '—')}</td>
-      <td class="stamp bad">${esc(s.updated ?? '—')}</td>
+      <td class="stamp fmw-bad">${esc(s.updated ?? '—')}</td>
     </tr>
   `
           )
           .join('');
         return `
-    <section class="section" data-section="temporal">
+    <section class="fmw-card" data-section="temporal">
       <h2>Temporal anomalies — <code>updated &lt; created</code> <span class="fmw-count">${reviewable.length}</span></h2>
       <div class="why">
         Frontmatter has <code>updated</code> earlier than <code>created</code>. Often manual paste
         error; sometimes a write-bug worth investigating. Open each note and fix the FM directly —
         no auto-fix endpoint, since re-stamping could mask the underlying cause.
       </div>
-      <table>
+      <div class="fmw-scroll"><table class="fmw-table wide small wrap">
         <thead><tr><th>record_id</th><th>file_path</th><th>created</th><th>updated</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>
+      </table></div>
       ${moreNote}
     </section>
   `;

@@ -15,10 +15,6 @@
     <link rel="icon" sizes="any" href="/favicon.ico" />
     <link rel="stylesheet" href="/ui/theme.css" />
     <style>
-      header h1 a {
-        color: inherit;
-        text-decoration: none;
-      }
       main {
         max-width: 60rem;
       }
@@ -28,22 +24,6 @@
       }
       h2:first-child {
         margin-top: 0;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.9rem;
-      }
-      th,
-      td {
-        text-align: left;
-        padding: 0.4rem 0.6rem;
-        border-bottom: 1px solid var(--line);
-        vertical-align: baseline;
-      }
-      th {
-        color: var(--muted);
-        font-weight: 500;
       }
       td code,
       .events code {
@@ -57,11 +37,6 @@
       button {
         padding: 0.35rem 0.75rem;
         font-size: 0.85rem;
-      }
-      button.danger {
-        background: var(--bad);
-        color: #fff;
-        border-color: var(--bad);
       }
       form.claim {
         display: flex;
@@ -94,13 +69,6 @@
       }
       .events li {
         margin: 0.15rem 0;
-      }
-      .error {
-        background: color-mix(in srgb, var(--bad) 12%, var(--bg));
-        border: 1px solid var(--bad);
-        border-radius: 6px;
-        padding: 0.6rem 0.9rem;
-        margin-bottom: 1rem;
       }
     </style>
   </head>
@@ -141,7 +109,7 @@
       const $ = sel => document.querySelector(sel);
 
       const showStatus = msg => {
-        $('#status').innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : '';
+        $('#status').innerHTML = msg ? `<div class="err">${esc(msg)}</div>` : '';
       };
 
       const fmtSince = iso => {
@@ -186,12 +154,12 @@
           )
           .join('');
         $('#leases').innerHTML = `
-          <table>
+          <div class="fmw-scroll"><table class="fmw-table wide wrap">
             <thead><tr>
               <th>resource</th><th>holder</th><th>held</th><th>expires</th><th>attestation</th><th></th>
             </tr></thead>
             <tbody>${rows}</tbody>
-          </table>`;
+          </table></div>`;
       };
 
       const renderHandoffs = items => {
@@ -225,12 +193,12 @@
           )
           .join('');
         $('#handoffs').innerHTML = `
-          <table>
+          <div class="fmw-scroll"><table class="fmw-table wide wrap">
             <thead><tr>
               <th>id</th><th>to</th><th>kind</th><th>status</th><th>from</th><th>ref</th><th>artifact</th><th>touched</th><th>notes</th>
             </tr></thead>
             <tbody>${rows}</tbody>
-          </table>`;
+          </table></div>`;
       };
 
       const renderEvents = items => {
