@@ -60,7 +60,7 @@ import {
 import {commitHandler} from './handlers/commit.ts';
 import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
-import {resolveHandler} from './handlers/resolve.ts';
+import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
 import {healthHandler, releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
 import {startHealthMonitor, type HealthMonitor} from './health.ts';
 import {
@@ -237,6 +237,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
 
   router.get('/resolve', resolveHandler({resolverCache}));
+  router.post('/resolve', resolveBatchHandler({resolverCache}));
 
   router.post(
     '/commit',

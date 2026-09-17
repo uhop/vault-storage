@@ -3,8 +3,8 @@
 // Renders markdown via the vendored `marked` bundle with a wikilink
 // extension: `[[topics/foo]]` and `[[topics/foo|alias]]` become
 // <a class="wikilink" data-wikilink="..."> elements that the component
-// then resolves via GET /resolve?wikilink= in parallel, caching hits and
-// misses for the lifetime of the element. Resolved links get an `href`
+// then resolves in one POST /resolve per render, caching hits and misses
+// for the lifetime of the element. Resolved links get an `href`
 // (so middle-click / cmd-click / ctrl-click open in a new tab as native
 // <a>); unresolved links get an `.unresolved` class for line-through
 // styling and no href.
@@ -72,6 +72,8 @@ const configureMarked = () => {
   markedConfigured = true;
 };
 
+const BATCH = 200; // the server caps a batch at 500
+
 class VaultMarkdown extends HTMLElement {
   static observedAttributes = ['value', 'show-frontmatter'];
 
@@ -111,38 +113,51 @@ class VaultMarkdown extends HTMLElement {
   }
 
   async #decorateWikilinks(token) {
-    const links = this.querySelectorAll('a.wikilink');
+    const links = [...this.querySelectorAll('a.wikilink')].filter(a => a.dataset.wikilink);
     if (links.length === 0) return;
     const auth = localStorage.getItem('vault.token');
     if (!auth) return;
+    const pending = new Set();
+    for (const a of links) {
+      a.classList.add('resolving');
+      if (!this.#cache.has(a.dataset.wikilink)) pending.add(a.dataset.wikilink);
+    }
+    await this.#resolve([...pending], auth);
+    // Discard if a newer render has happened — the elements we
+    // captured may already be detached from the DOM.
+    if (token !== this.#renderToken) return;
+    for (const a of links) {
+      const data = this.#cache.get(a.dataset.wikilink);
+      a.classList.remove('resolving');
+      if (data) {
+        a.href = data.ui_url;
+        a.title = data.file_path;
+      } else {
+        a.classList.add('unresolved');
+        a.title = 'Wikilink not resolved';
+      }
+    }
+  }
+
+  // A failed request caches nothing, so the next render retries it.
+  async #resolve(targets, auth) {
+    const chunks = [];
+    for (let i = 0; i < targets.length; i += BATCH) chunks.push(targets.slice(i, i + BATCH));
     await Promise.all(
-      [...links].map(async a => {
-        const target = a.dataset.wikilink;
-        if (!target) return;
-        a.classList.add('resolving');
-        let data = this.#cache.get(target);
-        if (data === undefined) {
-          try {
-            const res = await fetch(`/resolve?wikilink=${encodeURIComponent(target)}`, {
-              headers: {Authorization: `Bearer ${auth}`}
-            });
-            data = res.ok ? await res.json() : null;
-          } catch {
-            data = null;
-          }
-          this.#cache.set(target, data);
+      chunks.map(async chunk => {
+        let items;
+        try {
+          const res = await fetch('/resolve', {
+            method: 'POST',
+            headers: {Authorization: `Bearer ${auth}`, 'Content-Type': 'application/json'},
+            body: JSON.stringify({wikilinks: chunk})
+          });
+          if (!res.ok) return;
+          ({items} = await res.json());
+        } catch {
+          return;
         }
-        // Discard if a newer render has happened — the elements we
-        // captured may already be detached from the DOM.
-        if (token !== this.#renderToken) return;
-        a.classList.remove('resolving');
-        if (data) {
-          a.href = data.ui_url;
-          a.title = data.file_path;
-        } else {
-          a.classList.add('unresolved');
-          a.title = 'Wikilink not resolved';
-        }
+        chunk.forEach((target, i) => this.#cache.set(target, items[i]?.ui_url ? items[i] : null));
       })
     );
   }

@@ -260,3 +260,101 @@ test('GET /resolve requires bearer auth', async t => {
     cleanup();
   }
 });
+
+const postJson = async (
+  url: string,
+  body: string,
+  auth = true
+): Promise<{status: number; body: unknown}> => {
+  const headers: Record<string, string> = {'Content-Type': 'application/json'};
+  if (auth) headers['Authorization'] = `Bearer ${TEST_TOKEN}`;
+  const res = await fetch(url, {method: 'POST', headers, body});
+  const text = await res.text();
+  return {status: res.status, body: text.length === 0 ? null : JSON.parse(text)};
+};
+
+interface BatchItem {
+  target: string;
+  record_id: string | null;
+  file_path: string | null;
+  ui_url: string | null;
+}
+
+test('POST /resolve resolves a batch in request order', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const wikilinks = [
+        'topics/alpha',
+        'topics/beta.md',
+        'projects/demo',
+        'no/such',
+        'topics/alpha#part'
+      ];
+      const {status, body} = await postJson(`${ctx.url}/resolve`, JSON.stringify({wikilinks}));
+      t.equal(status, 200, '200 ok');
+      const {items} = body as {items: BatchItem[]};
+      t.deepEqual(
+        items.map(i => i.target),
+        wikilinks,
+        'targets echoed in request order'
+      );
+      t.deepEqual(
+        items.map(i => i.file_path),
+        ['topics/alpha.md', 'topics/beta.md', 'projects/demo/_about.md', null, 'topics/alpha.md'],
+        'paths resolved by the GET rules'
+      );
+      t.equal(
+        items.map(i => i.ui_url)[0],
+        '/ui/note.html?path=topics%2Falpha.md',
+        'ui_url encoded'
+      );
+      const ids = items.map(i => i.record_id);
+      t.ok(ids[0] !== null && ids[0] === ids[4], 'anchor stripped');
+      t.deepEqual(
+        items[3],
+        {target: 'no/such', record_id: null, file_path: null, ui_url: null},
+        'a miss carries nulls'
+      );
+      const empty = await postJson(`${ctx.url}/resolve`, JSON.stringify({wikilinks: []}));
+      t.equal(empty.status, 200, 'empty batch 200');
+      t.deepEqual(empty.body, {items: []}, 'empty batch answers no items');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /resolve rejects a malformed body, query params, and no auth', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const cases: [string, string][] = [
+        ['not json', 'not JSON'],
+        ['null', 'null body'],
+        ['{"wikilinks":"topics/alpha"}', 'not an array'],
+        ['{"wikilinks":["topics/alpha",""]}', 'empty entry'],
+        ['{"wikilinks":[1]}', 'non-string entry'],
+        [JSON.stringify({wikilinks: Array.from({length: 501}, () => 'x')}), 'over the cap']
+      ];
+      for (const [raw, label] of cases) {
+        const {status} = await postJson(`${ctx.url}/resolve`, raw);
+        t.equal(status, 400, `400 ${label}`);
+      }
+      const q = await postJson(`${ctx.url}/resolve?wikilink=topics/alpha`, '{"wikilinks":[]}');
+      t.equal(q.status, 400, '400 query params rejected');
+      const anon = await postJson(`${ctx.url}/resolve`, '{"wikilinks":[]}', false);
+      t.equal(anon.status, 401, '401 unauthorized');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
