@@ -256,3 +256,8 @@ Tests use a fake `fetch` to exercise client behaviour; smoke tests verify
 tool/resource registration, and description-pin tests hold tool descriptions
 to the real response shapes. Plain JavaScript — there is no type-check step
 in this sub-package.
+
+Before a publish, the consumer smoke at the repository root, `node
+scripts/mcp-smoke.mjs`, spawns the staged adapter and speaks JSON-RPC over
+stdio to the live server named by `VAULT_API_URL`: the tool list against
+`registerTools`, `vault_health`, one read tool, and one `fields=` subset.

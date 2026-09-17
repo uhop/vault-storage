@@ -26,4 +26,7 @@ the sub-package delta.
   when triaging transitive dependency advisories.
 - **Releases**: monorepo-naked tags `mcp-X.Y.Z` (no `v` prefix); version
   bumps land together with a regenerated `package-lock.json`; `npm publish`
-  is the maintainer's step (interactive 2FA).
+  is the maintainer's step (interactive 2FA). Before it, `node
+scripts/mcp-smoke.mjs` from the repository root speaks JSON-RPC over stdio
+  to the staged adapter against the live server: the tool list against
+  `registerTools`, `vault_health`, one read tool, one `fields=` subset.
