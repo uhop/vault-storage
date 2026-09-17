@@ -41,10 +41,6 @@
         font-size: 0.9em;
       }
       section {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 0.9rem 1.1rem 1rem;
         margin-top: 1rem;
         font-size: 0.9rem;
       }
@@ -187,9 +183,9 @@
 
       const renderGithub = () => {
         if (!baseline)
-          return `<section><h3>GitHub</h3><div class="empty">No stored GitHub baseline — the project has no public fleet repository, or <code>/fleet-status</code> has not collected it yet.</div></section>`;
+          return `<section class="fmw-card"><h3>GitHub</h3><div class="empty">No stored GitHub baseline — the project has no public fleet repository, or <code>/fleet-status</code> has not collected it yet.</div></section>`;
         const {html, links} = githubDetail({project, baseline}, runs, cutoffOf(windowState()));
-        return `<section id="github"><h3>GitHub</h3>${html}<div class="links">${links}</div></section>`;
+        return `<section id="github" class="fmw-card"><h3>GitHub</h3>${html}<div class="links">${links}</div></section>`;
       };
 
       const renderFleet = p => {
@@ -310,7 +306,7 @@
             : null,
           p.repo ? ext(`https://github.com/${p.repo}`, p.repo) : null
         ].filter(Boolean);
-        return `<section>${head}${links.length ? `<div class="links">${links.join(' · ')}</div>` : ''}${n ? renderNpm(p) : ''}${renderFleet(p)}</section>`;
+        return `<section class="fmw-card">${head}${links.length ? `<div class="links">${links.join(' · ')}</div>` : ''}${n ? renderNpm(p) : ''}${renderFleet(p)}</section>`;
       };
 
       const render = () => {
@@ -344,7 +340,7 @@
         $('#content').innerHTML = `${renderGithub()}${list.map(renderPackage).join('')}${
           packages
             ? ''
-            : '<section><h3>Packages</h3><div class="empty">No stored packages for this project.</div></section>'
+            : '<section class="fmw-card"><h3>Packages</h3><div class="empty">No stored packages for this project.</div></section>'
         }`;
       };
 

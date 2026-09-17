@@ -52,92 +52,39 @@
         gap: 0.35rem;
         margin-top: 0.6rem;
       }
-      .recents button.chip {
-        padding: 0.2rem 0.55rem;
-        font-size: 0.8rem;
+      .recents .fmw-pill {
         font-family: var(--mono);
-        background: transparent;
-        color: var(--muted);
-        border-color: var(--line);
-      }
-      .recents button.chip:hover {
-        color: var(--fg);
-        border-color: var(--muted);
       }
       .results {
+        display: grid;
+        gap: 0.5rem;
         margin-top: 1.2rem;
       }
-      .result {
-        padding: 0.7rem 0.9rem;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        margin-bottom: 0.5rem;
-        background: var(--card);
-      }
-      .result .head {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.4rem;
-        align-items: baseline;
-      }
-      .result .filename {
+      #results .filename {
         font-family: var(--mono);
         font-size: 0.9rem;
         color: var(--accent);
         cursor: pointer;
         word-break: break-all;
       }
-      .result .filename:hover {
+      #results .filename:hover {
         text-decoration: underline;
       }
-      .result .edit {
-        font-size: 0.8rem;
-        color: var(--muted);
-        text-decoration: none;
-        padding: 0.1em 0.4em;
-        border: 1px solid var(--line);
-        border-radius: 3px;
-      }
-      .result .edit:hover {
-        color: var(--fg);
-        border-color: var(--muted);
-      }
-      .result .score {
-        color: var(--muted);
-        font-size: 0.8rem;
-      }
-      .result .snippets {
+      #results .snippets {
         margin-top: 0.4rem;
         font-size: 0.85rem;
         color: var(--muted);
         font-family: var(--mono);
       }
-      .result .snippets div {
+      #results .snippets div {
         padding: 0.15rem 0;
         word-break: break-word;
       }
-      .result .snippets mark {
+      #results .snippets mark {
         background: var(--hl);
         color: inherit;
         padding: 0 0.1em;
         border-radius: 2px;
-      }
-      .result .body {
-        display: none;
-        margin-top: 0.6rem;
-        padding: 0.6rem 0.8rem;
-        background: var(--bg);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        font-family: var(--mono);
-        font-size: 0.82rem;
-        white-space: pre-wrap;
-        word-break: break-word;
-        max-height: 30rem;
-        overflow-y: auto;
-      }
-      .result.open .body {
-        display: block;
       }
     </style>
   </head>
@@ -192,7 +139,7 @@
         $('#recents').innerHTML =
           r.length === 0
             ? ''
-            : r.map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('');
+            : r.map(q => `<button class="fmw-pill" data-q="${esc(q)}">${esc(q)}</button>`).join('');
       };
 
       const highlightSnippet = (context, match) => {
@@ -231,15 +178,15 @@
               .join('');
             const path = encodeURIComponent(r.filename);
             return `
-      <div class="result" data-idx="${i}">
-        <div class="head">
+      <div class="fmw-card" data-idx="${i}">
+        <header>
           <span class="filename" data-path="${esc(r.filename)}">${esc(r.filename)}</span>
-          <a class="edit" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
-          <a class="edit" href="/ui/note.html?path=${path}" title="Edit">edit</a>
-          <span class="score">${fmtScore(r.score, mode)}</span>
-        </div>
+          <a class="fmw-pill" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
+          <a class="fmw-pill" href="/ui/note.html?path=${path}" title="Edit">edit</a>
+          <small>${fmtScore(r.score, mode)}</small>
+        </header>
         ${snippets ? `<div class="snippets">${snippets}</div>` : ''}
-        <pre class="body" id="body-${i}"></pre>
+        <pre id="body-${i}"></pre>
       </div>
     `;
           })
@@ -273,7 +220,7 @@
           return;
         }
         card.classList.add('open');
-        const body = card.querySelector('.body');
+        const body = card.querySelector('pre');
         if (body.dataset.loaded === '1') return;
         body.textContent = 'loading…';
         try {
@@ -295,7 +242,7 @@
       });
 
       document.addEventListener('click', e => {
-        const chip = e.target.closest('button.chip');
+        const chip = e.target.closest('button.fmw-pill');
         if (chip) {
           $('#q').value = chip.dataset.q;
           search();
@@ -303,7 +250,7 @@
         }
         const fname = e.target.closest('.filename');
         if (fname) {
-          const card = fname.closest('.result');
+          const card = fname.closest('.fmw-card');
           expandResult(card, fname.dataset.path);
         }
       });

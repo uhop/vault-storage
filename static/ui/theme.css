@@ -545,3 +545,60 @@ dialog .dlg-row {
 .fmw-eyebrow .fmw-count {
   color: var(--fg);
 }
+
+/* .fmw-card: a bordered box; its <header> is the title row with <small>
+   metadata, and a direct <pre> is the folded body shown while the card is
+   .open. The container spaces the cards. */
+.fmw-card {
+  padding: 0.7rem 0.9rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.fmw-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.fmw-card > header small {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.fmw-card > pre {
+  display: none;
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 30rem;
+  overflow-y: auto;
+}
+.fmw-card.open > pre {
+  display: block;
+}
+
+/* .fmw-pill: a small bordered link or button beside a title. */
+.fmw-pill {
+  display: inline-block;
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-decoration: none;
+  cursor: pointer;
+}
+.fmw-pill:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}

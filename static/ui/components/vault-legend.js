@@ -126,7 +126,7 @@ const ENTRIES = [
     mark: `${cell('success', 'fmw-ok')} ${cell('failure', 'fmw-bad')} ${cell('cancelled', 'fmw-warn')} ${cell('none', 'fmw-quiet')}`,
     text: 'The last CI run on the default branch, linked to the run; none when no run is recorded.'
   },
-  {views: ['packages'], mark: '<a class="x">npm</a>', text: 'Opens the package on npm.'},
+  {views: ['packages'], mark: '<a class="fmw-pill">npm</a>', text: 'Opens the package on npm.'},
   {
     views: ['packages', 'project'],
     mark: '<span class="fmw-warn">deprecated</span>',

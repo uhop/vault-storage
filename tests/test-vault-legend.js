@@ -22,7 +22,7 @@ const TABLE_MARKS = {
   packages: [
     '&nbsp;',
     '>-<',
-    'class="x"',
+    'fmw-pill',
     'deprecated',
     '≤',
     '<svg',

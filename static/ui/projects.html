@@ -29,76 +29,24 @@
         gap: 0.35rem;
         cursor: pointer;
       }
-      .proj {
-        padding: 0.7rem 0.9rem;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        margin-bottom: 0.5rem;
-        background: var(--card);
-      }
-      .proj .head {
-        display: flex;
-        flex-wrap: wrap;
+      #projects {
+        display: grid;
         gap: 0.5rem;
-        align-items: baseline;
       }
-      .proj .name {
+      #projects .name {
         font-family: var(--mono);
         font-size: 0.95rem;
         color: var(--accent);
         cursor: pointer;
         word-break: break-all;
       }
-      .proj .name:hover {
+      #projects .name:hover {
         text-decoration: underline;
       }
-      .proj .edit {
-        font-size: 0.8rem;
-        color: var(--muted);
-        text-decoration: none;
-        padding: 0.1em 0.4em;
-        border: 1px solid var(--line);
-        border-radius: 3px;
-      }
-      .proj .edit:hover {
-        color: var(--fg);
-        border-color: var(--muted);
-      }
-      .proj .meta {
-        color: var(--muted);
-        font-size: 0.8rem;
-        font-family: var(--mono);
-      }
-      .proj .meta .open {
-        color: var(--fg);
-      }
-      .proj .meta .open.warn {
-        color: var(--warn);
-      }
-      .proj .meta .open.bad {
-        color: var(--bad);
-      }
-      .proj .summary {
+      #projects .summary {
         margin-top: 0.35rem;
         font-size: 0.9rem;
         color: var(--muted);
-      }
-      .proj .body {
-        display: none;
-        margin-top: 0.6rem;
-        padding: 0.6rem 0.8rem;
-        background: var(--bg);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        font-family: var(--mono);
-        font-size: 0.82rem;
-        white-space: pre-wrap;
-        word-break: break-word;
-        max-height: 30rem;
-        overflow-y: auto;
-      }
-      .proj.open .body {
-        display: block;
       }
     </style>
   </head>
@@ -147,17 +95,17 @@
         return {updated, openTasks, doneTasks, summary, full: text};
       };
 
-      const openClass = n => (n === 0 ? '' : n > 20 ? 'bad' : n > 8 ? 'warn' : '');
+      const openClass = n => (n === 0 ? '' : n > 20 ? 'fmw-bad' : n > 8 ? 'fmw-warn' : '');
 
       const renderSkeleton = folders => {
         $('#projects').innerHTML = folders
           .map(
             name => `
-    <div class="proj" data-name="${esc(name)}">
-      <div class="head">
+    <div class="fmw-card" data-name="${esc(name)}">
+      <header>
         <span class="name">${esc(name)}</span>
-        <span class="meta"><span class="spinner"></span></span>
-      </div>
+        <small><span class="spinner"></span></small>
+      </header>
     </div>
   `
           )
@@ -168,22 +116,22 @@
         const card = document.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!card) return;
         if (!q) {
-          card.innerHTML = `<div class="head">
+          card.innerHTML = `<header>
       <span class="name">${esc(name)}</span>
-      <span class="meta">no queue.md</span>
-    </div>`;
+      <small>no queue.md</small>
+    </header>`;
           return;
         }
         const path = `projects/${encodeURIComponent(name)}/queue.md`;
         card.innerHTML = `
-    <div class="head">
+    <header>
       <span class="name" data-name="${esc(name)}">${esc(name)}</span>
-      <a class="edit" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
-      <a class="edit" href="/ui/note.html?path=${path}" title="Edit queue.md">edit</a>
-      <span class="meta">${esc(q.updated ?? '—')} · <span class="open ${openClass(q.openTasks)}">${q.openTasks} open</span> / ${q.openTasks + q.doneTasks} total</span>
-    </div>
+      <a class="fmw-pill" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
+      <a class="fmw-pill" href="/ui/note.html?path=${path}" title="Edit queue.md">edit</a>
+      <small>${esc(q.updated ?? '—')} · <b class="${openClass(q.openTasks)}">${q.openTasks} open</b> / ${q.openTasks + q.doneTasks} total</small>
+    </header>
     <div class="summary">${esc(q.summary)}</div>
-    <pre class="body"></pre>
+    <pre></pre>
   `;
         card._queueText = q.full;
       };
@@ -213,7 +161,7 @@
           .replace(/\n{3,}/g, '\n\n');
 
       const renderBody = (card, showDone) => {
-        const body = card.querySelector('.body');
+        const body = card.querySelector('pre');
         if (!body || !card._queueText) return;
         body.textContent = showDone ? card._queueText : stripDoneTasks(card._queueText);
       };
@@ -235,7 +183,7 @@
 
       const reRenderOpenBodies = () => {
         const showDone = showDoneState();
-        $$('.proj.open').forEach(card => renderBody(card, showDone));
+        $$('.fmw-card.open').forEach(card => renderBody(card, showDone));
       };
 
       const refresh = async () => {
@@ -290,7 +238,7 @@
       document.addEventListener('click', e => {
         const name = e.target.closest('.name[data-name]');
         if (name) {
-          const card = name.closest('.proj');
+          const card = name.closest('.fmw-card');
           expandProject(card);
         }
       });

@@ -105,19 +105,9 @@
         font-size: 0.85rem;
         line-height: 1.8;
       }
-      a.x {
-        font-size: 0.75rem;
-        color: var(--muted);
-        text-decoration: none;
-        border: 1px solid var(--line);
-        border-radius: 3px;
-        padding: 0 0.35em;
+      td.name .fmw-pill {
         margin-left: 0.3rem;
         vertical-align: 0.1em;
-      }
-      a.x:hover {
-        color: var(--fg);
-        border-color: var(--muted);
       }
       .scroll {
         overflow-x: auto;
@@ -703,7 +693,7 @@
           const change = dependentsChange(r.dependents, cutoff);
           const trend = r.weekly.slice(-26);
           return `<tr>
-            <td class="name"><a href="${projectHref(r.project, `pkg-${r.name}`)}" title="GitHub and npm details">${esc(r.name)}</a><a class="x" href="${esc(npmHref(r.name))}" target="_blank" rel="noopener">npm</a>${r.deprecated ? ' <span class="fmw-warn">deprecated</span>' : ''}</td>
+            <td class="name"><a href="${projectHref(r.project, `pkg-${r.name}`)}" title="GitHub and npm details">${esc(r.name)}</a><a class="fmw-pill" href="${esc(npmHref(r.name))}" target="_blank" rel="noopener">npm</a>${r.deprecated ? ' <span class="fmw-warn">deprecated</span>' : ''}</td>
             <td><a href="${projectHref(r.project)}">${esc(r.project)}</a></td>
             <td title="${esc(r.published_at ? `published ${dayLabel(r.published_at.slice(0, 10))}` : '')}">${esc(r.latest ?? '-')} <span class="fmw-quiet">${esc(ageText(r.published_at))}</span></td>
             <td class="n" title="${esc(r.week ? `${r.week.downloads.toLocaleString('en-US')} downloads, ${rangeLabel(r.week.start, r.week.end)}` : '')}">${r.week?.downloads === 0 ? '&nbsp;' : esc(compact(r.week?.downloads))}</td>
