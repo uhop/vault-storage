@@ -25,11 +25,6 @@
       h2:first-child {
         margin-top: 0;
       }
-      h2 .count {
-        color: var(--muted);
-        font-weight: 400;
-        font-size: 0.85em;
-      }
       button.danger {
         background: var(--bad);
         color: #fff;
@@ -181,7 +176,7 @@
           .join('');
         return `
     <section class="section" data-section="aliases">
-      <h2>Dangling tag aliases <span class="count">(${samples.length})</span></h2>
+      <h2>Dangling tag aliases <span class="fmw-count">${samples.length}</span></h2>
       <div class="why">
         Aliases pointing to a canonical tag that's missing from the taxonomy. The alias was authored
         manually — pick which to drop. Server check: each selected alias is verified as still dangling
@@ -231,7 +226,7 @@
           .join('');
         return `
     <section class="section" data-section="temporal">
-      <h2>Temporal anomalies — <code>updated &lt; created</code> <span class="count">(${reviewable.length})</span></h2>
+      <h2>Temporal anomalies — <code>updated &lt; created</code> <span class="fmw-count">${reviewable.length}</span></h2>
       <div class="why">
         Frontmatter has <code>updated</code> earlier than <code>created</code>. Often manual paste
         error; sometimes a write-bug worth investigating. Open each note and fix the FM directly —

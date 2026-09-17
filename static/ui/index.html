@@ -145,52 +145,12 @@
         color: var(--muted);
         font-weight: 600;
       }
-      .recent-row {
-        display: flex;
-        gap: 0.8rem;
-        align-items: baseline;
-        padding: 0.5rem 0.9rem;
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        margin-bottom: 0.35rem;
-        text-decoration: none;
-        color: var(--fg);
-      }
-      .recent-row:hover {
-        border-color: var(--accent);
-      }
-      .recent-row .title {
-        font-weight: 600;
-        font-size: 0.95rem;
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .recent-row .path {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .recent-row .when {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-        flex-shrink: 0;
-      }
       @media (max-width: 600px) {
-        .recent-row {
+        #recent a {
           flex-wrap: wrap;
           gap: 0.25rem;
         }
-        .recent-row .path {
+        #recent small:first-of-type {
           width: 100%;
         }
       }
@@ -387,7 +347,7 @@
       </section>
       <section class="recent">
         <h2>Recently updated</h2>
-        <div id="recent"></div>
+        <div id="recent" class="fmw-records boxed rows"></div>
       </section>
       <section class="ops">
         <h2>System</h2>
@@ -486,10 +446,10 @@
         $('#recent').innerHTML = items
           .map(
             r => `
-    <a class="recent-row" href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
-      <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
-      <span class="path">${esc(r.file_path)}</span>
-      <span class="when">${esc(fmtRelative(r.modified_at ?? r.updated))}</span>
+    <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
+      <b>${esc(r.title || r.file_path.split('/').pop())}</b>
+      <small>${esc(r.file_path)}</small>
+      <small>${esc(fmtRelative(r.modified_at ?? r.updated))}</small>
     </a>
   `
           )

@@ -103,40 +103,6 @@
       .records-pane {
         min-height: 12rem;
       }
-      .record-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-      .record-list li {
-        margin: 0.25rem 0;
-      }
-      .record-list a {
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-        padding: 0.55rem 0.7rem;
-        border-radius: 4px;
-        text-decoration: none;
-        color: var(--fg);
-      }
-      .record-list a:hover {
-        background: rgba(127, 127, 127, 0.12);
-      }
-      .record-list .title {
-        font-weight: 600;
-        font-size: 0.95rem;
-      }
-      .record-list .path {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-      }
-      .record-list .meta {
-        font-family: var(--mono);
-        font-size: 0.7rem;
-        color: var(--muted);
-      }
     </style>
   </head>
   <body class="fmw">
@@ -240,19 +206,17 @@
             return;
           }
           items.sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
-          $('#records').innerHTML = `<ul class="record-list">${items
+          $('#records').innerHTML = `<div class="fmw-records">${items
             .map(
               r => `
-        <li>
-          <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
-            <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
-            <span class="path">${esc(r.file_path)}</span>
-            <span class="meta">${esc(r.type ?? '')} · updated ${esc(fmtDate(r.updated))}</span>
-          </a>
-        </li>
+        <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
+          <b>${esc(r.title || r.file_path.split('/').pop())}</b>
+          <small>${esc(r.file_path)}</small>
+          <small>${esc(r.type ?? '')} · updated ${esc(fmtDate(r.updated))}</small>
+        </a>
       `
             )
-            .join('')}</ul>`;
+            .join('')}</div>`;
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();

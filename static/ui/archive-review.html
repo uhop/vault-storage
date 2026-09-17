@@ -25,11 +25,6 @@
       h2:first-child {
         margin-top: 0;
       }
-      h2 .count {
-        color: var(--muted);
-        font-weight: 400;
-        font-size: 0.85em;
-      }
       button {
         padding: 0.35rem 0.75rem;
         font-size: 0.85rem;
@@ -492,7 +487,7 @@
             ? `<div class="why">Showing ${items.length} of ${total}; refresh after acting on a batch to see the next.</div>`
             : '';
         const html = `
-    <h2>Archive candidates <span class="count">(${items.length})</span></h2>
+    <h2>Archive candidates <span class="fmw-count">${items.length}</span></h2>
     <div class="why">
       Records flagged by per-type retention rules in <code>topics/vault-hygiene-policy</code>.
       Three actions per row: <b>Archive in FM</b> sets <code>status: archived</code> and keeps the file

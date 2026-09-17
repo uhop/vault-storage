@@ -40,81 +40,14 @@
       section + section {
         margin-top: 1.2rem;
       }
-      section h2 {
-        font-size: 0.85rem;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        color: var(--muted);
-        margin: 0 0 0.5rem;
-        font-weight: 600;
-        display: flex;
-        align-items: baseline;
-        gap: 0.5rem;
-      }
-      section h2 .count {
-        font-family: var(--mono);
-        color: var(--fg);
-        font-size: 0.85rem;
-      }
-      .list {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        overflow: hidden;
-      }
-      .list a {
-        display: flex;
-        align-items: baseline;
-        gap: 0.8rem;
-        padding: 0.55rem 0.9rem;
-        text-decoration: none;
-        color: var(--fg);
-        border-bottom: 1px solid var(--line);
-      }
-      .list a:last-child {
-        border-bottom: 0;
-      }
-      .list a:hover {
-        background: rgba(127, 127, 127, 0.08);
-      }
-      .list .icon {
-        font-family: var(--mono);
-        color: var(--muted);
-        flex-shrink: 0;
-        width: 1.2em;
-        text-align: center;
-      }
-      .list .name {
-        font-weight: 600;
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .list .name.untitled {
-        font-style: italic;
-        font-weight: 400;
-        color: var(--muted);
-      }
-      .list .badges {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
+      .badges {
         display: flex;
         gap: 0.4rem;
-        flex-shrink: 0;
       }
-      .list .badges .type {
+      .badges .type {
         padding: 0 0.35rem;
         border: 1px solid var(--line);
         border-radius: 3px;
-      }
-      .list .updated {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-        flex-shrink: 0;
       }
       .empty {
         padding: 1rem;
@@ -176,17 +109,14 @@
           .map(name => {
             const full = parentPath === '' ? name : `${parentPath}/${name}`;
             return `
-      <a href="${folderHref(full)}">
-        <span class="icon">📁</span>
-        <span class="name">${esc(name)}/</span>
-      </a>
+      <a href="${folderHref(full)}"><i>📁</i><b>${esc(name)}/</b></a>
     `;
           })
           .join('');
         return `
     <section>
-      <h2>Folders <span class="count">${subfolders.length}</span></h2>
-      <div class="list">${items}</div>
+      <h2 class="fmw-eyebrow">Folders <span class="fmw-count">${subfolders.length}</span></h2>
+      <div class="fmw-records boxed rows">${items}</div>
     </section>
   `;
       };
@@ -196,26 +126,25 @@
         const items = files
           .map(f => {
             const filename = f.path.split('/').pop();
-            const display = f.title ? esc(f.title) : esc(filename ?? f.path);
-            const cls = f.title ? 'name' : 'name untitled';
+            const display = f.title ? esc(f.title) : `<i>${esc(filename ?? f.path)}</i>`;
             const updated = f.updated ? f.updated.slice(0, 10) : '';
             return `
       <a href="/ui/note.html?path=${encodeURIComponent(f.path)}">
-        <span class="icon">📄</span>
-        <span class="${cls}">${display}</span>
-        <span class="badges">
+        <i>📄</i>
+        <b>${display}</b>
+        <small class="badges">
           <span class="type">${esc(f.type)}</span>
           ${f.status && f.status !== 'active' ? `<span class="type">${esc(f.status)}</span>` : ''}
-        </span>
-        <span class="updated">${esc(updated)}</span>
+        </small>
+        <small>${esc(updated)}</small>
       </a>
     `;
           })
           .join('');
         return `
     <section>
-      <h2>Files <span class="count">${files.length}</span></h2>
-      <div class="list">${items}</div>
+      <h2 class="fmw-eyebrow">Files <span class="fmw-count">${files.length}</span></h2>
+      <div class="fmw-records boxed rows">${items}</div>
     </section>
   `;
       };

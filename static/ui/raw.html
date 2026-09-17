@@ -18,73 +18,6 @@
       section + section {
         margin-top: 1.2rem;
       }
-      section h2 {
-        font-size: 0.85rem;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        color: var(--muted);
-        margin: 0 0 0.5rem;
-        font-weight: 600;
-        display: flex;
-        align-items: baseline;
-        gap: 0.5rem;
-      }
-      section h2 .count {
-        font-family: var(--mono);
-        color: var(--fg);
-        font-size: 0.85rem;
-      }
-      .list {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        overflow: hidden;
-      }
-      .list a {
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-        padding: 0.65rem 0.9rem;
-        text-decoration: none;
-        color: var(--fg);
-        border-bottom: 1px solid var(--line);
-      }
-      .list a:last-child {
-        border-bottom: 0;
-      }
-      .list a:hover {
-        background: rgba(127, 127, 127, 0.08);
-      }
-      .list .row1 {
-        display: flex;
-        align-items: baseline;
-        gap: 0.5rem;
-      }
-      .list .title {
-        font-weight: 600;
-        font-size: 0.95rem;
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .list .title.untitled {
-        font-style: italic;
-        font-weight: 400;
-        color: var(--muted);
-      }
-      .list .updated {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-        flex-shrink: 0;
-      }
-      .list .path {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-      }
       .empty {
         padding: 1rem;
         background: var(--card);
@@ -171,16 +104,12 @@
       const renderList = items =>
         items
           .map(it => {
-            const title = it.title ? esc(it.title) : '(untitled)';
-            const titleClass = it.title ? 'title' : 'title untitled';
+            const title = it.title ? esc(it.title) : '<i>(untitled)</i>';
             const updated = it.updated ? esc(it.updated) : '';
             return `
       <a href="/ui/note.html?path=${encodeURIComponent(it.path)}">
-        <div class="row1">
-          <span class="${titleClass}">${title}</span>
-          ${updated ? `<span class="updated">${updated}</span>` : ''}
-        </div>
-        <span class="path">${esc(it.path)}</span>
+        <span><b>${title}</b>${updated ? `<small>${updated}</small>` : ''}</span>
+        <small>${esc(it.path)}</small>
       </a>
     `;
           })
@@ -197,16 +126,16 @@
         if (ready.length > 0) {
           sections.push(`
       <section>
-        <h2>Ready for ingest <span class="count">${ready.length}</span></h2>
-        <div class="list">${renderList(ready)}</div>
+        <h2 class="fmw-eyebrow">Ready for ingest <span class="fmw-count">${ready.length}</span></h2>
+        <div class="fmw-records boxed">${renderList(ready)}</div>
       </section>
     `);
         }
         if (drafts.length > 0) {
           sections.push(`
       <section>
-        <h2>Drafts <span class="count">${drafts.length}</span></h2>
-        <div class="list">${renderList(drafts)}</div>
+        <h2 class="fmw-eyebrow">Drafts <span class="fmw-count">${drafts.length}</span></h2>
+        <div class="fmw-records boxed">${renderList(drafts)}</div>
       </section>
     `);
         }

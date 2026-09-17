@@ -31,8 +31,10 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --radius-s: 4px;
   --radius: 6px;
+  --radius-l: 8px;
   --text-s: 0.85rem;
   --text-xs: 0.8rem;
+  --text-mono-xs: 0.75rem;
 }
 :root[data-theme='light'] {
   color-scheme: light;
@@ -437,4 +439,109 @@ dialog .dlg-row {
   font-size: 1.4rem;
   font-weight: 600;
   margin-top: 0.1rem;
+}
+
+/* .fmw-records: a list of record links, each a <b> title with <small> metadata,
+   an optional leading <i> icon, or a <span> title line holding the <b> and a
+   <small>; stacked by default, .rows puts a record on one line, .boxed frames
+   the list with dividers. */
+.fmw-records {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.fmw-records a {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-s);
+  color: var(--fg);
+  text-decoration: none;
+}
+.fmw-records a:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+.fmw-records b {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.fmw-records b i {
+  font-weight: 400;
+  color: var(--muted);
+}
+.fmw-records small {
+  font-family: var(--mono);
+  font-size: var(--text-mono-xs);
+  color: var(--muted);
+}
+.fmw-records a > i {
+  font-family: var(--mono);
+  font-style: normal;
+  color: var(--muted);
+  flex-shrink: 0;
+  width: 1.2em;
+  text-align: center;
+}
+.fmw-records a > span {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.fmw-records a > span > b,
+.fmw-records.rows b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fmw-records.rows a {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.8rem;
+}
+.fmw-records.rows small {
+  flex-shrink: 0;
+}
+.fmw-records.boxed {
+  gap: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+.fmw-records.boxed a {
+  padding: 0.55rem 0.9rem;
+  border-radius: 0;
+  border-bottom: 1px solid var(--line);
+}
+.fmw-records.boxed a:last-child {
+  border-bottom: 0;
+}
+.fmw-records.boxed a:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+/* .fmw-eyebrow: the small uppercase section heading; .fmw-count: the count
+   beside a heading, in the eyebrow's ink where the heading is muted. */
+.fmw-eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  font-size: var(--text-s);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.fmw-count {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: var(--text-s);
+  color: var(--muted);
+}
+.fmw-eyebrow .fmw-count {
+  color: var(--fg);
 }

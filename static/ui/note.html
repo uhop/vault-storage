@@ -443,43 +443,10 @@
         max-width: 32rem;
         width: 90vw;
       }
-      .recent-list {
-        list-style: none;
-        padding: 0;
+      dialog .fmw-records {
         margin: 0 0 0.8rem;
         max-height: 60vh;
         overflow-y: auto;
-      }
-      .recent-list li {
-        padding: 0;
-        margin: 0.15rem 0;
-      }
-      .recent-list a {
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-        padding: 0.55rem 0.7rem;
-        border-radius: 4px;
-        text-decoration: none;
-        color: var(--fg);
-      }
-      .recent-list a:hover {
-        background: rgba(127, 127, 127, 0.12);
-      }
-      .recent-list .title {
-        font-weight: 600;
-        font-size: 0.95rem;
-      }
-      .recent-list .meta {
-        font-family: var(--mono);
-        font-size: 0.75rem;
-        color: var(--muted);
-      }
-      .recent-list .empty {
-        padding: 0.8rem;
-        color: var(--muted);
-        text-align: center;
-        font-size: 0.9rem;
       }
       dialog#wiki-dlg {
         max-width: 36rem;
@@ -627,7 +594,7 @@
     <dialog id="recent-dlg">
       <h2>Recent notes</h2>
       <p>Open a recent <code>raw/</code> note, or close to keep writing here.</p>
-      <ul id="recent-list" class="recent-list"></ul>
+      <div id="recent-list" class="fmw-records"></div>
       <div class="row">
         <button id="recent-close">Close</button>
       </div>
@@ -652,7 +619,7 @@
     <dialog id="backlinks-dlg">
       <h2>Backlinks</h2>
       <p id="backlinks-count">No notes link to this one.</p>
-      <ul id="backlinks-list" class="recent-list"></ul>
+      <div id="backlinks-list" class="fmw-records"></div>
       <div class="row">
         <button id="backlinks-close">Close</button>
       </div>
@@ -661,7 +628,7 @@
     <dialog id="outline-dlg">
       <h2>Outline</h2>
       <p id="outline-count"></p>
-      <ul id="outline-list" class="recent-list"></ul>
+      <div id="outline-list" class="fmw-records"></div>
       <div class="row">
         <button id="outline-close">Close</button>
       </div>
@@ -864,17 +831,15 @@ ready: false
             : `${headings.length} heading${headings.length === 1 ? '' : 's'}.`;
         if (headings.length === 0) {
           list.innerHTML =
-            '<li class="empty">Add headings (`# `, `## `, …) to jump around long notes.</li>';
+            '<div class="empty">Add headings (`# `, `## `, …) to jump around long notes.</div>';
         } else {
           list.innerHTML = headings
             .map(
               (h, i) => `
-          <li>
-            <a href="#" class="outline-item" data-offset="${h.offset}" data-index="${i}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
-              <span class="title">${esc(h.text)}</span>
-              <span class="meta">H${h.level}</span>
-            </a>
-          </li>
+          <a href="#" class="outline-item" data-offset="${h.offset}" data-index="${i}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
+            <b>${esc(h.text)}</b>
+            <small>H${h.level}</small>
+          </a>
         `
             )
             .join('');
@@ -915,7 +880,7 @@ ready: false
                 items.length < total ? ` (showing first ${items.length})` : ''
               }.`;
         if (items.length === 0) {
-          list.innerHTML = '<li class="empty">None.</li>';
+          list.innerHTML = '<div class="empty">None.</div>';
         } else {
           list.innerHTML = items
             .map(bl => {
@@ -923,12 +888,10 @@ ready: false
               const t = bl.edge?.type ?? 'cites';
               const title = fr.title || fr.file_path.split('/').pop().replace(/\.md$/, '');
               return `
-          <li>
-            <a href="/ui/note.html?path=${encodeURIComponent(fr.file_path)}">
-              <span class="title">${esc(title)}</span>
-              <span class="meta">${esc(fr.file_path)} · ${esc(t)}</span>
-            </a>
-          </li>
+          <a href="/ui/note.html?path=${encodeURIComponent(fr.file_path)}">
+            <b>${esc(title)}</b>
+            <small>${esc(fr.file_path)} · ${esc(t)}</small>
+          </a>
         `;
             })
             .join('');
@@ -1018,7 +981,7 @@ ready: false
 
       async function openRecent() {
         const list = $('#recent-list');
-        list.innerHTML = '<li class="empty"><span class="spinner"></span> loading…</li>';
+        list.innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
         $('#recent-dlg').showModal();
         try {
           const data = await apiJson('/sections?file_prefix=raw&exclude=body&limit=50');
@@ -1027,18 +990,16 @@ ready: false
             .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
             .slice(0, 10);
           if (items.length === 0) {
-            list.innerHTML = '<li class="empty">No recent notes in <code>raw/</code>.</li>';
+            list.innerHTML = '<div class="empty">No recent notes in <code>raw/</code>.</div>';
             return;
           }
           list.innerHTML = items
             .map(
               r => `
-      <li>
-        <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
-          <span class="title">${esc(r.title || r.file_path.split('/').pop())}</span>
-          <span class="meta">${esc(r.file_path)} · ${esc(r.updated ?? '')}</span>
-        </a>
-      </li>
+      <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
+        <b>${esc(r.title || r.file_path.split('/').pop())}</b>
+        <small>${esc(r.file_path)} · ${esc(r.updated ?? '')}</small>
+      </a>
     `
             )
             .join('');
@@ -1048,7 +1009,7 @@ ready: false
             showAuthDialog();
             return;
           }
-          list.innerHTML = `<li class="empty">Failed to load: ${esc(e.message)}</li>`;
+          list.innerHTML = `<div class="empty">Failed to load: ${esc(e.message)}</div>`;
         }
       }
 
