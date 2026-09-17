@@ -3,11 +3,13 @@
 // Companion to /ui/theme.css and the per-page pre-hydration <script> in
 // each <head> (which writes data-theme on <html> from localStorage before
 // first paint to avoid FOUC). This module renders the [Auto][Light][Dark]
-// segmented control into a <div id="theme-toggle"> placeholder, wires
-// click handlers, and reflects the active state on the wrapper.
+// <vault-switch> in place of the <div id="theme-toggle"> placeholder and
+// applies its changes.
 //
 // CSS does the actual color flipping via light-dark() against
 // color-scheme, which the data-theme attribute controls.
+
+import '/ui/components/vault-switch.js';
 
 const KEY = 'vault.theme';
 
@@ -40,23 +42,22 @@ const apply = mode => {
 };
 
 const refreshState = () => {
-  const wrap = document.getElementById('theme-toggle');
-  if (wrap) wrap.dataset.state = get();
+  const toggle = document.getElementById('theme-toggle');
+  if (toggle) toggle.value = get();
 };
 
 const renderToggle = wrap => {
-  wrap.setAttribute('role', 'group');
-  wrap.setAttribute('aria-label', 'Color theme');
-  wrap.dataset.state = get();
-  wrap.innerHTML = `
-    <button type="button" data-mode="auto"  title="Auto"  aria-label="Auto theme">${ICONS.auto}</button>
-    <button type="button" data-mode="light" title="Light" aria-label="Light theme">${ICONS.light}</button>
-    <button type="button" data-mode="dark"  title="Dark"  aria-label="Dark theme">${ICONS.dark}</button>
+  const toggle = document.createElement('vault-switch');
+  toggle.id = 'theme-toggle';
+  toggle.setAttribute('aria-label', 'Color theme');
+  toggle.innerHTML = `
+    <button type="button" data-value="auto"  title="Auto"  aria-label="Auto theme">${ICONS.auto}</button>
+    <button type="button" data-value="light" title="Light" aria-label="Light theme">${ICONS.light}</button>
+    <button type="button" data-value="dark"  title="Dark"  aria-label="Dark theme">${ICONS.dark}</button>
   `;
-  wrap.addEventListener('click', e => {
-    const btn = e.target.closest('button[data-mode]');
-    if (btn) apply(btn.dataset.mode);
-  });
+  toggle.value = get();
+  toggle.addEventListener('change', e => apply(e.detail.value));
+  wrap.replaceWith(toggle);
 };
 
 const init = () => {

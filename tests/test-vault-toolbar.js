@@ -14,7 +14,7 @@ test('vault-toolbar builds its standard parts and keeps authored children', t =>
   try {
     t.ok(el.querySelector('.path'), 'path label present');
     t.ok(el.querySelector('.pill'), 'status pill present');
-    t.equal(el.querySelectorAll('.modes button').length, 3, 'three mode buttons');
+    t.equal(el.querySelectorAll('vault-switch.modes button').length, 3, 'three mode buttons');
     const last = el.children[el.children.length - 1];
     t.equal(last.id, 'my-action', 'authored action button survives, after the standard parts');
     t.equal(el.children[0].className, 'path', 'standard parts are prepended');
@@ -58,19 +58,19 @@ test('vault-toolbar mode toggle: pressed state and mode-change event', t => {
     el.mode = 'split';
     t.equal(el.mode, 'split', 'setter reflected by getter');
     t.equal(
-      el.querySelector('[data-mode="split"]').getAttribute('aria-pressed'),
+      el.querySelector('[data-value="split"]').getAttribute('aria-pressed'),
       'true',
       'target pressed'
     );
     t.equal(
-      el.querySelector('[data-mode="edit"]').getAttribute('aria-pressed'),
+      el.querySelector('[data-value="edit"]').getAttribute('aria-pressed'),
       'false',
       'others released'
     );
 
     let got = null;
     el.addEventListener('mode-change', e => (got = e.detail.mode));
-    el.querySelector('[data-mode="preview"]').click();
+    el.querySelector('[data-value="preview"]').click();
     t.equal(got, 'preview', 'click dispatches mode-change with the mode');
     t.equal(el.mode, 'preview', 'pressed state follows the click');
   } finally {

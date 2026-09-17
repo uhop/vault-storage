@@ -7,10 +7,12 @@
 // Light DOM on purpose, same rationale as <vault-editor>: the host page's CSS
 // (`.toolbar`, `.pill`, `.modes`) styles the parts without a shadow boundary.
 //
-// Mode contract: a mode click updates the pressed state and dispatches a
+// Mode contract: the view-mode group is a <vault-switch>; its change becomes a
 // bubbling `mode-change` {detail: {mode}}; persistence policy (URL param /
 // localStorage / viewport default, body dataset) stays with the page, which
 // reflects back through the `mode` setter — both writes are idempotent.
+
+import './vault-switch.js';
 
 const MODES = [
   {mode: 'edit', label: 'edit', title: 'Edit only'},
@@ -30,29 +32,25 @@ class VaultToolbar extends HTMLElement {
     this._pill.className = 'pill';
     this._pill.textContent = 'idle';
 
-    this._modes = document.createElement('span');
+    this._modes = document.createElement('vault-switch');
     this._modes.className = 'modes';
-    this._modes.setAttribute('role', 'group');
     this._modes.setAttribute('aria-label', 'View mode');
     for (const {mode, label, title} of MODES) {
       const btn = document.createElement('button');
-      btn.dataset.mode = mode;
-      btn.setAttribute('aria-pressed', 'false');
+      btn.dataset.value = mode;
       btn.title = title;
       btn.textContent = label;
       this._modes.appendChild(btn);
     }
-    this._modes.addEventListener('click', this);
+    this._modes.addEventListener('change', this);
 
     this.prepend(this._path, this._pill, this._modes);
   }
 
   handleEvent(e) {
-    const btn = e.target.closest('button[data-mode]');
-    if (!btn) return;
-    this.mode = btn.dataset.mode;
+    e.stopPropagation();
     this.dispatchEvent(
-      new CustomEvent('mode-change', {detail: {mode: btn.dataset.mode}, bubbles: true})
+      new CustomEvent('mode-change', {detail: {mode: e.detail.value}, bubbles: true})
     );
   }
 
@@ -66,14 +64,11 @@ class VaultToolbar extends HTMLElement {
 
   /** Currently pressed view mode, or null before the page sets one. */
   get mode() {
-    return this._modes?.querySelector('[aria-pressed="true"]')?.dataset.mode ?? null;
+    return this._modes?.value ?? null;
   }
 
   set mode(mode) {
-    if (!this._modes) return;
-    for (const btn of this._modes.children) {
-      btn.setAttribute('aria-pressed', btn.dataset.mode === mode ? 'true' : 'false');
-    }
+    if (this._modes) this._modes.value = mode;
   }
 
   /** Save-state pill: kind ∈ idle|editing|saving|saved|offline; `saving` renders its own spinner + label. */

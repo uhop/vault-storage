@@ -22,32 +22,6 @@
         font-size: 1rem;
         margin: 0;
       }
-      .switch {
-        display: inline-flex;
-        background: var(--bg);
-        border: 1px solid var(--line);
-        border-radius: 4px;
-        overflow: hidden;
-      }
-      .switch button {
-        border: 0;
-        border-radius: 0;
-        padding: 0.25rem 0.75rem;
-        font-size: 0.9rem;
-        font-weight: 600;
-        background: transparent;
-        color: var(--muted);
-      }
-      .switch button + button {
-        border-left: 1px solid var(--line);
-      }
-      .switch button:hover {
-        color: var(--fg);
-      }
-      .switch button[aria-pressed='true'] {
-        background: var(--card);
-        color: var(--fg);
-      }
       code {
         font-family: var(--mono);
         font-size: 0.9em;
@@ -152,11 +126,11 @@
     <main>
       <div id="status"></div>
       <div class="fmw-bar controls">
-        <div class="switch" role="group" aria-label="View">
-          <button type="button" data-view="glance">At a glance</button>
-          <button type="button" data-view="repos">Repositories</button>
-          <button type="button" data-view="packages">Packages</button>
-        </div>
+        <vault-switch id="view-switch" param="view" default="glance" aria-label="View">
+          <button data-value="glance">At a glance</button>
+          <button data-value="repos">Repositories</button>
+          <button data-value="packages">Packages</button>
+        </vault-switch>
         <label id="window-label"
           >activity since
           <select id="window"></select
@@ -719,8 +693,7 @@
 
       const renderView = () => {
         const view = viewState();
-        for (const b of document.querySelectorAll('.switch button'))
-          b.setAttribute('aria-pressed', String(b.dataset.view === view));
+        $('#view-switch').value = view;
         $('#glance-view').hidden = view !== 'glance';
         $('#tables').hidden = view === 'glance';
         $('#window-label').hidden = view === 'repos';
@@ -785,14 +758,8 @@
         renderView();
       });
 
-      document.querySelector('.switch').addEventListener('click', e => {
-        const b = e.target.closest('button[data-view]');
-        if (!b) return;
-        const url = new URL(location.href);
-        if (b.dataset.view === 'glance') url.searchParams.delete(VIEW_PARAM);
-        else url.searchParams.set(VIEW_PARAM, b.dataset.view);
-        url.hash = '';
-        history.replaceState(null, '', url);
+      // The switch wrote ?view= before dispatching; the menu and the view read it back.
+      $('#view-switch').addEventListener('change', () => {
         document.querySelector('vault-nav')?.refresh?.();
         renderView();
       });
@@ -831,6 +798,7 @@
     <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
     <script type="module" src="/ui/components/vault-legend.js"></script>
+    <script type="module" src="/ui/components/vault-switch.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>
 </html>

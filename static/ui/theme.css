@@ -9,8 +9,8 @@
  *   :root[data-theme="light"]  → color-scheme: light        (force light)
  *   :root[data-theme="dark"]   → color-scheme: dark         (force dark)
  *
- * #theme-toggle is the segmented [Auto] [Light] [Dark] button group
- * rendered into a <div id="theme-toggle"> placeholder by theme.js.
+ * #theme-toggle is the [Auto] [Light] [Dark] <vault-switch> theme.js renders in
+ * place of the <div id="theme-toggle"> placeholder.
  *
  * Since 2026-09-08 the sheet also carries the page chrome that every page used
  * to copy into its own <style> (see the block after the tokens).
@@ -146,35 +146,41 @@ button:disabled {
   }
 }
 
-#theme-toggle {
+/* <vault-switch> — the segmented control: authored <button data-value>
+   children, the pressed one filled; a page restates the size or the pressed
+   look. #theme-toggle is the icon instance, the height vault-settings matches. */
+vault-switch {
   display: inline-flex;
   align-self: center;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   overflow: hidden;
 }
-#theme-toggle button {
+vault-switch button {
   border: 0;
   border-radius: 0;
-  padding: 0.4rem 0.55rem;
+  padding: 0.25rem 0.75rem;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  line-height: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
-#theme-toggle button + button {
+vault-switch button + button {
   border-left: 1px solid var(--line);
 }
-#theme-toggle button:hover {
+vault-switch button:hover {
   color: var(--fg);
 }
-#theme-toggle[data-state='auto'] button[data-mode='auto'],
-#theme-toggle[data-state='light'] button[data-mode='light'],
-#theme-toggle[data-state='dark'] button[data-mode='dark'] {
+vault-switch button[aria-pressed='true'] {
   background: var(--card);
   color: var(--fg);
+}
+#theme-toggle button {
+  padding: 0.4rem 0.55rem;
+  line-height: 0;
 }
 #theme-toggle svg {
   display: block;
