@@ -94,6 +94,7 @@
 
     <script type="module">
       import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {sortable} from '/ui/fmw-sortable.js';
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
 
@@ -149,6 +150,22 @@
   `;
       };
 
+      const TABLES = {
+        temporal: {
+          columns: [
+            {key: 'id', label: 'record_id', value: s => s.id, text: true},
+            {key: 'path', label: 'file_path', value: s => s.file_path, text: true},
+            {key: 'created', label: 'created', value: s => s.created ?? '', text: true},
+            {key: 'updated', label: 'updated', value: s => s.updated ?? '', text: true}
+          ],
+          storage: 'vault.lint.temporal.sort',
+          fallback: {key: 'updated', dir: 'desc'},
+          tie: s => s.id
+        }
+      };
+      const {rows: sortRows, head: headRow, bind: bindSorting} = sortable(TABLES);
+      const last = {temporal: [], total: 0};
+
       const renderTemporal = (samples, total) => {
         // Filter to the updated<created subset; future-stamp samples are auto-
         // fixed by the dashboard's "Clean now" button (cleanup-lint endpoint).
@@ -165,6 +182,7 @@
           total > samples.length
             ? `<div class="why">Showing ${samples.length} of ${total} samples (capped server-side); future-stamp samples are not shown here — fix via dashboard "Clean now".</div>`
             : '';
+        const sort = sortRows('temporal', reviewable);
         const rows = reviewable
           .map(
             s => `
@@ -186,7 +204,7 @@
         no auto-fix endpoint, since re-stamping could mask the underlying cause.
       </div>
       <div class="fmw-scroll"><table class="fmw-table wide small wrap">
-        <thead><tr><th>record_id</th><th>file_path</th><th>created</th><th>updated</th></tr></thead>
+        <thead><tr>${headRow('temporal', sort)}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
       ${moreNote}
@@ -270,6 +288,7 @@
         const danglingTotal = lint.checks?.dangling_tag_aliases?.count ?? 0;
         const temporal = lint.checks?.temporal_anomalies?.samples ?? [];
         const temporalTotal = lint.checks?.temporal_anomalies?.count ?? 0;
+        Object.assign(last, {temporal, total: temporalTotal});
         const html =
           renderDangling(dangling, danglingTotal) + renderTemporal(temporal, temporalTotal);
 
@@ -292,6 +311,11 @@
 
       document.addEventListener('token-change', refresh);
 
+      // A sort redraws the temporal section alone, so the alias selections survive it.
+      bindSorting($('#content'), () => {
+        const section = $('[data-section="temporal"]');
+        if (section) section.outerHTML = renderTemporal(last.temporal, last.total);
+      });
       refresh();
     </script>
     <script type="module" src="/ui/components/vault-settings.js"></script>

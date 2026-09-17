@@ -106,6 +106,7 @@
 
     <script type="module">
       import {api, apiJson, esc, showAuthDialog} from '/ui/api.js';
+      import {sortable} from '/ui/fmw-sortable.js';
       const $ = sel => document.querySelector(sel);
 
       const showStatus = msg => {
@@ -132,12 +133,52 @@
         return `${(s / 3600).toFixed(1)}h left`;
       };
 
+      const TABLES = {
+        leases: {
+          columns: [
+            {key: 'resource', label: 'resource', value: l => l.resource, text: true},
+            {key: 'holder', label: 'holder', value: l => l.holder, text: true},
+            {key: 'held', label: 'held', value: l => Date.parse(l.claimed_at) || 0},
+            {key: 'expires', label: 'expires', value: l => Date.parse(l.expires_at) || Infinity},
+            {key: 'attestation', label: 'attestation'},
+            {key: 'release', label: ''}
+          ],
+          storage: 'vault.agents.leases.sort',
+          fallback: {key: 'resource', dir: 'asc'},
+          tie: l => `${l.resource} ${l.holder}`
+        },
+        handoffs: {
+          columns: [
+            {key: 'id', label: 'id'},
+            {key: 'to', label: 'to', value: h => h.to, text: true},
+            {key: 'kind', label: 'kind', value: h => h.kind, text: true},
+            {key: 'status', label: 'status', value: h => h.status, text: true},
+            {
+              key: 'from',
+              label: 'from',
+              value: h => `${h.from.host}/${h.from.session}`,
+              text: true
+            },
+            {key: 'ref', label: 'ref'},
+            {key: 'artifact', label: 'artifact', value: h => h.artifact?.bytes ?? -1},
+            {key: 'touched', label: 'touched', value: h => Date.parse(h.updated) || 0},
+            {key: 'notes', label: 'notes', value: h => h.notes.length}
+          ],
+          storage: 'vault.agents.handoffs.sort',
+          fallback: {key: 'touched', dir: 'desc'},
+          tie: h => h.id
+        }
+      };
+      const {rows: sortRows, head: headRow, bind: bindSorting} = sortable(TABLES);
+      const last = {leases: [], handoffs: []};
+
       const renderLeases = items => {
         if (items.length === 0) {
           $('#leases').innerHTML =
             `<div class="empty">No leases held. Every repo is claimable (clean checkouts only for side claims).</div>`;
           return;
         }
+        const sort = sortRows('leases', items);
         const rows = items
           .map(
             l => `
@@ -155,9 +196,7 @@
           .join('');
         $('#leases').innerHTML = `
           <div class="fmw-scroll"><table class="fmw-table wide wrap">
-            <thead><tr>
-              <th>resource</th><th>holder</th><th>held</th><th>expires</th><th>attestation</th><th></th>
-            </tr></thead>
+            <thead><tr>${headRow('leases', sort)}</tr></thead>
             <tbody>${rows}</tbody>
           </table></div>`;
       };
@@ -169,6 +208,7 @@
             `<div class="empty">No handoffs in flight. Resolved ones live in each project's handoff-archive.md.</div>`;
           return;
         }
+        const sort = sortRows('handoffs', inFlight);
         const rows = inFlight
           .map(
             h => `
@@ -194,9 +234,7 @@
           .join('');
         $('#handoffs').innerHTML = `
           <div class="fmw-scroll"><table class="fmw-table wide wrap">
-            <thead><tr>
-              <th>id</th><th>to</th><th>kind</th><th>status</th><th>from</th><th>ref</th><th>artifact</th><th>touched</th><th>notes</th>
-            </tr></thead>
+            <thead><tr>${headRow('handoffs', sort)}</tr></thead>
             <tbody>${rows}</tbody>
           </table></div>`;
       };
@@ -233,8 +271,10 @@
             apiJson('/leases/events?limit=50'),
             apiJson('/handoffs/events?limit=50')
           ]);
-          renderLeases(leases.items);
-          renderHandoffs(handoffs.items);
+          last.leases = leases.items;
+          last.handoffs = handoffs.items;
+          renderLeases(last.leases);
+          renderHandoffs(last.handoffs);
           renderEvents(
             [...leaseEvents.items, ...handoffEvents.items]
               .sort((a, b) => (a.at < b.at ? 1 : -1))
@@ -244,6 +284,9 @@
           handleErr(e);
         }
       };
+
+      bindSorting($('#leases'), () => renderLeases(last.leases));
+      bindSorting($('#handoffs'), () => renderHandoffs(last.handoffs));
 
       $('#claim-form').addEventListener('submit', async ev => {
         ev.preventDefault();

@@ -83,26 +83,6 @@
         margin-left: 0.3rem;
         vertical-align: 0.1em;
       }
-      th.sortable {
-        cursor: pointer;
-        user-select: none;
-      }
-      th.sortable:hover {
-        color: var(--fg);
-      }
-      th[aria-sort='ascending']::after {
-        content: ' ▲';
-        font-size: 0.7em;
-      }
-      th[aria-sort='descending']::after {
-        content: ' ▼';
-        font-size: 0.7em;
-      }
-      th .sub {
-        display: block;
-        font-size: 0.75rem;
-        font-weight: 400;
-      }
       td.name {
         font-family: var(--mono);
       }
@@ -188,6 +168,7 @@
       } from '/ui/fleet-view.js';
       import {chip, bindPopovers} from '/ui/fleet-popover.js';
       import {sparkline, rangeLabel, dayLabel, monthDay} from '/ui/fleet-charts.js';
+      import {sortable} from '/ui/fmw-sortable.js';
 
       const VIEW_PARAM = 'view';
       const SORT_KEY = 'vault.fleet.packages.sort';
@@ -591,36 +572,7 @@
         }
       };
 
-      const sortState = table => {
-        const t = TABLES[table];
-        try {
-          const s = JSON.parse(localStorage.getItem(t.storage));
-          if (t.columns.some(c => c.key === s?.key && c.value)) return s;
-        } catch {}
-        return t.fallback;
-      };
-
-      const sortRows = (table, rows) => {
-        const t = TABLES[table],
-          sort = sortState(table);
-        const col = t.columns.find(c => c.key === sort.key);
-        const sign = sort.dir === 'asc' ? 1 : -1;
-        rows.sort((a, b) => {
-          const x = col.value(a),
-            y = col.value(b);
-          const d = col.text ? String(x).localeCompare(String(y)) : x - y;
-          return sign * d || t.tie(a).localeCompare(t.tie(b));
-        });
-        return sort;
-      };
-
-      const headRow = (table, sort, extra = () => '') =>
-        TABLES[table].columns
-          .map(
-            c =>
-              `<th class="${c.n ? 'n ' : ''}${c.value ? 'sortable' : ''}" ${c.value ? `data-table="${table}" data-sort="${c.key}" aria-sort="${sort.key === c.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}" tabindex="0"` : ''}>${c.label.split('\n').map(esc).join('<br>')}${extra(c)}</th>`
-          )
-          .join('');
+      const {rows: sortRows, head: headRow, bind: bindSorting} = sortable(TABLES);
 
       const signedPercent = ratio =>
         typeof ratio === 'number'
@@ -765,31 +717,7 @@
       });
       $('#filter').addEventListener('input', renderPackages);
 
-      const sortBy = th => {
-        const table = th.dataset.table,
-          key = th.dataset.sort;
-        const s = sortState(table),
-          col = TABLES[table].columns.find(c => c.key === key);
-        const dir = s.key === key ? (s.dir === 'asc' ? 'desc' : 'asc') : col.text ? 'asc' : 'desc';
-        try {
-          localStorage.setItem(TABLES[table].storage, JSON.stringify({key, dir}));
-        } catch {}
-        if (table === 'repos') renderRepos();
-        else renderPackages();
-      };
-
-      // Delegated: the table re-renders, its container doesn't.
-      $('#table').addEventListener('click', e => {
-        const th = e.target.closest('th[data-sort]');
-        if (th) sortBy(th);
-      });
-      $('#table').addEventListener('keydown', e => {
-        const th = e.target.closest('th[data-sort]');
-        if (th && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault();
-          sortBy(th);
-        }
-      });
+      bindSorting($('#table'), table => (table === 'repos' ? renderRepos() : renderPackages()));
       bindPopovers($('#glance'));
       document.addEventListener('token-change', load);
 

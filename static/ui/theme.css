@@ -396,7 +396,8 @@ dialog .dlg-row {
 
 /* .fmw-table: a data table with .n numeric cells and a tr.total sum row;
    .wide fills the container, .dense tightens the rows, .small shrinks the
-   text, .wrap lets cells wrap instead of the table scrolling. */
+   text, .wrap lets cells wrap instead of the table scrolling. A th.sortable
+   with aria-sort is what fmw-sortable.js renders; .sub is a header's second line. */
 .fmw-table {
   border-collapse: collapse;
   font-size: 0.9rem;
@@ -439,6 +440,26 @@ dialog .dlg-row {
 .fmw-table tr.total td {
   font-weight: 600;
   border-bottom: 0;
+}
+.fmw-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.fmw-table th.sortable:hover {
+  color: var(--fg);
+}
+.fmw-table th[aria-sort='ascending']::after {
+  content: ' ▲';
+  font-size: 0.7em;
+}
+.fmw-table th[aria-sort='descending']::after {
+  content: ' ▼';
+  font-size: 0.7em;
+}
+.fmw-table th .sub {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
 }
 
 /* .fmw-tiles: a grid of stat tiles; a tile is <small> label, <b> value, and an
