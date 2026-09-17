@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Rendered-comparison gate for CSS changes under static/ui: a computed-style snapshot of every
-// page over an in-process server and a fixture vault, and the diff of two snapshots.
+// page at each viewport width over an in-process server and a fixture vault, and the diff of
+// two snapshots.
 //   node scripts/ui-style-snapshot.mjs snapshot <dir>
 //   node scripts/ui-style-snapshot.mjs diff <before-dir> <after-dir> [--ignore=prop,prop]
 // A position:fixed probe carrying one element per shared class is appended to each page, so a rule
@@ -25,6 +26,7 @@ const PAGES = [
   'search',
   'tags'
 ];
+const VIEWPORTS = [1280, 400];
 const TOKEN = 'snapshot-token';
 const root = new URL('..', import.meta.url);
 
@@ -162,23 +164,26 @@ const snapshot = async out => {
   const base = `http://127.0.0.1:${handle.server.address().port}`;
   const browser = await pw.chromium.launch();
   try {
-    const ctx = await browser.newContext({
-      viewport: {width: 1280, height: 900},
-      colorScheme: 'light'
-    });
-    await ctx.addInitScript(t => localStorage.setItem('vault.token', t), TOKEN);
-    for (const name of PAGES) {
-      const page = await ctx.newPage();
-      const errors = [];
-      page.on('pageerror', e => errors.push(String(e)));
-      await page.goto(`${base}/ui/${name}.html`, {waitUntil: 'networkidle'});
-      await page.waitForTimeout(800);
-      const snap = await page.evaluate(snapshotPage);
-      writeFileSync(join(out, `${name}.json`), JSON.stringify(snap));
-      console.log(
-        `${name}: ${Object.keys(snap).length} elements${errors.length ? `, ${errors.length} page errors` : ''}`
-      );
-      await page.close();
+    for (const width of VIEWPORTS) {
+      const ctx = await browser.newContext({
+        viewport: {width, height: 900},
+        colorScheme: 'light'
+      });
+      await ctx.addInitScript(t => localStorage.setItem('vault.token', t), TOKEN);
+      for (const name of PAGES) {
+        const page = await ctx.newPage();
+        const errors = [];
+        page.on('pageerror', e => errors.push(String(e)));
+        await page.goto(`${base}/ui/${name}.html`, {waitUntil: 'networkidle'});
+        await page.waitForTimeout(800);
+        const snap = await page.evaluate(snapshotPage);
+        writeFileSync(join(out, `${name}-${width}.json`), JSON.stringify(snap));
+        console.log(
+          `${name} at ${width}px: ${Object.keys(snap).length} elements${errors.length ? `, ${errors.length} page errors` : ''}`
+        );
+        await page.close();
+      }
+      await ctx.close();
     }
   } finally {
     await browser.close();

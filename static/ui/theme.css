@@ -62,6 +62,7 @@ body {
 }
 header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 1rem;
   padding: 0.8rem 1rem;
@@ -177,11 +178,23 @@ header h1 a:hover {
   text-decoration: underline;
 }
 
-/* <vault-nav> — the shared menu look. */
+/* <vault-nav> — the shared menu look. The unwrapped header row needs 654 px
+   at the default font (measured 2026-09-17), so below 767 px the menu takes
+   its own full-width row under the title and the controls. */
 header nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.8rem;
   font-size: 0.9rem;
+}
+@media (max-width: 767px) {
+  header {
+    row-gap: 0.4rem;
+  }
+  header vault-nav {
+    flex-basis: 100%;
+    order: 1;
+  }
 }
 header nav a {
   color: var(--muted);
