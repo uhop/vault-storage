@@ -1,4 +1,5 @@
 import type {ServerResponse} from 'node:http';
+import {sendBuffer} from './compress.ts';
 
 /**
  * The error envelope: `error`, `code`, and `details` are the fields every
@@ -29,13 +30,10 @@ export const sendJson = (
   body: unknown,
   headers: Record<string, string> = {}
 ): void => {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
+  sendBuffer(res, status, Buffer.from(JSON.stringify(body), 'utf8'), {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload).toString(),
     ...headers
   });
-  res.end(payload);
 };
 
 export const sendError = (
@@ -67,10 +65,5 @@ export const sendText = (
   body: string,
   headers?: Record<string, string>
 ): void => {
-  res.writeHead(status, {
-    'Content-Type': contentType,
-    'Content-Length': Buffer.byteLength(body).toString(),
-    ...headers
-  });
-  res.end(body);
+  sendBuffer(res, status, Buffer.from(body, 'utf8'), {'Content-Type': contentType, ...headers});
 };

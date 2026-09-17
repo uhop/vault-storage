@@ -1,5 +1,6 @@
 import {readFile, stat} from 'node:fs/promises';
 import {extname, join, resolve, sep} from 'node:path';
+import {sendBuffer} from '../compress.ts';
 import {sendError} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -79,18 +80,17 @@ export const staticHandler =
     if (reqEtag === etag) {
       ctx.res.writeHead(304, {
         ETag: etag,
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        Vary: 'Accept-Encoding'
       });
       ctx.res.end();
       return;
     }
 
     const body = await readFile(candidate);
-    ctx.res.writeHead(200, {
+    sendBuffer(ctx.res, 200, body, {
       'Content-Type': mimeFor(candidate),
-      'Content-Length': body.byteLength.toString(),
       ETag: etag,
       'Cache-Control': 'no-cache'
     });
-    ctx.res.end(body);
   };

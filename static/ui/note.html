@@ -224,6 +224,9 @@
       body[data-view='preview'] .preview {
         border-left: 0;
       }
+      .preview-gate button {
+        margin-top: 0.6rem;
+      }
       @media (max-width: 767px) {
         body[data-view='split'] .preview {
           display: none;
@@ -511,6 +514,10 @@
           data-placeholder="Start typing… frontmatter at the top, body below."
         ></vault-editor>
         <vault-markdown class="preview" id="preview" show-frontmatter></vault-markdown>
+        <div class="preview preview-gate" id="preview-gate" hidden>
+          <p class="fmw-notice" id="preview-gate-text"></p>
+          <button type="button" id="preview-render">Render preview</button>
+        </div>
       </div>
     </main>
     <div class="insert-row" id="insert-row" aria-label="Markdown shortcuts">
@@ -593,6 +600,7 @@
       const VIEW_KEY = 'vault.view-mode';
       const DEBOUNCE_MS = 1500;
       const PREVIEW_DEBOUNCE_MS = 150;
+      const PREVIEW_AUTO_MAX_CHARS = 100_000;
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
 
@@ -985,18 +993,58 @@ ready: false
       };
 
       let previewTimer = null;
+      let previewManual = false;
+      let previewRendered = false;
+
+      const fmtCount = n =>
+        n < 1000
+          ? `${n}`
+          : n < 1_000_000
+            ? `${Math.round(n / 1000)}K`
+            : `${(n / 1_000_000).toFixed(1)}M`;
+
+      const renderPreview = text => {
+        previewRendered = true;
+        $('#preview-gate').hidden = true;
+        $('#preview').hidden = false;
+        $('#preview').value = text;
+      };
+
+      // Parsing a large note blocks the main thread until it finishes — a
+      // second here, tens on a slow engine — and again after every typing
+      // pause, so above the threshold the render is the reader's to ask for.
+      const armPreviewGate = chars => {
+        $('#preview-gate-text').textContent = previewRendered
+          ? `Preview is out of date. This note is ${fmtCount(chars)} characters, and re-rendering it freezes the page while it parses.`
+          : `Preview is off above ${fmtCount(PREVIEW_AUTO_MAX_CHARS)} characters. This note is ${fmtCount(chars)}, and rendering it freezes the page while it parses.`;
+        $('#preview-render').textContent = previewRendered ? 'Re-render' : 'Render preview';
+        $('#preview').hidden = true;
+        $('#preview-gate').hidden = false;
+      };
+
       const schedulePreview = () => {
         if (viewMode === 'edit') return;
         if (previewTimer) clearTimeout(previewTimer);
         previewTimer = setTimeout(() => {
-          $('#preview').value = $('#editor').value;
+          const text = $('#editor').value;
+          if (!previewManual && text.length > PREVIEW_AUTO_MAX_CHARS) {
+            armPreviewGate(text.length);
+            return;
+          }
+          renderPreview(text);
         }, PREVIEW_DEBOUNCE_MS);
       };
+
+      $('#preview-render').addEventListener('click', () => {
+        previewManual = true;
+        renderPreview($('#editor').value);
+      });
 
       // edit + autosave -------------------------------------------------
       function onInput() {
         const body = $('#editor').value;
         state.dirty = body !== state.serverContent;
+        previewManual = false;
         schedulePreview();
         // Keep find highlights in sync if the bar is open while editing.
         if (!$('#find-bar').hidden) recomputeFind();

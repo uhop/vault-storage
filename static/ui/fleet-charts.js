@@ -2,8 +2,8 @@
 // de-emphasis in the muted ink. Builders return markup; bindTips() adds the
 // hover layer to any element carrying `data-tip`.
 
-import {esc} from '/ui/api.js';
-import {compact, percent} from '/ui/fleet-digest.js';
+import {esc} from './api.js';
+import {compact, percent} from './fleet-digest.js';
 
 const STYLE = `
 .viz { display: block; max-width: 100%; overflow: visible; }

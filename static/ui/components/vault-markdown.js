@@ -24,7 +24,7 @@
 // project's single-user single-token convention). If absent, wikilink
 // resolution is skipped — links render as raw <a> elements without href.
 
-import {marked} from '/ui/vendor/marked.esm.js';
+import {marked} from '../vendor/marked.esm.js';
 
 const esc = s =>
   String(s).replace(
@@ -89,7 +89,9 @@ class VaultMarkdown extends HTMLElement {
     this.render();
   }
 
-  attributeChangedCallback() {
+  attributeChangedCallback(name, oldValue, newValue) {
+    // Re-setting the same value would re-parse the whole document for nothing.
+    if (oldValue === newValue) return;
     if (this.isConnected) this.render();
   }
 

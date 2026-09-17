@@ -2,7 +2,7 @@
 // tap on touch) pins it so its links can be reached, Escape or a click outside
 // closes it. The details ride in `data-pop` as JSON and render as text nodes.
 
-import {esc} from '/ui/api.js';
+import {esc} from './api.js';
 
 const STYLE = `
 .chip { font: inherit; font-family: var(--mono); font-size: 0.8rem; line-height: 1.3; padding: 0 0.35em; margin: 0.1rem 0.15rem 0.1rem 0; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--fg); cursor: pointer; position: relative; vertical-align: baseline; }

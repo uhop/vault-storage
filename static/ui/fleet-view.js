@@ -1,7 +1,7 @@
 // Markup shared by the fleet pages: links, the GitHub baseline detail, and the
 // stale mark. The data readers live in fleet-digest.js.
 
-import {esc} from '/ui/api.js';
+import {esc} from './api.js';
 import {
   stateDocPath,
   storedMovement,
