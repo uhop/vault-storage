@@ -116,10 +116,6 @@
       .chart .viz {
         height: auto;
       }
-      .legend {
-        color: var(--muted);
-        font-size: 0.8rem;
-      }
       table {
         border-collapse: collapse;
         font-size: 0.85rem;
@@ -189,6 +185,7 @@
       <div class="bar">
         <h2 id="title"></h2>
         <span class="meta" id="links"></span>
+        <vault-legend view="project"></vault-legend>
       </div>
       <div class="bar">
         <span class="meta" id="collected"></span>
@@ -376,7 +373,6 @@
         return `<div class="tiles">${tiles}</div>
           <h4>Weekly downloads, ${plural(weekly.length, 'week')}</h4>
           <div class="chart">${weeklyBars(weekly, ends, n.publishes, {width: chartWidth()})}</div>
-          <div class="legend">A tick under a week marks a publish in that week. Mirrors download each new version, so a spike after a publish is not adoption.</div>
           ${table}${versions}${dependents}`;
       };
 
@@ -516,6 +512,7 @@
     </script>
     <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/components/vault-legend.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>
 </html>

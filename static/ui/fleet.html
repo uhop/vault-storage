@@ -135,36 +135,6 @@
         font-size: 0.8rem;
         margin-right: 0.35rem;
       }
-      .legend {
-        position: relative;
-        margin-left: auto;
-        font-size: 0.85rem;
-      }
-      .legend summary {
-        cursor: pointer;
-        color: var(--muted);
-      }
-      .legend-panel {
-        position: absolute;
-        right: 0;
-        top: 1.6rem;
-        z-index: 40;
-        display: grid;
-        grid-template-columns: max-content minmax(12rem, 26rem);
-        gap: 0.45rem 0.8rem;
-        align-items: baseline;
-        width: max-content;
-        max-width: calc(100vw - 32px);
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-        padding: 0.7rem 0.9rem;
-      }
-      .legend-panel .chip {
-        cursor: default;
-        justify-self: start;
-      }
       .quiet-list summary {
         cursor: pointer;
         color: var(--muted);
@@ -289,50 +259,7 @@
         <div class="bar">
           <h2>At a glance</h2>
           <span class="meta" id="glance-meta"></span>
-          <details class="legend" id="legend">
-            <summary>Legend</summary>
-            <div class="legend-panel">
-              <span class="legend-line">repository</span
-              ><span
-                >Has a new item from a person that you have not answered yet; these come
-                first.</span
-              >
-              <span class="chip new">#12</span
-              ><span
-                >Opened by a person in the last 10 days, with no reaction, comment, or assignee from
-                you.</span
-              >
-              <span class="chip">#12</span
-              ><span
-                >An open issue, PR, or discussion. Hover or tap it for details; click it to keep
-                them open.</span
-              >
-              <span class="chip active">#12</span
-              ><span
-                >Updated within the activity window: a comment, an edit, a label, or a state
-                change.</span
-              >
-              <span class="chip bot">#12</span><span>Opened by a bot, such as Dependabot.</span>
-              <span class="chip draft">#12</span><span>A draft PR.</span>
-              <span class="chip">+4</span
-              ><span>More of the same kind; hover or tap it for the list.</span>
-              <span class="chip warn">GHSA-1234</span
-              ><span>A security advisory without a CVE, or not yet published.</span>
-              <span class="chip warn">Dependabot 3</span
-              ><span
-                >Open alerts. A ≥ before the number means the collector stopped counting there, so
-                the repository has at least that many.</span
-              >
-              <span class="chip bad">failure</span
-              ><span>The last CI run on the default branch did not succeed.</span>
-              <span class="chip">1.8.1</span
-              ><span>An npm version published within the activity window.</span>
-              <span class="chip">dependents +3</span
-              ><span>A change in deps.dev direct dependents within the activity window.</span>
-              <span class="warn">stale</span
-              ><span>The stored GitHub data is more than 7 days old.</span>
-            </div>
-          </details>
+          <vault-legend view="glance"></vault-legend>
         </div>
         <div id="glance"></div>
       </section>
@@ -341,6 +268,7 @@
           <h2 id="table-title">Repositories</h2>
           <input type="search" id="filter" placeholder="filter packages" hidden />
           <span class="meta" id="table-meta"></span>
+          <vault-legend id="table-legend" view="repos"></vault-legend>
         </div>
         <div class="scroll" id="table"></div>
       </section>
@@ -883,6 +811,7 @@
         $('#tables').hidden = view === 'glance';
         $('#window-label').hidden = view === 'repos';
         $('#table-title').textContent = view === 'packages' ? 'Packages' : 'Repositories';
+        $('#table-legend').view = view === 'packages' ? 'packages' : 'repos';
         $('#filter').hidden = view !== 'packages';
         if (view === 'glance') renderGlance();
         else if (view === 'packages') renderPackages();
@@ -981,16 +910,13 @@
         }
       });
       bindPopovers($('#glance'));
-      document.addEventListener('click', e => {
-        const legend = $('#legend');
-        if (legend.open && !legend.contains(e.target)) legend.open = false;
-      });
       document.addEventListener('token-change', load);
 
       load();
     </script>
     <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/components/vault-legend.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>
 </html>
