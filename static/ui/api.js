@@ -44,6 +44,29 @@ export async function api(path, init = {}) {
  */
 export const apiJson = (path, init) => api(path, init).then(res => res.json());
 
+const RESOLVE_BATCH = 500;
+
+/**
+ * The subset of vault paths (folder-qualified, `projects/x/state.md`) that
+ * exist, from batched `POST /resolve`: probing each with a GET answers 404
+ * for every missing one, a console error apiece.
+ */
+export const existingPaths = async paths => {
+  const found = new Set();
+  for (let i = 0; i < paths.length; i += RESOLVE_BATCH) {
+    const chunk = paths.slice(i, i + RESOLVE_BATCH);
+    const {items} = await apiJson('/resolve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({wikilinks: chunk})
+    });
+    items.forEach((item, j) => {
+      if (item.record_id !== null) found.add(chunk[j]);
+    });
+  }
+  return found;
+};
+
 /** HTML-escape for interpolating untrusted text into innerHTML templates. */
 export const esc = s =>
   String(s).replace(

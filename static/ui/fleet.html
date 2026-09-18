@@ -138,7 +138,7 @@
     <div class="footer" id="footer"></div>
 
     <script type="module">
-      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, existingPaths, getToken, showAuthDialog} from '/ui/api.js';
       import {
         stateDocPath,
         parseBaseline,
@@ -668,8 +668,10 @@
         try {
           const list = await apiJson('/vault/projects/');
           const folders = (list.files ?? []).filter(f => f.endsWith('/')).map(f => f.slice(0, -1));
+          const stored = await existingPaths(folders.map(stateDocPath));
           const found = await Promise.all(
             folders.map(async project => {
+              if (!stored.has(stateDocPath(project))) return null;
               try {
                 const res = await api(`/vault/${stateDocPath(encodeURIComponent(project))}`);
                 const doc = await res.text();

@@ -70,7 +70,7 @@
     <div class="footer" id="footer"></div>
 
     <script type="module">
-      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, existingPaths, getToken, showAuthDialog} from '/ui/api.js';
       const SHOW_DONE_KEY = 'vault.show-done';
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
@@ -96,6 +96,8 @@
       };
 
       const openClass = n => (n === 0 ? '' : n > 20 ? 'fmw-bad' : n > 8 ? 'fmw-warn' : '');
+
+      const queueDocPath = name => `projects/${name}/queue.md`;
 
       const renderSkeleton = folders => {
         $('#projects').innerHTML = folders
@@ -213,8 +215,25 @@
 
         renderSkeleton(folders);
 
+        let queued;
+        try {
+          queued = await existingPaths(folders.map(queueDocPath));
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') {
+            showAuthDialog();
+            return;
+          }
+          $('#projects').innerHTML =
+            `<div class="err">Failed to find queues: ${esc(e.message)}</div>`;
+          return;
+        }
+
         const projects = await Promise.all(
           folders.map(async name => {
+            if (!queued.has(queueDocPath(name))) {
+              renderProject(name, null);
+              return {name, queue: null};
+            }
             try {
               const res = await api(`/vault/projects/${encodeURIComponent(name)}/queue.md`);
               const text = await res.text();
