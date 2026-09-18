@@ -2117,6 +2117,67 @@ test('PUT /vault/{path} "__unset__" removes a key — the /vault ingest ready-fl
   }
 });
 
+test('PUT /vault/{path}?frontmatter=replace removes the keys the request leaves out', async t => {
+  const {root, cleanup} = setupVault();
+  const stored =
+    '---\ntitle: Old\ntype: permanent\ncustom: gone soon\nempty:\ncreated: 2026-01-02\nupdated: 2026-01-02\n---\nBody.\n';
+  writeMd(root, 'topics/fm.md', stored);
+  const ctx = await startTestServer(root);
+  try {
+    const at = `${ctx.url}/vault/topics/fm.md`;
+    const put = (query: string, init: RequestInit) =>
+      fetchAuthed(`${at}${query}`, {method: 'PUT', ...init});
+    const markdown = (text: string, etag?: string) => ({
+      headers: {'Content-Type': 'text/markdown', ...(etag ? {'If-Match': etag} : {})},
+      body: text
+    });
+    const onDisk = () => parseFrontmatter(readFileSync(join(root, 'topics/fm.md'), 'utf8'));
+
+    const merged = await put('', markdown('---\ntitle: Merged\ntype: permanent\n---\nBody.\n'));
+    t.equal(merged.status, 204);
+    t.equal(onDisk().data['custom'], 'gone soon', 'without the parameter an omitted key is kept');
+
+    const etag = (await fetchAuthed(at)).etag!;
+    const replaced = await put(
+      '?frontmatter=replace',
+      markdown('---\ntitle: New\ntype: permanent\nempty:\n---\nBody, edited.\n', etag)
+    );
+    t.equal(replaced.status, 204, 'a key empty in both is kept, not refused as null');
+    const {data, body} = onDisk();
+    t.equal(data['title'], 'New');
+    t.notOk('custom' in data, 'the key the editor deleted is gone');
+    t.ok('empty' in data, 'the empty key stays');
+    t.equal(String(data['created']).slice(0, 10), '2026-01-02', 'created stays indexer-owned');
+    t.equal(body, 'Body, edited.\n');
+
+    const json = await put('?frontmatter=replace', {
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({frontmatter: {title: 'Json'}, body: 'Body.\n'})
+    });
+    t.equal(json.status, 204);
+    t.deepEqual(
+      Object.keys(onDisk().data).sort(),
+      ['created', 'title', 'updated'],
+      'the JSON form replaces the same way'
+    );
+
+    const before = readFileSync(join(root, 'topics/fm.md'), 'utf8');
+    const unparsed = await put('?frontmatter=replace', markdown('---\ntitle: Open\nBody.\n'));
+    t.equal(unparsed.status, 400, 'an unclosed block is refused, not read as an empty one');
+    t.equal(readFileSync(join(root, 'topics/fm.md'), 'utf8'), before, 'nothing was written');
+
+    const created = await fetchAuthed(`${ctx.url}/vault/topics/fresh.md?frontmatter=replace`, {
+      method: 'PUT',
+      ...markdown('---\ntitle: Fresh\n---\nNew note.\n')
+    });
+    t.equal(created.status, 204, 'nothing stored to replace on a create');
+    t.equal((await put('?frontmatter=merge', markdown(before))).status, 400, 'only replace');
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
 test('POST /vault/edit — append collapses trailing whitespace, FM verbatim, updated stamped', async t => {
   const {root, cleanup} = setupVault();
   try {

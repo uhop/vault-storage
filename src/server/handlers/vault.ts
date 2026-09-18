@@ -45,8 +45,8 @@ import type {Handler} from '../router.ts';
 import {
   documentEtag,
   ensureSafePath,
-  FM_UNSET_SENTINEL,
   parseWriteRequest,
+  replacementFrontmatter,
   validateWritePayload,
   WriterError,
   writeRecordToDisk,
@@ -423,18 +423,28 @@ export const renderVaultHandler =
  * `X-Vault-Dedup: skip` short-circuits the check when the caller has
  * already run /vault/propose and made an explicit decision; useful so
  * the propose-then-write idiom doesn't double-charge the embedder.
+ *
+ * `?frontmatter=replace` makes the request's frontmatter the whole block, so
+ * a stored key it leaves out is removed; the whole-note editor sends it.
  */
 export const putVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
     // A typo'd `chek=true` would leave the dedup gate disarmed while the
     // caller believes it fired, and write the duplicate it was meant to catch.
-    if (!rejectUnknownParams(ctx, new Set(['shadow', 'check', 'check_threshold']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['shadow', 'check', 'check_threshold', 'frontmatter'])))
+      return;
     const path = ctx.params['path'] ?? '';
     if (path.length === 0 || path.endsWith('/')) {
       sendError(ctx.res, 400, 'invalid_path', 'PUT requires a file path (no trailing slash)');
       return;
     }
+    const frontmatterMode = ctx.query['frontmatter'];
+    if (frontmatterMode !== undefined && frontmatterMode !== 'replace') {
+      sendError(ctx.res, 400, 'bad_request', 'frontmatter must be "replace" when given');
+      return;
+    }
+    const replaceFrontmatter = frontmatterMode === 'replace';
     if (!path.endsWith('.md')) {
       sendError(ctx.res, 400, 'invalid_path', 'only .md files are supported');
       return;
@@ -571,6 +581,7 @@ export const putVaultHandler =
               frontmatter: parsed.frontmatter,
               body: parsed.body,
               vaultDataPath: deps.vaultDataPath,
+              replaceFrontmatter,
               ...(typeof ifMatch === 'string' ? {ifMatch} : {})
             })
           : writeRecordToDisk({
@@ -578,6 +589,7 @@ export const putVaultHandler =
               existing,
               requestMarkdown: parsed.markdown,
               vaultDataPath: deps.vaultDataPath,
+              replaceFrontmatter,
               ...(typeof ifMatch === 'string' ? {ifMatch} : {})
             });
       absolutePath = result.absolutePath;
@@ -712,26 +724,6 @@ const frontmatterOrError = (res: ServerResponse, text: string): Record<string, u
     return null;
   }
   return parsed as Record<string, unknown>;
-};
-
-/**
- * The writer's merge keeps any stored key a request omits, so a replace
- * unsets each one the new block dropped. A key left empty in both stays as
- * stored; the writer restores it, as it does for every edit op.
- */
-const replacementFrontmatter = (
-  stored: Record<string, unknown>,
-  next: Record<string, unknown>
-): Record<string, unknown> => {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(next)) {
-    if (value === null && stored[key] === null) continue;
-    out[key] = value;
-  }
-  for (const key of Object.keys(stored)) {
-    if (!Object.hasOwn(next, key)) out[key] = FM_UNSET_SENTINEL;
-  }
-  return out;
 };
 
 /**

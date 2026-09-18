@@ -764,7 +764,7 @@ ready: false
         }
         const headers = {'Content-Type': 'text/markdown'};
         if (!force && !state.isNew) headers['If-Match'] = `"${state.baseHash}"`;
-        const res = await api(at, {method: 'PUT', headers, body: text});
+        const res = await api(`${at}?frontmatter=replace`, {method: 'PUT', headers, body: text});
         return {hash: etagOf(res), text};
       }
 

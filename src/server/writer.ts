@@ -52,6 +52,26 @@ export const INDEXER_OVERRIDE_KEYS: ReadonlySet<string> = new Set(['created', 'u
  */
 export const FM_UNSET_SENTINEL = '__unset__';
 
+/**
+ * The merge keeps any stored key a request omits, so a replace unsets each one
+ * the new block dropped. A key left empty in both stays as stored; the merge
+ * restores it.
+ */
+export const replacementFrontmatter = (
+  stored: Record<string, unknown>,
+  next: Record<string, unknown>
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (value === null && stored[key] === null) continue;
+    out[key] = value;
+  }
+  for (const key of Object.keys(stored)) {
+    if (!Object.hasOwn(next, key)) out[key] = FM_UNSET_SENTINEL;
+  }
+  return out;
+};
+
 /** Depth-first search for the unset sentinel below top level; returns the
  *  offending path or null. */
 const findNestedUnsetSentinel = (value: unknown, path: string): string | null => {
@@ -233,6 +253,8 @@ export interface WriteOptions {
    * Absent header → last-writer-wins, the pre-existing contract.
    */
   ifMatch?: string;
+  /** See {@link WriteSplitOptions.replaceFrontmatter}. */
+  replaceFrontmatter?: boolean;
   now?: string;
 }
 
@@ -246,6 +268,12 @@ export interface WriteSplitOptions {
   existing: VaultRecord | null;
   /** Raw `If-Match` header value — see {@link WriteOptions.ifMatch}. */
   ifMatch?: string;
+  /**
+   * The request's frontmatter is the whole block: a stored key it leaves out
+   * is removed instead of kept. For editors that send the document as the
+   * user sees it; `created` and `updated` stay indexer-owned.
+   */
+  replaceFrontmatter?: boolean;
   now?: string;
   /**
    * Set by the markdown path when the request opened with a frontmatter
@@ -474,7 +502,8 @@ export const ensureSafePath = (vaultRoot: string, filePath: string): string => {
  * defaults. `updated` is always force-stamped to `now`. `created` is preserved
  * from disk/record, or stamped at first write. The merge is union-only, so
  * omitting a key keeps the stored value; a request value of
- * {@link FM_UNSET_SENTINEL} deletes the key instead.
+ * {@link FM_UNSET_SENTINEL} deletes the key instead, and `replaceFrontmatter`
+ * deletes every key the request omits.
  */
 export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
   const {filePath, existing, requestMarkdown, vaultDataPath} = opts;
@@ -509,6 +538,7 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
     openingDelimiterUnparsed:
       Object.keys(requestFm).length === 0 && DELIMITER_OPENING.test(requestMarkdown),
     ...(opts.ifMatch !== undefined ? {ifMatch: opts.ifMatch} : {}),
+    ...(opts.replaceFrontmatter !== undefined ? {replaceFrontmatter: opts.replaceFrontmatter} : {}),
     ...(opts.now !== undefined ? {now: opts.now} : {})
   });
 };
@@ -526,7 +556,8 @@ export const writeRecordToDisk = (opts: WriteOptions): WriteResult => {
  * programmatic callers (agents, UI) that already have an FM object in hand.
  */
 export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => {
-  const {filePath, existing, frontmatter, body, vaultDataPath} = opts;
+  const {filePath, existing, body, vaultDataPath} = opts;
+  let {frontmatter} = opts;
   const now = opts.now ?? new Date().toISOString();
 
   const absolutePath = ensureSafePath(vaultDataPath, filePath);
@@ -572,6 +603,9 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
     } catch {
       storedBody = onDisk;
     }
+  }
+  if (opts.replaceFrontmatter && storedFrontmatter) {
+    frontmatter = replacementFrontmatter(storedFrontmatter, frontmatter);
   }
   validateWritePayload(frontmatter, body, storedBody, storedFrontmatter);
 
