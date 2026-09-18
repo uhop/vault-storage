@@ -42,9 +42,13 @@ test('vault-toolbar path and status API', t => {
       'labels are text, never markup'
     );
 
-    el.setStatus('saving', 'ignored');
+    el.setStatus('saving', 'loading…');
     t.ok(el.querySelector('.pill .spinner'), 'saving renders its spinner');
-    t.matchString(el.querySelector('.pill').textContent, /saving…/, 'saving renders its own label');
+    t.equal(el.querySelector('.pill').textContent, ' loading…', 'saving renders the given label');
+
+    el.setStatus('saving', '');
+    t.ok(el.querySelector('.pill .spinner'), 'spinner without a label too');
+    t.equal(el.querySelector('.pill').textContent, ' saving…', 'an empty label falls back');
   } finally {
     el.remove();
   }

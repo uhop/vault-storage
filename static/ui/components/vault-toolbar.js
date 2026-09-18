@@ -71,7 +71,7 @@ class VaultToolbar extends HTMLElement {
     if (this._modes) this._modes.value = mode;
   }
 
-  /** Save-state pill: kind ∈ idle|editing|saving|saved|offline; `saving` renders its own spinner + label. */
+  /** Save-state pill: kind ∈ idle|editing|saving|saved|offline; `saving` puts a spinner before its label, "saving…" when the label is empty. */
   setStatus(kind, label) {
     if (!this._pill) return;
     this._pill.className = 'pill ' + kind;
@@ -79,7 +79,7 @@ class VaultToolbar extends HTMLElement {
     if (kind === 'saving') {
       const spin = document.createElement('span');
       spin.className = 'spinner';
-      this._pill.append(spin, ' saving…');
+      this._pill.append(spin, ' ' + (label || 'saving…'));
     } else {
       this._pill.textContent = label;
     }

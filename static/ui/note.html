@@ -9,6 +9,20 @@
         const t = localStorage.getItem('vault.theme');
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       })();
+      // Before first paint: until data-view exists no pane rule matches, and both panes show.
+      // Precedence: URL `?view=` (one-shot, for "open as rendered" links) > localStorage > viewport.
+      (() => {
+        const known = v => v === 'edit' || v === 'split' || v === 'preview';
+        const url = new URLSearchParams(location.search).get('view');
+        const kept = localStorage.getItem('vault.view-mode');
+        document.documentElement.dataset.view = known(url)
+          ? url
+          : known(kept)
+            ? kept
+            : innerWidth >= 768
+              ? 'split'
+              : 'edit';
+      })();
     </script>
     <title>vault-storage — note</title>
     <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
@@ -215,20 +229,20 @@
         border-left: 1px solid var(--line);
         background: var(--card);
       }
-      body[data-view='edit'] .preview {
+      :root[data-view='edit'] .preview {
         display: none;
       }
-      body[data-view='preview'] vault-editor {
+      :root[data-view='preview'] vault-editor {
         display: none;
       }
-      body[data-view='preview'] .preview {
+      :root[data-view='preview'] .preview {
         border-left: 0;
       }
       .preview-gate button {
         margin-top: 0.6rem;
       }
       @media (max-width: 767px) {
-        body[data-view='split'] .preview {
+        :root[data-view='split'] .preview {
           display: none;
         }
       }
@@ -706,7 +720,7 @@ ready: false
       }
 
       async function loadExisting(path) {
-        mark('loadExisting: start', `${path}, view=${document.body.dataset.view}`);
+        mark('loadExisting: start', `${path}, view=${viewMode}`);
         toolbar.path = path;
         $('#del').hidden = false;
         $('#editor').disabled = true;
@@ -722,8 +736,8 @@ ready: false
             `${draft ? draft.length : 0} chars`
           );
           state.serverContent = text;
-          // Through the setter: the view-mode setup may have filled the editor
-          // before the note arrived, and then the DOM needs the text too.
+          // Through the setter: a mode switch or find during the fetch may
+          // have filled the editor, and then the DOM needs the text too.
           setDocText(restore ? draft : text);
           state.dirty = restore;
           if (restore) {
@@ -816,12 +830,11 @@ ready: false
         // `edit` mode. Dispatch to whichever surface is visible (or both in
         // `split`). If the preview is empty (we just rendered an edit-only
         // session), fall back to scrolling the editor.
-        const previewMode = document.body.dataset.view;
-        if (previewMode === 'preview') {
+        if (viewMode === 'preview') {
           // Jumping is a request to see it, so render even if gated.
           renderPreview(docText());
           requestAnimationFrame(() => jumpInPreview(index));
-        } else if (previewMode === 'edit') {
+        } else if (viewMode === 'edit') {
           jumpInEditor(offset);
         } else {
           // split: jump both surfaces.
@@ -1021,24 +1034,13 @@ ready: false
       }
 
       // view modes ------------------------------------------------------
-      // Precedence: URL `?view=` (one-shot for "open as rendered" affordances) >
-      // localStorage (sticky user preference) > viewport-derived default.
-      const urlView = new URLSearchParams(location.search).get('view');
-      let viewMode;
-      if (urlView === 'edit' || urlView === 'split' || urlView === 'preview') {
-        viewMode = urlView;
-      } else {
-        viewMode = localStorage.getItem(VIEW_KEY);
-        if (viewMode !== 'edit' && viewMode !== 'split' && viewMode !== 'preview') {
-          viewMode = window.innerWidth >= 768 ? 'split' : 'edit';
-        }
-      }
-      document.body.dataset.view = viewMode;
+      // Resolved by the head script; one precedence rule, in one place.
+      let viewMode = document.documentElement.dataset.view;
 
       const setViewMode = mode => {
         viewMode = mode;
         localStorage.setItem(VIEW_KEY, mode);
-        document.body.dataset.view = mode;
+        document.documentElement.dataset.view = mode;
         toolbar.mode = mode;
         syncEditor();
         schedulePreview();
@@ -1287,7 +1289,9 @@ ready: false
 
       // View-mode toggle (Edit / Split / Preview).
       toolbar.addEventListener('mode-change', e => setViewMode(e.detail.mode));
-      setViewMode(viewMode);
+      // Not setViewMode: that persists a one-shot URL mode and fills the editor
+      // before the note arrives. init() fills and renders once the text is in.
+      toolbar.mode = viewMode;
 
       // Mobile insert-row -----------------------------------------------
       const insertWrap = (open, close) => {
@@ -1442,7 +1446,7 @@ ready: false
       };
 
       const openFind = focusReplace => {
-        if (document.body.dataset.view === 'preview') return false;
+        if (viewMode === 'preview') return false;
         const ta = ensureEditor();
         const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
         if (sel && !sel.includes('\n')) $('#find-input').value = sel;
@@ -1498,7 +1502,7 @@ ready: false
         recomputeFind();
       });
       $('#find-btn').addEventListener('click', () => {
-        if (document.body.dataset.view === 'preview') setViewMode('split');
+        if (viewMode === 'preview') setViewMode('split');
         openFind(false);
       });
       // Buttons keep focus in the active find/replace input so Enter still navigates.
@@ -1518,7 +1522,7 @@ ready: false
           // is unstyleable and invisible — white-on-yellow — in the dark theme).
           // Reveal the editor first if we're in preview-only view.
           e.preventDefault();
-          if (document.body.dataset.view === 'preview') setViewMode('split');
+          if (viewMode === 'preview') setViewMode('split');
           openFind(false);
           return;
         }
