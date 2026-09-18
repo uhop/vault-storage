@@ -77,8 +77,9 @@ const bestSegmentByTerms = (segments: string[], terms: string[]): number => {
  * Exactly one of `query` / `record_id` anchors the pack:
  *
  * - `query` — hybrid retrieval: record-level RRF over the lexical FTS5 leg
- *   and the semantic chunk-KNN leg; each fused record contributes its best
- *   chunk. The graph context is rooted at the top fused record.
+ *   and the semantic leg (`nearest`: the better of a record's best chunk and
+ *   its summary vector, D45); each fused record contributes its best chunk.
+ *   The graph context is rooted at the top fused record.
  * - `record_id` — the anchor's nearest records by chunk embeddings, each
  *   contributing its closest chunk; graph context rooted at the anchor.
  *

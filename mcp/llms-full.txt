@@ -53,17 +53,19 @@ was computed at (it moves on every record write), so an empty answer reads as
 Input schemas inline closed-enum lists (record types, statuses, edge types,
 suggestion kinds) so the canonical vocabulary is visible at discovery time.
 
-## Tools (70)
+## Tools
 
 Search & list:
 
 - vault_search — lexical (FTS5, default) or semantic (mode=semantic) search;
   {as_of, hits: [{filename, score, matches}]}.
 - vault_context_pack — one prepared RAG pack anchored by exactly one of
-  `query` (hybrid: lexical FTS + semantic chunk-KNN, fused by reciprocal
-  rank) or `record_id` (nearest chunks). Returns {anchor, chunks, graph,
-  budget}; chunk text is the bare body segment the stored vectors index
-  (degenerate segments skipped); the graph block carries the deduped 1-hop
+  `query` (hybrid: lexical FTS + semantic ranking, fused by reciprocal
+  rank; the semantic leg scores a record by the better of its best chunk
+  and its agent.summary vector) or `record_id` (nearest chunks). Returns
+  {anchor, chunks, graph, budget}; chunk text is the bare body segment the
+  stored vectors index, the record's best chunk even when it matched on its
+  summary (degenerate segments skipped); the graph block carries the deduped 1-hop
   typed neighborhood as agent.summary lines — each entry with its typed
   edges + directions, inbound entries doubling as the backlinks
   (inbound_total = backlink degree), capped at 20 with the true total.
@@ -130,7 +132,8 @@ Maintenance:
 
 - vault_raw_inbox — raw/ ready vs drafts split (the /vault ingest entry).
 - vault_cleanup_lint — delete orphan embeddings and other auto-fixables.
-- vault_embed_pending — embed records with missing/drifted vectors.
+- vault_embed_pending — embed records with missing/drifted chunk or summary
+  vectors, reusing the vector of any unchanged text; loops until drained.
 - vault_incremental_reindex — catch up after a git pull from another machine.
 - vault_run_scans — all four suggestion-filing scans in one pass.
 
