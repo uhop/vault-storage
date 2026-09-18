@@ -46,10 +46,11 @@ const lookup = ({resolver, pathById}: ResolvedView, link: string): Resolved | nu
  * Returns 200 with `{target, record_id, file_path, ui_url}` on resolution,
  * 404 when no record matches, 400 when wikilink param is missing/empty.
  *
- * `ui_url` points at the note editor (`/ui/note.html?path=…`). The UI's
- * preview pane reads it to populate `<a class="wikilink">` href attributes
- * so clicking a rendered wikilink navigates like a native link (including
- * middle-click and cmd/ctrl-click for new-tab semantics).
+ * `ui_url` points at the note page (`/ui/note.html?path=…`), which shows the
+ * note rendered. The edit page's preview reads it to populate
+ * `<a class="wikilink">` href attributes so clicking a rendered wikilink
+ * navigates like a native link (including middle-click and cmd/ctrl-click
+ * for new-tab semantics).
  */
 export const resolveHandler =
   (deps: ResolveDeps): Handler =>
@@ -91,7 +92,7 @@ const parseBatch = (raw: string): string[] | string => {
  * Resolves every entry by the GET rules and answers `{items}` in request
  * order: a hit is the GET's `{target, record_id, file_path, ui_url}`, a
  * miss is `{target, record_id: null, file_path: null, ui_url: null}`. The
- * preview pane sends a rendered note's distinct wikilinks in one request;
+ * edit page's preview sends a rendered note's distinct wikilinks in one request;
  * one GET per link was 145 round trips on a 900 KB note (2026-09-17).
  */
 export const resolveBatchHandler =

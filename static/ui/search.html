@@ -181,8 +181,8 @@
       <div class="fmw-card" data-idx="${i}">
         <header>
           <span class="filename" data-path="${esc(r.filename)}">${esc(r.filename)}</span>
-          <a class="fmw-pill" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
-          <a class="fmw-pill" href="/ui/note.html?path=${path}" title="Edit">edit</a>
+          <a class="fmw-pill" href="/ui/note.html?path=${path}" title="View rendered">view</a>
+          <a class="fmw-pill" href="/ui/edit.html?path=${path}" title="Edit">edit</a>
           <small>${fmtScore(r.score, mode)}</small>
         </header>
         ${snippets ? `<div class="snippets">${snippets}</div>` : ''}

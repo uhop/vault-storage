@@ -659,3 +659,129 @@ dialog .dlg-row {
 .fmw-notice.ok {
   color: var(--ok);
 }
+
+/* .fmw-prose: a rendered markdown document. The frontmatter block is the one inner class. */
+.fmw-prose .frontmatter {
+  padding: 0.5rem 0.7rem;
+  margin: 0 0 1rem;
+  background: rgba(127, 127, 127, 0.08);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.fmw-prose h1,
+.fmw-prose h2,
+.fmw-prose h3,
+.fmw-prose h4 {
+  line-height: 1.3;
+}
+.fmw-prose h1 {
+  font-size: 1.6rem;
+  margin: 1.2rem 0 0.6rem;
+}
+.fmw-prose h2 {
+  font-size: 1.3rem;
+  margin: 1.2rem 0 0.6rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--line);
+}
+.fmw-prose h3 {
+  font-size: 1.1rem;
+  margin: 1rem 0 0.5rem;
+}
+.fmw-prose h4 {
+  font-size: 1rem;
+  margin: 0.8rem 0 0.4rem;
+}
+.fmw-prose p,
+.fmw-prose ul,
+.fmw-prose ol,
+.fmw-prose pre,
+.fmw-prose blockquote,
+.fmw-prose table {
+  margin: 0.6rem 0;
+  line-height: 1.6;
+}
+.fmw-prose code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: rgba(127, 127, 127, 0.12);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+.fmw-prose pre {
+  background: rgba(127, 127, 127, 0.08);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  overflow-x: auto;
+}
+.fmw-prose pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.fmw-prose blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 1rem;
+  color: var(--muted);
+}
+.fmw-prose a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.fmw-prose a:hover {
+  text-decoration: underline;
+}
+.fmw-prose a.wikilink {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: rgba(127, 127, 127, 0.08);
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+}
+.fmw-prose a.wikilink.resolving {
+  opacity: 0.65;
+}
+.fmw-prose a.wikilink.unresolved {
+  color: var(--bad);
+  text-decoration: line-through;
+  background: rgba(192, 57, 43, 0.12);
+  cursor: not-allowed;
+}
+.fmw-prose a.wikilink.unresolved:hover {
+  text-decoration: line-through;
+}
+.fmw-prose ul,
+.fmw-prose ol {
+  padding-left: 1.5rem;
+}
+.fmw-prose li {
+  margin: 0.2rem 0;
+}
+.fmw-prose hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 1.5rem 0;
+}
+.fmw-prose table {
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.fmw-prose th,
+.fmw-prose td {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.fmw-prose th {
+  background: rgba(127, 127, 127, 0.08);
+}
+.fmw-prose img {
+  max-width: 100%;
+  height: auto;
+}

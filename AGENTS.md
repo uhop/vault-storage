@@ -43,6 +43,7 @@ Start with `ARCHITECTURE.md` for the full module map. The coarse shape:
 Runtime dependencies are deliberately few (fleet minimal-dependencies policy); justify any addition:
 
 - **`@huggingface/transformers`** — ONNX inference for BGE embeddings (local CPU).
+- **`marked`** — markdown to HTML for the note pages, rendered on the server (D60) because a slow browser engine took 45 s to parse a large note. No dependencies of its own; the page already rendered with it, so the output did not change.
 - **`sqlite-vec`** — vector-search SQLite extension loaded into `node:sqlite`.
 - **`time-queues`** — scheduling for the watcher / git-sync / scan loops.
 - **`yaml`** — frontmatter parse + safe serialization.

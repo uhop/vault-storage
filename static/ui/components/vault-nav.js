@@ -15,7 +15,7 @@ const ITEMS = [
   {href: '/ui/tags.html', label: 'tags'},
   {href: '/ui/raw.html', label: 'raw'},
   {href: '/ui/folder.html', label: 'browse'},
-  {href: '/ui/note.html', label: 'note'},
+  {href: '/ui/edit.html', label: 'note'},
   {href: '/ui/agents.html', label: 'agents'}
 ];
 

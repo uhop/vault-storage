@@ -12,7 +12,7 @@ const CANON = [
   ['/ui/tags.html', 'tags'],
   ['/ui/raw.html', 'raw'],
   ['/ui/folder.html', 'browse'],
-  ['/ui/note.html', 'note'],
+  ['/ui/edit.html', 'note'],
   ['/ui/agents.html', 'agents']
 ];
 

@@ -15,6 +15,7 @@ import pw from 'playwright';
 const PAGES = [
   'agents',
   'archive-review',
+  'edit',
   'fleet',
   'fleet-project',
   'folder',
@@ -26,6 +27,8 @@ const PAGES = [
   'search',
   'tags'
 ];
+// Pages that show nothing worth measuring without a note to show.
+const QUERY = {edit: '?path=topics%2Falpha.md', note: '?path=topics%2Falpha.md'};
 const VIEWPORTS = [1280, 400];
 const TOKEN = 'snapshot-token';
 const root = new URL('..', import.meta.url);
@@ -174,7 +177,7 @@ const snapshot = async out => {
         const page = await ctx.newPage();
         const errors = [];
         page.on('pageerror', e => errors.push(String(e)));
-        await page.goto(`${base}/ui/${name}.html`, {waitUntil: 'networkidle'});
+        await page.goto(`${base}/ui/${name}.html${QUERY[name] ?? ''}`, {waitUntil: 'networkidle'});
         await page.waitForTimeout(800);
         const snap = await page.evaluate(snapshotPage);
         writeFileSync(join(out, `${name}-${width}.json`), JSON.stringify(snap));

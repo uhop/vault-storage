@@ -34,7 +34,7 @@ export const ext = (href, text, cls = '') =>
   `<a${cls ? ` class="${cls}"` : ''} href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
 export const renderParts = parts =>
   parts.map(p => (typeof p === 'string' ? esc(p) : ext(p.href, p.text))).join('');
-export const noteHref = path => `/ui/note.html?path=${encodeURIComponent(path)}&view=preview`;
+export const noteHref = path => `/ui/note.html?path=${encodeURIComponent(path)}`;
 export const queueHref = project => noteHref(`projects/${project}/queue.md`);
 export const projectHref = (project, anchor = '') =>
   `/ui/fleet-project.html?project=${encodeURIComponent(project)}${anchor ? `#${encodeURIComponent(anchor)}` : ''}`;

@@ -128,8 +128,8 @@
         card.innerHTML = `
     <header>
       <span class="name" data-name="${esc(name)}">${esc(name)}</span>
-      <a class="fmw-pill" href="/ui/note.html?path=${path}&view=preview" title="View rendered">view</a>
-      <a class="fmw-pill" href="/ui/note.html?path=${path}" title="Edit queue.md">edit</a>
+      <a class="fmw-pill" href="/ui/note.html?path=${path}" title="View rendered">view</a>
+      <a class="fmw-pill" href="/ui/edit.html?path=${path}" title="Edit queue.md">edit</a>
       <small>${esc(q.updated ?? '—')} · <b class="${openClass(q.openTasks)}">${q.openTasks} open</b> / ${q.openTasks + q.doneTasks} total</small>
     </header>
     <div class="summary">${esc(q.summary)}</div>
