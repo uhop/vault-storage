@@ -60,7 +60,7 @@ type LinedHeading = Tokens.Heading & {line?: number};
 
 const WIKILINK = /^\[\[([^\]|]+?)(?:\|([^\]]+))?\]\]/;
 
-// The options and wikilink syntax of static/ui/components/vault-markdown.js, so the page reads the same.
+// The options and wikilink syntax of the retired in-browser renderer (vault-markdown, D60), so notes read the same.
 const makeMarked = (resolve: ResolveLink): Marked =>
   new Marked({
     gfm: true,

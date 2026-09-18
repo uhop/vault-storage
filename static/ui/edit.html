@@ -405,7 +405,7 @@
           spellcheck="false"
           data-placeholder="Start typing… frontmatter at the top, body below."
         ></vault-editor>
-        <vault-markdown class="preview fmw-prose" id="preview" show-frontmatter></vault-markdown>
+        <div class="preview fmw-prose" id="preview"></div>
         <div class="preview preview-gate fmw-prose" id="preview-gate" hidden>
           <p class="fmw-notice" id="preview-gate-text"></p>
           <button type="button" id="preview-render">Render preview</button>
@@ -484,7 +484,6 @@
 
     <script type="module">
       import {mark, perfOn, time, timeAsync} from '/ui/perf.js';
-      import '/ui/components/vault-markdown.js';
       import '/ui/components/vault-editor.js';
       import '/ui/components/vault-toolbar.js';
       import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
@@ -949,22 +948,55 @@ ready: false
             ? `${Math.round(n / 1000)}K`
             : `${(n / 1_000_000).toFixed(1)}M`;
 
-      const renderPreview = text => {
+      const splitFrontmatter = text => {
+        const end = text.startsWith('---\n') ? text.indexOf('\n---', 4) : -1;
+        if (end < 0) return {yaml: null, body: text};
+        const after = end + 4;
+        return {
+          yaml: text.slice(4, end),
+          body: text.slice(text[after] === '\n' ? after + 1 : after)
+        };
+      };
+
+      let previewTicket = 0;
+
+      // The server renders (D60): the browser's own regex engine took 45 s on a large note.
+      const renderPreview = async text => {
         // An empty render is not one: the debounce can fire before the note
         // body has arrived, and that must not read back as "out of date".
         previewRendered = text.length > 0;
         $('#preview-gate').hidden = true;
         $('#preview').hidden = false;
-        $('#preview').value = text;
+        const ticket = ++previewTicket;
+        const {yaml, body} = splitFrontmatter(text);
+        try {
+          const res = await timeAsync('preview: server render', () =>
+            api('/vault/render', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({markdown: body})
+            })
+          );
+          const {html} = await res.json();
+          if (ticket !== previewTicket) return;
+          const fm = yaml === null ? '' : `<pre class="frontmatter">${esc(yaml)}</pre>`;
+          time(
+            'preview: insert',
+            () => ($('#preview').innerHTML = fm + html),
+            `${html.length} chars`
+          );
+        } catch (e) {
+          if (ticket !== previewTicket) return;
+          $('#preview').innerHTML = `<p class="fmw-notice">Preview failed: ${esc(e.message)}</p>`;
+        }
       };
 
-      // Parsing a large note blocks the main thread until it finishes — a
-      // second here, tens on a slow engine — and again after every typing
-      // pause, so above the threshold the render is the reader's to ask for.
+      // Laying out a large rendered note takes most of a second on a slow engine, so above the
+      // threshold a render per typing pause is the writer's to ask for.
       const armPreviewGate = chars => {
         $('#preview-gate-text').textContent = previewRendered
-          ? `Preview is out of date. This note is ${fmtCount(chars)} characters, and re-rendering it freezes the page while it parses.`
-          : `Preview is off above ${fmtCount(PREVIEW_AUTO_MAX_CHARS)} characters. This note is ${fmtCount(chars)}, and rendering it freezes the page while it parses.`;
+          ? `Preview is out of date. This note is ${fmtCount(chars)} characters; re-render it to see the change.`
+          : `Preview is off above ${fmtCount(PREVIEW_AUTO_MAX_CHARS)} characters. This note is ${fmtCount(chars)}.`;
         $('#preview-render').textContent = previewRendered ? 'Re-render' : 'Render preview';
         $('#preview').hidden = true;
         $('#preview-gate').hidden = false;
@@ -988,7 +1020,6 @@ ready: false
         previewManual = true;
         mark('preview: render asked for');
         renderPreview(time('preview: read document', () => docText()));
-        mark('preview: render returned');
       });
 
       // Spellcheck stays off until someone actually edits. Checking a large
