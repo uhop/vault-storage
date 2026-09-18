@@ -212,6 +212,22 @@ test('queue lint: bold-led paragraphs, and placeholders that are not the bare (e
   t.equal(itemCount(parsed), 2, 'the bold-led paragraph is not an item; the bullets are');
 });
 
+test('queue lint: a schema section with nothing in it is reported; a subsection, a fence, or a prose H2 is not', t => {
+  const out = queueFindings(
+    parseQueue(
+      '## Active\n\n## Backlog\n\n### P1\n\n## See also\n\n## Watching\n\n```\nfenced\n```\n\n## backlog\n'
+    )
+  );
+  t.deepEqual(
+    out,
+    [
+      'Active: no item and no placeholder — write the bare "(empty)"',
+      'backlog: no item and no placeholder — write the bare "(empty)"'
+    ],
+    out.join('\n')
+  );
+});
+
 // The two paragraph-start worlds no fixture above reaches (apodictum audit 5b0015b94b26).
 test('queue lint: a paragraph starts after a heading, and a second column-0 line does not start one', t => {
   const underHeading = parseQueue(

@@ -2626,7 +2626,10 @@ test('POST /vault/move-item — the queue-to-archive move in one request, and a 
         ),
         'landed in Active with its continuation'
       );
-      t.ok(afterPromote.includes('## Backlog\n\n## Watching'), 'Backlog left empty');
+      t.ok(
+        afterPromote.includes('## Backlog\n\n(empty)\n\n## Watching'),
+        'the emptied Backlog gets the bare placeholder'
+      );
 
       const noDest = await fetchAuthed(`${ctx.url}/vault/move-item`, {
         method: 'POST',

@@ -1,5 +1,6 @@
 import {findSection} from '../markdown/sections.ts';
 import {maskCodeRegions} from '../markdown/wikilinks.ts';
+import {SCHEMA_H2} from './lint.ts';
 import {normalizeTitle} from './parse.ts';
 
 // One queue item as the parser sees it: a column-0 bullet line and every line
@@ -67,10 +68,26 @@ export const findItem = (body: string, title: string, heading?: string): ItemLoo
 export const itemText = (body: string, span: ItemSpan): string =>
   body.split('\n').slice(span.start, span.end).join('\n').replace(/\s+$/, '');
 
-/** The body without the item; a document that ends there keeps one newline. */
+const TOP_HEADING_RE = /^#{1,2}\s/;
+const SCHEMA_HEADING_RE = new RegExp(`^##\\s+(?:${SCHEMA_H2.join('|')})\\s*$`, 'i');
+
+/**
+ * The body without the item; a schema section it leaves with nothing but blank
+ * lines gets the bare `(empty)`, and a document that ends there keeps one newline.
+ */
 export const removeItem = (body: string, span: ItemSpan): string => {
-  const lines = body.split('\n');
-  const out = [...lines.slice(0, span.start), ...lines.slice(span.end)];
+  const {raw, masked} = structuralLines(body);
+  const out = [...raw.slice(0, span.start), ...raw.slice(span.end)];
+  const outMasked = [...masked.slice(0, span.start), ...masked.slice(span.end)];
+  let h = span.start - 1;
+  while (h >= 0 && !HEADING_RE.test(outMasked[h] ?? '')) --h;
+  if (SCHEMA_HEADING_RE.test(outMasked[h] ?? '')) {
+    let next = h + 1;
+    while (next < out.length && !TOP_HEADING_RE.test(outMasked[next] ?? '')) ++next;
+    if (out.slice(h + 1, next).every(l => l.trim().length === 0)) {
+      out.splice(h + 1, next - h - 1, '', '(empty)', '');
+    }
+  }
   return out
     .join('\n')
     .replace(/\n{3,}$/, '\n\n')

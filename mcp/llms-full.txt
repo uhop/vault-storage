@@ -104,12 +104,14 @@ Narrow writes (atomic server-side ops; prefer these over whole-document writes):
   echoes the resulting array.
 - vault_remove_item / vault_insert_item — one queue item by its bold title
   (normalized, exactly once; 409 item_assert_failed): removed with its
-  continuation lines (the text comes back as `removed`), or inserted at the
-  start or end of a section, framed by blank lines, with create_section for a
-  missing heading.
+  continuation lines (the text comes back as `removed`; an Active, Backlog,
+  or Watching section left with nothing gets the bare `(empty)`), or inserted
+  at the start or end of a section, framed by blank lines, with create_section
+  for a missing heading.
 - vault_move_item — the queue-to-archive move as one request: from_path →
   to_path, title, to_section, optional trail inserted after the bold title,
-  destination written before the source. Returns {title, from, to} with etags.
+  destination written before the source; a schema section it empties gets
+  the bare `(empty)`. Returns {title, from, to} with etags.
 
 Whole-document writes:
 

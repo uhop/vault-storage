@@ -8,7 +8,8 @@
 // paragraph, a bold-led paragraph with no item above it is not an item to the
 // parser or the item ops (below an item it is that item's prose), and a
 // placeholder other than the bare `(empty)` is prose the archive should hold
-// (2026-09-16). Ported 2026-09-06 from claude-config's
+// (2026-09-16), and a schema section with nothing in it lacks the placeholder
+// the convention writes (2026-09-17). Ported 2026-09-06 from claude-config's
 // `skills/vault-lint/queue-lint.mjs`, calibrated there on all 53 fleet queues
 // (claude-config D16); the fixture in `tests/test-queue-lint.ts` pins the
 // port. Structural detection mirrors `parse.ts` — same masking, same bullet
@@ -65,6 +66,8 @@ export interface QueueLintSection {
   prose: boolean;
   items: QueueLintItem[];
   paragraphs: QueueLintParagraph[];
+  /** Nothing but blank lines under the heading: no item, placeholder, prose, subsection, or fence. */
+  blank: boolean;
 }
 
 export interface ParsedQueueLint {
@@ -83,7 +86,8 @@ export const parseQueue = (body: string): ParsedQueueLint => {
     known: false,
     prose: false,
     items: [],
-    paragraphs: []
+    paragraphs: [],
+    blank: true
   };
   const sections: QueueLintSection[] = [];
   const glued: Array<{line: number; text: string}> = [];
@@ -100,11 +104,13 @@ export const parseQueue = (body: string): ParsedQueueLint => {
         known: isSchema(heading),
         prose: PROSE_H2.some(re => re.test(heading)),
         items: [],
-        paragraphs: []
+        paragraphs: [],
+        blank: true
       };
       sections.push(current);
       return;
     }
+    if ((raw[i] ?? '').trim().length > 0) current.blank = false;
     if (/^#{1,6}\s/.test(line)) return;
     if (GLUED_RE.test(line)) glued.push({line: i + 1, text: (raw[i] ?? '').trim()});
     const b = BULLET_RE.exec(line);
@@ -206,6 +212,7 @@ export const queueFindings = (parsed: ParsedQueueLint): string[] => {
       out.push(
         `${s.heading}: ${plural(s.items.length, 'item')} and an "(empty…)" placeholder together — remove the placeholder`
       );
+    if (s.blank) out.push(`${s.heading}: no item and no placeholder — write the bare "(empty)"`);
   }
   for (const g of parsed.glued)
     out.push(

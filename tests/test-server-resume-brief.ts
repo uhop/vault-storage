@@ -123,6 +123,8 @@ const seed = (root: string): void => {
       '  - blocked-by: Free item.',
       '',
       '## Watching',
+      '',
+      '(empty)',
       ''
     ].join('\n')
   );
@@ -148,6 +150,8 @@ const seed = (root: string): void => {
       '- **Invented heading.** invisible to every queue view',
       '',
       '## Watching',
+      '',
+      '(empty)',
       ''
     ].join('\n')
   );

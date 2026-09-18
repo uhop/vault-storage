@@ -909,7 +909,8 @@ const commitBody = (
  * create_section?}`. The item is located by its bold title, `trail` is
  * inserted right after that title (the archive's **Shipped** line), and the
  * destination is written before the source, so a failure between the two
- * leaves a duplicate to clean up, never a lost item. Returns
+ * leaves a duplicate to clean up, never a lost item; a schema section the
+ * move empties gets the bare `(empty)` (`removeItem`). Returns
  * `{title, from: {path, etag}, to: {path, etag}}`.
  */
 export const moveItemHandler =

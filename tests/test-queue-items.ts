@@ -92,8 +92,51 @@ test('removeItem: the block and its trailing blank line go, nothing else moves',
   const last = findItem(DOC, 'Watched.');
   if (!last.ok) return t.fail('precondition');
   t.ok(
-    removeItem(DOC, last.span).endsWith('## Watching\n'),
-    'removing the last item keeps one newline'
+    removeItem(DOC, last.span).endsWith('## Watching\n\n(empty)\n'),
+    'removing the last item of the last section leaves the placeholder and one newline'
+  );
+});
+
+test('removeItem: a schema section left with nothing gets the bare (empty), and nothing else does', t => {
+  const remove = (doc: string, title: string): string => {
+    const found = findItem(doc, title);
+    if (!found.ok) throw new Error(`precondition: ${title}`);
+    return removeItem(doc, found.span);
+  };
+  t.equal(
+    remove('## Active\n\n- **Only.** x\n\n## Backlog\n\n- **B.** y\n', 'Only.'),
+    '## Active\n\n(empty)\n\n## Backlog\n\n- **B.** y\n',
+    'the only Active item'
+  );
+  t.equal(
+    remove('## Active\n\n- **One.** x\n\n- **Two.** y\n\n## Backlog\n', 'One.'),
+    '## Active\n\n- **Two.** y\n\n## Backlog\n',
+    'one of two: no placeholder'
+  );
+  t.equal(
+    remove('## Backlog\n\n- **Direct.** x\n\n### P1\n\n- **Deep.** y\n', 'Direct.'),
+    '## Backlog\n\n### P1\n\n- **Deep.** y\n',
+    'a subsection is content: no placeholder'
+  );
+  t.equal(
+    remove('## Backlog\n\n### P1\n\n- **Deep.** y\n\n## Watching\n', 'Deep.'),
+    '## Backlog\n\n### P1\n\n## Watching\n',
+    'the last item of a subsection: not a schema section, no placeholder'
+  );
+  t.equal(
+    remove('## 2026-09-17\n\n- **Shipped.** x\n\n## 2026-09-16\n\n- **Older.** y\n', 'Shipped.'),
+    '## 2026-09-17\n\n## 2026-09-16\n\n- **Older.** y\n',
+    'an archive date block is not a schema section'
+  );
+  t.equal(
+    remove('## active\n\n```\n## Backlog\n```\n\n- **Only.** x\n', 'Only.'),
+    '## active\n\n```\n## Backlog\n```\n',
+    'a fence no item owns is content; the heading matches case-insensitively'
+  );
+  t.equal(
+    remove('## Watching\n\n- **Only.** x\n\n```\nfenced\n```\n', 'Only.'),
+    '## Watching\n\n(empty)\n',
+    'a fence under the item is the item’s, and goes with it'
   );
 });
 
