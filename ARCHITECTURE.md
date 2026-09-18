@@ -22,12 +22,12 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 
 ## Import pipeline (`src/importer/`)
 
-- **`import.ts`** — `importVault` / `importVaultAsync`: `walkMarkdown` → per-file `importFile`, one transaction per `IMPORT_BATCH_FILES` batch, then one synchronous `buildEdges` (its GC deletes every edge the pass did not touch, so it cannot yield). The async driver yields to the event loop between batches; the server uses it.
+- **`import.ts`** — `importVault` / `importVaultAsync`: `walkMarkdown` → per-file `importFile`, one transaction per `IMPORT_BATCH_FILES` batch, then `buildEdges`. The async driver yields to the event loop between batches, and its edge pass is `buildEdgesAsync`, which yields too; the server uses it.
 - **`import-file.ts`** — per-file stage: frontmatter parse, type/status/priority/date derivation, `agent:` block extraction, content hashes; skips unchanged files (hash + FM compare — dates at date granularity, see decision D3); files/auto-resolves `tag_suggestion` / `agent_enrichment_stale` / `archive_candidate`.
 - **`walk.ts`** — recursive `.md` walker (skips `.git`, `node_modules`, `.obsidian`).
 - **`type-from-path.ts`** — folder-default record-type inference (`_index.md` → index, `projects/*/state.md` → state, …).
-- **`import-tags.ts`** — normalize + alias-rewrite FM tags, replace the record's tag set atomically; unknown tags file `new_tag` suggestions.
-- **`build-edges.ts`** — second pass: FM `related:`/`edges:` + body wikilinks → resolved typed edges, stale-edge pruning, `edge_type` review suggestions (filed for unreviewed default-cites links; settled `fm-override` when the FM map pins the type, rejected `link-removed` once the body no longer carries the link — a moot question, not a verdict, so the pair re-files if the link returns).
+- **`import-tags.ts`** — normalize + alias-rewrite FM tags; a set equal to the stored one writes nothing, a changed one is replaced whole; unknown tags file `new_tag` suggestions.
+- **`build-edges.ts`** — second pass: FM `related:`/`edges:` + body wikilinks → resolved typed edges, stale-edge pruning, `edge_type` review suggestions (filed for unreviewed default-cites links; settled `fm-override` when the FM map pins the type, rejected `link-removed` once the body no longer carries the link — a moot question, not a verdict, so the pair re-files if the link returns). `buildEdges` runs scoped (the records a write touched) or whole in one transaction; `buildEdgesAsync`, the whole pass for the server, commits and yields every `EDGE_BATCH_RECORDS` records, re-resolves after a write changes the path set, and spares edges touching a record written while it ran.
 - **`classify-wikilinks.ts`** — heuristic edge classifier for body links (keyword cues; default `cites`).
 - **`resolver.ts`** — wikilink target → record id (exact path, `.md`-stripped, unique basename, `_about.md` fallback).
 - **`file-suggestions.ts`** — generic `SuggestionFiler` with per-kind idempotency, snooze semantics, and evidence provenance (`payload.evidence: {source, asserted}`, stamped per kind unless the caller supplies one).

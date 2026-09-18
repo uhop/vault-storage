@@ -1,7 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {RecordsRepository} from '../records/repository.ts';
-import {buildEdges, type EdgeBuildSummary} from './build-edges.ts';
+import {buildEdges, buildEdgesAsync, type EdgeBuildSummary} from './build-edges.ts';
 import {SuggestionFiler} from './file-suggestions.ts';
 import {importFile} from './import-file.ts';
 import {TagsImporter} from './import-tags.ts';
@@ -100,10 +100,8 @@ export const importVault = (db: DatabaseSync, vaultRoot: string): ImportSummary 
 };
 
 /**
- * {@link importVault} for the server: yields to the event loop between batches.
- * The edge rebuild stays one synchronous pass, because its garbage collection
- * deletes every edge the pass did not touch, including one an interleaved write
- * had just added.
+ * {@link importVault} for the server: yields to the event loop between batches,
+ * the edge rebuild included ({@link buildEdgesAsync}).
  */
 export const importVaultAsync = async (
   db: DatabaseSync,
@@ -114,6 +112,6 @@ export const importVaultAsync = async (
   const counts = emptyCounts();
   const steps = importBatches(db, vaultRoot, now, counts);
   while (!steps.next().done) await nextTurn();
-  const edges = buildEdges(db, {vaultRoot, now});
+  const edges = await buildEdgesAsync(db, {vaultRoot, now});
   return {...counts, durationMs: Math.round(performance.now() - start), edges};
 };

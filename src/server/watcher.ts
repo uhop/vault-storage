@@ -12,7 +12,7 @@ import {join, sep} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {EMBED_ROUND, embedPending} from '../embeddings/embed-pass.ts';
 import type {Embedder} from '../embeddings/types.ts';
-import {buildEdges} from '../importer/build-edges.ts';
+import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
 import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
 import {TagsImporter} from '../importer/import-tags.ts';
@@ -200,11 +200,9 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     // full rebuild otherwise. An errored file's DB state is stale in an
     // unknown way — the conservative full pass keeps the GC sound.
     const scoped = !pathSetChanged && errors === 0;
-    const edges = buildEdges(db, {
-      vaultRoot: vaultDataPath,
-      now,
-      ...(scoped ? {scope: changedRecordIds} : {})
-    });
+    const edges = scoped
+      ? buildEdges(db, {vaultRoot: vaultDataPath, now, scope: changedRecordIds})
+      : await buildEdgesAsync(db, {vaultRoot: vaultDataPath, now});
     const embed = await embedRound();
 
     log(

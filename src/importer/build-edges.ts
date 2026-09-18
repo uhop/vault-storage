@@ -1,4 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {setImmediate as nextTurn} from 'node:timers/promises';
+import {getContentGeneration} from '../db/meta.ts';
 import {extractEdgesFromFrontmatter, extractRelatedFromFrontmatter} from '../markdown/wikilinks.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {readFileSync} from 'node:fs';
@@ -61,8 +63,16 @@ export interface EdgeBuildSummary {
   suggestionsLinkRemoved: number;
   /** Archived records skipped — outbound edges are not extracted from `status: archived` notes. */
   archivedSkipped: number;
+  /** Untouched edges a yielding pass kept because a write stamped an endpoint while it ran. */
+  edgesSparedByWrites: number;
   durationMs: number;
 }
+
+/** Records per transaction in {@link buildEdgesAsync}, the importer's batch size. */
+export const EDGE_BATCH_RECORDS = 50;
+
+/** Edges per GC page in {@link buildEdgesAsync}: about 5 ms over 36,716 edges (2026-09-18). */
+export const EDGE_GC_PAGE = 2000;
 
 interface RecordSource {
   /**
@@ -253,8 +263,130 @@ const scratchSummary = (): EdgeBuildSummary => ({
   suggestionsSkippedByType: 0,
   suggestionsLinkRemoved: 0,
   archivedSkipped: 0,
+  edgesSparedByWrites: 0,
   durationMs: 0
 });
+
+interface PassContext {
+  source: RecordSource;
+  resolver: WikilinkResolver;
+  /** record_id → file_path, for suggestion payloads and the link-removed check. */
+  pathById: ReadonlyMap<string, string>;
+  edges: EdgesRepository;
+  filer: SuggestionFiler<'edge_type'>;
+  /** Every edge the pass backs; the GC deletes what is not in it. */
+  touched: Set<string>;
+  summary: EdgeBuildSummary;
+  now: string;
+  skipFilingFromTypes: ReadonlySet<string>;
+}
+
+/** Upsert the edges one record's content backs and settle its `edge_type` suggestions. */
+const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
+  const {summary, filer, now} = ctx;
+  // Archived notes are kept for inbound wikilink resolution only.
+  // Skip outbound extraction so they don't bloat fanout; their stale
+  // outbound edges from pre-archive content will be GC'd at the end of
+  // this pass since none land in `touched`.
+  if (record.status === 'archived') {
+    summary.archivedSkipped++;
+    return;
+  }
+
+  const citesNeedingReview: Array<{toId: string; context: string}> = [];
+  const bodyLinkIds = new Set<string>();
+
+  forEachDeclaredEdge(
+    record,
+    ctx.source,
+    ctx.resolver,
+    summary,
+    (fromId, toId, type) => {
+      ctx.touched.add(touchKey(fromId, toId, type));
+      ctx.edges.upsert({fromId, toId, type, weight: 1, note: null, created: now});
+      summary.edgesCreated++;
+    },
+    {
+      // If a pending suggestion already exists for this pair (e.g. the
+      // user edited FM manually after filing), auto-resolve it.
+      onOverride: toId =>
+        filer.accept({from_record: record.recordId, to_record: toId}, 'fm-override', now),
+      onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context}),
+      onBodyLink: toId => bodyLinkIds.add(toId)
+    }
+  );
+
+  // File one suggestion per (fromRecord, toRecord) for unreviewed default-cites.
+  // The filer is idempotent: a suggestion of any status for the same pair
+  // is left in place.
+  //
+  // Source-type skip: log / query / meta sources default-cite
+  // topic/project notes by convention (meta = compaction summaries &
+  // the archived index stub); flagging them for review just adds queue
+  // noise. Edges still land in the DB at type=cites; only the
+  // review-queue filing is skipped. Per `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM`.
+  const skipFilingForRecord = ctx.skipFilingFromTypes.has(record.type);
+  const filedFor = new Set<string>();
+  for (const {toId, context} of citesNeedingReview) {
+    if (filedFor.has(toId)) continue;
+    filedFor.add(toId);
+    if (skipFilingForRecord) {
+      ++summary.suggestionsSkippedByType;
+      continue;
+    }
+    const toPath = ctx.pathById.get(toId);
+    if (toPath === undefined) continue;
+    const filed = filer.file(
+      {
+        from_record: record.recordId,
+        from_path: record.filePath,
+        to_record: toId,
+        to_path: toPath,
+        classifier_type: 'cites',
+        context
+      },
+      now
+    );
+    if (filed) summary.suggestionsFiled++;
+  }
+
+  // A pending review whose link the body no longer carries is a moot
+  // question. Matched by id or by path: a target deleted and recreated
+  // leaves the row with a dangling to_record while the link still
+  // stands (the 2026-07-12 shape the filer's altIdentity exists for).
+  const bodyLinkPaths = new Set<string>();
+  for (const toId of bodyLinkIds) {
+    const path = ctx.pathById.get(toId);
+    if (path !== undefined) bodyLinkPaths.add(path);
+  }
+  for (const {id, payload} of filer.pending({from_record: record.recordId})) {
+    const {to_record: toId, to_path: toPath} = payload;
+    if (typeof toId !== 'string' && typeof toPath !== 'string') continue;
+    if (bodyLinkIds.has(toId) || bodyLinkPaths.has(toPath)) continue;
+    if (filer.rejectById(id, LINK_REMOVED, now)) ++summary.suggestionsLinkRemoved;
+  }
+};
+
+type EdgeKey = Pick<Edge, 'fromId' | 'toId' | 'type'>;
+
+/** Delete each edge the pass did not back, except those touching a record in `spared`. */
+const sweep = (
+  keys: Iterable<EdgeKey>,
+  edges: EdgesRepository,
+  touched: ReadonlySet<string>,
+  summary: EdgeBuildSummary,
+  spared: ReadonlySet<string> = new Set()
+): void => {
+  for (const edge of keys) {
+    if (touched.has(touchKey(edge.fromId, edge.toId, edge.type))) continue;
+    if (spared.has(edge.fromId) || spared.has(edge.toId)) {
+      summary.edgesSparedByWrites++;
+      continue;
+    }
+    edges.delete(edge.fromId, edge.toId, edge.type);
+    summary.edgesDeleted++;
+  }
+};
 
 /**
  * Walk records, extract wikilinks (`related:` array → 'related-to', body
@@ -302,123 +434,39 @@ export const buildEdges = (
   const records = new RecordsRepository(db);
   const edges = new EdgesRepository(db);
   const all = records.listAll();
-  const resolver = new WikilinkResolver(all);
-  const filer = new SuggestionFiler(db, 'edge_type');
 
-  // O(1) lookup from record_id to record (used to render to_path in suggestion payloads).
+  // O(1) lookup from record_id to record (the scoped GC re-reads a counterparty).
   const byRecordId = new Map<string, VaultRecord>();
   for (const r of all) byRecordId.set(r.recordId, r);
 
   const source = options.vaultRoot ? fsRecordSource(options.vaultRoot) : dbRecordSource();
-  const now = options.now ?? new Date().toISOString();
-  const skipFilingFromTypes =
-    options.skipEdgeTypeFilingFromTypes ?? DEFAULT_SKIP_EDGE_TYPE_FILING_FROM;
+  const summary: EdgeBuildSummary = scratchSummary();
+  const start = performance.now();
+  const ctx: PassContext = {
+    source,
+    resolver: new WikilinkResolver(all),
+    pathById: new Map(all.map(r => [r.recordId, r.filePath])),
+    edges,
+    filer: new SuggestionFiler(db, 'edge_type'),
+    // Every edge that the current pass backs. The GC below deletes edges not
+    // in this set — so a wikilink removal in a markdown file actually removes
+    // the corresponding edge instead of leaving a dangling row.
+    touched: new Set<string>(),
+    summary,
+    now: options.now ?? new Date().toISOString(),
+    skipFilingFromTypes: options.skipEdgeTypeFilingFromTypes ?? DEFAULT_SKIP_EDGE_TYPE_FILING_FROM
+  };
+  const {resolver, touched} = ctx;
 
   const scope = options.scope;
   const work = scope === undefined ? all : all.filter(r => scope.has(r.recordId));
 
-  const summary: EdgeBuildSummary = scratchSummary();
-  const start = performance.now();
-
-  // Track every edge that the current pass backs. The GC below deletes edges
-  // not in this set — so a wikilink removal in a markdown file actually
-  // removes the corresponding edge instead of leaving a dangling row.
-  const touched = new Set<string>();
-
   db.exec('BEGIN');
   try {
-    for (const record of work) {
-      // Archived notes are kept for inbound wikilink resolution only.
-      // Skip outbound extraction so they don't bloat fanout; their stale
-      // outbound edges from pre-archive content will be GC'd at the end of
-      // this pass since none land in `touched`.
-      if (record.status === 'archived') {
-        summary.archivedSkipped++;
-        continue;
-      }
-
-      const citesNeedingReview: Array<{toId: string; context: string}> = [];
-      const bodyLinkIds = new Set<string>();
-
-      forEachDeclaredEdge(
-        record,
-        source,
-        resolver,
-        summary,
-        (fromId, toId, type) => {
-          touched.add(touchKey(fromId, toId, type));
-          edges.upsert({fromId, toId, type, weight: 1, note: null, created: now});
-          summary.edgesCreated++;
-        },
-        {
-          // If a pending suggestion already exists for this pair (e.g. the
-          // user edited FM manually after filing), auto-resolve it.
-          onOverride: toId =>
-            filer.accept({from_record: record.recordId, to_record: toId}, 'fm-override', now),
-          onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context}),
-          onBodyLink: toId => bodyLinkIds.add(toId)
-        }
-      );
-
-      // File one suggestion per (fromRecord, toRecord) for unreviewed default-cites.
-      // The filer is idempotent: a suggestion of any status for the same pair
-      // is left in place.
-      //
-      // Source-type skip: log / query / meta sources default-cite
-      // topic/project notes by convention (meta = compaction summaries &
-      // the archived index stub); flagging them for review just adds queue
-      // noise. Edges still land in the DB at type=cites; only the
-      // review-queue filing is skipped. Per `DEFAULT_SKIP_EDGE_TYPE_FILING_FROM`.
-      const skipFilingForRecord = skipFilingFromTypes.has(record.type);
-      const filedFor = new Set<string>();
-      for (const {toId, context} of citesNeedingReview) {
-        if (filedFor.has(toId)) continue;
-        filedFor.add(toId);
-        if (skipFilingForRecord) {
-          ++summary.suggestionsSkippedByType;
-          continue;
-        }
-        const toRecord = byRecordId.get(toId);
-        if (!toRecord) continue;
-        const filed = filer.file(
-          {
-            from_record: record.recordId,
-            from_path: record.filePath,
-            to_record: toId,
-            to_path: toRecord.filePath,
-            classifier_type: 'cites',
-            context
-          },
-          now
-        );
-        if (filed) summary.suggestionsFiled++;
-      }
-
-      // A pending review whose link the body no longer carries is a moot
-      // question. Matched by id or by path: a target deleted and recreated
-      // leaves the row with a dangling to_record while the link still
-      // stands (the 2026-07-12 shape the filer's altIdentity exists for).
-      const bodyLinkPaths = new Set<string>();
-      for (const toId of bodyLinkIds) {
-        const target = byRecordId.get(toId);
-        if (target) bodyLinkPaths.add(target.filePath);
-      }
-      for (const {id, payload} of filer.pending({from_record: record.recordId})) {
-        const {to_record: toId, to_path: toPath} = payload;
-        if (typeof toId !== 'string' && typeof toPath !== 'string') continue;
-        if (bodyLinkIds.has(toId) || bodyLinkPaths.has(toPath)) continue;
-        if (filer.rejectById(id, LINK_REMOVED, now)) ++summary.suggestionsLinkRemoved;
-      }
-    }
+    for (const record of work) extractRecord(record, ctx);
 
     if (scope === undefined) {
-      // GC pass: any edge in the DB not covered by the current run is stale.
-      for (const edge of edges.listAll()) {
-        if (!touched.has(touchKey(edge.fromId, edge.toId, edge.type))) {
-          edges.delete(edge.fromId, edge.toId, edge.type);
-          summary.edgesDeleted++;
-        }
-      }
+      sweep(edges.listAll(), edges, touched, summary);
     } else {
       // Scoped GC: only edges incident to scoped records can have gone
       // stale (content elsewhere didn't change). An untouched candidate is
@@ -468,6 +516,142 @@ export const buildEdges = (
   } catch (err) {
     db.exec('ROLLBACK');
     throw err;
+  }
+
+  summary.durationMs = Math.round(performance.now() - start);
+  return summary;
+};
+
+const inTransaction = (db: DatabaseSync, fn: () => void): void => {
+  db.exec('BEGIN');
+  try {
+    fn();
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+};
+
+/** The resolver over the current path set, from ids and paths alone (no bodies). */
+const pathView = (
+  db: DatabaseSync
+): {resolver: WikilinkResolver; pathById: Map<string, string>} => {
+  const rows = db.prepare('SELECT record_id, file_path FROM records').all() as unknown[] as {
+    record_id: string;
+    file_path: string;
+  }[];
+  const entries = rows.map(r => ({recordId: r.record_id, filePath: r.file_path}));
+  return {
+    resolver: new WikilinkResolver(entries),
+    pathById: new Map(entries.map(e => [e.recordId, e.filePath]))
+  };
+};
+
+/**
+ * The unscoped {@link buildEdges} for the server: one transaction per
+ * {@link EDGE_BATCH_RECORDS} records, yielding between them, so a full rebuild
+ * never holds the event loop for the whole vault.
+ *
+ * A write that lands between two batches rebuilds its record's edges itself
+ * (every write path runs the scoped pass) and re-stamps its `modified_at`.
+ * When this pass reached that record first, the write's new edges are not in
+ * `touched`, so the GC spares every edge touching a record stamped since the
+ * pass began, by the database clock that stamps it; a record imported in that
+ * same millisecond is spared too, which keeps a stale edge one pass longer and
+ * loses nothing. A record the pass reaches after the write is read fresh, and a
+ * write that changes the path set bumps the content generation, so the next
+ * batch resolves against the new paths. The result is the synchronous pass's
+ * where nothing interleaves.
+ */
+export const buildEdgesAsync = async (
+  db: DatabaseSync,
+  options: {
+    vaultRoot?: string;
+    now?: string;
+    skipEdgeTypeFilingFromTypes?: ReadonlySet<string>;
+    batch?: number;
+    gcPage?: number;
+    /** Awaited after each committed batch and GC page; tests interleave writes here. */
+    yieldTo?: () => Promise<unknown>;
+  } = {}
+): Promise<EdgeBuildSummary> => {
+  const records = new RecordsRepository(db);
+  const summary: EdgeBuildSummary = scratchSummary();
+  const start = performance.now();
+  // The database clock, which stamps `modified_at`.
+  const began = (
+    db.prepare(`SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS t`).get() as {t: string}
+  ).t;
+  const ids = (
+    db.prepare('SELECT record_id FROM records ORDER BY file_path').all() as unknown[] as {
+      record_id: string;
+    }[]
+  ).map(r => r.record_id);
+  const base = {
+    source: options.vaultRoot ? fsRecordSource(options.vaultRoot) : dbRecordSource(),
+    edges: new EdgesRepository(db),
+    filer: new SuggestionFiler(db, 'edge_type'),
+    touched: new Set<string>(),
+    summary,
+    now: options.now ?? new Date().toISOString(),
+    skipFilingFromTypes: options.skipEdgeTypeFilingFromTypes ?? DEFAULT_SKIP_EDGE_TYPE_FILING_FROM
+  };
+  const size = options.batch ?? EDGE_BATCH_RECORDS;
+  const gcPage = options.gcPage ?? EDGE_GC_PAGE;
+  const yieldTo = options.yieldTo ?? nextTurn;
+
+  let generation = getContentGeneration(db);
+  let view = pathView(db);
+  for (let i = 0; i < ids.length; i += size) {
+    const current = getContentGeneration(db);
+    if (current !== generation) {
+      generation = current;
+      view = pathView(db);
+    }
+    const ctx: PassContext = {...base, ...view};
+    inTransaction(db, () => {
+      for (const id of ids.slice(i, i + size)) {
+        const record = records.getById(id);
+        if (record !== null) extractRecord(record, ctx);
+      }
+    });
+    await yieldTo();
+  }
+
+  // The GC walks the primary key a page at a time and yields between pages.
+  // An edge a write adds ahead of the cursor has an endpoint stamped since the
+  // pass began, so each page re-reads the spared set; one added behind the
+  // cursor is never visited.
+  const page = db.prepare(
+    `SELECT from_id, to_id, type FROM edges
+      WHERE (from_id, to_id, type) > (?, ?, ?)
+      ORDER BY from_id, to_id, type LIMIT ?`
+  );
+  const writtenSince = db.prepare('SELECT record_id FROM records WHERE modified_at >= ?');
+  let after: [string, string, string] = ['', '', ''];
+  for (;;) {
+    const rows = page.all(...after, gcPage) as unknown[] as {
+      from_id: string;
+      to_id: string;
+      type: EdgeType;
+    }[];
+    inTransaction(db, () => {
+      const spared = new Set(
+        (writtenSince.all(began) as unknown[] as {record_id: string}[]).map(r => r.record_id)
+      );
+      sweep(
+        rows.map(r => ({fromId: r.from_id, toId: r.to_id, type: r.type})),
+        base.edges,
+        base.touched,
+        summary,
+        spared
+      );
+    });
+    const last = rows.at(-1);
+    if (last === undefined || rows.length < gcPage) break;
+    after = [last.from_id, last.to_id, last.type];
+    await yieldTo();
   }
 
   summary.durationMs = Math.round(performance.now() - start);

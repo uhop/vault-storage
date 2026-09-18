@@ -15,7 +15,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {buildEdges} from '../importer/build-edges.ts';
+import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
 import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
 import {importVaultAsync} from '../importer/import.ts';
@@ -323,11 +323,8 @@ const runIncrementalReindex = async (
   // Refresh edges after the per-file dispatch. Pure-modify batches use the
   // scoped (incremental) rebuild; anything that changed the path set runs
   // the full idempotent pass.
-  buildEdges(db, {
-    vaultRoot: vaultDataPath,
-    now,
-    ...(pathSetChanged ? {} : {scope: changedRecordIds})
-  });
+  if (pathSetChanged) await buildEdgesAsync(db, {vaultRoot: vaultDataPath, now});
+  else buildEdges(db, {vaultRoot: vaultDataPath, now, scope: changedRecordIds});
 
   summary.durationMs = Math.round(performance.now() - start);
   return summary;
