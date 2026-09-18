@@ -8,9 +8,11 @@ import {
   unlinkSync
 } from 'node:fs';
 import type {ServerResponse} from 'node:http';
+import yaml from 'yaml';
 import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter, splitFrontmatter} from '../../markdown/frontmatter.ts';
+import {contentHash} from '../../util/hash.ts';
 import type {Rendered} from '../../render/render.ts';
 import {RenderTimeoutError, type MarkdownRenderer} from '../../render/renderer.ts';
 import {
@@ -43,6 +45,7 @@ import type {Handler} from '../router.ts';
 import {
   documentEtag,
   ensureSafePath,
+  FM_UNSET_SENTINEL,
   parseWriteRequest,
   validateWritePayload,
   WriterError,
@@ -152,31 +155,45 @@ const listFolder = (vaultRoot: string, relativePath: string, res: ServerResponse
 /**
  * Resolve `heading` to its section span or send the error: 400 for a value
  * that is not an ATX heading line, 409 `section_assert_failed` (with the
- * occurrence count) when the heading is absent or ambiguous — asserted like
- * `replace`, never a silent no-op.
+ * occurrence count) when the heading is absent or ambiguous, or when
+ * `occurrence` names one past the last — asserted like `replace`, never a
+ * silent no-op.
  */
 const sectionOrError = (
   res: ServerResponse,
   path: string,
   body: string,
-  heading: string
+  heading: string,
+  occurrence?: number
 ): SectionSpan | null => {
   const wanted = heading.trim();
   if (!HEADING_LINE_RE.test(wanted)) {
     sendError(res, 400, 'bad_request', 'heading must be an ATX heading line such as "## Title"');
     return null;
   }
-  const found = findSection(body, wanted);
+  const found = findSection(body, wanted, occurrence);
   if (found.ok) return found.span;
+  const n = found.occurrences;
   sendError(
     res,
     409,
     'section_assert_failed',
-    found.occurrences === 0
+    n === 0
       ? `heading not found in ${path}: ${wanted}`
-      : `heading occurs ${found.occurrences} times in ${path}: ${wanted}`,
-    {occurrences: found.occurrences}
+      : occurrence === undefined
+        ? `heading occurs ${n} times in ${path}: ${wanted} (pass occurrence to pick one)`
+        : `heading occurs ${n} times in ${path}, so there is no occurrence ${occurrence}: ${wanted}`,
+    {occurrences: n}
   );
+  return null;
+};
+
+/** A non-negative integer from JSON or a query string; undefined when absent, null after a 400. */
+const occurrenceOrError = (res: ServerResponse, raw: unknown): number | undefined | null => {
+  if (raw === undefined) return undefined;
+  const n = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : raw;
+  if (typeof n === 'number' && Number.isSafeInteger(n) && n >= 0) return n;
+  sendError(res, 400, 'bad_request', 'occurrence must be a non-negative integer');
   return null;
 };
 
@@ -222,35 +239,46 @@ const sendRendered = async (
  * `?section=<heading line>` returns one section as JSON instead: the content
  * under that heading up to the next heading of the same or higher level,
  * with the whole document's etag, so a client never pulls a large document
- * into context to read one part of it. `?render=html` returns the note
- * rendered as JSON: `html` for the body with wikilinks resolved and each
- * top-level heading carrying `data-line`, the frontmatter as written, and
- * the `sections` the section editor can address.
+ * into context to read one part of it; `&occurrence=<n>` picks one of
+ * several identical heading lines, and `hash` is the content's sha256, which a
+ * guarded `replace-section` sends back. `?frontmatter=yaml` returns the
+ * frontmatter block as written, with its `hash` for `replace-frontmatter`.
+ * `?render=html` returns the note rendered as JSON: `html` for the body with
+ * wikilinks resolved and each top-level heading carrying `data-line`, the
+ * frontmatter as written, and the `sections` the section editor can address.
  */
 export const getVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
     // Precedes bumpLastReferenced: a rejected request must not leave a trace.
-    if (!rejectUnknownParams(ctx, new Set(['section', 'render']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['section', 'occurrence', 'render', 'frontmatter'])))
+      return;
     const path = ctx.params['path'] ?? '';
     const section = ctx.query['section'];
     const render = ctx.query['render'];
+    const frontmatter = ctx.query['frontmatter'];
+    const modes = ['section', 'render', 'frontmatter'].filter(k => ctx.query[k] !== undefined);
+    if (modes.length > 1) {
+      sendError(ctx.res, 400, 'bad_request', `${modes.join(' and ')} cannot be combined`);
+      return;
+    }
     if (render !== undefined && render !== 'html') {
       sendError(ctx.res, 400, 'bad_request', 'render must be "html"');
       return;
     }
-    if (render !== undefined && section !== undefined) {
-      sendError(ctx.res, 400, 'bad_request', 'render and section cannot be combined');
+    if (frontmatter !== undefined && frontmatter !== 'yaml') {
+      sendError(ctx.res, 400, 'bad_request', 'frontmatter must be "yaml"');
+      return;
+    }
+    const occurrence = occurrenceOrError(ctx.res, ctx.query['occurrence']);
+    if (occurrence === null) return;
+    if (occurrence !== undefined && section === undefined) {
+      sendError(ctx.res, 400, 'bad_request', 'occurrence applies only with section');
       return;
     }
     if (path.endsWith('/')) {
-      if (section !== undefined || render !== undefined) {
-        sendError(
-          ctx.res,
-          400,
-          'bad_request',
-          `${section !== undefined ? 'section' : 'render'} applies to a file, not a folder`
-        );
+      if (modes.length > 0) {
+        sendError(ctx.res, 400, 'bad_request', `${modes[0]} applies to a file, not a folder`);
         return;
       }
       listFolder(deps.vaultDataPath, path.slice(0, -1), ctx.res);
@@ -274,14 +302,27 @@ export const getVaultHandler =
       }
       if (section !== undefined) {
         const {body} = parseFrontmatter(document);
-        const span = sectionOrError(ctx.res, path, body, section);
+        const span = sectionOrError(ctx.res, path, body, section, occurrence);
         if (span === null) return;
+        const content = sectionContent(body, span);
         sendJson(ctx.res, 200, {
           path,
           etag: documentEtag(document),
           heading: span.heading,
           level: span.level,
-          content: sectionContent(body, span)
+          occurrence: span.occurrence,
+          content,
+          hash: contentHash(content)
+        });
+        return;
+      }
+      if (frontmatter !== undefined) {
+        const text = splitFrontmatter(document).yaml ?? '';
+        sendJson(ctx.res, 200, {
+          path,
+          etag: documentEtag(document),
+          frontmatter: text,
+          hash: contentHash(text)
         });
         return;
       }
@@ -295,7 +336,7 @@ export const getVaultHandler =
       const folderAbs = abs.slice(0, -'.md'.length);
       if (existsSync(folderAbs) && statSync(folderAbs).isDirectory()) {
         const composed = composeFolder(folderAbs);
-        if (composed !== null && section !== undefined) {
+        if (composed !== null && (section !== undefined || frontmatter !== undefined)) {
           sendError(
             ctx.res,
             409,
@@ -577,12 +618,16 @@ interface EditBody {
   item?: unknown;
   position?: unknown;
   create_section?: unknown;
+  occurrence?: unknown;
+  expected_hash?: unknown;
+  yaml?: unknown;
 }
 
 const EDIT_OPS: ReadonlySet<string> = new Set([
   'append',
   'replace',
   'replace-section',
+  'replace-frontmatter',
   'remove-item',
   'insert-item'
 ]);
@@ -652,6 +697,43 @@ const sectionInsertError = (
     {occurrences}
   );
 
+/** The YAML text of a frontmatter block as a mapping, or null after a 400. */
+const frontmatterOrError = (res: ServerResponse, text: string): Record<string, unknown> | null => {
+  let parsed: unknown;
+  try {
+    parsed = yaml.parse(text);
+  } catch (err) {
+    sendError(res, 400, 'invalid_yaml', `invalid YAML in frontmatter: ${(err as Error).message}`);
+    return null;
+  }
+  if (parsed === null || parsed === undefined) return {};
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    sendError(res, 400, 'invalid_yaml', 'frontmatter must be a mapping of keys to values');
+    return null;
+  }
+  return parsed as Record<string, unknown>;
+};
+
+/**
+ * The writer's merge keeps any stored key a request omits, so a replace
+ * unsets each one the new block dropped. A key left empty in both stays as
+ * stored; the writer restores it, as it does for every edit op.
+ */
+const replacementFrontmatter = (
+  stored: Record<string, unknown>,
+  next: Record<string, unknown>
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (value === null && stored[key] === null) continue;
+    out[key] = value;
+  }
+  for (const key of Object.keys(stored)) {
+    if (!Object.hasOwn(next, key)) out[key] = FM_UNSET_SENTINEL;
+  }
+  return out;
+};
+
 /**
  * POST /vault/edit — atomic server-side body edit: the read-modify-write
  * primitive that retires the client-side GET → transform → ETag'd-PUT
@@ -660,7 +742,8 @@ const sectionInsertError = (
  *
  *   {path, op: "append", text}
  *   {path, op: "replace", from, to, all?}
- *   {path, op: "replace-section", heading, body}
+ *   {path, op: "replace-section", heading, body, occurrence?, expected_hash?}
+ *   {path, op: "replace-frontmatter", yaml, expected_hash?}
  *
  * Semantics mirror claude-config's `vault-put` exactly (the established
  * client idiom this replaces): append collapses trailing whitespace to a
@@ -671,14 +754,21 @@ const sectionInsertError = (
  * as a whole line, exactly once, code fences masked) up to the next heading
  * of the same or higher level, trimmed and framed by blank lines, every byte
  * outside the span untouched — the same assert, 409 `section_assert_failed`
- * with the occurrence count. Frontmatter rides verbatim from disk through the standard write
- * path (`updated` re-stamped; enrichment staleness filed downstream); FM
- * changes stay on PUT / PATCH. Editing requires an existing on-disk file —
+ * with the occurrence count; `occurrence` picks one of repeated headings, and
+ * `expected_hash`, the hash a section read returned, turns a section that
+ * changed since into a 409 `section_changed` instead of an overwrite.
+ * replace-frontmatter replaces the block with the YAML given, dropping every
+ * key it leaves out (the writer's merge alone would keep them), with the same
+ * validation as a PUT and the body untouched; its `expected_hash` guards the
+ * block the same way (409 `frontmatter_changed`). Otherwise frontmatter rides
+ * verbatim from disk through the standard write path (`updated` re-stamped;
+ * enrichment staleness filed downstream). Editing requires an existing on-disk file —
  * 404 otherwise, with a composed atomized view pointed at its pieces. No
  * If-Match: the server holds the document, so the RMW is atomic within the
  * single-threaded process — that is the point of the primitive. Returns
- * 200 `{path, etag, replaced?}`, or `{path, etag, heading, level}` for a
- * section.
+ * 200 `{path, etag, replaced?}`, `{path, etag, heading, level, occurrence,
+ * hash}` for a section, or `{path, etag, hash}` for the frontmatter; the
+ * hash is the new text's, for the next guarded save.
  */
 export const editVaultHandler =
   (deps: VaultDeps): Handler =>
@@ -718,7 +808,7 @@ export const editVaultHandler =
         ctx.res,
         400,
         'bad_request',
-        'op must be "append", "replace", "replace-section", "remove-item", or "insert-item"'
+        'op must be "append", "replace", "replace-section", "replace-frontmatter", "remove-item", or "insert-item"'
       );
       return;
     }
@@ -760,6 +850,21 @@ export const editVaultHandler =
         return;
       }
     }
+    if (req.op === 'replace-frontmatter' && typeof req.yaml !== 'string') {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'replace-frontmatter requires a string `yaml` (empty clears the block)'
+      );
+      return;
+    }
+    if (req.expected_hash !== undefined && typeof req.expected_hash !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', '`expected_hash` must be a string');
+      return;
+    }
+    const occurrence = occurrenceOrError(ctx.res, req.occurrence);
+    if (occurrence === null) return;
     if (
       req.op === 'remove-item' &&
       (typeof req.title !== 'string' || req.title.trim().length === 0)
@@ -813,12 +918,14 @@ export const editVaultHandler =
       return;
     }
 
-    const {data: onDiskFm, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+    const document = readFileSync(abs, 'utf8');
+    const {data: onDiskFm, body} = parseFrontmatter(document);
 
     let edited: string;
     let replaced: number | undefined;
-    let section: {heading: string; level: number} | undefined;
+    let section: {heading: string; level: number; occurrence: number; hash: string} | undefined;
     let extra: Record<string, unknown> = {};
+    let replacedFm: Record<string, unknown> | undefined;
     if (req.op === 'append') {
       edited = body.replace(/\s*$/, '\n') + (req.text as string);
     } else if (req.op === 'remove-item') {
@@ -846,10 +953,43 @@ export const editVaultHandler =
       edited = outcome.body;
       extra = {section: heading.trim(), position, created: outcome.created};
     } else if (req.op === 'replace-section') {
-      const span = sectionOrError(ctx.res, path, body, req.heading as string);
+      const span = sectionOrError(ctx.res, path, body, req.heading as string, occurrence);
       if (span === null) return;
-      edited = replaceSectionContent(body, span, req.body as string);
-      section = {heading: span.heading, level: span.level};
+      const current = contentHash(sectionContent(body, span));
+      if (req.expected_hash !== undefined && req.expected_hash !== current) {
+        sendError(
+          ctx.res,
+          409,
+          'section_changed',
+          `the section changed since it was read: ${span.heading} in ${path}`,
+          {current_hash: current}
+        );
+        return;
+      }
+      const content = req.body as string;
+      edited = replaceSectionContent(body, span, content);
+      section = {
+        heading: span.heading,
+        level: span.level,
+        occurrence: span.occurrence,
+        hash: contentHash(content.trim())
+      };
+    } else if (req.op === 'replace-frontmatter') {
+      const current = contentHash(splitFrontmatter(document).yaml ?? '');
+      if (req.expected_hash !== undefined && req.expected_hash !== current) {
+        sendError(
+          ctx.res,
+          409,
+          'frontmatter_changed',
+          `the frontmatter changed since it was read: ${path}`,
+          {current_hash: current}
+        );
+        return;
+      }
+      const next = frontmatterOrError(ctx.res, req.yaml as string);
+      if (next === null) return;
+      replacedFm = replacementFrontmatter(onDiskFm, next);
+      edited = body;
     } else {
       const from = req.from as string;
       const count = body.split(from).length - 1;
@@ -883,10 +1023,11 @@ export const editVaultHandler =
     // null, which the writer's wipe-guard rejects in *request* position — but
     // the merge restores them from the on-disk FM unchanged, so dropping them
     // here preserves the document exactly.
-    const requestFm: Record<string, unknown> = {};
+    let requestFm: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(onDiskFm)) {
       if (value !== null) requestFm[key] = value;
     }
+    if (replacedFm) requestFm = replacedFm;
 
     const {records} = deps;
     const existing = records.getByPath(path);
@@ -915,6 +1056,9 @@ export const editVaultHandler =
       archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
     });
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
+    if (replacedFm) {
+      extra = {hash: contentHash(splitFrontmatter(readFileSync(abs, 'utf8')).yaml ?? '')};
+    }
 
     sendJson(ctx.res, 200, {
       path,

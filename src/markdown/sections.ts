@@ -13,6 +13,8 @@ export interface SectionSpan {
   headingEnd: number;
   /** Offset where the next heading of the same or higher level starts, or the body length. */
   end: number;
+  /** How many identical heading lines precede this one. */
+  occurrence: number;
 }
 
 export type SectionLookup = {ok: true; span: SectionSpan} | {ok: false; occurrences: number};
@@ -62,15 +64,17 @@ export const scanHeadings = (body: string): HeadingLine[] => {
 /**
  * Locate the section under `heading`: the heading is matched as a whole line,
  * exactly once, with fenced and inline code masked so a `## ` inside a code
- * sample is not a heading. The section runs to the next heading of the same
- * or higher level, so subsections belong to it.
+ * sample is not a heading; `occurrence` picks one of several identical
+ * heading lines, counted from 0. The section runs to the next heading of the
+ * same or higher level, so subsections belong to it.
  */
-export const findSection = (body: string, heading: string): SectionLookup => {
+export const findSection = (body: string, heading: string, occurrence?: number): SectionLookup => {
   const wanted = heading.trim();
   const headings = scanHeadings(body);
   const hits = headings.filter(h => h.heading === wanted);
-  if (hits.length !== 1) return {ok: false, occurrences: hits.length};
-  const hit = hits[0]!;
+  const hit =
+    occurrence === undefined ? (hits.length === 1 ? hits[0] : undefined) : hits[occurrence];
+  if (!hit) return {ok: false, occurrences: hits.length};
   let end = body.length;
   for (const h of headings) {
     if (h.offset > hit.offset && h.level <= hit.level) {
@@ -85,7 +89,8 @@ export const findSection = (body: string, heading: string): SectionLookup => {
       level: hit.level,
       headingStart: hit.offset,
       headingEnd: hit.offset + hit.length,
-      end
+      end,
+      occurrence: hit.occurrence
     }
   };
 };

@@ -87,9 +87,11 @@ Read:
 - vault_read_piece — one record by id.
 - vault_read_meta — the indexed record row minus body (not arbitrary FM keys).
 - vault_read_section — one ATX-heading section, {path, etag, heading, level,
-  content}: the heading matched as a whole line, exactly once, code fences
-  masked; the span runs to the next heading of the same or higher level;
-  absent or ambiguous 409s (section_assert_failed, details.occurrences).
+  occurrence, content, hash}: the heading matched as a whole line, exactly
+  once, code fences masked, or the one `occurrence` names among identical
+  headings (counted from 0); the span runs to the next heading of the same or
+  higher level; absent or ambiguous 409s (section_assert_failed,
+  details.occurrences). hash is the content's sha256, for a guarded replace.
 
 Narrow writes (atomic server-side ops; prefer these over whole-document writes):
 
@@ -99,7 +101,10 @@ Narrow writes (atomic server-side ops; prefer these over whole-document writes):
 - vault_replace_section — replace the content under one heading (same
   match and span rules as vault_read_section, same assert); the body is
   trimmed and framed by blank lines, every byte outside the span untouched;
-  an empty body empties the section. Returns {path, etag, heading, level}.
+  an empty body empties the section. occurrence picks among identical
+  headings; expected_hash (the read's hash) makes a changed section a 409
+  section_changed with details.current_hash. Returns {path, etag, heading,
+  level, occurrence, hash}.
 - vault_patch_fm — add/remove one frontmatter array member (related:, tags:…);
   echoes the resulting array.
 - vault_remove_item / vault_insert_item — one queue item by its bold title

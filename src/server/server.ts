@@ -1,3 +1,4 @@
+import {join} from 'node:path';
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
 import {checkBearer} from './auth.ts';
@@ -84,6 +85,8 @@ import {
   supersedeVaultHandler
 } from './handlers/vault.ts';
 import {MarkdownRenderer} from '../render/renderer.ts';
+import {DraftStore} from './drafts.ts';
+import {deleteDraftHandler, listDraftsHandler, putDraftHandler} from './handlers/drafts.ts';
 import {sendError} from './responses.ts';
 import {ResolverCache} from './resolver-cache.ts';
 import {Router, type RequestContext} from './router.ts';
@@ -238,6 +241,14 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/vault/move-item', moveItemHandler(vaultDeps));
   router.post('/vault/supersede', supersedeVaultHandler(vaultDeps));
   router.post('/vault/propose', proposeVaultHandler(vaultDeps));
+
+  const draftDeps = {
+    drafts: new DraftStore(join(opts.env.vaultDataPath, '.vault-storage', 'drafts')),
+    vaultDataPath: opts.env.vaultDataPath
+  };
+  router.get('/drafts', listDraftsHandler(draftDeps));
+  router.put('/drafts', putDraftHandler(draftDeps));
+  router.delete('/drafts/{id}', deleteDraftHandler(draftDeps));
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));

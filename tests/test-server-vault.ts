@@ -3030,3 +3030,218 @@ test('POST /vault/render — markdown in, html and sections out', async t => {
     cleanup();
   }
 });
+
+test('GET /vault/{path} — section occurrence and hash, frontmatter as YAML, and the combinations refused', async t => {
+  const {root, cleanup} = setupVault();
+  writeMd(
+    root,
+    'topics/log.md',
+    '---\ntitle: Log\ntags: [a]\n---\n## Day\n\nfirst\n\n## Day\n\nsecond\n'
+  );
+  const ctx = await startTestServer(root);
+  try {
+    const get = (q: string) => fetchAuthed(`${ctx.url}/vault/topics/log.md?${q}`);
+    const day = encodeURIComponent('## Day');
+    const second = await get(`section=${day}&occurrence=1`);
+    t.equal(second.status, 200);
+    const body = second.body as {occurrence: number; content: string; hash: string};
+    t.equal(body.occurrence, 1);
+    t.equal(body.content, 'second');
+    t.equal(body.hash, contentHash('second'), 'the hash of the content as returned');
+    t.equal((await get(`section=${day}`)).status, 409, 'ambiguous without occurrence');
+    t.equal((await get(`section=${day}&occurrence=2`)).status, 409, 'past the last occurrence');
+
+    const fm = await get('frontmatter=yaml');
+    t.equal(fm.status, 200);
+    const fmBody = fm.body as {frontmatter: string; hash: string; etag: string};
+    t.equal(fmBody.frontmatter, 'title: Log\ntags: [a]', 'the block as written');
+    t.equal(fmBody.hash, contentHash('title: Log\ntags: [a]'));
+
+    const refused: Array<[string, number]> = [
+      ['frontmatter=json', 400],
+      [`frontmatter=yaml&section=${day}`, 400],
+      ['occurrence=1', 400],
+      [`section=${day}&occurrence=-1`, 400],
+      [`section=${day}&occurrence=x`, 400],
+      ['render=html&frontmatter=yaml', 400]
+    ];
+    for (const [q, status] of refused) t.equal((await get(q)).status, status, q);
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
+test('POST /vault/edit — replace-section by occurrence, guarded by the hash of what was read', async t => {
+  const {root, cleanup} = setupVault();
+  const doc = '---\ntitle: Log\n---\n## Day\n\nfirst\n\n## Day\n\nsecond\n';
+  writeMd(root, 'topics/log.md', doc);
+  const ctx = await startTestServer(root);
+  try {
+    const edit = (payload: Record<string, unknown>) =>
+      fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          path: 'topics/log.md',
+          op: 'replace-section',
+          heading: '## Day',
+          ...payload
+        })
+      });
+    const stale = await edit({occurrence: 1, body: 'x', expected_hash: contentHash('not it')});
+    t.equal(stale.status, 409);
+    t.equal((stale.body as {code: string}).code, 'section_changed');
+    t.equal(
+      (stale.body as {details: {current_hash: string}}).details.current_hash,
+      contentHash('second')
+    );
+
+    const ok = await edit({
+      occurrence: 1,
+      body: 'second, edited\n',
+      expected_hash: contentHash('second')
+    });
+    t.equal(ok.status, 200);
+    const body = ok.body as {occurrence: number; hash: string; level: number};
+    t.equal(body.occurrence, 1);
+    t.equal(body.hash, contentHash('second, edited'), 'the hash of the new content, trimmed');
+    const {body: onDisk} = parseFrontmatter(readFileSync(join(root, 'topics/log.md'), 'utf8'));
+    t.equal(
+      onDisk,
+      '## Day\n\nfirst\n\n## Day\n\nsecond, edited\n',
+      'the first occurrence untouched'
+    );
+
+    t.equal((await edit({occurrence: 5, body: 'x'})).status, 409, 'past the last occurrence');
+    t.equal((await edit({occurrence: 'one', body: 'x'})).status, 400);
+    t.equal((await edit({body: 'x', expected_hash: 7})).status, 400);
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
+test('POST /vault/edit — replace-frontmatter replaces the block, keeps the body, and asserts', async t => {
+  const {root, cleanup} = setupVault();
+  const body = '## Keep\n\nthe body, byte for byte\n';
+  writeMd(
+    root,
+    'topics/fm.md',
+    `---\ntitle: Old\ntype: permanent\ncustom: gone soon\ncreated: 2026-01-02\nupdated: 2026-01-02\n---\n${body}`
+  );
+  const ctx = await startTestServer(root);
+  try {
+    const read = async () =>
+      (await fetchAuthed(`${ctx.url}/vault/topics/fm.md?frontmatter=yaml`)).body as {
+        frontmatter: string;
+        hash: string;
+      };
+    const edit = (payload: Record<string, unknown>) =>
+      fetchAuthed(`${ctx.url}/vault/edit`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: 'topics/fm.md', op: 'replace-frontmatter', ...payload})
+      });
+    const before = await read();
+    const ok = await edit({yaml: 'title: New\ntype: permanent\n', expected_hash: before.hash});
+    t.equal(ok.status, 200);
+    const after = await read();
+    t.equal((ok.body as {hash: string}).hash, after.hash, 'the answer carries the new block hash');
+    const {data, body: onDiskBody} = parseFrontmatter(
+      readFileSync(join(root, 'topics/fm.md'), 'utf8')
+    );
+    t.equal(data['title'], 'New');
+    t.notOk('custom' in data, 'a key the new block dropped is gone');
+    t.equal(String(data['created']).slice(0, 10), '2026-01-02', 'created is kept');
+    t.equal(onDiskBody, body, 'the body is untouched');
+
+    const stale = await edit({yaml: 'title: X\n', expected_hash: before.hash});
+    t.equal(stale.status, 409);
+    t.equal((stale.body as {code: string}).code, 'frontmatter_changed');
+    t.equal((await edit({yaml: 'title: [unclosed'})).status, 400, 'invalid YAML');
+    t.equal((await edit({yaml: '- a\n- b\n'})).status, 400, 'not a mapping');
+    t.equal((await edit({yaml: 'type: nonsense\n'})).status, 400, 'enum validation still applies');
+    t.equal((await edit({})).status, 400, 'yaml is required');
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
+test('drafts — PUT replaces one unit, GET lists by note, DELETE discards; kept outside the note tree', async t => {
+  const {root, cleanup} = setupVault();
+  writeMd(root, 'topics/alpha.md', '---\ntitle: Alpha\n---\n## A\n\nx\n');
+  const ctx = await startTestServer(root);
+  try {
+    const put = (payload: unknown) =>
+      fetchAuthed(`${ctx.url}/drafts`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+    const section = {kind: 'section', heading: '## A', occurrence: 0};
+    const first = await put({path: 'topics/alpha.md', unit: section, base_hash: 'h1', text: 'one'});
+    t.equal(first.status, 200);
+    const saved = first.body as {id: string; text?: string; unit: unknown};
+    t.ok(/^[0-9a-f]{32}$/.test(saved.id), 'an id');
+    t.notOk('text' in saved, 'the answer leaves the text out');
+    t.deepEqual(saved.unit, section);
+    await put({path: 'topics/alpha.md', unit: section, base_hash: 'h1', text: 'two'});
+    await put({
+      path: 'topics/alpha.md',
+      unit: {kind: 'frontmatter'},
+      base_hash: 'h2',
+      text: 'title: A'
+    });
+    await put({path: 'topics/beta.md', unit: {kind: 'document'}, base_hash: '', text: 'b'});
+    t.ok(existsSync(join(root, '.vault-storage', 'drafts', `${saved.id}.json`)), 'on disk');
+
+    const mine = (await fetchAuthed(`${ctx.url}/drafts?path=topics%2Falpha.md`)).body as {
+      count: number;
+      items: Array<{id: string; text: string}>;
+    };
+    t.equal(mine.count, 2, 'one per unit of this note');
+    t.equal(
+      mine.items.find(d => d.id === saved.id)?.text,
+      'two',
+      'the second save replaced the first'
+    );
+    t.equal(((await fetchAuthed(`${ctx.url}/drafts`)).body as {count: number}).count, 3);
+
+    t.equal((await fetchAuthed(`${ctx.url}/drafts/${saved.id}`, {method: 'DELETE'})).status, 204);
+    t.equal((await fetchAuthed(`${ctx.url}/drafts/${saved.id}`, {method: 'DELETE'})).status, 404);
+    t.equal((await fetchAuthed(`${ctx.url}/drafts/..%2F..%2Fx`, {method: 'DELETE'})).status, 404);
+
+    const refused: Array<[unknown, number]> = [
+      [{path: '../x.md', unit: {kind: 'document'}, base_hash: '', text: ''}, 400],
+      [{path: 'topics/a.txt', unit: {kind: 'document'}, base_hash: '', text: ''}, 400],
+      [{path: 'topics/a.md', unit: {kind: 'page'}, base_hash: '', text: ''}, 400],
+      [
+        {
+          path: 'topics/a.md',
+          unit: {kind: 'section', heading: 'A', occurrence: 0},
+          base_hash: '',
+          text: ''
+        },
+        400
+      ],
+      [
+        {
+          path: 'topics/a.md',
+          unit: {kind: 'section', heading: '## A', occurrence: -1},
+          base_hash: '',
+          text: ''
+        },
+        400
+      ],
+      [{path: 'topics/a.md', unit: {kind: 'document'}, text: ''}, 400]
+    ];
+    for (const [payload, status] of refused) {
+      t.equal((await put(payload)).status, status, JSON.stringify(payload));
+    }
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});

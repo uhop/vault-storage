@@ -97,6 +97,33 @@ test('findSection: absent, ambiguous, fence-only, and trailing-space headings', 
   );
 });
 
+test('findSection: occurrence picks one of repeated headings and reports which', async t => {
+  const doc = '## Log\n\nfirst\n\n## Other\n\nx\n\n## Log\n\nsecond\n';
+  const first = findSection(doc, '## Log', 0);
+  const second = findSection(doc, '## Log', 1);
+  t.ok(first.ok && second.ok, 'both occurrences are addressable');
+  if (!first.ok || !second.ok) return;
+  t.equal(sectionContent(doc, first.span), 'first');
+  t.equal(sectionContent(doc, second.span), 'second');
+  t.equal(first.span.occurrence, 0);
+  t.equal(second.span.occurrence, 1);
+  t.deepEqual(
+    findSection(doc, '## Log', 2),
+    {ok: false, occurrences: 2},
+    'past the last → the count'
+  );
+  t.deepEqual(
+    findSection(doc, '## Log'),
+    {ok: false, occurrences: 2},
+    'no occurrence → still ambiguous'
+  );
+  const unique = findSection(doc, '## Other', 0);
+  t.ok(
+    unique.ok && unique.span.occurrence === 0,
+    'occurrence 0 of a unique heading is that heading'
+  );
+});
+
 test('replaceSectionContent: bytes outside the span untouched, content framed, empty keeps the heading', async t => {
   const backlog = findSection(DOC, '## Backlog');
   if (!backlog.ok) return t.fail('precondition');

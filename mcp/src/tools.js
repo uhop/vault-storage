@@ -349,34 +349,59 @@ export const registerTools = (mcp, client) => {
     'vault_read_section',
     {
       description:
-        "Read one section of a document without pulling the whole document into context: the content under an ATX heading line (`## Title`, matched as a whole line, exactly once, with code fences masked) up to the next heading of the same or higher level, trimmed. Returns {path, etag, heading, level, content} — the etag is the whole document's, the same one vault_read_file{include_etag} returns. An absent or ambiguous heading is a 409 `section_assert_failed` carrying details.occurrences; a composed folder view is a 409 pointing at its pieces. Pair with vault_replace_section for a read-edit-write on one section.",
-      inputSchema: {
-        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
-        heading: z
-          .string()
-          .min(1)
-          .describe('The heading line as written in the document, e.g. "## Active"')
-      }
-    },
-    wrap(async ({path, heading}) => client.getJson(`/vault/${path}`, {section: heading}))
-  );
-
-  mcp.registerTool(
-    'vault_replace_section',
-    {
-      description:
-        'Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss. Frontmatter rides through untouched; composed folder views are refused. Returns {path, etag, heading, level}.',
+        "Read one section of a document without pulling the whole document into context: the content under an ATX heading line (`## Title`, matched as a whole line, exactly once, with code fences masked) up to the next heading of the same or higher level, trimmed. Pass occurrence to pick one of several identical heading lines, counted from 0. Returns {path, etag, heading, level, occurrence, content, hash} — the etag is the whole document's, the same one vault_read_file{include_etag} returns; hash is the content's sha256, which vault_replace_section takes as expected_hash. An absent or ambiguous heading, or an occurrence past the last, is a 409 `section_assert_failed` carrying details.occurrences; a composed folder view is a 409 pointing at its pieces. Pair with vault_replace_section for a read-edit-write on one section.",
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         heading: z
           .string()
           .min(1)
           .describe('The heading line as written in the document, e.g. "## Active"'),
-        body: z.string().describe('New section content; empty string empties the section')
+        occurrence: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Which of several identical heading lines, counted from 0')
       }
     },
-    wrap(async ({path, heading, body}) =>
-      client.postJson('/vault/edit', {path, op: 'replace-section', heading, body})
+    wrap(async ({path, heading, occurrence}) =>
+      client.getJson(`/vault/${path}`, {section: heading, occurrence})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_replace_section',
+    {
+      description:
+        "Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss; occurrence picks one of several identical heading lines. Pass expected_hash, the hash vault_read_section returned, and a section that changed since is a 409 `section_changed` carrying details.current_hash instead of an overwrite. Frontmatter rides through untouched; composed folder views are refused. Returns {path, etag, heading, level, occurrence, hash}, hash being the new content's, for the next guarded replace.",
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        heading: z
+          .string()
+          .min(1)
+          .describe('The heading line as written in the document, e.g. "## Active"'),
+        body: z.string().describe('New section content; empty string empties the section'),
+        occurrence: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Which of several identical heading lines, counted from 0'),
+        expected_hash: z
+          .string()
+          .optional()
+          .describe('The section hash vault_read_section returned; the replace fails if it changed')
+      }
+    },
+    wrap(async ({path, heading, body, occurrence, expected_hash}) =>
+      client.postJson('/vault/edit', {
+        path,
+        op: 'replace-section',
+        heading,
+        body,
+        occurrence,
+        expected_hash
+      })
     )
   );
 

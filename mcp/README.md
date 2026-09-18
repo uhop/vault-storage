@@ -46,13 +46,15 @@ The tools map to the REST surface, grouped by purpose:
   (`include_etag: true` returns `{path, etag, composed, content}` — the
   tag a conditional write needs, and the composed-folder flag),
   `vault_read_section` (one ATX-heading section as
-  `{path, etag, heading, level, content}`, so a large document never has
-  to be pulled into context to read one part of it)
+  `{path, etag, heading, level, occurrence, content, hash}`, so a large
+  document never has to be pulled into context to read one part of it;
+  `occurrence` picks one of several identical headings)
 - **Narrow write** — `vault_append`, `vault_replace` (asserted: a missing
   or ambiguous target is a 409, never a silent no-op),
   `vault_replace_section` (the content under one heading, matched exactly
   once with code fences masked, to the next heading of the same or higher
-  level; same assert), `vault_remove_item` / `vault_insert_item` /
+  level; same assert; `expected_hash` from the read refuses a section that
+  changed since), `vault_remove_item` / `vault_insert_item` /
   `vault_move_item` (one queue item by its bold title — removed, inserted
   into a section, or moved between documents with a trail after the title,
   the queue-to-archive move as one request), `vault_patch_fm` (add/remove
@@ -152,7 +154,10 @@ beside them. Common codes:
 - `replace_assert_failed` — `vault_replace` target missing, or ambiguous
   without `all` (`details.occurrences` carries the count)
 - `section_assert_failed` — `vault_read_section` / `vault_replace_section`
-  heading absent or ambiguous (`details.occurrences` carries the count)
+  heading absent or ambiguous, or `occurrence` past the last
+  (`details.occurrences` carries the count)
+- `section_changed` — `vault_replace_section` `expected_hash` is stale;
+  `details.current_hash` is the section's hash now
 - `precondition_failed` — `expected_etag` is stale;
   `details.current_etag` is what to re-read and retry against
 - `empty_body` / `null_body` — the write would leave the document with no

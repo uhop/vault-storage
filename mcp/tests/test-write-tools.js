@@ -341,3 +341,33 @@ test('vault_update_piece accepts expected_etag too', async t => {
   t.equal(captured.url, 'http://test/sections/r1');
   t.equal(captured.init.headers['If-Match'], '"e"');
 });
+
+test('vault_read_section and vault_replace_section pass occurrence and expected_hash through', async t => {
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify({ok: true}), {
+        status: 200,
+        headers: {'Content-Type': 'application/json'}
+      })
+  );
+  await call('vault_read_section', {path: 'a.md', heading: '## Day', occurrence: 1});
+  t.equal(new URL(getCaptured().url).searchParams.get('occurrence'), '1');
+  await call('vault_read_section', {path: 'a.md', heading: '## Day'});
+  t.notOk(new URL(getCaptured().url).searchParams.has('occurrence'), 'absent stays absent');
+
+  await call('vault_replace_section', {
+    path: 'a.md',
+    heading: '## Day',
+    body: 'x',
+    occurrence: 1,
+    expected_hash: 'abc'
+  });
+  t.deepEqual(bodyOf(getCaptured()), {
+    path: 'a.md',
+    op: 'replace-section',
+    heading: '## Day',
+    body: 'x',
+    occurrence: 1,
+    expected_hash: 'abc'
+  });
+});
