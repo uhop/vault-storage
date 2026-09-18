@@ -73,6 +73,27 @@ const configureMarked = () => {
   markedConfigured = true;
 };
 
+// marked.parse's own sync path while no hooks or walkTokens are set, timed apart to tell
+// a slow regex engine (the lexer) from slow JavaScript at large (the scan).
+const parseTimed = body => {
+  const lines = time(
+    'preview: baseline scan, no regex',
+    () => {
+      let n = 0;
+      for (let i = 0; i < body.length; ++i) if (body.charCodeAt(i) === 10) ++n;
+      return n;
+    },
+    `${body.length} chars`
+  );
+  const opts = {...marked.defaults};
+  const tokens = time('preview: marked.lexer', () => marked.lexer(body, opts), `${lines} lines`);
+  return time(
+    'preview: marked.parser',
+    () => marked.parser(tokens, opts),
+    `${tokens.length} tokens`
+  );
+};
+
 const BATCH = 200; // the server caps a batch at 500
 
 class VaultMarkdown extends HTMLElement {
@@ -109,7 +130,7 @@ class VaultMarkdown extends HTMLElement {
     const {fm, body} = splitFrontmatter(text);
     let html = '';
     if (showFm && fm) html = `<pre class="frontmatter">${esc(fm)}</pre>`;
-    html += time('preview: marked.parse', () => marked.parse(body), `${body.length} chars`);
+    html += perfOn ? parseTimed(body) : marked.parse(body);
     time('preview: set innerHTML', () => (this.innerHTML = html), `${html.length} chars`);
     if (perfOn) time('preview: forced layout', () => this.getBoundingClientRect().height);
     this.#renderToken++;
