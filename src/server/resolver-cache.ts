@@ -1,15 +1,15 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {WikilinkResolver} from '../importer/resolver.ts';
-
-interface PathEntry {
-  recordId: string;
-  filePath: string;
-}
+import type {PathEntry} from '../render/render.ts';
+import {contentHash} from '../util/hash.ts';
 
 export interface ResolvedView {
   resolver: WikilinkResolver;
   /** record_id → file_path for the records the resolver was built from. */
   pathById: ReadonlyMap<string, string>;
+  entries: readonly PathEntry[];
+  /** Changes only when a rebuild finds a different set of (record, path) pairs. */
+  version: number;
 }
 
 /**
@@ -29,6 +29,8 @@ export interface ResolvedView {
 export class ResolverCache {
   readonly #db: DatabaseSync;
   #view: ResolvedView | null = null;
+  #signature = '';
+  #version = 0;
 
   constructor(db: DatabaseSync) {
     this.#db = db;
@@ -37,12 +39,17 @@ export class ResolverCache {
   get(): ResolvedView {
     if (this.#view === null) {
       const rows = this.#db
-        .prepare('SELECT record_id, file_path FROM records')
+        .prepare('SELECT record_id, file_path FROM records ORDER BY file_path')
         .all() as unknown[] as {record_id: string; file_path: string}[];
       const entries: PathEntry[] = rows.map(r => ({recordId: r.record_id, filePath: r.file_path}));
+      const signature = contentHash(entries.map(e => e.filePath + '\t' + e.recordId).join('\n'));
+      if (signature !== this.#signature) {
+        this.#signature = signature;
+        ++this.#version;
+      }
       const resolver = new WikilinkResolver(entries);
       const pathById = new Map(entries.map(e => [e.recordId, e.filePath]));
-      this.#view = {resolver, pathById};
+      this.#view = {resolver, pathById, entries, version: this.#version};
     }
     return this.#view;
   }

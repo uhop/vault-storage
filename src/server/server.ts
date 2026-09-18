@@ -80,8 +80,10 @@ import {
   moveVaultHandler,
   proposeVaultHandler,
   putVaultHandler,
+  renderVaultHandler,
   supersedeVaultHandler
 } from './handlers/vault.ts';
+import {MarkdownRenderer} from '../render/renderer.ts';
 import {sendError} from './responses.ts';
 import {ResolverCache} from './resolver-cache.ts';
 import {Router, type RequestContext} from './router.ts';
@@ -139,6 +141,8 @@ interface BuildOptions {
    * and bare servers still answer /system/health.
    */
   health?: HealthMonitor;
+  /** Defaults to a router-local one; startServer stops it on close. */
+  renderer?: MarkdownRenderer;
 }
 
 export const buildRouter = (opts: BuildOptions): Router => {
@@ -221,13 +225,15 @@ export const buildRouter = (opts: BuildOptions): Router => {
     vaultDataPath: opts.env.vaultDataPath,
     embedder: opts.embedder,
     records,
-    resolverCache
+    resolverCache,
+    renderer: opts.renderer ?? new MarkdownRenderer()
   };
   router.get('/vault/', getVaultRootHandler(vaultDeps));
   router.get('/vault/{path}', getVaultHandler(vaultDeps));
   router.put('/vault/{path}', putVaultHandler(vaultDeps));
   router.delete('/vault/{path}', deleteVaultHandler(vaultDeps));
   router.post('/vault/edit', editVaultHandler(vaultDeps));
+  router.post('/vault/render', renderVaultHandler(vaultDeps));
   router.post('/vault/move', moveVaultHandler(vaultDeps));
   router.post('/vault/move-item', moveItemHandler(vaultDeps));
   router.post('/vault/supersede', supersedeVaultHandler(vaultDeps));
@@ -468,7 +474,8 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
       if (handoff) completeHandoffArchival(archivalDeps, handoffsRepo, handoff);
     }
   }
-  const router = buildRouter(opts);
+  const renderer = opts.renderer ?? new MarkdownRenderer();
+  const router = buildRouter({...opts, renderer});
   const server = createServer(handleRequest(router, opts.env));
   // The DB is synchronous, so heavy handlers block the event loop and every
   // queued request waits out the full backlog before its headers are even
@@ -485,11 +492,13 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
     server.listen(opts.env.port, opts.env.host, () => {
       server.off('error', reject);
       const url = `http://${opts.env.host}:${opts.env.port}`;
-      const close = (): Promise<void> =>
-        new Promise(resolveClosed => {
+      const close = async (): Promise<void> => {
+        await new Promise<void>(resolveClosed => {
           server.closeAllConnections();
           server.close(() => resolveClosed());
         });
+        await renderer.terminate();
+      };
       resolveListening({server, url, close});
     });
   });

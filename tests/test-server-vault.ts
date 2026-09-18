@@ -2911,3 +2911,122 @@ test('unknown query parameters are a loud 400 across the vault surface', async t
     cleanup();
   }
 });
+
+test('GET /vault/{path}?render=html — the note rendered, wikilinks resolved, headings on their document lines', async t => {
+  const {root, cleanup} = setupVault();
+  writeMd(
+    root,
+    'topics/alpha.md',
+    [
+      '---',
+      'title: Alpha',
+      '---',
+      '# Alpha',
+      '',
+      'See [[topics/beta|Beta]] and [[topics/gone]].',
+      '',
+      '## Part',
+      'text',
+      ''
+    ].join('\n')
+  );
+  writeMd(root, 'topics/beta.md', ['---', 'title: Beta', '---', 'Beta.', ''].join('\n'));
+  const ctx = await startTestServer(root);
+  try {
+    const plain = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md`);
+    const res = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md?render=html`);
+    t.equal(res.status, 200);
+    const body = res.body as {
+      path: string;
+      etag: string;
+      composed: boolean;
+      frontmatter: string | null;
+      html: string;
+      sections: unknown[];
+    };
+    t.equal(body.path, 'topics/alpha.md');
+    t.equal(`"${body.etag}"`, plain.etag, 'the document etag');
+    t.equal(body.composed, false);
+    t.equal(body.frontmatter, 'title: Alpha', 'frontmatter as written');
+    t.ok(body.html.includes('<h1 data-line="4">Alpha</h1>'), 'lines count the frontmatter');
+    t.ok(body.html.includes('<h2 data-line="8">Part</h2>'));
+    t.ok(body.html.includes('href="/ui/note.html?path=topics%2Fbeta.md"'), 'resolved');
+    t.ok(
+      body.html.includes('<a class="wikilink unresolved" data-wikilink="topics/gone"'),
+      'unresolved'
+    );
+    t.deepEqual(body.sections, [
+      {heading: '# Alpha', level: 1, line: 4, occurrence: 0},
+      {heading: '## Part', level: 2, line: 8, occurrence: 0}
+    ]);
+
+    const put = await fetchAuthed(`${ctx.url}/vault/topics/gone.md`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'text/markdown'},
+      body: '---\ntitle: Gone\n---\nBack.\n'
+    });
+    t.equal(put.status, 204);
+    const again = await fetchAuthed(`${ctx.url}/vault/topics/alpha.md?render=html`);
+    t.ok(
+      (again.body as {html: string}).html.includes('href="/ui/note.html?path=topics%2Fgone.md"'),
+      'a target created since the last render resolves'
+    );
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
+test('GET /vault/{path}?render=html — a composed folder, and the requests it refuses', async t => {
+  const {root, cleanup} = setupVault();
+  writeMd(root, 'topics/alpha.md', ['---', 'title: Alpha', '---', '## A', ''].join('\n'));
+  writeMd(root, 'projects/x/decisions/_about.md', '---\ntitle: X decisions\n---\nAbout.\n');
+  writeMd(root, 'projects/x/decisions/one.md', '---\ntitle: One\nsequence_key: 1\n---\nFirst.\n');
+  const ctx = await startTestServer(root);
+  try {
+    const composed = await fetchAuthed(`${ctx.url}/vault/projects/x/decisions.md?render=html`);
+    t.equal(composed.status, 200);
+    const body = composed.body as {composed: boolean; html: string; sections: unknown[]};
+    t.equal(body.composed, true);
+    t.ok(body.html.includes('<h2 data-line="4">One</h2>'), 'the pieces, composed');
+    t.deepEqual(body.sections, [{heading: '## One', level: 2, line: 4, occurrence: 0}]);
+
+    const cases: Array<[string, number]> = [
+      ['/vault/topics/alpha.md?render=pdf', 400],
+      [`/vault/topics/alpha.md?render=html&section=${encodeURIComponent('## A')}`, 400],
+      ['/vault/topics/?render=html', 400],
+      ['/vault/topics/missing.md?render=html', 404]
+    ];
+    for (const [url, status] of cases) {
+      t.equal((await fetchAuthed(`${ctx.url}${url}`)).status, status, url);
+    }
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
+test('POST /vault/render — markdown in, html and sections out', async t => {
+  const {root, cleanup} = setupVault();
+  writeMd(root, 'topics/beta.md', ['---', 'title: Beta', '---', 'Beta.', ''].join('\n'));
+  const ctx = await startTestServer(root);
+  try {
+    const post = (body: string) =>
+      fetchAuthed(`${ctx.url}/vault/render`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body
+      });
+    const res = await post(JSON.stringify({markdown: '## A\n\n[[topics/beta]]\n'}));
+    t.equal(res.status, 200);
+    const body = res.body as {html: string; sections: unknown[]};
+    t.ok(body.html.includes('<h2 data-line="1">A</h2>'), 'lines count from 1');
+    t.ok(body.html.includes('href="/ui/note.html?path=topics%2Fbeta.md"'));
+    t.deepEqual(body.sections, [{heading: '## A', level: 2, line: 1, occurrence: 0}]);
+    t.equal((await post('not json')).status, 400);
+    t.equal((await post(JSON.stringify({markdown: 5}))).status, 400);
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});

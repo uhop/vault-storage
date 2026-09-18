@@ -17,6 +17,48 @@ export interface SectionSpan {
 
 export type SectionLookup = {ok: true; span: SectionSpan} | {ok: false; occurrences: number};
 
+export interface HeadingLine {
+  /** The heading line, trimmed. */
+  heading: string;
+  level: number;
+  /** Zero-based line index in the body. */
+  index: number;
+  /** Offset of the line's first character. */
+  offset: number;
+  /** Untrimmed line length. */
+  length: number;
+  /** How many identical heading lines precede this one. */
+  occurrence: number;
+}
+
+/** Every line that opens a section, in order, with fenced and inline code masked. */
+export const scanHeadings = (body: string): HeadingLine[] => {
+  const rawLines = body.split('\n');
+  const maskedLines = maskCodeRegions(body).split('\n');
+  const seen = new Map<string, number>();
+  const headings: HeadingLine[] = [];
+  let offset = 0;
+  for (let i = 0; i < rawLines.length; ++i) {
+    const line = rawLines[i] ?? '';
+    const match = HEADING_LINE_RE.exec(maskedLines[i] ?? '');
+    if (match) {
+      const heading = line.trim();
+      const occurrence = seen.get(heading) ?? 0;
+      seen.set(heading, occurrence + 1);
+      headings.push({
+        heading,
+        level: match[1]!.length,
+        index: i,
+        offset,
+        length: line.length,
+        occurrence
+      });
+    }
+    offset += line.length + 1;
+  }
+  return headings;
+};
+
 /**
  * Locate the section under `heading`: the heading is matched as a whole line,
  * exactly once, with fenced and inline code masked so a `## ` inside a code
@@ -25,19 +67,10 @@ export type SectionLookup = {ok: true; span: SectionSpan} | {ok: false; occurren
  */
 export const findSection = (body: string, heading: string): SectionLookup => {
   const wanted = heading.trim();
-  const rawLines = body.split('\n');
-  const maskedLines = maskCodeRegions(body).split('\n');
-  const headings: Array<{index: number; level: number; offset: number}> = [];
-  let offset = 0;
-  for (let i = 0; i < rawLines.length; ++i) {
-    const match = HEADING_LINE_RE.exec(maskedLines[i] ?? '');
-    if (match) headings.push({index: i, level: match[1]!.length, offset});
-    offset += (rawLines[i] ?? '').length + 1;
-  }
-  const hits = headings.filter(h => (rawLines[h.index] ?? '').trim() === wanted);
+  const headings = scanHeadings(body);
+  const hits = headings.filter(h => h.heading === wanted);
   if (hits.length !== 1) return {ok: false, occurrences: hits.length};
   const hit = hits[0]!;
-  const line = rawLines[hit.index] ?? '';
   let end = body.length;
   for (const h of headings) {
     if (h.offset > hit.offset && h.level <= hit.level) {
@@ -48,10 +81,10 @@ export const findSection = (body: string, heading: string): SectionLookup => {
   return {
     ok: true,
     span: {
-      heading: line.trim(),
+      heading: hit.heading,
       level: hit.level,
       headingStart: hit.offset,
-      headingEnd: hit.offset + line.length,
+      headingEnd: hit.offset + hit.length,
       end
     }
   };

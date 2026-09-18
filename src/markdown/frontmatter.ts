@@ -9,23 +9,29 @@ export interface Frontmatter {
 
 const FRONTMATTER_BLOCK = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
+/** The frontmatter block's YAML text as written, unparsed, and the body after it. */
+export const splitFrontmatter = (source: string): {yaml: string | null; body: string} => {
+  const match = FRONTMATTER_BLOCK.exec(source);
+  if (!match) return {yaml: null, body: source};
+  return {yaml: match[1] ?? '', body: source.slice(match[0].length)};
+};
+
 /**
  * Split a markdown source into its YAML frontmatter and body. Files without a
  * leading `---\n...\n---` block (legacy raw notes per design constraint C5)
  * return `data: {}` and the original text as `body`.
  */
 export const parseFrontmatter = (source: string): Frontmatter => {
-  const match = FRONTMATTER_BLOCK.exec(source);
-  if (!match) return {data: {}, body: source};
+  const {yaml: yamlText, body} = splitFrontmatter(source);
+  if (yamlText === null) return {data: {}, body};
 
-  const yamlText = match[1] ?? '';
   const parsed = yaml.parse(yamlText);
   const data =
     parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
 
-  return {data, body: source.slice(match[0].length)};
+  return {data, body};
 };
 
 /**

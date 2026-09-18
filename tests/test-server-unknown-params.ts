@@ -79,6 +79,7 @@ const ROUTES: Array<[string, string]> = [
   ['PUT', '/vault/topics/nope.md'],
   ['DELETE', '/vault/topics/nope.md'],
   ['POST', '/vault/edit'],
+  ['POST', '/vault/render'],
   ['POST', '/vault/move'],
   ['POST', '/vault/move-item'],
   ['POST', '/vault/supersede'],

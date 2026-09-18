@@ -1,3 +1,4 @@
+import {noteUiUrl} from '../../render/render.ts';
 import {readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import type {ResolvedView, ResolverCache} from '../resolver-cache.ts';
@@ -29,7 +30,7 @@ const lookup = ({resolver, pathById}: ResolvedView, link: string): Resolved | nu
     target: link,
     record_id: recordId,
     file_path: filePath,
-    ui_url: `/ui/note.html?path=${encodeURIComponent(filePath)}`
+    ui_url: noteUiUrl(filePath)
   };
 };
 

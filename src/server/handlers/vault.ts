@@ -10,7 +10,9 @@ import {
 import type {ServerResponse} from 'node:http';
 import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
-import {parseFrontmatter} from '../../markdown/frontmatter.ts';
+import {parseFrontmatter, splitFrontmatter} from '../../markdown/frontmatter.ts';
+import type {Rendered} from '../../render/render.ts';
+import {RenderTimeoutError, type MarkdownRenderer} from '../../render/renderer.ts';
 import {
   findSection,
   HEADING_LINE_RE,
@@ -55,6 +57,7 @@ interface VaultDeps {
   records: RecordsRepository;
   /** Invalidated on writes that can change the path set (PUT-create, DELETE, move). */
   resolverCache: ResolverCache;
+  renderer: MarkdownRenderer;
 }
 
 /**
@@ -177,23 +180,77 @@ const sectionOrError = (
   return null;
 };
 
+const renderOrError = async (
+  deps: VaultDeps,
+  res: ServerResponse,
+  body: string,
+  firstLine: number
+): Promise<Rendered | null> => {
+  const {version, entries} = deps.resolverCache.get();
+  try {
+    return await deps.renderer.render(body, firstLine, {version, entries});
+  } catch (err) {
+    if (err instanceof RenderTimeoutError) sendError(res, 503, 'render_timeout', err.message);
+    else sendError(res, 500, 'render_failed', (err as Error).message);
+    return null;
+  }
+};
+
+const sendRendered = async (
+  deps: VaultDeps,
+  res: ServerResponse,
+  path: string,
+  document: string,
+  composed: boolean
+): Promise<void> => {
+  const {yaml, body} = splitFrontmatter(document);
+  const head = document.slice(0, document.length - body.length);
+  const rendered = await renderOrError(deps, res, body, head.split('\n').length);
+  if (rendered === null) return;
+  sendJson(res, 200, {
+    path,
+    etag: documentEtag(document),
+    composed,
+    frontmatter: yaml,
+    html: rendered.html,
+    sections: rendered.sections
+  });
+};
+
 /**
  * GET /vault/{path} — file read, or compose-on-demand for atomized folders.
  * `?section=<heading line>` returns one section as JSON instead: the content
  * under that heading up to the next heading of the same or higher level,
  * with the whole document's etag, so a client never pulls a large document
- * into context to read one part of it.
+ * into context to read one part of it. `?render=html` returns the note
+ * rendered as JSON: `html` for the body with wikilinks resolved and each
+ * top-level heading carrying `data-line`, the frontmatter as written, and
+ * the `sections` the section editor can address.
  */
 export const getVaultHandler =
   (deps: VaultDeps): Handler =>
-  ctx => {
+  async ctx => {
     // Precedes bumpLastReferenced: a rejected request must not leave a trace.
-    if (!rejectUnknownParams(ctx, new Set(['section']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['section', 'render']))) return;
     const path = ctx.params['path'] ?? '';
     const section = ctx.query['section'];
+    const render = ctx.query['render'];
+    if (render !== undefined && render !== 'html') {
+      sendError(ctx.res, 400, 'bad_request', 'render must be "html"');
+      return;
+    }
+    if (render !== undefined && section !== undefined) {
+      sendError(ctx.res, 400, 'bad_request', 'render and section cannot be combined');
+      return;
+    }
     if (path.endsWith('/')) {
-      if (section !== undefined) {
-        sendError(ctx.res, 400, 'bad_request', 'section applies to a file, not a folder');
+      if (section !== undefined || render !== undefined) {
+        sendError(
+          ctx.res,
+          400,
+          'bad_request',
+          `${section !== undefined ? 'section' : 'render'} applies to a file, not a folder`
+        );
         return;
       }
       listFolder(deps.vaultDataPath, path.slice(0, -1), ctx.res);
@@ -211,6 +268,10 @@ export const getVaultHandler =
       const rec = records.getByPath(path);
       if (rec) records.bumpLastReferenced(rec.recordId);
       const document = readFileSync(abs, 'utf8');
+      if (render !== undefined) {
+        await sendRendered(deps, ctx.res, path, document, false);
+        return;
+      }
       if (section !== undefined) {
         const {body} = parseFrontmatter(document);
         const span = sectionOrError(ctx.res, path, body, section);
@@ -244,6 +305,10 @@ export const getVaultHandler =
           );
           return;
         }
+        if (composed !== null && render !== undefined) {
+          await sendRendered(deps, ctx.res, path, composed, true);
+          return;
+        }
         if (composed !== null) {
           // Weak ETag: the document is virtual (no single on-disk file), so
           // If-Match's strong comparison can never succeed against it — a
@@ -268,6 +333,40 @@ export const getVaultRootHandler =
   ctx => {
     if (!rejectUnknownParams(ctx, new Set())) return;
     listFolder(deps.vaultDataPath, '', ctx.res);
+  };
+
+/**
+ * POST /vault/render — body `{markdown}`, rendered the way `?render=html`
+ * renders a note body, with lines counted from 1 in the text sent. Answers
+ * `{html, sections}`. It serves the edit page's preview of one section, so
+ * the browser never parses markdown itself.
+ */
+export const renderVaultHandler =
+  (deps: VaultDeps): Handler =>
+  async ctx => {
+    if (!rejectUnknownParams(ctx, new Set())) return;
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      sendError(ctx.res, 400, 'bad_request', 'body must be JSON');
+      return;
+    }
+    const markdown = (parsed as {markdown?: unknown} | null)?.markdown;
+    if (typeof markdown !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', 'markdown must be a string');
+      return;
+    }
+    const rendered = await renderOrError(deps, ctx.res, markdown, 1);
+    if (rendered === null) return;
+    sendJson(ctx.res, 200, rendered);
   };
 
 /**
