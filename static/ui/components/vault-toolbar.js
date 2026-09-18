@@ -4,8 +4,8 @@
 // on connect; authored children (page-specific action buttons) stay in place
 // after them, so a page declares its own actions as plain markup.
 //
-// Light DOM on purpose, same rationale as <vault-editor>: the host page's CSS
-// (`.toolbar`, `.pill`, `.modes`) styles the parts without a shadow boundary.
+// Light DOM on purpose: the host page's CSS (`.toolbar`, `.pill`, `.modes`)
+// styles the parts without a shadow boundary.
 //
 // Mode contract: the view-mode group is a <vault-switch>; its change becomes a
 // bubbling `mode-change` {detail: {mode}}; persistence policy (URL param /

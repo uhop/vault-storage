@@ -238,14 +238,14 @@
         if (fm) {
           fm.insertAdjacentHTML(
             'beforeend',
-            `<a class="fmw-pill" href="${editHref('&line=1')}" title="Edit the frontmatter">edit</a>`
+            `<a class="fmw-pill" href="${editHref('&frontmatter')}" title="Edit the frontmatter">edit</a>`
           );
         }
         const byLine = new Map(note.sections.map(s => [s.line, s]));
         for (const h of doc.querySelectorAll('[data-line]')) {
           const s = byLine.get(Number(h.dataset.line));
           if (!s) continue;
-          const extra = `&section=${encodeURIComponent(s.heading)}&n=${s.occurrence}&line=${s.line}`;
+          const extra = `&section=${encodeURIComponent(s.heading)}&n=${s.occurrence}`;
           h.insertAdjacentHTML(
             'beforeend',
             `<a class="fmw-pill" href="${editHref(extra)}" title="Edit this section">edit</a>`
@@ -282,9 +282,11 @@
           time('view: decorate', () => decorate(note), `${note.sections.length} sections`);
           if (perfOn) time('view: forced layout', () => $('#doc').getBoundingClientRect().height);
           $('#edit').href = editHref();
-          for (const id of ['#edit', '#outline', '#find-btn']) $(id).hidden = false;
+          $('#edit').hidden = note.composed;
+          for (const id of ['#outline', '#find-btn']) $(id).hidden = false;
           findIndex = null;
           fetchBacklinks();
+          if (!note.composed) noteDrafts(note.sections);
           mark('view: done');
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
@@ -294,6 +296,45 @@
           $('#doc').innerHTML = '';
           showError(`Failed to load ${path}: ${e.message}`);
         }
+      }
+
+      // drafts -----------------------------------------------------------
+      const draftHref = (unit, sections) => {
+        if (unit.kind === 'frontmatter') return editHref('&frontmatter');
+        if (unit.kind === 'document') return editHref();
+        const known = sections.some(
+          s => s.heading === unit.heading && s.occurrence === unit.occurrence
+        );
+        return known
+          ? editHref(`&section=${encodeURIComponent(unit.heading)}&n=${unit.occurrence}`)
+          : null;
+      };
+
+      const draftName = unit =>
+        unit.kind === 'section'
+          ? unit.heading
+          : unit.kind === 'frontmatter'
+            ? 'the frontmatter'
+            : 'the whole note';
+
+      // Unsaved edits are kept on the server (D60); a reader should know they are waiting.
+      async function noteDrafts(sections) {
+        let items;
+        try {
+          ({items} = await apiJson(`/drafts?path=${encodeURIComponent(path)}`));
+        } catch {
+          return;
+        }
+        if (!items.length) return;
+        const links = items.map(d => {
+          const href = draftHref(d.unit, sections);
+          const name = esc(draftName(d.unit));
+          return href ? `<a href="${href}">${name}</a>` : `${name} (no longer in the note)`;
+        });
+        $('#doc').insertAdjacentHTML(
+          'afterbegin',
+          `<p class="fmw-notice">Unsaved drafts of this note: ${links.join(', ')}.</p>`
+        );
       }
 
       // backlinks --------------------------------------------------------

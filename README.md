@@ -307,13 +307,6 @@ needs no extra step; `npm install-scripts ls` reports the state. Firefox and Web
 > exits `0`, with the aborted workers' tests reported as skipped. Dropping `O` keeps
 > parallelism and reports every failure. (tape-six bug; revisit `FO` once fixed.)
 
-### Editor probe
-
-`/ui/editor-probe.html` mounts the real `<vault-editor>` next to a live dump of its
-`value`, DOM nodes, and `innerHTML`, plus a verdict on whether the content would still
-parse as frontmatter. It exists because contenteditable line-break handling differs per
-engine — use it to check a browser before trusting the editor in it.
-
 ## Design summary
 
 The architectural decisions are recorded as numbered constraints C1–C16 in the design vault. The shapes that matter for using the project:

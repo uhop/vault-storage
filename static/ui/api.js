@@ -10,6 +10,8 @@
 //   - <body.error>    — server returned a non-2xx with a JSON `{error: ...}`
 //                       body; that string is the message.
 //   - 'HTTP <status>' — fallback for non-2xx without a parseable error body.
+// Every thrown error past the token check carries `status`, and the body's
+// `code` and `details` when it had them, for a caller that handles a conflict.
 
 const TOKEN_KEY = 'vault.token';
 
@@ -24,17 +26,18 @@ export async function api(path, init = {}) {
   if (!token) throw new Error('no-token');
   const headers = {...(init.headers ?? {}), Authorization: `Bearer ${token}`};
   const res = await fetch(path, {...init, headers});
-  if (res.status === 401) throw new Error('unauthorized');
-  if (res.status === 404) throw new Error('not-found');
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      if (body?.error) msg = body.error;
-    } catch {}
-    throw new Error(msg);
-  }
-  return res;
+  if (res.ok) return res;
+  let msg = res.status === 401 ? 'unauthorized' : res.status === 404 ? 'not-found' : '';
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {}
+  if (!msg) msg = body?.error || `HTTP ${res.status}`;
+  throw Object.assign(new Error(msg), {
+    status: res.status,
+    code: body?.code,
+    details: body?.details
+  });
 }
 
 /**

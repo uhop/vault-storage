@@ -10,19 +10,22 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       })();
       // Before first paint: until data-view exists no pane rule matches, and both panes show.
-      // Precedence: URL `?view=` (one-shot) > localStorage > viewport. A remembered preview-only
-      // mode is not restored: reading has its own page (D60), and this one is for editing.
+      // Precedence: the frontmatter unit (no preview) > URL `?view=` > localStorage > viewport. A
+      // remembered preview-only mode is not restored: reading has its own page (D60).
       (() => {
+        const q = new URLSearchParams(location.search);
         const known = v => v === 'edit' || v === 'split' || v === 'preview';
-        const url = new URLSearchParams(location.search).get('view');
+        const url = q.get('view');
         const kept = localStorage.getItem('vault.view-mode');
-        document.documentElement.dataset.view = known(url)
-          ? url
-          : known(kept) && kept !== 'preview'
-            ? kept
-            : innerWidth >= 768
-              ? 'split'
-              : 'edit';
+        document.documentElement.dataset.view = q.has('frontmatter')
+          ? 'edit'
+          : known(url)
+            ? url
+            : known(kept) && kept !== 'preview'
+              ? kept
+              : innerWidth >= 768
+                ? 'split'
+                : 'edit';
       })();
     </script>
     <title>vault-storage — edit</title>
@@ -93,6 +96,48 @@
       .spinner {
         border-top-color: currentColor;
       }
+      .toolbar .modes button {
+        padding: 0.35rem 0.7rem;
+        font-size: 0.8rem;
+        font-weight: 400;
+      }
+      /* Underline, never a fill: the group sits on --card, so filling the
+         active button made it blend in and the inactive ones read as raised. */
+      .toolbar .modes button[aria-pressed='true'] {
+        background: transparent;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+        text-decoration-thickness: 2px;
+      }
+      :root[data-unit='frontmatter'] .toolbar .modes {
+        display: none;
+      }
+      @media (max-width: 767px) {
+        .toolbar .path {
+          flex-basis: 100%;
+        }
+        .toolbar .modes button[data-value='split'] {
+          display: none;
+        }
+      }
+      #notice {
+        flex-shrink: 0;
+        margin: 0;
+        border-radius: 0;
+        border-width: 0 0 1px;
+      }
+      #notice button {
+        margin-left: 0.4rem;
+        padding: 0.2rem 0.6rem;
+        font-size: 0.85rem;
+      }
+      .err {
+        border: 0;
+        border-bottom: 1px solid var(--bad);
+        border-radius: 0;
+        flex-shrink: 0;
+        font-size: 0.9rem;
+      }
       main {
         padding: 0;
         max-width: none;
@@ -102,6 +147,65 @@
         display: flex;
         flex-direction: column;
         position: relative;
+      }
+      .panes {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+      }
+      .edit-pane {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .unit {
+        padding: 0.5rem 1rem 0;
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      #editor {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        padding: 1rem;
+        border: 0;
+        resize: none;
+        outline: none;
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        line-height: 1.55;
+        background: var(--bg);
+        color: var(--fg);
+        tab-size: 2;
+      }
+      .preview {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        padding: 1rem 1.2rem;
+        overflow-y: auto;
+        border-left: 1px solid var(--line);
+        background: var(--card);
+      }
+      :root[data-view='edit'] .preview {
+        display: none;
+      }
+      :root[data-view='preview'] .edit-pane {
+        display: none;
+      }
+      :root[data-view='preview'] .preview {
+        border-left: 0;
+      }
+      .preview-gate button {
+        margin-top: 0.6rem;
+      }
+      @media (max-width: 767px) {
+        :root[data-view='split'] .preview {
+          display: none;
+        }
       }
       .find-bar {
         position: absolute;
@@ -114,7 +218,7 @@
         padding: 0.5rem;
         background: var(--card);
         border: 1px solid var(--line);
-        border-radius: 6px;
+        border-radius: var(--radius);
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
       }
       .find-bar[hidden] {
@@ -132,7 +236,7 @@
         font: inherit;
         font-size: 0.85rem;
         border: 1px solid var(--line);
-        border-radius: 4px;
+        border-radius: var(--radius-s);
         background: var(--bg);
         color: var(--fg);
       }
@@ -143,19 +247,6 @@
         padding: 0.3rem 0.5rem;
         font-size: 0.8rem;
         line-height: 1;
-        border: 1px solid var(--line);
-        background: var(--card);
-        color: var(--fg);
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      .find-bar button:hover:not(:disabled) {
-        border-color: var(--accent);
-        color: var(--accent);
-      }
-      .find-bar button:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
       }
       .find-bar button[aria-pressed='true'] {
         border-color: var(--accent);
@@ -177,92 +268,6 @@
         .find-bar input[type='text'] {
           width: 100%;
           flex: 1;
-        }
-      }
-      .panes {
-        flex: 1;
-        min-height: 0;
-        display: flex;
-      }
-      vault-editor {
-        display: block;
-        flex: 1;
-        min-height: 0;
-        min-width: 0;
-        width: 100%;
-        padding: 1rem;
-        outline: none;
-        overflow-y: auto;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        font-family: var(--mono);
-        font-size: 0.9rem;
-        line-height: 1.55;
-        background: var(--bg);
-        color: var(--fg);
-        tab-size: 2;
-      }
-      vault-editor.empty::before {
-        content: attr(data-placeholder);
-        color: var(--muted);
-        pointer-events: none;
-      }
-      vault-editor.loading {
-        opacity: 0.6;
-      }
-      /* Force both colors so highlights stay legible in either theme — a
-         theme-inherited (light) text colour over yellow is the invisible
-         white-on-yellow the browser's native find suffers from. */
-      ::highlight(vault-find) {
-        background-color: #ffd54a;
-        color: #1a1a1a;
-      }
-      ::highlight(vault-find-current) {
-        background-color: var(--accent);
-        color: #fff;
-      }
-      .preview {
-        flex: 1;
-        min-width: 0;
-        min-height: 0;
-        padding: 1rem 1.2rem;
-        overflow-y: auto;
-        border-left: 1px solid var(--line);
-        background: var(--card);
-      }
-      :root[data-view='edit'] .preview {
-        display: none;
-      }
-      :root[data-view='preview'] vault-editor {
-        display: none;
-      }
-      :root[data-view='preview'] .preview {
-        border-left: 0;
-      }
-      .preview-gate button {
-        margin-top: 0.6rem;
-      }
-      @media (max-width: 767px) {
-        :root[data-view='split'] .preview {
-          display: none;
-        }
-      }
-      .toolbar .modes button {
-        padding: 0.35rem 0.7rem;
-        font-size: 0.8rem;
-        font-weight: 400;
-      }
-      /* Underline, never a fill: the group sits on --card, so filling the
-         active button made it blend in and the inactive ones read as raised. */
-      .toolbar .modes button[aria-pressed='true'] {
-        background: transparent;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-        text-decoration-thickness: 2px;
-      }
-      @media (max-width: 767px) {
-        .toolbar .modes button[data-value='split'] {
-          display: none;
         }
       }
       .insert-row {
@@ -288,7 +293,7 @@
         font-size: 0.9rem;
         background: var(--bg);
         border: 1px solid var(--line);
-        border-radius: 4px;
+        border-radius: var(--radius-s);
         color: var(--fg);
         cursor: pointer;
       }
@@ -301,19 +306,13 @@
         body[data-editor-focused] .insert-row {
           display: flex;
         }
-        body[data-editor-focused] vault-editor {
+        body[data-editor-focused] #editor {
           padding-bottom: 4rem;
         }
       }
-      .err {
-        border: 0;
-        border-bottom: 1px solid var(--bad);
-        border-radius: 0;
-        flex-shrink: 0;
-        font-size: 0.9rem;
-      }
-      dialog#recent-dlg {
-        max-width: 32rem;
+      dialog#recent-dlg,
+      dialog#wiki-dlg {
+        max-width: 36rem;
         width: 90vw;
       }
       dialog .fmw-records {
@@ -321,22 +320,15 @@
         max-height: 60vh;
         overflow-y: auto;
       }
-      dialog#wiki-dlg {
-        max-width: 36rem;
-        width: 90vw;
-      }
       .wiki-search {
         width: 100%;
         padding: 0.55rem 0.7rem;
         font: inherit;
         border: 1px solid var(--line);
-        border-radius: 4px;
+        border-radius: var(--radius-s);
         background: var(--bg);
         color: var(--fg);
         margin-bottom: 0.6rem;
-      }
-      #wiki-results {
-        max-height: 50vh;
       }
       #wiki-results a.active,
       #wiki-results a:hover {
@@ -361,16 +353,17 @@
       <vault-settings></vault-settings>
     </header>
     <vault-toolbar class="toolbar" id="toolbar">
-      <button id="save">Save</button>
+      <button id="save" class="primary" disabled title="Save (⌘S)">Save</button>
+      <button id="discard" hidden title="Drop your changes and the draft">Discard</button>
       <button id="view" hidden title="Read the rendered note">View</button>
       <button id="wiki-pick" title="Insert wikilink (search the vault)">[[…]]</button>
       <button id="outline" title="Outline (jump to heading)">Outline</button>
       <button id="find-btn" title="Find / replace (⌘F)">Find</button>
       <button id="recent" hidden>Recent</button>
-      <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
       <button id="del" class="danger" hidden>Delete</button>
     </vault-toolbar>
     <div class="err" id="err" hidden></div>
+    <div class="fmw-notice" id="notice" hidden></div>
     <main>
       <div id="find-bar" class="find-bar" hidden role="search" aria-label="Find and replace">
         <div class="find-row">
@@ -400,11 +393,10 @@
         </div>
       </div>
       <div class="panes">
-        <vault-editor
-          id="editor"
-          spellcheck="false"
-          data-placeholder="Start typing… frontmatter at the top, body below."
-        ></vault-editor>
+        <div class="edit-pane">
+          <div class="unit" id="unit" hidden></div>
+          <textarea id="editor" spellcheck="false" disabled></textarea>
+        </div>
         <div class="preview fmw-prose" id="preview"></div>
         <div class="preview preview-gate fmw-prose" id="preview-gate" hidden>
           <p class="fmw-notice" id="preview-gate-text"></p>
@@ -432,10 +424,19 @@
 
     <dialog id="del-dlg">
       <h2>Delete this note?</h2>
-      <p id="del-msg">This will remove the file from the vault. Cannot be undone via the UI.</p>
+      <p>This removes the file from the vault. The UI cannot undo it.</p>
       <div class="row">
         <button id="del-cancel">Cancel</button>
         <button id="del-confirm" class="danger primary">Delete</button>
+      </div>
+    </dialog>
+
+    <dialog id="discard-dlg">
+      <h2>Discard your changes?</h2>
+      <p>This drops the text in the editor and its draft, and shows what the note holds now.</p>
+      <div class="row">
+        <button id="discard-cancel">Cancel</button>
+        <button id="discard-confirm" class="danger primary">Discard</button>
       </div>
     </dialog>
 
@@ -464,15 +465,6 @@
       </div>
     </dialog>
 
-    <dialog id="backlinks-dlg">
-      <h2>Backlinks</h2>
-      <p id="backlinks-count">No notes link to this one.</p>
-      <div id="backlinks-list" class="fmw-records"></div>
-      <div class="row">
-        <button id="backlinks-close">Close</button>
-      </div>
-    </dialog>
-
     <dialog id="outline-dlg">
       <h2>Outline</h2>
       <p id="outline-count"></p>
@@ -484,17 +476,16 @@
 
     <script type="module">
       import {mark, perfOn, time, timeAsync} from '/ui/perf.js';
-      import '/ui/components/vault-editor.js';
       import '/ui/components/vault-toolbar.js';
-      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, existingPaths, getToken, showAuthDialog} from '/ui/api.js';
 
-      const DRAFT_PREFIX = 'vault.draft.';
-      const VIEW_KEY = 'vault.view-mode';
-      const DEBOUNCE_MS = 1500;
-      const PREVIEW_DEBOUNCE_MS = 150;
+      const DRAFT_DEBOUNCE_MS = 1500;
+      const PREVIEW_DEBOUNCE_MS = 300;
       const PREVIEW_AUTO_MAX_CHARS = 100_000;
       const $ = sel => document.querySelector(sel);
-      const $$ = sel => document.querySelectorAll(sel);
+      const editor = $('#editor');
+      const toolbar = $('#toolbar');
+      const params = new URLSearchParams(location.search);
 
       const STARTER_TEMPLATE = `---
 title: ""
@@ -506,440 +497,440 @@ ready: false
 
 `;
 
+      const pad = n => String(n).padStart(2, '0');
+      const fmtTime = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
       const newCapturePath = () => {
         const d = new Date();
-        const p = n => String(n).padStart(2, '0');
-        return `raw/${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.md`;
+        return `raw/${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.md`;
       };
-
       const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
+      const etagOf = res => (res.headers.get('ETag') ?? '').replace(/^W\//, '').replace(/"/g, '');
+
+      const unitFromUrl = () => {
+        if (params.has('section')) {
+          const n = Number(params.get('n'));
+          return {
+            kind: 'section',
+            heading: params.get('section').trim(),
+            occurrence: Number.isSafeInteger(n) && n > 0 ? n : 0
+          };
+        }
+        return params.has('frontmatter') ? {kind: 'frontmatter'} : {kind: 'document'};
+      };
 
       // state -----------------------------------------------------------
-      const params = new URLSearchParams(location.search);
       const state = {
-        path: params.get('path') ?? null, // null = new capture
-        serverContent: '', // last-known server content
-        body: '', // the document text, whoever is holding it
-        dirty: false, // body != serverContent
-        saveTimer: null,
+        path: params.get('path'),
+        unit: unitFromUrl(),
+        isNew: false,
+        // What the edit started from: the unit's hash, or the document's ETag.
+        baseHash: '',
+        serverText: '',
+        dirty: false,
+        draftId: null,
+        draftText: null,
+        draftTimer: null,
         lastSavedAt: null
       };
+      document.documentElement.dataset.unit = state.unit.kind;
 
-      // toolbar (path label + status pill + view modes) ------------------
-      const toolbar = $('#toolbar');
       const setStatus = (kind, label) => toolbar.setStatus(kind, label);
+      const unitName = unit =>
+        unit.kind === 'section'
+          ? unit.heading + (unit.occurrence ? ` (occurrence ${unit.occurrence + 1})` : '')
+          : unit.kind === 'frontmatter'
+            ? 'the frontmatter'
+            : 'the whole note';
 
-      const fmtTime = d => {
-        const p = n => String(n).padStart(2, '0');
-        return `${p(d.getHours())}:${p(d.getMinutes())}`;
+      const showError = msg => {
+        $('#err').textContent = msg;
+        $('#err').hidden = false;
+      };
+      const hideError = () => {
+        $('#err').hidden = true;
+      };
+      const showNotice = html => {
+        $('#notice').innerHTML = html;
+        $('#notice').hidden = false;
+      };
+      const hideNotice = () => {
+        $('#notice').hidden = true;
       };
 
-      // draft staging ---------------------------------------------------
-      const draftKey = () => DRAFT_PREFIX + (state.path ?? 'new');
-      const stageDraft = body => localStorage.setItem(draftKey(), body);
-      const dropDraft = () => localStorage.removeItem(draftKey());
-      const loadDraft = () => localStorage.getItem(draftKey());
+      const reflectDirty = () => {
+        state.dirty = state.isNew || editor.value !== state.serverText;
+        $('#save').disabled = !state.dirty;
+        $('#discard').hidden = !state.dirty || state.isNew;
+      };
 
-      // Laziness, because both surfaces are expensive on a large note: the
-      // editor holds the whole document in a contenteditable, the preview
-      // parses it. Neither happens until something on screen needs it, so
-      // `state.body` is the text until a surface takes it.
-      let editorFilled = false;
+      // drafts ------------------------------------------------------------
+      const sameUnit = (a, b) =>
+        a.kind === b.kind &&
+        (a.kind !== 'section' || (a.heading === b.heading && a.occurrence === b.occurrence));
 
-      // The stylesheet's own query: `(min-width: 768px)` is not its complement at fractional widths.
-      const narrow = window.matchMedia('(max-width: 767px)');
-      const editorOnScreen = () => viewMode !== 'preview';
-      const previewOnScreen = () =>
-        viewMode === 'preview' || (viewMode === 'split' && !narrow.matches);
-
-      /** Fill the editor because something is about to read or write its DOM. */
-      const ensureEditor = () => {
-        const ed = $('#editor');
-        if (!editorFilled) {
-          editorFilled = true;
-          time('editor: fill', () => (ed.value = state.body), `${state.body.length} chars`);
+      async function keepDraft() {
+        clearTimeout(state.draftTimer);
+        state.draftTimer = null;
+        const text = editor.value;
+        if (!state.dirty || text === state.draftText) return;
+        try {
+          const draft = await apiJson('/drafts', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              path: state.path,
+              unit: state.unit,
+              base_hash: state.baseHash,
+              text
+            })
+          });
+          state.draftId = draft.id;
+          state.draftText = text;
+          if (state.dirty) setStatus('editing', `unsaved; draft kept ${fmtTime(new Date())}`);
+        } catch {
+          setStatus('offline', 'draft not kept');
         }
-        return ed;
+      }
+
+      async function dropDraft() {
+        const id = state.draftId;
+        state.draftId = null;
+        state.draftText = null;
+        if (!id) return;
+        try {
+          await api(`/drafts/${id}`, {method: 'DELETE'});
+        } catch {
+          // Already gone is the outcome wanted.
+        }
+      }
+
+      const offerDraft = draft => {
+        state.draftId = draft.id;
+        state.draftText = draft.text;
+        const stale =
+          draft.base_hash !== state.baseHash
+            ? ' The note changed after this draft began, so saving it replaces those changes.'
+            : '';
+        showNotice(
+          `An unsaved draft of ${esc(unitName(state.unit))} from ${esc(fmtTime(new Date(draft.updated)))} is kept on the server.${stale}` +
+            '<button data-action="restore">Restore it</button><button data-action="drop">Discard it</button>'
+        );
       };
 
-      /** Fill it only when it is actually on screen. */
-      const syncEditor = () => {
-        if (editorOnScreen()) ensureEditor();
+      // load ------------------------------------------------------------
+      const fill = text => {
+        time('editor: fill', () => (editor.value = text), `${text.length} chars`);
+        if (perfOn) time('editor: forced layout', () => editor.getBoundingClientRect().height);
       };
 
-      /** The document text, from whichever side is holding it. */
-      const docText = () => (editorFilled ? $('#editor').value : state.body);
+      async function readUnit() {
+        const at = `/vault/${encodePath(state.path)}`;
+        const {unit} = state;
+        if (unit.kind === 'section') {
+          const r = await apiJson(
+            `${at}?section=${encodeURIComponent(unit.heading)}&occurrence=${unit.occurrence}`
+          );
+          return {text: r.content, hash: r.hash};
+        }
+        if (unit.kind === 'frontmatter') {
+          const r = await apiJson(`${at}?frontmatter=yaml`);
+          return {text: r.frontmatter, hash: r.hash};
+        }
+        const res = await api(at);
+        return {text: await res.text(), hash: etagOf(res)};
+      }
 
-      /** Replace the document text, wherever it currently lives. */
-      const setDocText = v => {
-        state.body = v;
-        if (editorFilled) $('#editor').value = v;
-      };
-
-      // load / capture init ---------------------------------------------
-      async function init() {
+      async function load() {
+        hideError();
+        hideNotice();
         if (!getToken()) {
           showAuthDialog();
           return;
         }
-        if (state.path) {
-          await loadExisting(state.path);
-        } else {
-          initCapture();
+        if (!state.path) return startNew(newCapturePath());
+        toolbar.path =
+          state.unit.kind === 'document' ? state.path : `${state.path} · ${unitName(state.unit)}`;
+        document.title = `vault-storage — edit ${state.path}`;
+        if (state.unit.kind === 'section') {
+          $('#unit').textContent = state.unit.heading;
+          $('#unit').hidden = false;
         }
-        $('#editor').addEventListener('input', onInput);
-        schedulePreview();
-        window.addEventListener('beforeunload', e => {
-          if (state.dirty) {
-            e.preventDefault();
-            e.returnValue = '';
-          }
-        });
-      }
-
-      async function loadExisting(path) {
-        mark('loadExisting: start', `${path}, view=${viewMode}`);
-        toolbar.path = path;
-        $('#del').hidden = false;
-        $('#view').hidden = false;
-        $('#editor').disabled = true;
         setStatus('saving', 'loading…');
+        let loaded;
         try {
-          const res = await timeAsync('fetch: note', () => api(`/vault/${encodePath(path)}`));
-          const text = await timeAsync('fetch: read body', () => res.text());
-          mark('body in hand', `${text.length} chars`);
-          const draft = time('draft: localStorage read', () => loadDraft());
-          const restore = time(
-            'draft: compare',
-            () => Boolean(draft) && draft !== text,
-            `${draft ? draft.length : 0} chars`
-          );
-          state.serverContent = text;
-          // Through the setter: a mode switch or find during the fetch may
-          // have filled the editor, and then the DOM needs the text too.
-          setDocText(restore ? draft : text);
-          state.dirty = restore;
-          if (restore) {
-            // Recover from a previous session that didn't reach the server.
-            setStatus('offline', 'unsynced draft restored');
-          } else {
-            setStatus('saved', `loaded ${fmtTime(new Date())}`);
-          }
-          time('editor: enable', () => ($('#editor').disabled = false));
-          syncEditor();
-          const line = Number(params.get('line'));
-          if (line > 1) jumpInEditor(lineOffset(docText(), line));
-          else if (editorOnScreen()) time('editor: focus', () => $('#editor').focus());
-          timeAsync('backlinks', () => fetchBacklinks());
-          mark('loadExisting: done');
-          if (perfOn) {
-            requestAnimationFrame(() => mark('first frame after load'));
-            setTimeout(() => mark('first macrotask after load'), 0);
-          }
+          loaded = await timeAsync('load: read', () => readUnit());
         } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') {
-            showAuthDialog();
-            return;
-          }
-          showError(`Failed to load: ${e.message}`);
-        }
-      }
-
-      function initCapture() {
-        toolbar.path = 'new — unsaved';
-        $('#del').hidden = true;
-        $('#recent').hidden = false;
-        const draft = loadDraft();
-        state.serverContent = '';
-        setDocText(draft ?? STARTER_TEMPLATE);
-        state.dirty = !!draft;
-        setStatus('editing', state.dirty ? 'unsaved draft restored' : 'new note');
-        // A new note is written, not read, so the editor is wanted right away.
-        const ed = ensureEditor();
-        ed.focus();
-        // Place cursor at end so the user starts typing body content after the FM.
-        ed.setSelectionRange(state.body.length, state.body.length);
-      }
-
-      // Outline ----------------------------------------------------------
-      const parseHeadings = text => {
-        // Skip leading frontmatter so `# title` lines inside FM aren't headings.
-        const fmMatch = /^---\n[\s\S]*?\n---\n/.exec(text);
-        const headStart = fmMatch ? fmMatch[0].length : 0;
-        const lines = text.split('\n');
-        const headings = [];
-        let inFence = false;
-        let runningOffset = 0;
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          if (runningOffset < headStart) {
-            runningOffset += line.length + 1;
-            continue;
-          }
-          if (/^```/.test(line)) {
-            inFence = !inFence;
-            runningOffset += line.length + 1;
-            continue;
-          }
-          if (!inFence) {
-            const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
-            if (m) headings.push({level: m[1].length, text: m[2], offset: runningOffset});
-          }
-          runningOffset += line.length + 1;
-        }
-        return headings;
-      };
-
-      const lineOffset = (text, line) => {
-        let offset = 0;
-        for (let n = 1; n < line; ++n) {
-          const next = text.indexOf('\n', offset);
-          if (next < 0) return text.length;
-          offset = next + 1;
-        }
-        return offset;
-      };
-
-      const jumpInEditor = offset => {
-        const ta = ensureEditor();
-        ta.focus();
-        ta.setSelectionRange(offset, offset);
-        ta.scrollToOffset(offset);
-      };
-
-      const jumpInPreview = index => {
-        // Pick the Nth heading element in the rendered output. The parser and
-        // marked agree on heading order for ATX headings (the convention in
-        // this vault); setext headings would mismatch but they're rare here.
-        const headings = $('#preview').querySelectorAll('h1, h2, h3, h4, h5, h6');
-        const target = headings[index];
-        if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
-      };
-
-      const jumpToHeading = (offset, index) => {
-        // Editor pane is hidden in `preview` mode; preview pane is hidden in
-        // `edit` mode. Dispatch to whichever surface is visible (or both in
-        // `split`). If the preview is empty (we just rendered an edit-only
-        // session), fall back to scrolling the editor.
-        if (viewMode === 'preview') {
-          // Jumping is a request to see it, so render even if gated.
-          renderPreview(docText());
-          requestAnimationFrame(() => jumpInPreview(index));
-        } else if (viewMode === 'edit') {
-          jumpInEditor(offset);
-        } else {
-          // split: jump both surfaces.
-          jumpInEditor(offset);
-          requestAnimationFrame(() => jumpInPreview(index));
-        }
-      };
-
-      const openOutline = () => {
-        const headings = parseHeadings(docText());
-        const list = $('#outline-list');
-        $('#outline-count').textContent =
-          headings.length === 0
-            ? 'No headings in this note.'
-            : `${headings.length} heading${headings.length === 1 ? '' : 's'}.`;
-        if (headings.length === 0) {
-          list.innerHTML =
-            '<div class="empty">Add headings (`# `, `## `, …) to jump around long notes.</div>';
-        } else {
-          list.innerHTML = headings
-            .map(
-              (h, i) => `
-          <a href="#" class="outline-item" data-offset="${h.offset}" data-index="${i}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem">
-            <b>${esc(h.text)}</b>
-            <small>H${h.level}</small>
-          </a>
-        `
-            )
-            .join('');
-        }
-        $('#outline-dlg').showModal();
-      };
-
-      // Backlinks --------------------------------------------------------
-      const fetchBacklinks = async () => {
-        if (!state.path) return;
-        try {
-          const resolved = await apiJson(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
-          state.recordId = resolved.record_id;
-          const data = await apiJson(`/sections/${state.recordId}/backlinks?limit=50`);
-          state.backlinks = data.items ?? [];
-          state.backlinksTotal = data.total ?? state.backlinks.length;
-          const btn = $('#backlinks');
-          if (state.backlinksTotal === 0) {
-            btn.hidden = true;
-          } else {
-            btn.hidden = false;
-            btn.textContent = `Backlinks (${state.backlinksTotal})`;
-          }
-        } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') return;
-          // Backlinks are nice-to-have; don't surface errors to the user.
-        }
-      };
-
-      const openBacklinks = () => {
-        const list = $('#backlinks-list');
-        const items = state.backlinks ?? [];
-        const total = state.backlinksTotal ?? 0;
-        $('#backlinks-count').textContent =
-          total === 0
-            ? 'No notes link to this one.'
-            : `${total} note${total === 1 ? '' : 's'} link${total === 1 ? 's' : ''} to this one${
-                items.length < total ? ` (showing first ${items.length})` : ''
-              }.`;
-        if (items.length === 0) {
-          list.innerHTML = '<div class="empty">None.</div>';
-        } else {
-          list.innerHTML = items
-            .map(bl => {
-              const fr = bl.from_record;
-              const t = bl.edge?.type ?? 'cites';
-              const title = fr.title || fr.file_path.split('/').pop().replace(/\.md$/, '');
-              return `
-          <a href="/ui/note.html?path=${encodeURIComponent(fr.file_path)}">
-            <b>${esc(title)}</b>
-            <small>${esc(fr.file_path)} · ${esc(t)}</small>
-          </a>
-        `;
-            })
-            .join('');
-        }
-        $('#backlinks-dlg').showModal();
-      };
-
-      // Wikilink picker --------------------------------------------------
-      let wikiResults = [];
-      let wikiSelected = -1;
-      let wikiSearchTimer = null;
-      let wikiAbort = null;
-
-      const insertAtCursor = text => {
-        const ta = ensureEditor();
-        const start = ta.selectionStart;
-        const end = ta.selectionEnd;
-        ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
-        const pos = start + text.length;
-        ta.setSelectionRange(pos, pos);
-        ta.dispatchEvent(new Event('input', {bubbles: true}));
-      };
-
-      const insertWikilink = path => {
-        const target = path.replace(/\.md$/, '');
-        insertAtCursor(`[[${target}]]`);
-      };
-
-      const openWikiPicker = () => {
-        $('#wiki-search').value = '';
-        $('#wiki-results').innerHTML = '<div class="empty">Type to search the vault.</div>';
-        wikiResults = [];
-        wikiSelected = -1;
-        $('#wiki-dlg').showModal();
-        $('#wiki-search').focus();
-      };
-
-      const renderWikiResults = items => {
-        if (items.length === 0) {
-          $('#wiki-results').innerHTML = '<div class="empty">No matches.</div>';
+          if (e.message === 'unauthorized' || e.message === 'no-token') return showAuthDialog();
+          if (e.status === 404 && params.has('new')) return startNew(state.path);
+          setStatus('offline', 'not loaded');
+          showError(`Failed to load ${unitName(state.unit)} of ${state.path}: ${e.message}`);
           return;
         }
-        $('#wiki-results').innerHTML = items
-          .map(
-            (r, i) => `
-    <a href="#" class="${i === wikiSelected ? 'active' : ''}" data-idx="${i}">
-      <b>${esc(r.title)}</b>
-      <small>${esc(r.filename)}</small>
-      ${r.snippet ? `<span class="snippet">… ${esc(r.snippet)} …</span>` : ''}
-    </a>
-  `
-          )
-          .join('');
-        if (wikiSelected >= 0) {
-          const active = $('#wiki-results a.active');
-          if (active) active.scrollIntoView({block: 'nearest'});
-        }
-      };
+        state.isNew = false;
+        state.serverText = loaded.text;
+        state.baseHash = loaded.hash;
+        fill(loaded.text);
+        editor.disabled = false;
+        $('#view').hidden = false;
+        $('#del').hidden = state.unit.kind !== 'document';
+        reflectDirty();
+        setStatus('saved', `loaded ${fmtTime(new Date())}`);
+        schedulePreview();
+        await checkDrafts();
+        mark('load: done');
+      }
 
-      const wikiSearchOnce = async q => {
-        if (wikiAbort) wikiAbort.abort();
-        wikiAbort = new AbortController();
+      async function checkDrafts() {
         try {
-          const params = new URLSearchParams({query: q});
-          const data = await apiJson(`/search/simple/?${params}`, {
-            method: 'POST',
-            signal: wikiAbort.signal
-          });
-          const items = (Array.isArray(data) ? data : [])
-            .filter(r => r.filename !== state.path)
-            .slice(0, 10)
-            .map(r => ({
-              filename: r.filename,
-              title: r.filename.split('/').pop().replace(/\.md$/, ''),
-              snippet: r.matches?.[0]?.context ?? null
-            }));
-          wikiResults = items;
-          wikiSelected = items.length > 0 ? 0 : -1;
-          renderWikiResults(items);
-        } catch (e) {
-          if (e.name === 'AbortError') return;
-          $('#wiki-results').innerHTML =
-            `<div class="empty">Search failed: ${esc(e.message)}</div>`;
-        }
-      };
-
-      async function openRecent() {
-        const list = $('#recent-list');
-        list.innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
-        $('#recent-dlg').showModal();
-        try {
-          const data = await apiJson('/sections?file_prefix=raw&exclude=body&limit=50');
-          const items = (data.items ?? [])
-            .filter(r => !r.file_path.includes('/archive/'))
-            .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
-            .slice(0, 10);
-          if (items.length === 0) {
-            list.innerHTML = '<div class="empty">No recent notes in <code>raw/</code>.</div>';
-            return;
-          }
-          list.innerHTML = items
-            .map(
-              r => `
-      <a href="/ui/edit.html?path=${encodeURIComponent(r.file_path)}">
-        <b>${esc(r.title || r.file_path.split('/').pop())}</b>
-        <small>${esc(r.file_path)} · ${esc(r.updated ?? '')}</small>
-      </a>
-    `
-            )
-            .join('');
-        } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') {
-            $('#recent-dlg').close();
-            showAuthDialog();
-            return;
-          }
-          list.innerHTML = `<div class="empty">Failed to load: ${esc(e.message)}</div>`;
+          const {items} = await apiJson(`/drafts?path=${encodeURIComponent(state.path)}`);
+          const draft = items.find(d => sameUnit(d.unit, state.unit));
+          if (draft && draft.text !== editor.value) offerDraft(draft);
+        } catch {
+          // No drafts to offer is the same page either way.
         }
       }
 
-      // view modes ------------------------------------------------------
-      // Resolved by the head script; one precedence rule, in one place.
-      let viewMode = document.documentElement.dataset.view;
+      function startNew(path) {
+        state.path = path;
+        state.unit = {kind: 'document'};
+        state.isNew = true;
+        state.serverText = '';
+        state.baseHash = '';
+        history.replaceState(null, '', `?path=${encodeURIComponent(path)}&new=1`);
+        toolbar.path = `${path} (new)`;
+        document.title = 'vault-storage — new note';
+        $('#recent').hidden = false;
+        fill(STARTER_TEMPLATE);
+        editor.disabled = false;
+        reflectDirty();
+        setStatus('editing', 'new note');
+        editor.focus();
+        editor.setSelectionRange(editor.value.length, editor.value.length);
+        checkDrafts().then(offerOrphans);
+      }
 
-      const setViewMode = mode => {
-        viewMode = mode;
-        localStorage.setItem(VIEW_KEY, mode);
-        document.documentElement.dataset.view = mode;
-        toolbar.mode = mode;
-        syncEditor();
+      // Unsaved new notes left behind by an earlier page: drafts of paths not yet in the vault.
+      async function offerOrphans() {
+        if (!$('#notice').hidden) return;
+        try {
+          const {items} = await apiJson('/drafts');
+          const candidates = items.filter(
+            d => d.unit.kind === 'document' && d.path.startsWith('raw/') && d.path !== state.path
+          );
+          if (!candidates.length) return;
+          const exist = await existingPaths(candidates.map(d => d.path));
+          const orphans = candidates.filter(d => !exist.has(d.path)).slice(0, 5);
+          if (!orphans.length) return;
+          showNotice(
+            'Unsaved new notes from earlier: ' +
+              orphans
+                .map(
+                  d =>
+                    `<a href="/ui/edit.html?path=${encodeURIComponent(d.path)}&new=1">${esc(d.path)}</a> (${esc(fmtTime(new Date(d.updated)))})`
+                )
+                .join(', ') +
+              '.'
+          );
+        } catch {
+          // Nothing to offer.
+        }
+      }
+
+      // save ------------------------------------------------------------
+      async function writeUnit(text, force) {
+        const at = `/vault/${encodePath(state.path)}`;
+        const {unit} = state;
+        const guard = force ? {} : {expected_hash: state.baseHash};
+        const edit = payload =>
+          apiJson('/vault/edit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: state.path, ...payload, ...guard})
+          });
+        if (unit.kind === 'section') {
+          const r = await edit({
+            op: 'replace-section',
+            heading: unit.heading,
+            occurrence: unit.occurrence,
+            body: text
+          });
+          return {hash: r.hash, text};
+        }
+        if (unit.kind === 'frontmatter') {
+          const r = await edit({op: 'replace-frontmatter', yaml: text});
+          // The server writes its own serialization and stamps `updated`; show what it wrote.
+          const fresh = await apiJson(`${at}?frontmatter=yaml`);
+          return {hash: r.hash, text: fresh.hash === r.hash ? fresh.frontmatter : text};
+        }
+        const headers = {'Content-Type': 'text/markdown'};
+        if (!force && !state.isNew) headers['If-Match'] = `"${state.baseHash}"`;
+        const res = await api(at, {method: 'PUT', headers, body: text});
+        return {hash: etagOf(res), text};
+      }
+
+      const isConflict = e =>
+        e.status === 412 ||
+        (e.status === 409 && (e.code === 'section_changed' || e.code === 'frontmatter_changed'));
+
+      async function save(force = false) {
+        if (!state.dirty && !force) return;
+        const text = editor.value;
+        setStatus('saving', '');
+        hideNotice();
+        try {
+          const saved = await writeUnit(text, force);
+          const created = state.isNew;
+          state.isNew = false;
+          state.baseHash = saved.hash;
+          state.serverText = saved.text;
+          if (saved.text !== text && editor.value === text) editor.value = saved.text;
+          state.lastSavedAt = new Date();
+          await dropDraft();
+          reflectDirty();
+          setStatus('saved', `saved ${fmtTime(state.lastSavedAt)}`);
+          hideError();
+          if (created) {
+            history.replaceState(null, '', `?path=${encodeURIComponent(state.path)}`);
+            toolbar.path = state.path;
+            document.title = `vault-storage — edit ${state.path}`;
+            $('#view').hidden = false;
+            $('#del').hidden = false;
+            $('#recent').hidden = true;
+          }
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') return showAuthDialog();
+          await keepDraft();
+          setStatus('offline', 'not saved');
+          if (isConflict(e)) {
+            showNotice(
+              `${esc(unitName(state.unit))} changed on the server since you opened it. Your text is kept as a draft.` +
+                '<button data-action="reload">Load the server’s version</button><button data-action="force">Save mine anyway</button>'
+            );
+            return;
+          }
+          showError(`Save failed: ${e.message}`);
+        }
+      }
+
+      async function discard() {
+        clearTimeout(state.draftTimer);
+        state.draftTimer = null;
+        await dropDraft();
+        editor.value = state.serverText;
+        reflectDirty();
+        hideNotice();
+        setStatus('saved', 'changes discarded');
         schedulePreview();
+      }
+
+      $('#notice').addEventListener('click', async e => {
+        const action = e.target.closest('button[data-action]')?.dataset.action;
+        if (!action) return;
+        hideNotice();
+        if (action === 'restore') {
+          editor.value = state.draftText ?? editor.value;
+          reflectDirty();
+          setStatus('editing', 'draft restored; not saved');
+          schedulePreview();
+        } else if (action === 'drop') {
+          await dropDraft();
+        } else if (action === 'reload') {
+          await load();
+        } else if (action === 'force') {
+          await save(true);
+        }
+      });
+
+      async function del() {
+        try {
+          await api(`/vault/${encodePath(state.path)}`, {method: 'DELETE'});
+          await dropDraft();
+          state.dirty = false;
+          location.href = '/ui/projects.html';
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') return showAuthDialog();
+          showError(`Delete failed: ${e.message}`);
+        }
+      }
+
+      // edit ------------------------------------------------------------
+      editor.addEventListener('input', () => {
+        reflectDirty();
+        if (state.dirty) {
+          setStatus('editing', 'unsaved');
+          clearTimeout(state.draftTimer);
+          state.draftTimer = setTimeout(keepDraft, DRAFT_DEBOUNCE_MS);
+        } else {
+          setStatus(
+            'saved',
+            state.lastSavedAt ? `saved ${fmtTime(state.lastSavedAt)}` : 'no changes'
+          );
+        }
+        previewManual = false;
+        schedulePreview();
+        if (!$('#find-bar').hidden) recomputeFind();
+      });
+
+      // execCommand keeps the edit on the textarea's own undo stack; setRangeText is the fallback.
+      const insertText = text => {
+        editor.focus();
+        if (!document.execCommand('insertText', false, text)) {
+          editor.setRangeText(text, editor.selectionStart, editor.selectionEnd, 'end');
+          editor.dispatchEvent(new Event('input', {bubbles: true}));
+        }
       };
 
+      const insertWrap = (open, close) => {
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        const tail = close ?? open;
+        const selected = editor.value.slice(start, end);
+        insertText(open + selected + tail);
+        if (selected) editor.setSelectionRange(start, end + open.length + tail.length);
+        else editor.setSelectionRange(start + open.length, start + open.length);
+      };
+
+      const insertPrefix = prefix => {
+        const cursor = editor.selectionStart;
+        const lineStart = editor.value.lastIndexOf('\n', cursor - 1) + 1;
+        editor.setSelectionRange(lineStart, lineStart);
+        insertText(prefix);
+        editor.setSelectionRange(cursor + prefix.length, cursor + prefix.length);
+      };
+
+      // Blur and refocus: the engines scroll a textarea to its caret on focus.
+      const jumpTo = (start, end = start) => {
+        editor.focus();
+        editor.setSelectionRange(start, end);
+        editor.blur();
+        editor.focus();
+      };
+
+      // Spellcheck stays off until someone edits: checking a large body can cost more than the load.
+      const armSpellcheck = () => {
+        if (!editor.spellcheck) time('editor: spellcheck on', () => (editor.spellcheck = true));
+      };
+      for (const evt of ['pointerdown', 'keydown']) {
+        editor.addEventListener(evt, armSpellcheck, {once: true});
+      }
+
+      editor.addEventListener('focus', () => {
+        document.body.dataset.editorFocused = '1';
+      });
+      editor.addEventListener('blur', () => {
+        delete document.body.dataset.editorFocused;
+      });
+
+      // preview ---------------------------------------------------------
+      let viewMode = document.documentElement.dataset.view;
       let previewTimer = null;
+      let previewTicket = 0;
       let previewManual = false;
       let previewRendered = false;
+      const narrow = window.matchMedia('(max-width: 767px)');
+      const previewOnScreen = () =>
+        state.unit.kind !== 'frontmatter' &&
+        (viewMode === 'preview' || (viewMode === 'split' && !narrow.matches));
 
       const fmtCount = n =>
         n < 1000
@@ -958,17 +949,16 @@ ready: false
         };
       };
 
-      let previewTicket = 0;
-
       // The server renders (D60): the browser's own regex engine took 45 s on a large note.
       const renderPreview = async text => {
-        // An empty render is not one: the debounce can fire before the note
-        // body has arrived, and that must not read back as "out of date".
         previewRendered = text.length > 0;
         $('#preview-gate').hidden = true;
         $('#preview').hidden = false;
         const ticket = ++previewTicket;
-        const {yaml, body} = splitFrontmatter(text);
+        const {yaml, body} =
+          state.unit.kind === 'section'
+            ? {yaml: null, body: `${state.unit.heading}\n\n${text}`}
+            : splitFrontmatter(text);
         try {
           const res = await timeAsync('preview: server render', () =>
             api('/vault/render', {
@@ -995,8 +985,8 @@ ready: false
       // threshold a render per typing pause is the writer's to ask for.
       const armPreviewGate = chars => {
         $('#preview-gate-text').textContent = previewRendered
-          ? `Preview is out of date. This note is ${fmtCount(chars)} characters; re-render it to see the change.`
-          : `Preview is off above ${fmtCount(PREVIEW_AUTO_MAX_CHARS)} characters. This note is ${fmtCount(chars)}.`;
+          ? `Preview is out of date. This text is ${fmtCount(chars)} characters; re-render it to see the change.`
+          : `Preview is off above ${fmtCount(PREVIEW_AUTO_MAX_CHARS)} characters. This text is ${fmtCount(chars)}.`;
         $('#preview-render').textContent = previewRendered ? 'Re-render' : 'Render preview';
         $('#preview').hidden = true;
         $('#preview-gate').hidden = false;
@@ -1004,10 +994,9 @@ ready: false
 
       const schedulePreview = () => {
         if (!previewOnScreen()) return;
-        if (previewTimer) clearTimeout(previewTimer);
+        clearTimeout(previewTimer);
         previewTimer = setTimeout(() => {
-          mark('preview: debounce fired');
-          const text = time('preview: read document', () => docText());
+          const text = editor.value;
           if (!previewManual && text.length > PREVIEW_AUTO_MAX_CHARS) {
             armPreviewGate(text.length);
             return;
@@ -1018,384 +1007,167 @@ ready: false
 
       $('#preview-render').addEventListener('click', () => {
         previewManual = true;
-        mark('preview: render asked for');
-        renderPreview(time('preview: read document', () => docText()));
+        renderPreview(editor.value);
       });
 
-      // Spellcheck stays off until someone actually edits. Checking a large
-      // body can cost more than the whole load, and the engine does it even
-      // while the editor sits hidden behind the preview.
-      const armSpellcheck = () => {
-        if ($('#editor').spellcheck) return;
-        time('editor: spellcheck on', () => ($('#editor').spellcheck = true));
-      };
-      for (const evt of ['pointerdown', 'keydown']) {
-        $('#editor').addEventListener(evt, armSpellcheck, {once: true});
-      }
-
-      // edit + autosave -------------------------------------------------
-      function onInput() {
-        const body = $('#editor').value;
-        state.body = body;
-        state.dirty = body !== state.serverContent;
-        previewManual = false;
-        schedulePreview();
-        // Keep find highlights in sync if the bar is open while editing.
-        if (!$('#find-bar').hidden) recomputeFind();
-        if (!state.dirty) {
-          setStatus(
-            'saved',
-            state.lastSavedAt ? `saved ${fmtTime(state.lastSavedAt)}` : 'no changes'
-          );
-          return;
-        }
-        stageDraft(body);
-        setStatus('editing', 'editing');
-        if (state.saveTimer) clearTimeout(state.saveTimer);
-        state.saveTimer = setTimeout(save, DEBOUNCE_MS);
-      }
-
-      async function save() {
-        if (state.saveTimer) {
-          clearTimeout(state.saveTimer);
-          state.saveTimer = null;
-        }
-        const body = docText();
-        if (!state.dirty && state.path) return;
-        if (!state.path) state.path = newCapturePath();
-        setStatus('saving', '');
-        try {
-          await api(`/vault/${encodePath(state.path)}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'text/markdown'},
-            body
-          });
-          state.serverContent = body;
-          state.body = body;
-          state.dirty = false;
-          state.lastSavedAt = new Date();
-          // Clear both the per-path draft and the capture-mode "new" key — on a
-          // first capture save the staged draft lives under "new" but dropDraft()
-          // now keys by the freshly-assigned path.
-          localStorage.removeItem(DRAFT_PREFIX + 'new');
-          dropDraft();
-          toolbar.path = state.path;
-          $('#del').hidden = false;
-          $('#view').hidden = false;
-          $('#recent').hidden = true;
-          // Update URL so refresh stays on this note.
-          if (location.search === '' || params.get('path') !== state.path) {
-            const newUrl = `?path=${encodeURIComponent(state.path)}`;
-            history.replaceState(null, '', newUrl);
-            params.set('path', state.path);
-          }
-          setStatus('saved', `saved ${fmtTime(state.lastSavedAt)}`);
-          hideError();
-        } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') {
-            showAuthDialog();
-            return;
-          }
-          setStatus('offline', 'offline; will retry');
-          showError(`Save failed: ${e.message}`);
-        }
-      }
-
-      async function del() {
-        if (!state.path) return;
-        try {
-          await api(`/vault/${encodePath(state.path)}`, {method: 'DELETE'});
-          dropDraft();
-          state.dirty = false;
-          location.href = '/ui/projects.html';
-        } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') {
-            showAuthDialog();
-            return;
-          }
-          showError(`Delete failed: ${e.message}`);
-        }
-      }
-
-      const showError = msg => {
-        $('#err').textContent = msg;
-        $('#err').hidden = false;
-      };
-      const hideError = () => {
-        $('#err').hidden = true;
-      };
-
-      // wiring ----------------------------------------------------------
-      document.addEventListener('token-change', init);
-
-      $('#save').addEventListener('click', save);
-      $('#view').addEventListener('click', () => {
-        location.href = `/ui/note.html?path=${encodeURIComponent(state.path)}`;
-      });
-      $('#del').addEventListener('click', () => $('#del-dlg').showModal());
-      $('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
-      $('#del-confirm').addEventListener('click', () => {
-        $('#del-dlg').close();
-        del();
-      });
-      $('#recent').addEventListener('click', openRecent);
-      $('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
-
-      $('#wiki-pick').addEventListener('click', openWikiPicker);
-      $('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
-
-      $('#backlinks').addEventListener('click', openBacklinks);
-      $('#backlinks-close').addEventListener('click', () => $('#backlinks-dlg').close());
-
-      $('#outline').addEventListener('click', openOutline);
-      $('#outline-close').addEventListener('click', () => $('#outline-dlg').close());
-      $('#outline-list').addEventListener('click', e => {
-        const item = e.target.closest('a.outline-item');
-        if (!item) return;
-        e.preventDefault();
-        const offset = Number(item.dataset.offset);
-        const index = Number(item.dataset.index);
-        if (Number.isFinite(offset) && Number.isFinite(index)) {
-          $('#outline-dlg').close();
-          jumpToHeading(offset, index);
-        }
-      });
-
-      $('#wiki-search').addEventListener('input', () => {
-        const q = $('#wiki-search').value.trim();
-        if (wikiSearchTimer) clearTimeout(wikiSearchTimer);
-        if (q.length < 2) {
-          wikiResults = [];
-          wikiSelected = -1;
-          $('#wiki-results').innerHTML = '<div class="empty">Type to search the vault.</div>';
-          return;
-        }
-        wikiSearchTimer = setTimeout(() => wikiSearchOnce(q), 150);
-      });
-
-      $('#wiki-search').addEventListener('keydown', e => {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          if (wikiResults.length === 0) return;
-          wikiSelected = (wikiSelected + 1) % wikiResults.length;
-          renderWikiResults(wikiResults);
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          if (wikiResults.length === 0) return;
-          wikiSelected = (wikiSelected - 1 + wikiResults.length) % wikiResults.length;
-          renderWikiResults(wikiResults);
-        } else if (e.key === 'Enter') {
-          e.preventDefault();
-          if (wikiResults.length > 0) {
-            const idx = wikiSelected >= 0 ? wikiSelected : 0;
-            insertWikilink(wikiResults[idx].filename);
-            $('#wiki-dlg').close();
-            $('#editor').focus();
-          }
-        }
-      });
-
-      $('#wiki-results').addEventListener('click', e => {
-        const item = e.target.closest('a[data-idx]');
-        if (!item) return;
-        e.preventDefault();
-        const idx = Number(item.dataset.idx);
-        if (Number.isFinite(idx) && wikiResults[idx]) {
-          insertWikilink(wikiResults[idx].filename);
-          $('#wiki-dlg').close();
-          $('#editor').focus();
-        }
-      });
-
-      // Split hides the preview under 768px, so crossing the breakpoint can
-      // reveal a surface that was never filled.
-      narrow.addEventListener('change', () => {
-        syncEditor();
+      toolbar.addEventListener('mode-change', e => {
+        viewMode = e.detail.mode;
+        localStorage.setItem('vault.view-mode', viewMode);
+        document.documentElement.dataset.view = viewMode;
+        toolbar.mode = viewMode;
         schedulePreview();
       });
-
-      // View-mode toggle (Edit / Split / Preview).
-      toolbar.addEventListener('mode-change', e => setViewMode(e.detail.mode));
-      // Not setViewMode: that persists a one-shot URL mode and fills the editor
-      // before the note arrives. init() fills and renders once the text is in.
       toolbar.mode = viewMode;
+      narrow.addEventListener('change', schedulePreview);
 
-      // Mobile insert-row -----------------------------------------------
-      const insertWrap = (open, close) => {
-        const ta = ensureEditor();
-        const start = ta.selectionStart;
-        const end = ta.selectionEnd;
-        const before = ta.value.slice(0, start);
-        const sel = ta.value.slice(start, end);
-        const after = ta.value.slice(end);
-        const tail = close ?? open;
-        ta.value = before + open + sel + tail + after;
-        if (sel.length === 0) {
-          const pos = start + open.length;
-          ta.setSelectionRange(pos, pos);
-        } else {
-          ta.setSelectionRange(start, end + open.length + tail.length);
+      // outline ---------------------------------------------------------
+      const parseHeadings = text => {
+        const lines = text.split('\n');
+        const headings = [];
+        let inFence = false;
+        let offset = 0;
+        let i = 0;
+        if (lines[0] === '---') {
+          offset = 4;
+          for (i = 1; i < lines.length && lines[i] !== '---'; ++i) offset += lines[i].length + 1;
+          offset += 4;
+          ++i;
         }
-        ta.dispatchEvent(new Event('input', {bubbles: true}));
+        for (; i < lines.length; ++i) {
+          const line = lines[i];
+          if (line.startsWith('```')) inFence = !inFence;
+          else if (!inFence) {
+            const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+            if (m) headings.push({level: m[1].length, text: m[2], offset});
+          }
+          offset += line.length + 1;
+        }
+        return headings;
       };
 
-      const insertPrefix = prefix => {
-        const ta = ensureEditor();
-        const cursor = ta.selectionStart;
-        const lineStart = ta.value.lastIndexOf('\n', cursor - 1) + 1;
-        ta.value = ta.value.slice(0, lineStart) + prefix + ta.value.slice(lineStart);
-        const newPos = cursor + prefix.length;
-        ta.setSelectionRange(newPos, newPos);
-        ta.dispatchEvent(new Event('input', {bubbles: true}));
+      const openOutline = () => {
+        const headings = parseHeadings(editor.value);
+        $('#outline-count').textContent = headings.length
+          ? `${headings.length} heading${headings.length === 1 ? '' : 's'}.`
+          : 'No headings in this text.';
+        $('#outline-list').innerHTML = headings
+          .map(
+            h =>
+              `<a href="#" data-offset="${h.offset}" style="padding-left: ${(h.level - 1) * 1.2 + 0.7}rem"><b>${esc(h.text)}</b><small>H${h.level}</small></a>`
+          )
+          .join('');
+        $('#outline-dlg').showModal();
       };
 
-      // Prevent the buttons from stealing focus from the editor on tap.
-      $('#insert-row').addEventListener('mousedown', e => {
-        if (e.target.closest('button')) e.preventDefault();
-      });
-      $('#insert-row').addEventListener('click', e => {
-        const btn = e.target.closest('button');
-        if (!btn) return;
+      $('#outline-list').addEventListener('click', e => {
+        const item = e.target.closest('a[data-offset]');
+        if (!item) return;
         e.preventDefault();
-        if (btn.dataset.insertWrap !== undefined) {
-          insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
-        } else if (btn.dataset.insertPrefix !== undefined) {
-          insertPrefix(btn.dataset.insertPrefix);
-        }
+        $('#outline-dlg').close();
+        jumpTo(Number(item.dataset.offset));
       });
 
-      $('#editor').addEventListener('focus', () => {
-        document.body.dataset.editorFocused = '1';
-      });
-      $('#editor').addEventListener('blur', () => {
-        delete document.body.dataset.editorFocused;
-      });
+      // find / replace --------------------------------------------------
+      const find = {matches: [], idx: -1, caseSensitive: false, anchor: 0};
 
-      // Track the on-screen keyboard via visualViewport so the insert-row
-      // floats above the keyboard rather than being covered by it.
-      if (window.visualViewport) {
-        const adjustKeyboardOffset = () => {
-          const vv = window.visualViewport;
-          const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-          document.documentElement.style.setProperty('--kb-offset', `${offset}px`);
-        };
-        window.visualViewport.addEventListener('resize', adjustKeyboardOffset);
-        window.visualViewport.addEventListener('scroll', adjustKeyboardOffset);
-        adjustKeyboardOffset();
-      }
-
-      // find / replace -------------------------------------------------
-      const findState = {idx: -1, caseSensitive: false, anchor: 0};
-      let findMatches = [];
-
-      const findAll = (hay, needle, cs) => {
+      const findAll = (hay, needle) => {
         const out = [];
         if (!needle) return out;
-        const h = cs ? hay : hay.toLowerCase();
-        const n = cs ? needle : needle.toLowerCase();
+        let h = hay;
+        let n = needle;
+        if (!find.caseSensitive) {
+          const lower = hay.toLowerCase();
+          // A case fold that changes the length would shift every offset.
+          if (lower.length === hay.length) {
+            h = lower;
+            n = needle.toLowerCase();
+          }
+        }
         for (let at = h.indexOf(n); at >= 0; at = h.indexOf(n, at + n.length)) out.push(at);
         return out;
       };
 
       const updateFindUI = () => {
-        const n = findMatches.length;
+        const n = find.matches.length;
         const q = $('#find-input').value;
-        $('#find-count').textContent = n ? `${findState.idx + 1}/${n}` : q ? 'no results' : '';
+        $('#find-count').textContent = n ? `${find.idx + 1}/${n}` : q ? 'no results' : '';
         for (const id of ['#find-prev', '#find-next', '#replace-one', '#replace-all']) {
           $(id).disabled = n === 0;
         }
         $('#find-input').classList.toggle('no-match', !!q && n === 0);
       };
 
-      const selectCurrentMatch = () => {
-        const ta = ensureEditor();
-        const len = $('#find-input').value.length;
-        // Paint every match (current one distinctly) via the Custom Highlight API —
-        // no DOM mutation, so editor focus/caret/undo are untouched and Enter keeps
-        // advancing. Then scroll the current match into view.
-        ta.setHighlights(findMatches, findState.idx, len);
-        if (findState.idx >= 0) {
-          const start = findMatches[findState.idx];
-          ta.scrollToOffset(start, start + len);
-        }
+      const selectMatch = () => {
+        if (find.idx < 0) return;
+        const start = find.matches[find.idx];
+        const back = document.activeElement;
+        jumpTo(start, start + $('#find-input').value.length);
+        if (back && back !== editor) back.focus();
       };
 
       const recomputeFind = () => {
-        const ta = ensureEditor();
-        findMatches = findAll(ta.value, $('#find-input').value, findState.caseSensitive);
-        if (findMatches.length === 0) {
-          findState.idx = -1;
-        } else {
-          const at = findMatches.findIndex(s => s >= findState.anchor);
-          findState.idx = at >= 0 ? at : 0;
-        }
+        find.matches = findAll(editor.value, $('#find-input').value);
+        const at = find.matches.findIndex(s => s >= find.anchor);
+        find.idx = find.matches.length ? (at >= 0 ? at : 0) : -1;
         updateFindUI();
-        selectCurrentMatch();
       };
 
       const stepFind = dir => {
-        if (!findMatches.length) return;
-        findState.idx = (findState.idx + dir + findMatches.length) % findMatches.length;
-        findState.anchor = findMatches[findState.idx];
+        const n = find.matches.length;
+        if (!n) return;
+        find.idx = (find.idx + dir + n) % n;
+        find.anchor = find.matches[find.idx];
         updateFindUI();
-        selectCurrentMatch();
+        selectMatch();
       };
 
       const replaceOne = () => {
-        if (findState.idx < 0) return;
-        const ta = ensureEditor();
-        const start = findMatches[findState.idx];
-        const rep = $('#replace-input').value;
-        ta.value =
-          ta.value.slice(0, start) + rep + ta.value.slice(start + $('#find-input').value.length);
-        ta.dispatchEvent(new Event('input', {bubbles: true}));
-        findState.anchor = start + rep.length;
+        if (find.idx < 0) return;
+        const start = find.matches[find.idx];
+        editor.setSelectionRange(start, start + $('#find-input').value.length);
+        insertText($('#replace-input').value);
+        find.anchor = start + $('#replace-input').value.length;
         recomputeFind();
+        $('#replace-input').focus();
       };
 
       const replaceAll = () => {
         const q = $('#find-input').value;
-        const ta = ensureEditor();
-        const matches = findAll(ta.value, q, findState.caseSensitive);
+        const matches = findAll(editor.value, q);
         if (!matches.length) return;
         const rep = $('#replace-input').value;
         let out = '';
         let prev = 0;
         for (const s of matches) {
-          out += ta.value.slice(prev, s) + rep;
+          out += editor.value.slice(prev, s) + rep;
           prev = s + q.length;
         }
-        ta.value = out + ta.value.slice(prev);
-        ta.dispatchEvent(new Event('input', {bubbles: true}));
-        findState.anchor = 0;
+        editor.setSelectionRange(0, editor.value.length);
+        insertText(out + editor.value.slice(prev));
+        find.anchor = 0;
         recomputeFind();
         $('#find-count').textContent = `${matches.length} replaced`;
       };
 
-      const openFind = focusReplace => {
-        if (viewMode === 'preview') return false;
-        const ta = ensureEditor();
-        const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+      const openFind = () => {
+        const sel = editor.value.slice(editor.selectionStart, editor.selectionEnd);
         if (sel && !sel.includes('\n')) $('#find-input').value = sel;
-        findState.anchor = ta.selectionStart || 0;
+        find.anchor = editor.selectionStart || 0;
         $('#find-bar').hidden = false;
         recomputeFind();
-        const focusEl = $(focusReplace ? '#replace-input' : '#find-input');
-        focusEl.focus();
-        focusEl.select();
-        return true;
+        $('#find-input').focus();
+        $('#find-input').select();
       };
 
       const closeFind = () => {
         if ($('#find-bar').hidden) return;
         $('#find-bar').hidden = true;
         $('#find-input').classList.remove('no-match');
-        const ta = ensureEditor();
-        ta.clearHighlights();
-        ta.focus();
-        if (findState.idx >= 0 && findMatches[findState.idx] != null) {
-          const s = findMatches[findState.idx];
-          ta.setSelectionRange(s, s + $('#find-input').value.length);
+        if (find.idx >= 0) {
+          const start = find.matches[find.idx];
+          jumpTo(start, start + $('#find-input').value.length);
+        } else {
+          editor.focus();
         }
       };
 
@@ -1424,39 +1196,198 @@ ready: false
       $('#replace-all').addEventListener('click', replaceAll);
       $('#find-close').addEventListener('click', closeFind);
       $('#find-case').addEventListener('click', () => {
-        findState.caseSensitive = !findState.caseSensitive;
-        $('#find-case').setAttribute('aria-pressed', String(findState.caseSensitive));
+        find.caseSensitive = !find.caseSensitive;
+        $('#find-case').setAttribute('aria-pressed', String(find.caseSensitive));
         recomputeFind();
       });
-      $('#find-btn').addEventListener('click', () => {
-        if (viewMode === 'preview') setViewMode('split');
-        openFind(false);
-      });
-      // Buttons keep focus in the active find/replace input so Enter still navigates.
       $('#find-bar').addEventListener('mousedown', e => {
         if (e.target.closest('button')) e.preventDefault();
       });
 
-      // Editor-wide shortcuts: ⌘S save, ⌘F find/replace, Esc closes the find bar.
+      // wikilink picker -------------------------------------------------
+      let wikiResults = [];
+      let wikiSelected = -1;
+      let wikiTimer = null;
+      let wikiAbort = null;
+
+      const insertWikilink = path => {
+        $('#wiki-dlg').close();
+        insertText(`[[${path.replace(/\.md$/, '')}]]`);
+      };
+
+      const renderWikiResults = () => {
+        $('#wiki-results').innerHTML = wikiResults.length
+          ? wikiResults
+              .map(
+                (r, i) =>
+                  `<a href="#" class="${i === wikiSelected ? 'active' : ''}" data-idx="${i}"><b>${esc(r.title)}</b><small>${esc(r.filename)}</small>${r.snippet ? `<span class="snippet">… ${esc(r.snippet)} …</span>` : ''}</a>`
+              )
+              .join('')
+          : '<div class="empty">No matches.</div>';
+        $('#wiki-results a.active')?.scrollIntoView({block: 'nearest'});
+      };
+
+      const wikiSearch = async q => {
+        wikiAbort?.abort();
+        wikiAbort = new AbortController();
+        try {
+          const data = await apiJson(`/search/simple/?${new URLSearchParams({query: q})}`, {
+            method: 'POST',
+            signal: wikiAbort.signal
+          });
+          wikiResults = (Array.isArray(data) ? data : [])
+            .filter(r => r.filename !== state.path)
+            .slice(0, 10)
+            .map(r => ({
+              filename: r.filename,
+              title: r.filename.split('/').pop().replace(/\.md$/, ''),
+              snippet: r.matches?.[0]?.context ?? null
+            }));
+          wikiSelected = wikiResults.length ? 0 : -1;
+          renderWikiResults();
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+          $('#wiki-results').innerHTML =
+            `<div class="empty">Search failed: ${esc(e.message)}</div>`;
+        }
+      };
+
+      $('#wiki-pick').addEventListener('click', () => {
+        $('#wiki-search').value = '';
+        $('#wiki-results').innerHTML = '<div class="empty">Type to search the vault.</div>';
+        wikiResults = [];
+        wikiSelected = -1;
+        $('#wiki-dlg').showModal();
+        $('#wiki-search').focus();
+      });
+      $('#wiki-cancel').addEventListener('click', () => $('#wiki-dlg').close());
+      $('#wiki-search').addEventListener('input', () => {
+        const q = $('#wiki-search').value.trim();
+        clearTimeout(wikiTimer);
+        if (q.length < 2) {
+          wikiResults = [];
+          wikiSelected = -1;
+          $('#wiki-results').innerHTML = '<div class="empty">Type to search the vault.</div>';
+          return;
+        }
+        wikiTimer = setTimeout(() => wikiSearch(q), 150);
+      });
+      $('#wiki-search').addEventListener('keydown', e => {
+        const n = wikiResults.length;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (!n) return;
+          wikiSelected = (wikiSelected + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+          renderWikiResults();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (n) insertWikilink(wikiResults[Math.max(wikiSelected, 0)].filename);
+        }
+      });
+      $('#wiki-results').addEventListener('click', e => {
+        const item = e.target.closest('a[data-idx]');
+        if (!item) return;
+        e.preventDefault();
+        const r = wikiResults[Number(item.dataset.idx)];
+        if (r) insertWikilink(r.filename);
+      });
+
+      // recent (a new note only) ----------------------------------------
+      async function openRecent() {
+        const list = $('#recent-list');
+        list.innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
+        $('#recent-dlg').showModal();
+        try {
+          const data = await apiJson('/sections?file_prefix=raw&exclude=body&limit=50');
+          const items = (data.items ?? [])
+            .filter(r => !r.file_path.includes('/archive/'))
+            .sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''))
+            .slice(0, 10);
+          list.innerHTML = items.length
+            ? items
+                .map(
+                  r =>
+                    `<a href="/ui/edit.html?path=${encodeURIComponent(r.file_path)}"><b>${esc(r.title || r.file_path.split('/').pop())}</b><small>${esc(r.file_path)} · ${esc(r.updated ?? '')}</small></a>`
+                )
+                .join('')
+            : '<div class="empty">No recent notes in <code>raw/</code>.</div>';
+        } catch (e) {
+          list.innerHTML = `<div class="empty">Failed to load: ${esc(e.message)}</div>`;
+        }
+      }
+
+      // wiring ----------------------------------------------------------
+      $('#save').addEventListener('click', () => save());
+      $('#discard').addEventListener('click', () => $('#discard-dlg').showModal());
+      $('#discard-cancel').addEventListener('click', () => $('#discard-dlg').close());
+      $('#discard-confirm').addEventListener('click', () => {
+        $('#discard-dlg').close();
+        discard();
+      });
+      $('#view').addEventListener('click', () => {
+        location.href = `/ui/note.html?path=${encodeURIComponent(state.path)}`;
+      });
+      $('#del').addEventListener('click', () => $('#del-dlg').showModal());
+      $('#del-cancel').addEventListener('click', () => $('#del-dlg').close());
+      $('#del-confirm').addEventListener('click', () => {
+        $('#del-dlg').close();
+        del();
+      });
+      $('#recent').addEventListener('click', openRecent);
+      $('#recent-close').addEventListener('click', () => $('#recent-dlg').close());
+      $('#outline').addEventListener('click', openOutline);
+      $('#outline-close').addEventListener('click', () => $('#outline-dlg').close());
+      $('#find-btn').addEventListener('click', openFind);
+
+      // Tapping a shortcut must not take focus from the editor.
+      $('#insert-row').addEventListener('mousedown', e => {
+        if (e.target.closest('button')) e.preventDefault();
+      });
+      $('#insert-row').addEventListener('click', e => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        e.preventDefault();
+        if (btn.dataset.insertWrap !== undefined)
+          insertWrap(btn.dataset.insertWrap, btn.dataset.insertEnd);
+        else if (btn.dataset.insertPrefix !== undefined) insertPrefix(btn.dataset.insertPrefix);
+      });
+
+      // Keep the insert row above the on-screen keyboard.
+      if (window.visualViewport) {
+        const adjust = () => {
+          const vv = window.visualViewport;
+          const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+          document.documentElement.style.setProperty('--kb-offset', `${offset}px`);
+        };
+        window.visualViewport.addEventListener('resize', adjust);
+        window.visualViewport.addEventListener('scroll', adjust);
+        adjust();
+      }
+
       document.addEventListener('keydown', e => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
           e.preventDefault();
           save();
-          return;
-        }
-        if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
-          // Always use our find (never the browser's native find, whose highlight
-          // is unstyleable and invisible — white-on-yellow — in the dark theme).
-          // Reveal the editor first if we're in preview-only view.
+        } else if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+          // Ours, not the browser's: GNOME Web reserves its own find at the chrome level.
           e.preventDefault();
-          if (viewMode === 'preview') setViewMode('split');
-          openFind(false);
-          return;
+          openFind();
+        } else if (e.key === 'Escape') {
+          closeFind();
         }
-        if (e.key === 'Escape') closeFind();
       });
 
-      init();
+      // A draft already on the server makes leaving safe; one still pending does not.
+      window.addEventListener('beforeunload', e => {
+        if (state.dirty && editor.value !== state.draftText) {
+          keepDraft();
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
+      document.addEventListener('token-change', load);
+
+      load();
     </script>
     <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
