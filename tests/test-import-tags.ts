@@ -119,6 +119,45 @@ test('TagsImporter: normalizes raw input', t => {
   }
 });
 
+test('TagsImporter: an unchanged set writes nothing; a changed one is rewritten', t => {
+  const db = setup();
+  try {
+    const tags = new TagsImporter(db);
+    const rowids = () =>
+      (
+        db.prepare('SELECT rowid, tag FROM tags WHERE record_id = ? ORDER BY tag').all('r1') as {
+          rowid: number;
+          tag: string;
+        }[]
+      ).map(r => `${r.rowid}:${r.tag}`);
+    t.equal(tags.syncTags('r1', 'topics/x.md', ['design', 'research']).unchanged, false);
+    const before = rowids();
+
+    const again = tags.syncTags('r1', 'topics/x.md', ['Research', 'designs', 'design']);
+    t.equal(again.unchanged, true, 'reordered, aliased, and duplicated: the same set');
+    t.equal(again.inserted, 0);
+    t.deepEqual(rowids(), before, 'no row was deleted and reinserted');
+
+    const grown = tags.syncTags('r1', 'topics/x.md', ['design', 'research', 'storage']);
+    t.equal(grown.unchanged, false);
+    t.equal(grown.inserted, 3, 'a changed set is replaced whole');
+
+    const unknown = ['design', 'research', 'storage', 'never-heard-of-this'];
+    t.equal(tags.syncTags('r1', 'topics/x.md', unknown).suggestionsFiled, 1);
+    const reimport = tags.syncTags('r1', 'topics/x.md', unknown);
+    t.equal(reimport.unchanged, false, 'an unknown tag is never stored, so it never matches');
+    t.deepEqual(reimport.rejected, ['never-heard-of-this'], 'and is still reported');
+    t.equal(reimport.suggestionsFiled, 0, 'without filing twice');
+
+    const cleared = tags.syncTags('r1', 'topics/x.md', 'not an array');
+    t.equal(cleared.unchanged, false, 'dropping every tag is a change');
+    t.deepEqual(rowids(), []);
+    t.equal(tags.syncTags('r1', 'topics/x.md', undefined).unchanged, true, 'empty stays empty');
+  } finally {
+    db.close();
+  }
+});
+
 test('TagsImporter: non-array frontmatter is a no-op', t => {
   const db = setup();
   try {

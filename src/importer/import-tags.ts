@@ -11,8 +11,11 @@
 //     C16). The agent decides via `/vault-review-tags` whether to add the
 //     tag to the taxonomy, register it as an alias of an existing canonical,
 //     or treat it as a typo and remove it from the source FM.
-//   - The full set is replaced atomically: `DELETE FROM tags WHERE record_id`
-//     before re-inserting, so a record losing a tag between imports is reflected.
+//   - A set equal to the stored one is left alone: a full import re-syncs every
+//     record, and rewriting unchanged rows was 12,018 deletes and inserts on
+//     croc's vault (2026-09-14). A changed set is replaced whole —
+//     `DELETE FROM tags WHERE record_id` before re-inserting — so a record
+//     losing a tag between imports is reflected.
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {normalizeTag} from '../migration/tags.ts';
@@ -83,38 +86,37 @@ export class TagsImporter {
   /**
    * Replace the tag set for a record from its frontmatter `tags:` array.
    * Returns the count of tags inserted (post-alias, post-dedup), the tags
-   * rejected by the taxonomy trigger, and the count of new_tag suggestions
-   * filed (idempotent — re-imports of the same record file no new ones).
+   * rejected by the taxonomy trigger, the count of new_tag suggestions
+   * filed (idempotent — re-imports of the same record file no new ones),
+   * and whether the stored set already matched, in which case nothing is written.
    */
   syncTags(
     recordId: string,
     filePath: string,
     frontmatterTags: unknown,
     now?: string
-  ): {inserted: number; rejected: string[]; suggestionsFiled: number} {
-    this.#deleteForRecord.run(recordId);
-
-    if (!Array.isArray(frontmatterTags)) {
-      return {inserted: 0, rejected: [], suggestionsFiled: 0};
+  ): {inserted: number; rejected: string[]; suggestionsFiled: number; unchanged: boolean} {
+    const wanted = new Set<string>();
+    if (Array.isArray(frontmatterTags)) {
+      for (const raw of frontmatterTags) {
+        if (typeof raw !== 'string') continue;
+        const tag = this.resolveTag(raw);
+        if (tag !== null) wanted.add(tag);
+      }
     }
 
+    const stored = this.getTagsForRecord(recordId);
+    if (wanted.size === stored.size && [...wanted].every(tag => stored.has(tag))) {
+      return {inserted: 0, rejected: [], suggestionsFiled: 0, unchanged: true};
+    }
+
+    this.#deleteForRecord.run(recordId);
     const stamp = now ?? new Date().toISOString();
-    const seen = new Set<string>();
     const rejected: string[] = [];
     let inserted = 0;
     let suggestionsFiled = 0;
 
-    for (const raw of frontmatterTags) {
-      if (typeof raw !== 'string') continue;
-      const norm = normalizeTag(raw);
-      if (norm.length === 0) continue;
-
-      const aliasRow = this.#lookupAlias.get(norm) as {canonical: string} | undefined;
-      const tag = aliasRow?.canonical ?? norm;
-
-      if (seen.has(tag)) continue;
-      seen.add(tag);
-
+    for (const tag of wanted) {
       try {
         this.#insertTag.run(recordId, tag);
         inserted++;
@@ -128,6 +130,6 @@ export class TagsImporter {
       }
     }
 
-    return {inserted, rejected, suggestionsFiled};
+    return {inserted, rejected, suggestionsFiled, unchanged: false};
   }
 }
