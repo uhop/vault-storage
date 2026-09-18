@@ -669,10 +669,11 @@ ready: false
       // `state.body` is the text until a surface takes it.
       let editorFilled = false;
 
+      // The stylesheet's own query: `(min-width: 768px)` is not its complement at fractional widths.
+      const narrow = window.matchMedia('(max-width: 767px)');
       const editorOnScreen = () => viewMode !== 'preview';
       const previewOnScreen = () =>
-        viewMode === 'preview' ||
-        (viewMode === 'split' && window.matchMedia('(min-width: 768px)').matches);
+        viewMode === 'preview' || (viewMode === 'split' && !narrow.matches);
 
       /** Fill the editor because something is about to read or write its DOM. */
       const ensureEditor = () => {
@@ -1282,7 +1283,7 @@ ready: false
 
       // Split hides the preview under 768px, so crossing the breakpoint can
       // reveal a surface that was never filled.
-      window.matchMedia('(min-width: 768px)').addEventListener('change', () => {
+      narrow.addEventListener('change', () => {
         syncEditor();
         schedulePreview();
       });

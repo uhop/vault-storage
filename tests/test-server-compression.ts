@@ -113,6 +113,13 @@ test('negotiateEncoding picks by weight, then by our preference', t => {
   t.equal(negotiateEncoding('*'), 'zstd', 'wildcard takes our first preference');
   t.equal(negotiateEncoding('*;q=0.1, gzip;q=0.9'), 'gzip', 'a named weight beats the wildcard');
   t.equal(negotiateEncoding('br;q=bogus'), null, 'an unparseable weight is a refusal');
+  t.equal(
+    negotiateEncoding('zstd;q=0, *'),
+    'br',
+    'a named refusal is not overridden by the wildcard'
+  );
+  t.equal(negotiateEncoding('gzip;Q=0'), null, 'the weight name is case-insensitive');
+  t.equal(negotiateEncoding(', gzip'), 'gzip', 'an empty list member is skipped');
 });
 
 test('a compressible body is coded per Accept-Encoding and round-trips', async t => {

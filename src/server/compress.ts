@@ -30,8 +30,8 @@ const weights = (header: string): Map<string, number> => {
   const out = new Map<string, number>();
   for (const part of header.split(',')) {
     const [name, ...params] = part.trim().split(';');
-    if (name === undefined || name.length === 0) continue;
-    const q = params.map(p => p.trim()).find(p => p.startsWith('q='));
+    if (!name) continue;
+    const q = params.map(p => p.trim().toLowerCase()).find(p => p.startsWith('q='));
     const weight = q === undefined ? 1 : Number.parseFloat(q.slice(2));
     out.set(name.trim().toLowerCase(), Number.isFinite(weight) ? weight : 0);
   }
