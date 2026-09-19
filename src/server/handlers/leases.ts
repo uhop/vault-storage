@@ -132,7 +132,9 @@ const parseTtl = (
 /**
  * POST /leases/claim — atomic claim; a loser gets a 409, never a silent
  * split. Idempotent for the current holder (re-claim = renew). Preemption per
- * the D23 lattice: human > cwd agent > side agent.
+ * the D23 lattice: human > cwd agent > side agent, and a cwd claim also takes
+ * a cwd lease unrenewed for an hour (D63). A preemption answers with `prior`,
+ * the lease it replaced.
  */
 export const claimLeaseHandler =
   (deps: LeaseDeps): Handler =>
@@ -213,7 +215,11 @@ export const claimLeaseHandler =
       );
       return;
     }
-    sendJson(ctx.res, 200, {status: outcome.status, lease: toApi(outcome.lease)});
+    sendJson(ctx.res, 200, {
+      status: outcome.status,
+      lease: toApi(outcome.lease),
+      ...(outcome.status === 'preempted' ? {prior: toApi(outcome.prior)} : {})
+    });
   };
 
 /** POST /leases/renew — holder must match; refreshes the TTL (no-op expiry for humans). */

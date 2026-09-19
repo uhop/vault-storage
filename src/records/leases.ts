@@ -3,8 +3,9 @@ import type {DatabaseSync} from 'node:sqlite';
 // Repo-lease registry (agent-coordination design, D21/D23) — the sibling of
 // claims.ts, generalized: one row per resource, atomic claim with a 409-style
 // conflict, TTL + lazy expiry. Precedence lattice: human > cwd agent > side
-// agent — cwd preempts an agent-held side lease, the operator preempts any
-// agent, nothing preempts a human. Human leases never expire.
+// agent — cwd preempts an agent-held side lease, and a cwd lease unrenewed
+// for STALE_CWD_LEASE_SECONDS; the operator preempts any agent, nothing
+// preempts a human. Human leases never expire.
 
 export const HOLDER_KINDS = ['agent', 'human'] as const;
 export type HolderKind = (typeof HOLDER_KINDS)[number];
@@ -15,6 +16,8 @@ export type LeasePriority = (typeof LEASE_PRIORITIES)[number];
 export const DEFAULT_LEASE_TTL_SECONDS = 4 * 3600; // hours, not minutes: a deploy must not expire a lease
 export const MIN_LEASE_TTL_SECONDS = 60;
 export const MAX_LEASE_TTL_SECONDS = 24 * 3600;
+/** Ruled 2026-09-19: past the gate's 15 min renew throttle, short of the 4 h TTL a dead session's lease used to hold. */
+export const STALE_CWD_LEASE_SECONDS = 3600;
 
 export interface Lease {
   resource: string;
@@ -37,7 +40,8 @@ export interface LeaseEvent {
 }
 
 export type ClaimOutcome =
-  | {status: 'claimed' | 'renewed' | 'preempted'; lease: Lease}
+  | {status: 'claimed' | 'renewed'; lease: Lease}
+  | {status: 'preempted'; lease: Lease; prior: Lease}
   | {status: 'conflict'; current: Lease};
 
 export type LeaseOpOutcome =
@@ -146,16 +150,21 @@ export class LeasesRepository {
       return {status: 'renewed', lease};
     }
 
-    if (this.#mayPreempt(req, current)) {
+    if (this.#mayPreempt(req, current, now)) {
       const lease = this.#write(req, now, now);
+      const stale = req.holderKind === 'agent' && current.priority === 'cwd';
       this.#logEvent(
         now,
         req.resource,
         'preempted',
         req.holder,
-        JSON.stringify({prior_holder: current.holder, prior_kind: current.holderKind})
+        JSON.stringify({
+          prior_holder: current.holder,
+          prior_kind: current.holderKind,
+          ...(stale ? {unrenewed_since: current.renewedAt} : {})
+        })
       );
-      return {status: 'preempted', lease};
+      return {status: 'preempted', lease, prior: current};
     }
 
     return {status: 'conflict', current};
@@ -238,10 +247,14 @@ export class LeasesRepository {
     return rows;
   }
 
-  #mayPreempt(req: ClaimRequest, current: Lease): boolean {
+  #mayPreempt(req: ClaimRequest, current: Lease, now: string): boolean {
     if (current.holderKind === 'human') return false; // nothing preempts the operator
     if (req.holderKind === 'human') return true; // the operator preempts any agent
-    return req.priority === 'cwd' && current.priority === 'side';
+    if (req.priority !== 'cwd') return false;
+    return (
+      current.priority === 'side' ||
+      Date.parse(now) - Date.parse(current.renewedAt) > STALE_CWD_LEASE_SECONDS * 1000
+    );
   }
 
   #expiry(now: string, ttlSeconds?: number): string {

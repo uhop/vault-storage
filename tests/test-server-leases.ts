@@ -161,6 +161,7 @@ test('leases: conflict and the preemption lattice', async t => {
       priority: 'cwd'
     });
     t.equal(cwd.body.status, 'preempted', 'cwd preempts an agent-held side lease');
+    t.equal(cwd.body.prior.holder, 'mba/session-b', 'the answer names the lease it replaced');
 
     const sideVsCwd = await api(`${ctx.url}/leases/claim`, 'POST', {
       resource: REPO,
@@ -243,6 +244,35 @@ test('leases: expiry is lazy and logged; expired lease is re-claimable', async t
     t.equal(claim2.status, 'claimed', 'fair re-claim after expiry, no grace window');
     const events = repo.events(REPO).map(e => e.event);
     t.ok(events.includes('expired'), 'expiry logged');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('leases: a cwd lease unrenewed past the grace window yields to another cwd claim', async t => {
+  const ctx = await startCtx();
+  try {
+    const repo = new LeasesRepository(ctx.db);
+    const at = (minutes: number): string =>
+      new Date(Date.parse('2026-09-19T00:00:00.000Z') + minutes * 60_000).toISOString();
+    const claim = (holder: string, priority: 'cwd' | 'side', minutes: number) =>
+      repo.claim({resource: REPO, holder, holderKind: 'agent', priority, now: at(minutes)});
+
+    t.equal(claim('nuke/dead', 'cwd', 0).status, 'claimed');
+    t.equal(claim('nuke/next', 'cwd', 59).status, 'conflict', 'inside the hour it holds');
+    t.equal(repo.renew(REPO, 'nuke/dead', undefined, at(30)).status, 'ok');
+    t.equal(claim('nuke/next', 'cwd', 89).status, 'conflict', 'a renew restarts the hour');
+    t.equal(claim('croc/side', 'side', 95).status, 'conflict', 'a side claim gets no grace');
+
+    const late = claim('nuke/next', 'cwd', 91);
+    t.equal(late.status, 'preempted', 'past the hour a cwd claim takes it');
+    const event = repo.events(REPO)[0]!;
+    t.equal(event.event, 'preempted');
+    t.deepEqual(JSON.parse(event.detail!), {
+      prior_holder: 'nuke/dead',
+      prior_kind: 'agent',
+      unrenewed_since: at(30)
+    });
   } finally {
     await stopCtx(ctx);
   }
