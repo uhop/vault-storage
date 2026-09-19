@@ -121,6 +121,12 @@ export const EDGE_TYPE_ALIASES: Readonly<Record<string, {type: EdgeType; inverse
   'basis-for': {type: 'derived-from', inverse: true}
 };
 
+/** What an FM `edges:` map or `agent.edge_classifications` may declare. */
+export const DECLARED_EDGE_TYPES: readonly string[] = [
+  ...EDGE_TYPES,
+  ...Object.keys(EDGE_TYPE_ALIASES)
+];
+
 export interface VaultRecord {
   recordId: string;
   filePath: string;

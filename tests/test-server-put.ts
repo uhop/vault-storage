@@ -794,6 +794,60 @@ test('PUT /sections/{id} rejects non-integer numeric priorities', async t => {
   }
 });
 
+test('PUT rejects an edge type outside the vocabulary in edges: and agent.edge_classifications', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const id = await findId(ctx.url, 'topics/alpha.md');
+      const put = (
+        frontmatter: Record<string, unknown>
+      ): Promise<{status: number; body: unknown}> =>
+        fetchAuthed(`${ctx.url}/sections/${id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({frontmatter, body: 'Alpha body.\n'})
+        });
+      const error = (r: {body: unknown}): string => (r.body as {error: string}).error || '';
+
+      const edges = await put({edges: {'topics/beta': 'extends'}});
+      t.equal(edges.status, 400, 'an edges: value outside the vocabulary is refused');
+      t.equal((edges.body as {code: string}).code, 'invalid_enum_value');
+      t.ok(
+        error(edges).includes("edges value 'extends' for topics/beta"),
+        'names field, value, target'
+      );
+      t.ok(error(edges).includes('applies-to, basis-for, caused-by'), 'lists the vocabulary');
+
+      const prior = await put({
+        agent: {summary: 'a', edge_classifications: {'[[topics/beta]]': 'example-of'}}
+      });
+      t.equal(prior.status, 400, 'an agent.edge_classifications value outside it too');
+      t.ok(error(prior).includes("agent.edge_classifications value 'example-of'"));
+
+      t.equal((await put({edges: {'topics/beta': 3}})).status, 400, 'a non-string is refused');
+      const ok = await put({
+        edges: {'topics/beta': 'basis-for'},
+        agent: {summary: 'a', edge_classifications: {'[[topics/beta]]': 'related-to'}}
+      });
+      t.equal(ok.status, 204, 'a canonical type and the basis-for alias pass');
+      t.equal((await put({edges: '__unset__'})).status, 204, 'the unset sentinel passes');
+
+      const md = await fetchAuthed(`${ctx.url}/sections/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'text/markdown'},
+        body: '---\ntitle: Alpha\nedges:\n  topics/beta: refines\n---\nAlpha body.\n'
+      });
+      t.equal(md.status, 400, 'markdown mode runs the same check');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT rejects an off-enum agent.complexity; the six shapes and an absent key pass', async t => {
   const {root, cleanup} = setupVault();
   try {

@@ -6,6 +6,7 @@ import {contentHash} from '../util/hash.ts';
 import {normalizeTag} from '../migration/tags.ts';
 import {
   AGENT_COMPLEXITY,
+  DECLARED_EDGE_TYPES,
   PRIORITY_ALIASES,
   RECORD_STATUSES,
   RECORD_TYPES,
@@ -97,6 +98,7 @@ const TYPE_SET: ReadonlySet<string> = new Set(RECORD_TYPES);
 const STATUS_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(STATUS_ALIASES));
 const PRIORITY_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(PRIORITY_ALIASES));
 const AGENT_COMPLEXITY_SET: ReadonlySet<string> = new Set(AGENT_COMPLEXITY);
+const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(DECLARED_EDGE_TYPES);
 
 /**
  * Validate a single closed-enum FM field. Pass-through if the value is
@@ -142,13 +144,35 @@ const validatePriority = (value: unknown): string | null => {
  * into difficulty words and genre words.
  */
 const validateAgentComplexity = (agent: unknown): string | null => {
-  if (agent === undefined || agent === null || typeof agent !== 'object' || Array.isArray(agent))
-    return null;
+  if (agent === null || typeof agent !== 'object' || Array.isArray(agent)) return null;
   const value = (agent as Record<string, unknown>)['complexity'];
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') return 'agent.complexity must be a string';
   if (AGENT_COMPLEXITY_SET.has(value)) return null;
   return `unknown agent.complexity value '${value}' — expected one of: ${[...AGENT_COMPLEXITY_SET].sort().join(', ')}`;
+};
+
+/**
+ * `edges:` and `agent.edge_classifications` map link targets to edge types.
+ * The importer drops an `edges:` value outside the vocabulary, and edge
+ * triage takes a classification as its prior, so both are refused here. Until
+ * 2026-09-18 only the enrichment harness checked them, and 38 had drifted.
+ */
+const validateEdgeTypeMap = (field: string, map: unknown): string | null => {
+  if (map === null || typeof map !== 'object' || Array.isArray(map)) return null;
+  for (const [target, type] of Object.entries(map)) {
+    if (typeof type === 'string' && DECLARED_EDGE_TYPE_SET.has(type)) continue;
+    return `unknown ${field} value '${String(type)}' for ${target} — expected one of: ${[...DECLARED_EDGE_TYPE_SET].sort().join(', ')}`;
+  }
+  return null;
+};
+
+const validateEdgeClassifications = (agent: unknown): string | null => {
+  if (agent === null || typeof agent !== 'object' || Array.isArray(agent)) return null;
+  return validateEdgeTypeMap(
+    'agent.edge_classifications',
+    (agent as Record<string, unknown>)['edge_classifications']
+  );
 };
 
 /**
@@ -367,8 +391,9 @@ export const parseWriteRequest = (
  *   lets a verbatim round-trip of such a note still write; the unset sentinel
  *   always passes, since it is the repair.
  * - Auto-managed keys (`record_id`, `content_hash`, …) are rejected.
- * - Closed-enum fields (`status`, `type`, `priority`): canonical values
- *   and known aliases pass; anything else 400s so authoring typos surface
+ * - Closed-enum fields (`status`, `type`, `priority`, `agent.complexity`,
+ *   and the values of `edges:` and `agent.edge_classifications`): canonical
+ *   values and known aliases pass; anything else 400s so authoring typos surface
  *   at the boundary rather than silently coercing to a default. The unset
  *   sentinel is exempt — it deletes the key, reverting to the indexer
  *   default.
@@ -463,6 +488,10 @@ export const validateWritePayload = (
   if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
   const complexityErr = validateAgentComplexity(enumInput('agent'));
   if (complexityErr) throw new WriterError(complexityErr, 'invalid_enum_value', 400);
+  const edgeTypeErr =
+    validateEdgeTypeMap('edges', enumInput('edges')) ??
+    validateEdgeClassifications(enumInput('agent'));
+  if (edgeTypeErr) throw new WriterError(edgeTypeErr, 'invalid_enum_value', 400);
 };
 
 export interface WriteResult {

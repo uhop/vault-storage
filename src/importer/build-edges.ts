@@ -7,16 +7,12 @@ import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
-import {EDGE_TYPE_ALIASES, EDGE_TYPES} from '../records/types.ts';
+import {DECLARED_EDGE_TYPES, EDGE_TYPE_ALIASES} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
 import {LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
 
-/** FM `edges:` value vocabulary: canonical types + direction-flipping aliases. */
-const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set([
-  ...EDGE_TYPES,
-  ...Object.keys(EDGE_TYPE_ALIASES)
-]);
+const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(DECLARED_EDGE_TYPES);
 
 /**
  * Record types where a default-`cites` body wikilink is overwhelmingly
