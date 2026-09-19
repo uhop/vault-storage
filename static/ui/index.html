@@ -13,6 +13,7 @@
     <script>
       // api() adopts these by exact URL: keep them in step with the page's own first requests.
       (() => {
+        performance.mark('head script');
         const token = localStorage.getItem('vault.token');
         if (!token) return;
         const urls = [

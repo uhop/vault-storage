@@ -13,6 +13,7 @@
     <script>
       // api() adopts these by exact URL: keep them in step with the page's own first requests.
       (() => {
+        performance.mark('head script');
         const token = localStorage.getItem('vault.token');
         const project = new URLSearchParams(location.search).get('project');
         if (!token || !project) return;

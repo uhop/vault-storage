@@ -73,6 +73,8 @@ if (enabled) {
   const [nav] = performance.getEntriesByType('navigation');
   if (nav) {
     say('document received', null, '', nav.responseEnd);
+    for (const m of performance.getEntriesByName('head script', 'mark'))
+      say('head script ran', null, '', m.startTime);
     if (nav.domInteractive) say('document parsed', null, '', nav.domInteractive);
   }
   const resource = r => {
