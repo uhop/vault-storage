@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Screenshot preview of the UI pages over a copy of the live vault's state documents:
 // an in-process server on a fixture directory, one shot per spec, and for each shot the
-// horizontal overflow, page errors, console errors, and every response of 400 or above.
+// horizontal overflow, page errors, console errors, every response of 400 or above, and every
+// request the page's <head> started that `api()` never adopted (a URL out of step with the page).
 // `ui-style-snapshot.mjs` answers a different question (computed styles over synthetic
 // fixtures, for CSS diffs); this shows what a change looks like on real data at any width.
 //   node scripts/ui-preview.mjs fixture <dir>    # copy state documents from VAULT_API_URL (read-only GETs)
@@ -153,9 +154,11 @@ const shoot = async (fixtureDir, out, measure, shots) => {
       });
       let overflow = null;
       let measured = null;
+      let unadopted = [];
       try {
         await page.goto(`${base}/ui/${shot.path}`, {waitUntil: 'networkidle'});
         await page.waitForTimeout(800);
+        unadopted = await page.evaluate(() => [...(window.__early?.keys() ?? [])]);
         if (shot.hover) {
           await page.hover(shot.hover);
           await page.waitForTimeout(300);
@@ -173,7 +176,8 @@ const shoot = async (fixtureDir, out, measure, shots) => {
       } catch (err) {
         pageErrors.push(err instanceof Error ? err.message : String(err));
       }
-      const problems = pageErrors.length + consoleErrors.length + responses.length;
+      const problems =
+        pageErrors.length + consoleErrors.length + responses.length + unadopted.length;
       if (problems > 0) ++failed;
       console.log(
         `${shot.name}: ${shot.width}px ${shot.scheme}, overflow ${overflow}px` +
@@ -183,6 +187,7 @@ const shoot = async (fixtureDir, out, measure, shots) => {
       for (const e of pageErrors) console.log(`  page error: ${e}`);
       for (const e of consoleErrors) console.log(`  console error: ${e}`);
       for (const r of responses) console.log(`  response: ${r}`);
+      for (const u of unadopted) console.log(`  head request never adopted: ${u}`);
       await ctx.close();
     }
   } finally {

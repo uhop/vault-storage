@@ -75,9 +75,25 @@ if (enabled) {
     say('document received', null, '', nav.responseEnd);
     if (nav.domInteractive) say('document parsed', null, '', nav.domInteractive);
   }
-  for (const r of performance.getEntriesByType('resource')) {
-    if (r.name.endsWith('.js'))
-      say('script fetched', r.duration, new URL(r.name).pathname, r.responseEnd);
+  const resource = r => {
+    const url = new URL(r.name);
+    if (url.pathname.endsWith('.js'))
+      say('script fetched', r.duration, url.pathname, r.responseEnd);
+    else if (r.initiatorType === 'fetch')
+      say(
+        'request',
+        r.duration,
+        `${url.pathname}${url.search}, started ${at(r.startTime).trim()}s`,
+        r.responseEnd
+      );
+  };
+  performance.getEntriesByType('resource').forEach(resource);
+  try {
+    new PerformanceObserver(list => list.getEntries().forEach(resource)).observe({
+      type: 'resource'
+    });
+  } catch {
+    mark('resource observer unavailable in this engine');
   }
   mark('perf logging on', 'times from navigation start');
 }

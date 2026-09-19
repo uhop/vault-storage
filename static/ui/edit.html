@@ -28,6 +28,31 @@
                 : 'edit';
       })();
     </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first requests.
+      (() => {
+        const token = localStorage.getItem('vault.token');
+        const q = new URLSearchParams(location.search);
+        const path = q.get('path');
+        if (!token || !path) return;
+        const at = `/vault/${path.split('/').map(encodeURIComponent).join('/')}`;
+        const n = Number(q.get('n'));
+        const occurrence = Number.isSafeInteger(n) && n > 0 ? n : 0;
+        const urls = [
+          q.has('section')
+            ? `${at}?section=${encodeURIComponent(q.get('section').trim())}&occurrence=${occurrence}`
+            : q.has('frontmatter')
+              ? `${at}?frontmatter=yaml`
+              : at
+        ];
+        const early = (window.__early ??= new Map());
+        for (const url of urls) {
+          const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+          res.catch(() => {});
+          early.set(url, res);
+        }
+      })();
+    </script>
     <title>vault-storage — edit</title>
     <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
     <link rel="icon" sizes="any" href="/favicon.ico" />

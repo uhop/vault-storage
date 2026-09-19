@@ -10,6 +10,20 @@
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
       })();
     </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first requests.
+      (() => {
+        const token = localStorage.getItem('vault.token');
+        if (!token) return;
+        const urls = ['/system/lint'];
+        const early = (window.__early ??= new Map());
+        for (const url of urls) {
+          const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+          res.catch(() => {});
+          early.set(url, res);
+        }
+      })();
+    </script>
     <title>vault-storage — lint review</title>
     <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
     <link rel="icon" sizes="any" href="/favicon.ico" />

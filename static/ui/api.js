@@ -21,11 +21,19 @@ export const setToken = t => {
   else localStorage.removeItem(TOKEN_KEY);
 };
 
+// A GET the page's <head> started before the modules loaded, handed over once.
+const takeEarly = (path, init) => {
+  if ((init.method ?? 'GET') !== 'GET') return undefined;
+  const early = globalThis.__early?.get(path);
+  globalThis.__early?.delete(path);
+  return early;
+};
+
 export async function api(path, init = {}) {
   const token = getToken();
   if (!token) throw new Error('no-token');
   const headers = {...(init.headers ?? {}), Authorization: `Bearer ${token}`};
-  const res = await fetch(path, {...init, headers});
+  const res = await (takeEarly(path, init) ?? fetch(path, {...init, headers}));
   if (res.ok) return res;
   let msg = res.status === 401 ? 'unauthorized' : res.status === 404 ? 'not-found' : '';
   let body = null;
