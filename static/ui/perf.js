@@ -16,11 +16,11 @@ const enabled = (() => {
 
 export const perfOn = enabled;
 
-const t0 = performance.now();
-const at = () => ((performance.now() - t0) / 1000).toFixed(2).padStart(7);
-const say = (label, ms, detail) =>
+// From navigation start, so the wait before the module graph runs is visible.
+const at = (t = performance.now()) => (t / 1000).toFixed(2).padStart(7);
+const say = (label, ms, detail, t) =>
   console.log(
-    `[perf] ${at()}s  ${ms === null ? '       ' : `${ms.toFixed(0).padStart(6)}ms`}  ${label}${detail ? `  (${detail})` : ''}`
+    `[perf] ${at(t)}s  ${ms === null ? '       ' : `${ms.toFixed(0).padStart(6)}ms`}  ${label}${detail ? `  (${detail})` : ''}`
   );
 
 export const mark = (label, detail = '') => {
@@ -70,5 +70,14 @@ if (enabled) {
   } catch {
     mark('longtask observer unavailable in this engine');
   }
-  mark('perf logging on');
+  const [nav] = performance.getEntriesByType('navigation');
+  if (nav) {
+    say('document received', null, '', nav.responseEnd);
+    if (nav.domInteractive) say('document parsed', null, '', nav.domInteractive);
+  }
+  for (const r of performance.getEntriesByType('resource')) {
+    if (r.name.endsWith('.js'))
+      say('script fetched', r.duration, new URL(r.name).pathname, r.responseEnd);
+  }
+  mark('perf logging on', 'times from navigation start');
 }
