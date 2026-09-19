@@ -2,6 +2,11 @@ import type {IncomingMessage} from 'node:http';
 
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 
+const bodies = new WeakMap<IncomingMessage, Buffer>();
+
+/** The body a handler read, for checks that run after it (the stream is gone by then). */
+export const bodyRead = (req: IncomingMessage): Buffer | undefined => bodies.get(req);
+
 /**
  * Buffer the request body up to `maxBytes`. Throws if the limit is exceeded —
  * the check runs per chunk, so an oversized upload is refused mid-stream
@@ -20,7 +25,9 @@ export const readBodyBuffer = async (
     }
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks);
+  const body = Buffer.concat(chunks);
+  bodies.set(req, body);
+  return body;
 };
 
 /** Buffer the request body up to `maxBytes`. Throws if the limit is exceeded. */

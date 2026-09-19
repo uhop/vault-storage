@@ -63,6 +63,8 @@ import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
 import {healthHandler, releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
+import {bodyFieldsHandler} from './handlers/body-fields.ts';
+import {bodyFieldObserver} from './body-fields.ts';
 import {startHealthMonitor, type HealthMonitor} from './health.ts';
 import {
   addAliasHandler,
@@ -170,6 +172,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   );
   router.get('/system/lint', lintHandler({db: opts.db}));
   router.get('/system/health', healthHandler(health));
+  router.get('/system/body-fields', bodyFieldsHandler({db: opts.db}));
   router.post(
     '/system/resume-bundle',
     resumeBundleHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
@@ -396,7 +399,7 @@ const parseUrl = (req: IncomingMessage): {path: string; query: Record<string, st
 };
 
 const handleRequest =
-  (router: Router, env: ServerEnv) =>
+  (router: Router, env: ServerEnv, observe: (route: string, req: IncomingMessage) => void) =>
   async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       const parsed = parseUrl(req);
@@ -444,6 +447,7 @@ const handleRequest =
         params: match.params
       };
       await match.handler(ctx);
+      observe(match.route, req);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`request error: ${msg}\n`);
@@ -487,7 +491,7 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
   }
   const renderer = opts.renderer ?? new MarkdownRenderer();
   const router = buildRouter({...opts, renderer});
-  const server = createServer(handleRequest(router, opts.env));
+  const server = createServer(handleRequest(router, opts.env, bodyFieldObserver(opts.db)));
   // The DB is synchronous, so heavy handlers block the event loop and every
   // queued request waits out the full backlog before its headers are even
   // parsed. Node's default headersTimeout (60 s) then destroys queued

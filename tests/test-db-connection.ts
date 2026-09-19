@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    24,
-    'schema version is 24 after all migrations through the summary vector'
+    25,
+    'schema version is 25 after all migrations through the body-field observations'
   );
   t.deepEqual(
     result.applied,
@@ -46,14 +46,18 @@ test('runs the init migration and creates required tables', t => {
       '0021_handoff_touches_verification.sql',
       '0022_suggestion_identity_indexes.sql',
       '0023_chunk_text_hash.sql',
-      '0024_record_summary_vec.sql'
+      '0024_record_summary_vec.sql',
+      '0025_body_field_observations.sql'
     ],
     'all migrations applied in order'
   );
   t.deepEqual(
     result.reindex,
     result.applied.filter(
-      name => name !== '0023_chunk_text_hash.sql' && name !== '0024_record_summary_vec.sql'
+      name =>
+        name !== '0023_chunk_text_hash.sql' &&
+        name !== '0024_record_summary_vec.sql' &&
+        name !== '0025_body_field_observations.sql'
     ),
     'every migration forces a full import except the ones marked no-reindex'
   );
@@ -88,7 +92,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 24, 'schema version stays at 24');
+  t.equal(second.current, 25, 'schema version stays at 25');
   db.close();
 });
 
@@ -145,9 +149,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0021_handoff_touches_verification.sql',
       '0022_suggestion_identity_indexes.sql',
       '0023_chunk_text_hash.sql',
-      '0024_record_summary_vec.sql'
+      '0024_record_summary_vec.sql',
+      '0025_body_field_observations.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0024)'
+    'migrations from schema 9 onward applied (0010–0025)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {

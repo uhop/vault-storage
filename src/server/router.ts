@@ -15,6 +15,7 @@ export type Handler = (ctx: RequestContext) => Promise<void> | void;
 
 interface CompiledRoute {
   method: string;
+  pattern: string;
   regex: RegExp;
   paramNames: string[];
   handler: Handler;
@@ -31,6 +32,7 @@ const compileRoute = (method: string, pattern: string, handler: Handler): Compil
   });
   return {
     method,
+    pattern,
     regex: new RegExp(`^${regexSrc}$`),
     paramNames,
     handler
@@ -65,11 +67,17 @@ export class Router {
     return this.add('DELETE', pattern, handler);
   }
 
-  /** Find the matching route, or null. Method mismatch on a path match returns 'method-not-allowed'. */
+  /**
+   * Find the matching route, or null. Method mismatch on a path match returns
+   * 'method-not-allowed'. `route` is the registration, `METHOD pattern`.
+   */
   match(
     method: string,
     path: string
-  ): {handler: Handler; params: Record<string, string>} | 'method-not-allowed' | null {
+  ):
+    | {handler: Handler; params: Record<string, string>; route: string}
+    | 'method-not-allowed'
+    | null {
     let pathMatched = false;
     for (const route of this.#routes) {
       const result = route.regex.exec(path);
@@ -81,9 +89,14 @@ export class Router {
         const raw = result[i + 1];
         params[name] = raw === undefined ? '' : decodeURIComponent(raw);
       });
-      return {handler: route.handler, params};
+      return {handler: route.handler, params, route: `${route.method} ${route.pattern}`};
     }
     return pathMatched ? 'method-not-allowed' : null;
+  }
+
+  /** Every registration as `METHOD pattern`, in order. */
+  routes(): string[] {
+    return this.#routes.map(route => `${route.method} ${route.pattern}`);
   }
 
   /**

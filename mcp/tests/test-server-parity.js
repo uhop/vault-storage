@@ -25,6 +25,9 @@ const unwrap = schema => {
   }
 };
 
+// Real values for the identifiers a handler checks before it reads the body.
+const real = new Map();
+
 const sample = (key, schema) => {
   const def = unwrap(schema).inner._zod.def;
   switch (def.type) {
@@ -45,7 +48,7 @@ const sample = (key, schema) => {
     case 'union':
       return sample(key, def.options[0]);
     default:
-      return `S${key}`;
+      return real.get(key) ?? `S${key}`;
   }
 };
 
@@ -110,6 +113,11 @@ const startVault = async () => {
 test('every tool parameter reaches the server, and the server accepts it by name', async t => {
   const vault = await startVault();
   try {
+    const pieces = await fetch(`${vault.url}/sections?file_prefix=topics/beta.md`, {
+      headers: {Authorization: 'Bearer tok'}
+    });
+    real.set('path', 'topics/beta.md');
+    real.set('record_id', (await pieces.json()).items[0].record_id);
     let wire = [];
     const fetchImpl = (url, init = {}) => {
       wire.push(
@@ -152,6 +160,17 @@ test('every tool parameter reaches the server, and the server accepts it by name
           t.notEqual(wire, baseline.wire, `${tool.name} ${key}: changes the request`);
         }
       }
+    }
+
+    const res = await fetch(`${vault.url}/system/body-fields`, {
+      headers: {Authorization: 'Bearer tok'}
+    });
+    for (const {route, unknown} of (await res.json()).routes) {
+      t.deepEqual(
+        unknown.map(u => u.field),
+        [],
+        `${route}: the server reads every body field the tools send`
+      );
     }
   } finally {
     await vault.close();
