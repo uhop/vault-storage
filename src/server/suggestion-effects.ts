@@ -1,9 +1,8 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {existsSync, readFileSync, statSync} from 'node:fs';
 import {buildEdges} from '../importer/build-edges.ts';
-import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
-import {TagsImporter} from '../importer/import-tags.ts';
+import {fullImportOptions} from '../importer/import-options.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {ensureSafePath, writeSplitRecordToDisk} from './writer.ts';
@@ -57,12 +56,7 @@ const locate = (deps: EffectDeps, recordId: string): LocatedRecord => {
 // The write-side re-import: full filer set so suggestion resolution settles
 // on contact rather than at the next reindex.
 const reimport = (deps: EffectDeps, rec: LocatedRecord): void => {
-  importFile(deps.records, rec.filePath, rec.abs, undefined, {
-    tags: new TagsImporter(deps.db),
-    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-  });
+  importFile(deps.records, rec.filePath, rec.abs, undefined, fullImportOptions(deps.db));
 };
 
 const writeFm = (deps: EffectDeps, rec: LocatedRecord, fmPatch: Record<string, unknown>): void => {

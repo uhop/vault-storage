@@ -16,10 +16,10 @@ import type {DatabaseSync} from 'node:sqlite';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
-import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
+import {fullImportOptions} from '../importer/import-options.ts';
 import {importVaultAsync} from '../importer/import.ts';
-import {TagsImporter} from '../importer/import-tags.ts';
+import {syncQueueFile} from '../queue/sync.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import {getCurrentHead, runGit} from '../util/git.ts';
 
@@ -223,10 +223,7 @@ const runIncrementalReindex = async (
   summary.changedFiles = changes.filter(c => isMd(c.kind === 'rename' ? c.new : c.path)).length;
 
   const records = new RecordsRepository(db);
-  const tags = new TagsImporter(db);
-  const agentStale = new SuggestionFiler(db, 'agent_enrichment_stale');
-  const tagSuggestion = new SuggestionFiler(db, 'tag_suggestion');
-  const archiveCandidate = new SuggestionFiler(db, 'archive_candidate');
+  const options = fullImportOptions(db);
   const now = new Date().toISOString();
 
   // Pure-modify batches rebuild edges for just the touched records; any
@@ -252,13 +249,9 @@ const runIncrementalReindex = async (
           db.prepare('UPDATE records SET file_path = ? WHERE file_path = ?').run(c.new, c.old);
           const abs = join(vaultDataPath, c.new);
           if (existsSync(abs)) {
-            importFile(records, c.new, abs, now, {
-              tags,
-              agentStale,
-              tagSuggestion,
-              archiveCandidate
-            });
+            importFile(records, c.new, abs, now, options);
           }
+          syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
           summary.renamed++;
           summary.imported++;
         } else if (oldIsMd) {
@@ -268,16 +261,12 @@ const runIncrementalReindex = async (
             records.delete(r.recordId);
             summary.deleted++;
           }
+          syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
         } else if (newIsMd) {
           // New .md appeared (renamed from non-.md).
           const abs = join(vaultDataPath, c.new);
           if (existsSync(abs)) {
-            importFile(records, c.new, abs, now, {
-              tags,
-              agentStale,
-              tagSuggestion,
-              archiveCandidate
-            });
+            importFile(records, c.new, abs, now, options);
             summary.imported++;
           }
         }
@@ -290,17 +279,13 @@ const runIncrementalReindex = async (
           records.delete(r.recordId);
           summary.deleted++;
         }
+        syncQueueFile(options.queueItems, c.path, vaultDataPath, now);
       } else {
         // add / modify
         if (c.kind === 'add') pathSetChanged = true;
         const abs = join(vaultDataPath, c.path);
         if (existsSync(abs)) {
-          importFile(records, c.path, abs, now, {
-            tags,
-            agentStale,
-            tagSuggestion,
-            archiveCandidate
-          });
+          importFile(records, c.path, abs, now, options);
           summary.imported++;
           if (c.kind === 'modify') {
             const rec = records.getByPath(c.path);

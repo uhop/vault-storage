@@ -13,10 +13,8 @@ import type {DatabaseSync} from 'node:sqlite';
 import {EMBED_ROUND, embedPending} from '../embeddings/embed-pass.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
-import {SuggestionFiler} from '../importer/file-suggestions.ts';
 import {importFile} from '../importer/import-file.ts';
-import {TagsImporter} from '../importer/import-tags.ts';
-import {QueueItemsRepository} from '../queue/repo.ts';
+import {fullImportOptions} from '../importer/import-options.ts';
 import {syncQueueFile} from '../queue/sync.ts';
 import {RecordsRepository} from '../records/repository.ts';
 
@@ -82,11 +80,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     (err => process.stderr.write(`watcher: ${err instanceof Error ? err.message : String(err)}\n`));
 
   const records = new RecordsRepository(db);
-  const tags = new TagsImporter(db);
-  const agentStale = new SuggestionFiler(db, 'agent_enrichment_stale');
-  const tagSuggestion = new SuggestionFiler(db, 'tag_suggestion');
-  const archiveCandidate = new SuggestionFiler(db, 'archive_candidate');
-  const queueItems = new QueueItemsRepository(db);
+  const options = fullImportOptions(db);
 
   const pending = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
@@ -155,16 +149,11 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             }
             // Queue files removed from disk: drop the slice too. No-op for
             // any non-queue path.
-            const dropped = syncQueueFile(queueItems, relativePath, vaultDataPath, now);
+            const dropped = syncQueueFile(options.queueItems, relativePath, vaultDataPath, now);
             if (dropped) queueItemsTouched += dropped.deleted;
             continue;
           }
-          const importResult = importFile(records, relativePath, abs, now, {
-            tags,
-            agentStale,
-            tagSuggestion,
-            archiveCandidate
-          });
+          const importResult = importFile(records, relativePath, abs, now, options);
           if (importResult.action === 'inserted') {
             pathSetChanged = true;
           } else {
@@ -175,12 +164,9 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             if (rec) changedRecordIds.add(rec.recordId);
           }
           imported++;
-          // Queue files: also reparse the queue_items slice. No-op for any
-          // path outside `projects/<name>/queue{,-archive}.md`.
-          const result = syncQueueFile(queueItems, relativePath, vaultDataPath, now);
-          if (result) {
-            queueItemsTouched +=
-              result.inserted + result.updated + result.refreshed + result.deleted;
+          const {queue} = importResult;
+          if (queue) {
+            queueItemsTouched += queue.inserted + queue.updated + queue.refreshed + queue.deleted;
           }
         } catch (err) {
           errors++;

@@ -1374,7 +1374,7 @@ export const registerTools = (mcp, client) => {
   );
 
   // ── queue items ───────────────────────────────────────────────────────────
-  // Backed by the queue_items table — a watcher-maintained derivative of every
+  // Backed by the queue_items table — a derivative, kept by every import, of every
   // projects/<name>/queue.md and queue-archive.md. Markdown stays source of
   // truth per constraint C4; the table is the fleet-query surface. See
   // [[topics/project-queue-convention]] for the markdown shape and
@@ -1566,7 +1566,7 @@ export const registerTools = (mcp, client) => {
     'vault_queue_reindex',
     {
       description:
-        'Walk the vault, re-parse every projects/*/queue.md and queue-archive.md, apply each as a slice, and drop slices for files no longer on disk. The watcher keeps the table in sync on edits; use this for first-run population, missed-event recovery, or after a multi-machine pull where another writer changed queue files. Idempotent. Returns the sweep summary {projectsScanned, filesProcessed, inserted, updated, refreshed, deleted, staleSlicesDropped, errors, durationMs} — `errors` is per-file [{path, message}] and is non-fatal, so check it rather than assuming a 200 means every queue file parsed.',
+        'Walk the vault, re-parse every projects/*/queue.md and queue-archive.md, apply each as a slice, and drop slices for files no longer on disk. API writes, the watcher, and every reindex (startup, incremental, full) keep the table in sync, so this is the recovery path for a slice that drifted anyway. Idempotent. Returns the sweep summary {projectsScanned, filesProcessed, inserted, updated, refreshed, deleted, staleSlicesDropped, errors, durationMs} — `errors` is per-file [{path, message}] and is non-fatal, so check it rather than assuming a 200 means every queue file parsed.',
       inputSchema: {}
     },
     wrap(async () => client.postJson('/maintenance/reindex-queues'))

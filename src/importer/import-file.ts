@@ -1,5 +1,8 @@
 import {readFileSync} from 'node:fs';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
+import {parseQueueFile} from '../queue/parse.ts';
+import type {ApplyResult, QueueItemsRepository} from '../queue/repo.ts';
+import {matchQueueFile} from '../queue/sync.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {
   PRIORITY_ALIASES,
@@ -96,6 +99,8 @@ export interface ImportFileResult {
   /** 'inserted' on first import, 'updated' on subsequent runs. */
   action: 'inserted' | 'updated' | 'unchanged';
   recordId: string;
+  /** The queue slice's changes when the file is a queue file and `queueItems` was given. */
+  queue: ApplyResult | null;
 }
 
 export interface ImportFileOptions {
@@ -123,6 +128,12 @@ export interface ImportFileOptions {
    * once the user (or skill) acts.
    */
   archiveCandidate?: SuggestionFiler<'archive_candidate'>;
+  /**
+   * When provided and the file is a `projects/<name>/queue{,-archive}.md`,
+   * re-derives its `queue_items` slice from the text just read, so a write
+   * that re-imports its file leaves the queue slices current too.
+   */
+  queueItems?: QueueItemsRepository;
 }
 
 /**
@@ -296,5 +307,16 @@ export const importFile = (
     }
   }
 
-  return {action, recordId};
+  let queue: ApplyResult | null = null;
+  const queueFile = matchQueueFile(relativePath);
+  if (options.queueItems && queueFile) {
+    queue = options.queueItems.applyParsed(
+      queueFile.project,
+      relativePath,
+      parseQueueFile(queueFile.project, relativePath, source),
+      now
+    );
+  }
+
+  return {action, recordId, queue};
 };

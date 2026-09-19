@@ -8,9 +8,8 @@ import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {buildEdges} from '../../importer/build-edges.ts';
-import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
-import {TagsImporter} from '../../importer/import-tags.ts';
+import {fullImportOptions} from '../../importer/import-options.ts';
 import {parseFrontmatter, serializeFrontmatter} from '../../markdown/frontmatter.ts';
 import {ARTIFACT_EXTS, MAX_ARTIFACT_BYTES, type ArtifactExt} from '../../records/handoff-spool.ts';
 import {
@@ -887,12 +886,13 @@ export const completeHandoffArchival = (
     mkdirSync(dirname(absolutePath), {recursive: true});
     writeFileSync(absolutePath, source);
 
-    const {recordId} = importFile(deps.records, archivePath, absolutePath, undefined, {
-      tags: new TagsImporter(deps.db),
-      agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-      tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-      archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-    });
+    const {recordId} = importFile(
+      deps.records,
+      archivePath,
+      absolutePath,
+      undefined,
+      fullImportOptions(deps.db)
+    );
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
   }
 

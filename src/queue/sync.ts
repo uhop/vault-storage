@@ -1,14 +1,9 @@
-// Integration helpers connecting the queue parser/repo to the watcher and the
-// HTTP layer. Two callers:
-//
-//   - watcher.drain(): per modified path, calls syncQueueFile (file present)
-//     or dropQueueFile (file removed). Both no-op when the path isn't a queue
-//     file, so the watcher can pass every changed path through unconditionally.
-//
-//   - POST /maintenance/reindex-queues: calls reindexAllQueues to walk the
-//     vault, parse every queue.md / queue-archive.md it finds, and apply.
-//     Also drops any slices in the DB whose source file no longer exists on
-//     disk — the corrective sweep when the watcher missed an event.
+// Integration helpers connecting the queue parser/repo to the rest of the
+// server. A file that is present syncs through `importFile`'s `queueItems`
+// option; syncQueueFile covers the paths that change without an import (a
+// delete, the old side of a rename) and no-ops for any non-queue path.
+// reindexAllQueues backs POST /maintenance/reindex-queues, the corrective
+// sweep that also drops slices whose source file is gone.
 
 import {existsSync, readFileSync, readdirSync} from 'node:fs';
 import {join} from 'node:path';

@@ -2,9 +2,8 @@ import type {DatabaseSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {RecordsRepository} from '../records/repository.ts';
 import {buildEdges, buildEdgesAsync, type EdgeBuildSummary} from './build-edges.ts';
-import {SuggestionFiler} from './file-suggestions.ts';
 import {importFile} from './import-file.ts';
-import {TagsImporter} from './import-tags.ts';
+import {fullImportOptions} from './import-options.ts';
 import {walkMarkdown, type MarkdownFile} from './walk.ts';
 
 export interface ImportSummary {
@@ -35,12 +34,7 @@ function* importBatches(
   counts: ImportCounts
 ): Generator<void, void, void> {
   const records = new RecordsRepository(db);
-  const filers = {
-    tags: new TagsImporter(db),
-    agentStale: new SuggestionFiler(db, 'agent_enrichment_stale'),
-    tagSuggestion: new SuggestionFiler(db, 'tag_suggestion'),
-    archiveCandidate: new SuggestionFiler(db, 'archive_candidate')
-  };
+  const options = fullImportOptions(db);
 
   const flush = (batch: readonly MarkdownFile[]): void => {
     db.exec('BEGIN');
@@ -48,7 +42,7 @@ function* importBatches(
       for (const file of batch) {
         ++counts.total;
         try {
-          const result = importFile(records, file.relativePath, file.absolutePath, now, filers);
+          const result = importFile(records, file.relativePath, file.absolutePath, now, options);
           ++counts[result.action];
         } catch (err) {
           ++counts.skipped;

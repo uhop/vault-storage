@@ -32,10 +32,12 @@ import {
 } from '../../queue/items.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {buildEdges} from '../../importer/build-edges.ts';
-import {repathPendingSuggestions, SuggestionFiler} from '../../importer/file-suggestions.ts';
+import {repathPendingSuggestions} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
-import {TagsImporter} from '../../importer/import-tags.ts';
+import {fullImportOptions} from '../../importer/import-options.ts';
 import {findDuplicateBlockers, proposeNearest} from '../../maintenance/propose.ts';
+import {QueueItemsRepository} from '../../queue/repo.ts';
+import {syncQueueFile} from '../../queue/sync.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {rejectUnknownParams} from '../query.ts';
@@ -492,10 +494,6 @@ export const putVaultHandler =
     }
 
     const {records} = deps;
-    const tags = new TagsImporter(deps.db);
-    const agentStale = new SuggestionFiler(deps.db, 'agent_enrichment_stale');
-    const tagSuggestion = new SuggestionFiler(deps.db, 'tag_suggestion');
-    const archiveCandidate = new SuggestionFiler(deps.db, 'archive_candidate');
     const existing = records.getByPath(path);
 
     let parsed: ReturnType<typeof parseWriteRequest>;
@@ -602,12 +600,13 @@ export const putVaultHandler =
       throw err;
     }
 
-    const {recordId} = importFile(records, path, absolutePath, undefined, {
-      tags,
-      agentStale,
-      tagSuggestion,
-      archiveCandidate
-    });
+    const {recordId} = importFile(
+      records,
+      path,
+      absolutePath,
+      undefined,
+      fullImportOptions(deps.db)
+    );
     // Scoped edge pass so an FM `edges:` override settles its edge_type
     // suggestion on the write itself, not at the next watcher/reindex pass.
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
@@ -1041,12 +1040,7 @@ export const editVaultHandler =
       throw err;
     }
 
-    const {recordId} = importFile(records, path, abs, undefined, {
-      tags: new TagsImporter(deps.db),
-      agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-      tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-      archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-    });
+    const {recordId} = importFile(records, path, abs, undefined, fullImportOptions(deps.db));
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
     if (replacedFm) {
       extra = {hash: contentHash(splitFrontmatter(readFileSync(abs, 'utf8')).yaml ?? '')};
@@ -1127,12 +1121,7 @@ const commitBody = (
     }
     throw err;
   }
-  const {recordId} = importFile(records, path, abs, undefined, {
-    tags: new TagsImporter(deps.db),
-    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-  });
+  const {recordId} = importFile(records, path, abs, undefined, fullImportOptions(deps.db));
   buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
   return etag;
 };
@@ -1306,6 +1295,7 @@ export const deleteVaultHandler =
       records.delete(existing.recordId);
       deps.resolverCache.invalidate();
     }
+    syncQueueFile(new QueueItemsRepository(deps.db), path, deps.vaultDataPath);
 
     sendNoContent(ctx.res);
   };
@@ -1404,6 +1394,9 @@ export const moveVaultHandler =
     // Unresolved suggestions carry filing-time paths; strand them and a
     // review skill writing to the old path resurrects a ghost record there.
     repathPendingSuggestions(deps.db, existing.recordId, toPath);
+    const queueItems = new QueueItemsRepository(deps.db);
+    syncQueueFile(queueItems, fromPath, deps.vaultDataPath);
+    syncQueueFile(queueItems, toPath, deps.vaultDataPath);
     deps.resolverCache.invalidate();
 
     sendNoContent(ctx.res);
@@ -1538,13 +1531,7 @@ export const supersedeVaultHandler =
     }
 
     // ── Mutation phase.
-    const tags = new TagsImporter(deps.db);
-    const filers = {
-      tags,
-      agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-      tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-      archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-    };
+    const options = fullImportOptions(deps.db);
 
     // 1. Archive the old note, record_id preserved.
     mkdirSync(dirname(archiveAbs), {recursive: true});
@@ -1562,7 +1549,7 @@ export const supersedeVaultHandler =
       body: archivedFm.body,
       vaultDataPath: deps.vaultDataPath
     });
-    const archived = importFile(records, archivePath, archiveAbs, undefined, filers);
+    const archived = importFile(records, archivePath, archiveAbs, undefined, options);
 
     // 3. Write the successor with the supersession wired in. Edges are
     //    backed by BODY wikilinks (the FM `edges:` map only retypes body
@@ -1585,7 +1572,8 @@ export const supersedeVaultHandler =
       body: `${newBody.replace(/\s+$/, '')}\n\n${footer}\n`,
       vaultDataPath: deps.vaultDataPath
     });
-    const successor = importFile(records, newPath, result.absolutePath, undefined, filers);
+    const successor = importFile(records, newPath, result.absolutePath, undefined, options);
+    if (newPath !== oldPath) syncQueueFile(options.queueItems, oldPath, deps.vaultDataPath);
     // Scoped edge pass: materializes the successor's `supersedes` edge (and
     // settles any pending edge_type suggestions) in the same request instead
     // of waiting for the watcher drain.

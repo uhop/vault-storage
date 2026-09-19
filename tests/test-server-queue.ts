@@ -278,6 +278,73 @@ test('GET /queue/projects/{name} — open items only, section-grouped order', as
   });
 });
 
+test('API writes to a queue file leave its slice current before any watcher drain', async t => {
+  await withServer(seedFleet, async url => {
+    const titles = async (project: string, archive = false): Promise<string[]> => {
+      const {body} = await fetchJson(
+        `${url}/queue/projects/${project}${archive ? '/archive' : ''}`,
+        {headers: authHeader}
+      );
+      return ((body as {items?: Array<{title: string}>}).items ?? []).map(it => it.title);
+    };
+    const send = (method: string, path: string, payload?: unknown) =>
+      fetchJson(`${url}${path}`, {
+        method,
+        headers: {...authHeader, 'Content-Type': 'application/json'},
+        ...(payload === undefined ? {} : {body: JSON.stringify(payload)})
+      });
+
+    await t.test('an inserted item', async t => {
+      const r = await send('POST', '/vault/edit', {
+        path: 'projects/bravo/queue.md',
+        op: 'insert-item',
+        section: '## Backlog',
+        item: '- **B-new.** filed through the API'
+      });
+      t.equal(r.status, 200);
+      t.ok((await titles('bravo')).includes('B-new.'));
+    });
+
+    await t.test('an item moved to the archive', async t => {
+      const r = await send('POST', '/vault/move-item', {
+        from_path: 'projects/alpha/queue.md',
+        to_path: 'projects/alpha/queue-archive.md',
+        title: 'A-top.',
+        to_section: '## 2026-05-13',
+        trail: '**Shipped.**'
+      });
+      t.equal(r.status, 200);
+      t.notOk((await titles('alpha')).includes('A-top.'), 'gone from the open queue');
+      t.ok((await titles('alpha', true)).includes('A-top.'), 'in the archive');
+    });
+
+    await t.test('a whole-document PUT', async t => {
+      const r = await send('PUT', '/vault/projects/alpha/queue.md', {
+        frontmatter: {title: 'x — Queue', type: 'project'},
+        body: '## Backlog\n\n- **A-only.** the rest were dropped\n'
+      });
+      t.equal(r.status, 204);
+      t.deepEqual(await titles('alpha'), ['A-only.']);
+    });
+
+    await t.test('a rename carries the slice to the new path', async t => {
+      const r = await send('POST', '/vault/move', {
+        from: 'projects/bravo/queue.md',
+        to: 'projects/charlie/queue.md'
+      });
+      t.equal(r.status, 204);
+      t.deepEqual(await titles('bravo'), [], 'the old slice is dropped');
+      t.ok((await titles('charlie')).includes('B-new.'), 'the new path has it');
+    });
+
+    await t.test('a delete drops the slice', async t => {
+      const r = await send('DELETE', '/vault/projects/charlie/queue.md');
+      t.equal(r.status, 204);
+      t.deepEqual(await titles('charlie'), []);
+    });
+  });
+});
+
 test('GET /queue/projects/{name}/archive — closed_at DESC with nulls last', async t => {
   await withServer(seedFleet, async url => {
     const {status, body} = await fetchJson(`${url}/queue/projects/alpha/archive`, {

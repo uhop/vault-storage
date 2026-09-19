@@ -10,6 +10,7 @@ import {
   incrementalReindex,
   setLastIndexedCommit
 } from '../src/maintenance/incremental-reindex.ts';
+import {QueueItemsRepository} from '../src/queue/repo.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 
 const writeMd = (root: string, relativePath: string, content: string): void => {
@@ -142,6 +143,48 @@ test('incrementalReindex: rename preserves record_id', async t => {
       originalId,
       'new path inherits the original record_id'
     );
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('incrementalReindex: queue slices follow the queue files through modify, rename, and delete', async t => {
+  const fx = setup();
+  try {
+    const queue = (items: string[]): string =>
+      `---\ntitle: Queue\ntype: project\n---\n## Backlog\n\n${items.map(i => `- **${i}.** x\n`).join('\n')}`;
+    const slices = (): string[] =>
+      new QueueItemsRepository(fx.db).listAll().map(r => `${r.source_file}: ${r.title}`);
+
+    writeMd(fx.root, 'projects/alpha/queue.md', queue(['First']));
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m initial');
+    await incrementalReindex(fx.db, fx.root);
+    t.deepEqual(slices(), ['projects/alpha/queue.md: First.'], 'the full import derives it');
+
+    writeMd(fx.root, 'projects/alpha/queue.md', queue(['First', 'Second']));
+    git(fx.root, 'commit -am modify');
+    await incrementalReindex(fx.db, fx.root);
+    t.deepEqual(
+      slices(),
+      ['projects/alpha/queue.md: First.', 'projects/alpha/queue.md: Second.'],
+      'a modify'
+    );
+
+    mkdirSync(join(fx.root, 'projects/bravo'));
+    git(fx.root, 'mv projects/alpha/queue.md projects/bravo/queue.md');
+    git(fx.root, 'commit -m rename');
+    await incrementalReindex(fx.db, fx.root);
+    t.deepEqual(
+      slices(),
+      ['projects/bravo/queue.md: First.', 'projects/bravo/queue.md: Second.'],
+      'a rename'
+    );
+
+    git(fx.root, 'rm -q projects/bravo/queue.md');
+    git(fx.root, 'commit -m delete');
+    await incrementalReindex(fx.db, fx.root);
+    t.deepEqual(slices(), [], 'a delete');
   } finally {
     teardown(fx);
   }

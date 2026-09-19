@@ -1,9 +1,8 @@
 import {existsSync, readFileSync, statSync} from 'node:fs';
 import type {ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
-import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
-import {TagsImporter} from '../../importer/import-tags.ts';
+import {fullImportOptions} from '../../importer/import-options.ts';
 import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import {RECORD_COLUMNS, RecordsRepository} from '../../records/repository.ts';
 import {RECORD_STATUSES, RECORD_TYPES} from '../../records/types.ts';
@@ -212,12 +211,7 @@ const readFmTags = (abs: string): FmReadResult => {
 // The write-side re-import: full filer set so suggestion resolution settles
 // on contact rather than at the next reindex.
 const reimport = (deps: FmHandlerDeps, row: RecordPathRow, abs: string): void => {
-  importFile(deps.records, row.file_path, abs, undefined, {
-    tags: new TagsImporter(deps.db),
-    agentStale: new SuggestionFiler(deps.db, 'agent_enrichment_stale'),
-    tagSuggestion: new SuggestionFiler(deps.db, 'tag_suggestion'),
-    archiveCandidate: new SuggestionFiler(deps.db, 'archive_candidate')
-  });
+  importFile(deps.records, row.file_path, abs, undefined, fullImportOptions(deps.db));
 };
 
 const persistTags = (

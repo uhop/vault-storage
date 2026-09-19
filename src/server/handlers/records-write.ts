@@ -1,9 +1,8 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {join} from 'node:path';
 import {buildEdges} from '../../importer/build-edges.ts';
-import {SuggestionFiler} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
-import {TagsImporter} from '../../importer/import-tags.ts';
+import {fullImportOptions} from '../../importer/import-options.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
@@ -35,10 +34,6 @@ export const putRecordHandler =
     }
 
     const {records} = deps;
-    const tags = new TagsImporter(deps.db);
-    const agentStale = new SuggestionFiler(deps.db, 'agent_enrichment_stale');
-    const tagSuggestion = new SuggestionFiler(deps.db, 'tag_suggestion');
-    const archiveCandidate = new SuggestionFiler(deps.db, 'archive_candidate');
     const existing = records.getById(id);
     if (!existing) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
@@ -86,12 +81,13 @@ export const putRecordHandler =
     // Re-import: parses the file we just wrote, recomputes content_hash, and
     // upserts. Preserves record_id (upsert is keyed on file_path).
     const absolutePath = join(deps.vaultDataPath, existing.filePath);
-    const {recordId} = importFile(records, existing.filePath, absolutePath, undefined, {
-      tags,
-      agentStale,
-      tagSuggestion,
-      archiveCandidate
-    });
+    const {recordId} = importFile(
+      records,
+      existing.filePath,
+      absolutePath,
+      undefined,
+      fullImportOptions(deps.db)
+    );
     // Scoped edge pass so an FM `edges:` override settles its edge_type
     // suggestion on the write itself, not at the next watcher/reindex pass.
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
