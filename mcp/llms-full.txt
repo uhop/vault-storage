@@ -150,6 +150,7 @@ Tags:
 - vault_tag_info — one taxonomy row (requested appears on alias lookups).
 - vault_records_by_tag — records carrying a tag (alias-aware; alias_for +
   requested on alias hits); paginated envelope.
+- vault_tag_update — rewrite a canonical tag's description; null clears it.
 
 Graph insight:
 
@@ -181,16 +182,18 @@ Queue-item slices (flat {count, items}):
   vault_queue_project_archive — all seven take fields ("a,b" keeps those
   fields plus id; "-a,-b" drops them; one mode per call, unknown names are a
   400), with exclude: "body" as the older alias for fields: "-body";
-  vault_queue_reindex rebuilds the derivative table after a multi-machine
-  pull.
+  every import keeps the derivative table current (server ≥ 2026-09-19), and
+  vault_queue_reindex rebuilds it when the queue lint reports a stale slice.
 
 Repo leases (agent coordination — who may edit which repo working tree; flat
 {count, items}, ephemeral: cleared on server restart):
 
 - vault_lease_list — current leases; ?resource filters to one, same shape.
 - vault_lease_claim — atomic claim/renew/preempt; 409 claimed_by_other with
-  the current lease. Precedence: human > cwd agent > side agent; side claims
-  attest a clean checkout ("clean at <sha>").
+  the current lease. Precedence: human > cwd agent > side agent, and a cwd
+  lease unrenewed for an hour yields to a cwd claim (server ≥ 2026-09-19;
+  the answer then carries prior); side claims attest a clean checkout
+  ("clean at <sha>").
 - vault_lease_renew, vault_lease_release (force = operator hatch),
   vault_lease_transfer — atomic handover, to_kind "human" for review/commit.
 - vault_lease_events — append-only transcript, newest first.

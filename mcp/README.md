@@ -98,8 +98,9 @@ The tools map to the REST surface, grouped by purpose:
   about a fifth of the bytes),
   `vault_queue_reindex`
 - **Repo leases** (agent coordination) — `vault_lease_list`, `vault_lease_events`,
-  `vault_lease_claim` (atomic; precedence human > cwd agent > side agent; side
-  claims attest a clean checkout), `vault_lease_renew`, `vault_lease_release`
+  `vault_lease_claim` (atomic; precedence human > cwd agent > side agent, and a
+  cwd lease unrenewed for an hour yields to a cwd claim; side claims attest a
+  clean checkout), `vault_lease_renew`, `vault_lease_release`
   (`force` = operator hatch), `vault_lease_transfer` (atomic handover)
 - **Handoffs** (agent coordination) — `vault_handoff_create` (idempotency key
   mandatory; role-addressed, never a session), `vault_handoff_list` (the
@@ -182,6 +183,20 @@ beside them. Common codes:
 
 ## Release notes
 
+- 0.8.0 — guarded section edits and a tag-description tool:
+  `vault_read_section` takes `occurrence` to pick one of several identical
+  heading lines and returns the section's `hash`, and `vault_replace_section`
+  takes the same `occurrence` plus `expected_hash`, so a save fails with
+  `section_changed` instead of overwriting a section someone changed;
+  `vault_tag_update` rewrites a canonical tag's description. `vault_propose` no
+  longer advertises `agent_summary`, which the server refuses since 2026-09-15,
+  so a call that followed the old schema stops failing. Tool descriptions now
+  match the server: the context pack's semantic ranking, the lease rule that a
+  `cwd` lease unrenewed for an hour yields to a `cwd` claim (with `prior` in
+  the answer), handoff verifications bound to the head commit, and queue slices
+  kept current by every import. `vault_tag_update` needs vault-storage from
+  2026-09-16, and the section parameters from 2026-09-18; calls without them
+  are unchanged against older servers.
 - 0.7.0 — section, item, and health tools, and response subsetting:
   `vault_read_section` / `vault_replace_section` read or rewrite the content
   under one ATX heading and leave every other byte alone; `vault_remove_item`,
