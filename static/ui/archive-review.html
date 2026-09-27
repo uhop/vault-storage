@@ -224,12 +224,16 @@
 
       let cache = {records: new Map()};
 
-      const fetchRecordContent = async path => {
-        if (cache.records.has(path)) return cache.records.get(path);
-        const res = await api('/vault/' + path);
-        const text = await res.text();
-        cache.records.set(path, text);
-        return text;
+      // The pending fetch is cached, so a second click awaits the first; a failed one is forgotten.
+      const fetchRecordContent = path => {
+        if (!cache.records.has(path)) {
+          const pending = api('/vault/' + path).then(res => res.text());
+          pending.catch(() => {
+            if (cache.records.get(path) === pending) cache.records.delete(path);
+          });
+          cache.records.set(path, pending);
+        }
+        return cache.records.get(path);
       };
 
       const fetchBacklinkCount = async recordId => {
