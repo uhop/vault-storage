@@ -69,6 +69,36 @@ test('maskCodeRegions', async t => {
     t.ok(masked.includes('b'));
     t.ok(!masked.includes('inside'));
   });
+  await t.test('a longer fence holds shorter ones and closes only on its own length', t => {
+    const input = [
+      'a',
+      '````markdown',
+      '```bash',
+      'inner',
+      '```',
+      'still inside',
+      '````',
+      'b'
+    ].join('\n');
+    const masked = maskCodeRegions(input);
+    t.ok(masked.includes('a') && masked.includes('b'));
+    t.notOk(masked.includes('inner'), 'the nested block is masked');
+    t.notOk(masked.includes('still inside'), 'a shorter closer does not end the block');
+  });
+  await t.test('a closer must repeat the opener character', t => {
+    const masked = maskCodeRegions(['~~~', '```', 'x', '~~~', 'after'].join('\n'));
+    t.notOk(masked.includes('x'));
+    t.ok(masked.includes('after'));
+  });
+  await t.test('a backtick opener with a backtick in its info string is not a fence', t => {
+    const masked = maskCodeRegions(['```x`', 'visible', '```', 'hidden', '```'].join('\n'));
+    t.ok(masked.includes('visible'));
+    t.notOk(masked.includes('hidden'));
+  });
+  await t.test('an unclosed fence masks nothing', t => {
+    const masked = maskCodeRegions(['````', 'open to the end'].join('\n'));
+    t.ok(masked.includes('open to the end'));
+  });
 });
 
 test('extractRelatedFromFrontmatter', async t => {

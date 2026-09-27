@@ -10,8 +10,39 @@
 // anchors, not cross-record references.
 
 const WIKILINK_RE = /\[\[([^\]\n|[]+?)(?:\|[^\]]*)?\]\]/g;
-const FENCED_CODE_RE = /(^|\n)([ \t]*)(```|~~~)[^\n]*\n[\s\S]*?\n\2\3[ \t]*(?=\n|$)/g;
+const FENCE_LINE_RE = /^[ \t]*(`{3,}|~{3,})(.*)$/;
 const INLINE_CODE_RE = /`+[^`\n]+?`+/g;
+
+const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
+
+/**
+ * Fenced code blocks as `[start, end)` offsets. CommonMark § 4.5: a fence
+ * closes only on a line of the same character, at least as long as the
+ * opener, so a four-backtick block can hold three-backtick ones. A backtick
+ * opener's info string has no backtick. An unclosed fence masks nothing.
+ */
+const fencedRanges = (text: string): [number, number][] => {
+  const ranges: [number, number][] = [];
+  let open: {start: number; char: string; length: number} | null = null;
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const m = FENCE_LINE_RE.exec(line);
+    if (m) {
+      const run = m[1]!;
+      const rest = m[2]!;
+      if (open === null) {
+        if (run[0] === '~' || !rest.includes('`')) {
+          open = {start: pos, char: run[0]!, length: run.length};
+        }
+      } else if (run[0] === open.char && run.length >= open.length && rest.trim() === '') {
+        ranges.push([open.start, pos + line.length]);
+        open = null;
+      }
+    }
+    pos += line.length + 1;
+  }
+  return ranges;
+};
 
 /**
  * Replace fenced code blocks and inline code spans with whitespace of the same
@@ -19,10 +50,14 @@ const INLINE_CODE_RE = /`+[^`\n]+?`+/g;
  * windows still align with the original text.
  */
 export const maskCodeRegions = (text: string): string => {
-  const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
-  let masked = text.replace(FENCED_CODE_RE, blank);
-  masked = masked.replace(INLINE_CODE_RE, blank);
-  return masked;
+  let masked = '';
+  let from = 0;
+  for (const [start, end] of fencedRanges(text)) {
+    masked += text.slice(from, start) + blank(text.slice(start, end));
+    from = end;
+  }
+  masked += text.slice(from);
+  return masked.replace(INLINE_CODE_RE, blank);
 };
 
 /** Pull every wikilink target out of arbitrary text. Display segments are dropped. */

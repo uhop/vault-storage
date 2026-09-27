@@ -97,6 +97,33 @@ test('findSection: absent, ambiguous, fence-only, and trailing-space headings', 
   );
 });
 
+test('findSection: a four-backtick block does not hide the next section (2026-09-19)', async t => {
+  const doc = [
+    '## Active',
+    '',
+    '- **Item.** Reply draft:',
+    '',
+    '````markdown',
+    '```js',
+    'x();',
+    '```',
+    '````',
+    '',
+    '## Backlog',
+    '',
+    '```bash',
+    'echo hi',
+    '```',
+    ''
+  ].join('\n');
+  const active = findSection(doc, '## Active');
+  t.ok(active.ok);
+  if (active.ok) {
+    t.notOk(sectionContent(doc, active.span).includes('## Backlog'), 'Active stops at Backlog');
+  }
+  t.ok(findSection(doc, '## Backlog').ok, 'Backlog is still a heading');
+});
+
 test('findSection: occurrence picks one of repeated headings and reports which', async t => {
   const doc = '## Log\n\nfirst\n\n## Other\n\nx\n\n## Log\n\nsecond\n';
   const first = findSection(doc, '## Log', 0);
