@@ -10,12 +10,15 @@ export const bodyRead = (req: IncomingMessage): Buffer | undefined => bodies.get
 /**
  * Buffer the request body up to `maxBytes`. Throws if the limit is exceeded —
  * the check runs per chunk, so an oversized upload is refused mid-stream
- * rather than after it has all been held in memory.
+ * rather than after it has all been held in memory. A body already read (the
+ * strict-field check reads it before the handler) is returned as it was.
  */
 export const readBodyBuffer = async (
   req: IncomingMessage,
   maxBytes: number = DEFAULT_MAX_BYTES
 ): Promise<Buffer> => {
+  const read = bodies.get(req);
+  if (read !== undefined) return read;
   let total = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req as AsyncIterable<Buffer>) {

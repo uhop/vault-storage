@@ -4,9 +4,8 @@ import {bodyRead} from './body.ts';
 
 /**
  * The top-level fields each write route reads from a JSON body; an empty
- * list means the route reads no body. Observed, not enforced (D64): a field
- * outside its route's list is recorded and the request goes through, until a
- * week of observations shows which routes can refuse one.
+ * list means the route reads no body. Every route records a field outside
+ * its list (D64); the routes in STRICT_BODY_ROUTES also refuse it (D68).
  */
 const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /system/resume-bundle': [],
@@ -117,8 +116,64 @@ export const BODY_FIELDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
 /** Write routes whose body is not a JSON object, so they have no fields to declare. */
 export const RAW_BODY_ROUTES: ReadonlySet<string> = new Set(['PUT /handoffs/{id}/artifact']);
 
+/**
+ * The routes that refuse a top-level field outside their list (D68): every
+ * route with JSON traffic and no unknown field from 2026-09-19 to 2026-09-27.
+ * A route with no traffic in that window stays observed only, since nothing
+ * yet shows what its clients send.
+ */
+export const STRICT_BODY_ROUTES: ReadonlySet<string> = new Set([
+  'PATCH /sections/{id}/fm',
+  'PATCH /tags/taxonomy/{tag}',
+  'POST /handoffs',
+  'POST /handoffs/claim',
+  'POST /handoffs/resolve',
+  'POST /handoffs/verify',
+  'POST /leases/claim',
+  'POST /leases/release',
+  'POST /leases/renew',
+  'POST /resolve',
+  'POST /sections/{id}/tags',
+  'POST /suggestions/claim',
+  'POST /suggestions/resolve-batch',
+  'POST /suggestions/{id}/reject',
+  'POST /tags/aliases',
+  'POST /tags/taxonomy',
+  'POST /vault/edit',
+  'POST /vault/move',
+  'POST /vault/move-item',
+  'POST /vault/propose',
+  'POST /vault/render',
+  'POST /vault/supersede',
+  'PUT /drafts',
+  'PUT /vault/{path}'
+]);
+
 const OPEN_BRACE = 0x7b;
 const CLIENT_MAX = 80;
+
+/** A body's top-level JSON object, or null for any other body (markdown, a patch, malformed JSON). */
+const jsonObjectOf = (raw: Buffer): Record<string, unknown> | null => {
+  const start = raw.findIndex(byte => byte > 0x20);
+  if (raw[start] !== OPEN_BRACE) return null;
+  let body: unknown;
+  try {
+    body = JSON.parse(raw.toString('utf8'));
+  } catch {
+    return null;
+  }
+  return body !== null && typeof body === 'object' && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : null;
+};
+
+/** The top-level fields of a JSON-object body outside the route's list; none for any other body. */
+export const unknownBodyFields = (route: string, raw: Buffer): string[] => {
+  const fields = BODY_FIELDS.get(route);
+  const body = jsonObjectOf(raw);
+  if (fields === undefined || body === null) return [];
+  return Object.keys(body).filter(field => !fields.has(field));
+};
 
 /**
  * Returns the observer the server calls after each handler: it records the
@@ -139,15 +194,8 @@ export const bodyFieldObserver = (
     if (fields === undefined) return;
     const raw = bodyRead(req);
     if (raw === undefined) return;
-    const start = raw.findIndex(byte => byte > 0x20);
-    if (raw[start] !== OPEN_BRACE) return;
-    let body: unknown;
-    try {
-      body = JSON.parse(raw.toString('utf8'));
-    } catch {
-      return;
-    }
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) return;
+    const body = jsonObjectOf(raw);
+    if (body === null) return;
     const client = String(req.headers['user-agent'] ?? '-').slice(0, CLIENT_MAX);
     const at = new Date().toISOString();
     try {

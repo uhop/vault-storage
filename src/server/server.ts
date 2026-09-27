@@ -64,7 +64,13 @@ import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.
 import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
 import {healthHandler, releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
 import {bodyFieldsHandler} from './handlers/body-fields.ts';
-import {bodyFieldObserver} from './body-fields.ts';
+import {
+  BODY_FIELDS,
+  STRICT_BODY_ROUTES,
+  bodyFieldObserver,
+  unknownBodyFields
+} from './body-fields.ts';
+import {readBodyBuffer} from './body.ts';
 import {startHealthMonitor, type HealthMonitor} from './health.ts';
 import {
   addAliasHandler,
@@ -437,6 +443,29 @@ const handleRequest =
         res.setHeader('Allow', router.allowedMethods(parsed.path).join(', '));
         sendError(res, 405, 'method_not_allowed', `method not allowed for ${parsed.path}`);
         return;
+      }
+
+      if (STRICT_BODY_ROUTES.has(match.route)) {
+        let raw: Buffer;
+        try {
+          raw = await readBodyBuffer(req);
+        } catch (err) {
+          sendError(res, 413, 'request_too_large', (err as Error).message);
+          return;
+        }
+        const unknown = unknownBodyFields(match.route, raw);
+        if (unknown.length > 0) {
+          const supported = [...(BODY_FIELDS.get(match.route) ?? [])].sort();
+          sendError(
+            res,
+            400,
+            'bad_request',
+            `unknown body field(s): ${unknown.join(', ')} — supported: ${supported.join(', ') || '(none)'}`,
+            {unknown, supported}
+          );
+          observe(match.route, req);
+          return;
+        }
       }
 
       const ctx: RequestContext = {
