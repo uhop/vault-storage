@@ -189,6 +189,20 @@ beside them. Common codes:
 
 ## Release notes
 
+- 0.9.0 — claim tokens and tag tools: every agent claim, whether a lease's, a
+  handoff's, or a suggestion batch's, returns a `claim_token` once, and
+  `vault_lease_renew`, `vault_lease_release`, `vault_lease_transfer`,
+  `vault_handoff_resolve`, a renewing re-claim, and
+  `vault_accept_suggestion` / `vault_reject_suggestion` /
+  `vault_resolve_suggestions_batch` / `vault_reopen_suggestion` on a claimed
+  item take it, so two claims under one holder name never settle each other's
+  work (409 `claim_token_mismatch` or `claimed_by_other` without it).
+  `vault_tag_add` and `vault_tag_remove` add or remove one tag on one record,
+  and `vault_patch_fm` no longer advertises `/tags`, which the server refuses.
+  The `vault_write_file` and `vault_update_piece` descriptions name the
+  `agent.complexity` values. The claim tokens need vault-storage from
+  2026-09-27, whose server refuses those calls without them; against an older
+  server the extra parameter is recorded and ignored.
 - 0.8.0 — guarded section edits and a tag-description tool:
   `vault_read_section` takes `occurrence` to pick one of several identical
   heading lines and returns the section's `hash`, and `vault_replace_section`

@@ -30,7 +30,9 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   (`fields: "a,b"` / `"-a,-b"` to subset a row, `exclude: "body"` the older
   alias for `fields: "-body"`),
   repo leases (`vault_lease_*` — agent coordination: atomic claim / renew /
-  release / transfer with a human-first precedence lattice), handoffs
+  release / transfer with a human-first precedence lattice; an agent claim
+  returns a `claim_token` once, and every later write on the lease, handoff,
+  or claimed suggestion presents it), handoffs
   (`vault_handoff_*` — role-addressed cross-agent work requests: idempotent
   create, claim, the review-loop resolve with `returned` rework, resubmit,
   notes, and a 10 MB git-patch artifact as the transport; durable in the
