@@ -8,10 +8,6 @@
       (() => {
         const t = localStorage.getItem('vault.theme');
         if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
-        // Instrument, off by default: &cv=1 turns on the content-visibility trial below.
-        if (new URLSearchParams(location.search).get('cv') === '1') {
-          document.documentElement.dataset.cv = '1';
-        }
       })();
     </script>
     <script>
@@ -74,11 +70,19 @@
       .toolbar a.button[hidden] {
         display: none;
       }
-      /* Trial behind &cv=1 (queue 2026-09-19): lay out only the blocks on screen. It changes the
-         spacing around loose lists, since containment stops margins collapsing out of a block. */
-      :root[data-cv='1'] #doc > * {
+      /* Sections off screen skip layout: Epiphany laid out a 430 KB note in 857 ms, 197 ms with this. */
+      #doc > section {
         content-visibility: auto;
-        contain-intrinsic-size: auto 3em;
+        contain-intrinsic-size: auto 20em;
+      }
+      /* Containment stops margins collapsing across sections; this restores the gap above a heading. */
+      /* Containment stops margins collapsing out of a section, so drop the trailing margins that
+         used to collapse into the next heading's: the last block's, down its chain of last children. */
+      #doc > section > :last-child,
+      #doc > section > :last-child > :last-child,
+      #doc > section > :last-child > :last-child > :last-child,
+      #doc > section > :last-child > :last-child > :last-child > :last-child {
+        margin-bottom: 0;
       }
       #doc :is(h1, h2, h3, h4, h5, h6) {
         scroll-margin-top: 4rem;
@@ -279,6 +283,22 @@
         }
       };
 
+      // One section per top-level heading, the unit #doc > section skips.
+      const sectioned = html => {
+        const tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        const out = document.createDocumentFragment();
+        let section = null;
+        for (const node of [...tpl.content.childNodes]) {
+          if (!section || (node.nodeType === Node.ELEMENT_NODE && /^H[1-6]$/.test(node.tagName))) {
+            section = document.createElement('section');
+            out.append(section);
+          }
+          section.append(node);
+        }
+        return out;
+      };
+
       async function load() {
         if (!path) {
           location.replace('/ui/edit.html');
@@ -302,7 +322,7 @@
               : `<details class="fm"><summary>frontmatter</summary><pre class="frontmatter">${esc(note.frontmatter)}</pre></details>`;
           time(
             'view: insert',
-            () => ($('#doc').innerHTML = fm + note.html),
+            () => $('#doc').replaceChildren(sectioned(fm + note.html)),
             `${note.html.length} chars`
           );
           time('view: decorate', () => decorate(note), `${note.sections.length} sections`);
