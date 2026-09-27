@@ -191,6 +191,13 @@ beside them. Common codes:
 
 ## Release notes
 
+- 0.10.0 — sorted and filtered tag listing: `vault_list_tags` takes `sort`
+  (`count`, the default, most used first; `count_asc`; `tag_asc`, A to Z;
+  `tag`, Z to A) and `contains`, a substring of the tag name, and each item
+  carries the tag's `description`. `vault_records_by_tag` returns the most
+  recently updated records first. The parameters need vault-storage from
+  2026-09-27; an older server answers them with a 400 for an unknown
+  parameter, and calls without them are unchanged.
 - 0.9.0 — claim tokens and tag tools: every agent claim, whether a lease's, a
   handoff's, or a suggestion batch's, returns a `claim_token` once, and
   `vault_lease_renew`, `vault_lease_release`, `vault_lease_transfer`,
