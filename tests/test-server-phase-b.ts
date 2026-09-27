@@ -445,6 +445,24 @@ test('GET /tags sorts by count or name, filters by substring, and rejects an unk
       );
       t.equal(env.total, 3, 'total counts every tag');
 
+      ctx.db
+        .prepare('UPDATE tags_taxonomy SET description = ? WHERE tag = ?')
+        .run('Container runtime.', 'docker');
+      const described = await fetchAuthed(`${ctx.url}/tags?contains=o`);
+      const rows = (described.body as {items: Array<{tag: string; description: string | null}>})
+        .items;
+      t.deepEqual(
+        rows.map(r => [r.tag, r.description]),
+        [['docker', 'Container runtime.']],
+        'items carry the description'
+      );
+      const k8s = await fetchAuthed(`${ctx.url}/tags?prefix=k8`);
+      t.equal(
+        (k8s.body as {items: Array<{description: string | null}>}).items[0]?.description,
+        null,
+        'a tag without one carries null'
+      );
+
       const bad = await fetchAuthed(`${ctx.url}/tags?sort=popularity`);
       t.equal(bad.status, 400, 'unknown sort is a 400');
     } finally {

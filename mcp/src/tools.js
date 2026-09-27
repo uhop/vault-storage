@@ -721,7 +721,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_tags',
     {
       description:
-        'List the managed tag taxonomy. Filter by `prefix` or by `contains` (a substring of the tag name); `sort` is `count` (default, most used first), `count_asc`, `tag_asc` (A to Z), or `tag` (Z to A). Returns the paginated envelope {items: [{tag, record_count}], offset, limit, total}; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'List the managed tag taxonomy. Filter by `prefix` or by `contains` (a substring of the tag name); `sort` is `count` (default, most used first), `count_asc`, `tag_asc` (A to Z), or `tag` (Z to A). Returns the paginated envelope {items: [{tag, description, record_count}], offset, limit, total}, `description` null when the tag has none; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         prefix: z.string().optional(),
         contains: z.string().optional(),

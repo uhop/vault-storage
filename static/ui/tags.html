@@ -80,8 +80,6 @@
         list-style: none;
         padding: 0;
         margin: 0;
-        max-height: 60vh;
-        overflow-y: auto;
       }
       .tag-list li {
         padding: 0;
@@ -91,8 +89,9 @@
         width: 100%;
         text-align: left;
         display: flex;
+        flex-wrap: wrap;
         align-items: baseline;
-        gap: 0.5rem;
+        column-gap: 0.5rem;
         padding: 0.35rem 0.55rem;
         border: 0;
         background: transparent;
@@ -141,9 +140,35 @@
       .tag-sort button {
         min-width: 2.4rem;
       }
-      .more {
-        margin-top: 0.6rem;
-        width: 100%;
+      .tag-list .desc {
+        flex-basis: 100%;
+        font-size: 0.75rem;
+        opacity: 0.75;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pager {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.6rem 0;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .pager span {
+        flex: 1;
+        text-align: center;
+      }
+      .tag-info {
+        margin: 0 0 0.8rem;
+        font-size: 0.9rem;
+      }
+      .tag-info p {
+        margin: 0 0 0.3rem;
+      }
+      .tag-info small {
+        color: var(--muted);
       }
     </style>
   </head>
@@ -180,13 +205,16 @@
             </select>
             <button type="button" id="tag-sort-order"></button>
           </div>
+          <div class="pager" data-list="tags" hidden></div>
           <ul id="tag-list" class="tag-list"></ul>
-          <button type="button" id="tag-more" class="more" hidden>Load more</button>
+          <div class="pager" data-list="tags" hidden></div>
         </section>
         <section class="records-pane">
           <h2 id="records-heading">Pick a tag</h2>
+          <div id="tag-info" class="tag-info" hidden></div>
+          <div class="pager" data-list="records" hidden></div>
           <div id="records"></div>
-          <button type="button" id="records-more" class="more" hidden>Load more</button>
+          <div class="pager" data-list="records" hidden></div>
         </section>
       </div>
     </main>
@@ -205,15 +233,32 @@
         if (SORTS.includes(s)) sort = s;
       } catch {}
 
-      let tags = [];
-      let tagsTotal = 0;
-      let tagsSeq = 0;
+      const lists = {
+        tags: {items: [], offset: 0, total: 0, seq: 0},
+        records: {items: [], offset: 0, total: 0, seq: 0}
+      };
       let activeTag = null;
-      let records = [];
-      let recordsTotal = 0;
-      let recordsSeq = 0;
 
       const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
+      const fmtNum = n => n.toLocaleString('en-US');
+
+      const renderPager = (name, noun) => {
+        const l = lists[name];
+        const pagers = $$(`.pager[data-list="${name}"]`);
+        const paged = l.total > PAGE;
+        const range =
+          l.total === 0
+            ? 'None'
+            : `${fmtNum(l.offset + 1)}–${fmtNum(l.offset + l.items.length)} of ${fmtNum(l.total)}${noun ? ` ${noun}` : ''}`;
+        pagers.forEach(p => {
+          p.hidden = l.total === 0;
+          p.innerHTML =
+            `<button type="button" data-step="-1" ${l.offset === 0 ? 'disabled' : ''}>‹ Prev</button>` +
+            `<span>${range}</span>` +
+            `<button type="button" data-step="1" ${l.offset + l.items.length >= l.total ? 'disabled' : ''}>Next ›</button>`;
+          p.querySelectorAll('button').forEach(b => (b.hidden = !paged));
+        });
+      };
 
       // Must match the head script's early request for the first page.
       const tagsUrl = offset => {
@@ -247,24 +292,26 @@
           localStorage.setItem('vault.tags.sort', sort);
         } catch {}
         renderSortControls();
-        loadTags();
+        loadTags(0);
       };
 
       const renderTagList = () => {
+        const l = lists.tags;
         const filtered = $('#tag-filter').value.trim() !== '';
-        $('#tag-total').textContent = `· ${tagsTotal} ${filtered ? 'matching' : 'total'}`;
-        $('#tag-more').hidden = tags.length >= tagsTotal;
-        if (tags.length === 0) {
+        $('#tag-total').textContent = `· ${fmtNum(l.total)} ${filtered ? 'matching' : 'total'}`;
+        renderPager('tags', '');
+        if (l.items.length === 0) {
           $('#tag-list').innerHTML = '<li><div class="empty">No tags match.</div></li>';
           return;
         }
-        $('#tag-list').innerHTML = tags
+        $('#tag-list').innerHTML = l.items
           .map(
             t => `
       <li>
         <button data-tag="${esc(t.tag)}" aria-current="${t.tag === activeTag}">
           <span class="name">${esc(t.tag)}</span>
           <span class="count">${t.record_count}</span>
+          ${t.description ? `<span class="desc" title="${esc(t.description)}">${esc(t.description)}</span>` : ''}
         </button>
       </li>
     `
@@ -272,22 +319,20 @@
           .join('');
       };
 
-      const loadTags = async (append = false) => {
-        const seq = ++tagsSeq;
-        if (!append) {
-          $('#tag-list').innerHTML =
-            '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
-          $('#tag-more').hidden = true;
-        }
+      const loadTags = async offset => {
+        const l = lists.tags;
+        const seq = ++l.seq;
+        $('#tag-list').innerHTML =
+          '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
         try {
-          const data = await apiJson(tagsUrl(append ? tags.length : 0));
-          if (seq !== tagsSeq) return;
-          const items = data.items ?? [];
-          tags = append ? tags.concat(items) : items;
-          tagsTotal = data.total ?? tags.length;
+          const data = await apiJson(tagsUrl(offset));
+          if (seq !== l.seq) return;
+          l.items = data.items ?? [];
+          l.offset = data.offset ?? offset;
+          l.total = data.total ?? l.items.length;
           renderTagList();
         } catch (e) {
-          if (seq !== tagsSeq) return;
+          if (seq !== l.seq) return;
           if (isAuthError(e)) {
             showAuthDialog();
             return;
@@ -300,16 +345,13 @@
       const fmtDate = iso => (iso ? iso.slice(0, 10) : '');
 
       const renderRecords = () => {
-        $('#records-more').hidden = records.length >= recordsTotal;
-        if (records.length === 0) {
+        const l = lists.records;
+        renderPager('records', 'records, most recently updated first');
+        if (l.items.length === 0) {
           $('#records').innerHTML = '<div class="empty">No records.</div>';
           return;
         }
-        const shown =
-          records.length < recordsTotal
-            ? `<div class="empty">Showing ${records.length} of ${recordsTotal}, most recently updated first.</div>`
-            : '';
-        $('#records').innerHTML = `${shown}<div class="fmw-records">${records
+        $('#records').innerHTML = `<div class="fmw-records">${l.items
           .map(
             r => `
         <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
@@ -322,32 +364,45 @@
           .join('')}</div>`;
       };
 
-      const loadRecords = async (append = false) => {
-        const seq = ++recordsSeq;
-        const tag = activeTag;
-        if (!append) {
-          $('#records').innerHTML =
-            '<div class="empty"><span class="spinner"></span> loading…</div>';
-          $('#records-more').hidden = true;
-        }
+      const loadRecords = async offset => {
+        const l = lists.records;
+        const seq = ++l.seq;
+        $('#records').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
         try {
-          const offset = append ? records.length : 0;
           const data = await apiJson(
-            `/tags/${encodeURIComponent(tag)}/records?limit=${PAGE}` +
+            `/tags/${encodeURIComponent(activeTag)}/records?limit=${PAGE}` +
               (offset ? `&offset=${offset}` : '')
           );
-          if (seq !== recordsSeq) return;
-          const items = data.items ?? [];
-          records = append ? records.concat(items) : items;
-          recordsTotal = data.total ?? records.length;
+          if (seq !== l.seq) return;
+          l.items = data.items ?? [];
+          l.offset = data.offset ?? offset;
+          l.total = data.total ?? l.items.length;
           renderRecords();
         } catch (e) {
-          if (seq !== recordsSeq) return;
+          if (seq !== l.seq) return;
           if (isAuthError(e)) {
             showAuthDialog();
             return;
           }
           $('#records').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+        }
+      };
+
+      const loadTagInfo = async tag => {
+        const box = $('#tag-info');
+        box.hidden = true;
+        try {
+          const info = await apiJson(`/tags/${encodeURIComponent(tag)}`);
+          if (tag !== activeTag) return;
+          const aliases = info.aliases?.length
+            ? ` · aliases: ${info.aliases.map(esc).join(', ')}`
+            : '';
+          box.innerHTML =
+            (info.description ? `<p>${esc(info.description)}</p>` : '') +
+            `<small>added ${esc(fmtDate(info.added))}${aliases}</small>`;
+          box.hidden = false;
+        } catch {
+          // The info line is an extra; the records list stands without it.
         }
       };
 
@@ -357,7 +412,8 @@
           b.setAttribute('aria-current', b.dataset.tag === tag ? 'true' : 'false')
         );
         $('#records-heading').textContent = `Records tagged ${tag}`;
-        loadRecords();
+        loadTagInfo(tag);
+        loadRecords(0);
       };
 
       const init = async () => {
@@ -366,7 +422,7 @@
           return;
         }
         renderSortControls();
-        await loadTags();
+        await loadTags(0);
         const hashTag = decodeURIComponent(location.hash.replace(/^#/, ''));
         if (hashTag) fetchRecordsForTag(hashTag);
       };
@@ -376,7 +432,7 @@
       let filterTimer;
       $('#tag-filter').addEventListener('input', () => {
         clearTimeout(filterTimer);
-        filterTimer = setTimeout(() => loadTags(), 200);
+        filterTimer = setTimeout(() => loadTags(0), 200);
       });
 
       $('#tag-sort-field').addEventListener('change', e =>
@@ -387,8 +443,18 @@
         setSort(sort.endsWith('_asc') ? sort.slice(0, -'_asc'.length) : `${sort}_asc`)
       );
 
-      $('#tag-more').addEventListener('click', () => loadTags(true));
-      $('#records-more').addEventListener('click', () => loadRecords(true));
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('.pager button[data-step]');
+        if (!btn) return;
+        const pager = btn.closest('.pager');
+        const name = pager.dataset.list;
+        const all = $$(`.pager[data-list="${name}"]`);
+        if (pager === all[all.length - 1])
+          pager.closest('section').scrollIntoView({block: 'start'});
+        const offset = Math.max(0, lists[name].offset + Number(btn.dataset.step) * PAGE);
+        if (name === 'tags') loadTags(offset);
+        else loadRecords(offset);
+      });
 
       $('#tag-list').addEventListener('click', e => {
         const btn = e.target.closest('button[data-tag]');

@@ -31,7 +31,7 @@ const likeEscape = (s: string): string => s.replace(/[\\%_]/g, '\\$&');
 
 /**
  * GET /tags?prefix=&contains=&sort=&offset=&limit=
- * List managed tags with per-tag record_count. `sort` is `count` (default,
+ * List managed tags with their description and per-tag record_count. `sort` is `count` (default,
  * most used first), `count_asc`, `tag` (Z to A), or `tag_asc` (A to Z).
  */
 export const listTagsHandler =
@@ -68,6 +68,7 @@ export const listTagsHandler =
 
     const sql = `
       SELECT t.tag AS tag,
+             t.description AS description,
              COALESCE(COUNT(tags.record_id), 0) AS record_count
         FROM tags_taxonomy t
         LEFT JOIN tags ON tags.tag = t.tag
@@ -79,12 +80,17 @@ export const listTagsHandler =
 
     const rows = deps.db.prepare(sql).all(...bindings, limit, offset) as unknown[] as {
       tag: string;
+      description: string | null;
       record_count: number;
     }[];
     const total = (deps.db.prepare(countSql).get(...bindings) as {n: number}).n;
 
     sendJson(ctx.res, 200, {
-      items: rows.map(r => ({tag: r.tag, record_count: r.record_count})),
+      items: rows.map(r => ({
+        tag: r.tag,
+        description: r.description,
+        record_count: r.record_count
+      })),
       offset,
       limit,
       total,
