@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 
 // Repo-lease registry (agent-coordination design, D21/D23) — the sibling of
@@ -6,6 +7,10 @@ import type {DatabaseSync} from 'node:sqlite';
 // agent — cwd preempts an agent-held side lease, and a cwd lease unrenewed
 // for STALE_CWD_LEASE_SECONDS; the operator preempts any agent, nothing
 // preempts a human. Human leases never expire.
+//
+// An agent claim issues a token (D67); renew, release, and transfer present
+// it, so two claims under one holder name never share a fence. A human lease
+// carries none: the operator's name is unique, and `force` is the hatch.
 
 export const HOLDER_KINDS = ['agent', 'human'] as const;
 export type HolderKind = (typeof HOLDER_KINDS)[number];
@@ -28,6 +33,8 @@ export interface Lease {
   claimedAt: string;
   renewedAt: string;
   expiresAt: string | null;
+  /** Returned to the claimer only; never serialized in a listing. Null for a human lease. */
+  claimToken: string | null;
 }
 
 export interface LeaseEvent {
@@ -42,13 +49,15 @@ export interface LeaseEvent {
 export type ClaimOutcome =
   | {status: 'claimed' | 'renewed'; lease: Lease}
   | {status: 'preempted'; lease: Lease; prior: Lease}
-  | {status: 'conflict'; current: Lease};
+  | {status: 'conflict'; current: Lease}
+  | {status: 'token_mismatch'; current: Lease};
 
 export type LeaseOpOutcome =
   | {status: 'ok'; lease: Lease}
   | {status: 'released'}
   | {status: 'not_found'}
-  | {status: 'not_holder'; current: Lease};
+  | {status: 'not_holder'; current: Lease}
+  | {status: 'token_mismatch'; current: Lease};
 
 interface LeaseRow {
   resource: string;
@@ -59,6 +68,7 @@ interface LeaseRow {
   claimed_at: string;
   renewed_at: string;
   expires_at: string | null;
+  claim_token: string | null;
 }
 
 const toLease = (row: LeaseRow): Lease => ({
@@ -69,7 +79,8 @@ const toLease = (row: LeaseRow): Lease => ({
   attestation: row.attestation,
   claimedAt: row.claimed_at,
   renewedAt: row.renewed_at,
-  expiresAt: row.expires_at
+  expiresAt: row.expires_at,
+  claimToken: row.claim_token
 });
 
 export interface ClaimRequest {
@@ -81,8 +92,21 @@ export interface ClaimRequest {
   /** Side-claim clean-tree evidence, e.g. "clean at abc1234" (D23; client-side check). */
   attestation?: string;
   ttlSeconds?: number;
+  /** The token of the caller's live claim; a re-claim under the same name renews only with it. */
+  claimToken?: string;
   now?: string;
 }
+
+/** Whether a caller may act on `current`: the holder by name for a human, by token for an agent. */
+const standing = (
+  current: Lease,
+  holder: string,
+  token: string | null
+): 'ok' | 'not_holder' | 'token_mismatch' => {
+  if (current.holder !== holder) return 'not_holder';
+  if (current.holderKind === 'human') return 'ok';
+  return token !== null && token === current.claimToken ? 'ok' : 'token_mismatch';
+};
 
 export class LeasesRepository {
   #db: DatabaseSync;
@@ -129,9 +153,10 @@ export class LeasesRepository {
   }
 
   /**
-   * Atomic claim. Re-claiming a held resource is a renew (idempotent — safe
-   * retry after an ambiguous network failure). Preemption needs no consent:
-   * the incumbent discovers demotion at its next verify.
+   * Atomic claim. Re-claiming a held resource with its token is a renew
+   * (idempotent — safe retry after an ambiguous network failure); the same
+   * name without it is `token_mismatch`. Preemption needs no consent: the
+   * incumbent discovers demotion at its next verify.
    */
   claim(req: ClaimRequest): ClaimOutcome {
     const now = req.now ?? new Date().toISOString();
@@ -145,7 +170,10 @@ export class LeasesRepository {
     }
 
     if (current.holder === req.holder) {
-      const lease = this.#write(req, current.claimedAt, now);
+      if (standing(current, req.holder, req.claimToken ?? null) !== 'ok') {
+        return {status: 'token_mismatch', current};
+      }
+      const lease = this.#write(req, current.claimedAt, now, current.claimToken);
       this.#logEvent(now, req.resource, 'renewed', req.holder, null);
       return {status: 'renewed', lease};
     }
@@ -170,27 +198,47 @@ export class LeasesRepository {
     return {status: 'conflict', current};
   }
 
-  renew(resource: string, holder: string, ttlSeconds?: number, now?: string): LeaseOpOutcome {
+  renew(
+    resource: string,
+    holder: string,
+    token: string | null,
+    ttlSeconds?: number,
+    now?: string
+  ): LeaseOpOutcome {
     const at = now ?? new Date().toISOString();
     const current = this.get(resource, at);
     if (current === null) return {status: 'not_found'};
-    if (current.holder !== holder) return {status: 'not_holder', current};
+    const stand = standing(current, holder, token);
+    if (stand !== 'ok') return {status: stand, current};
     const expires = current.holderKind === 'human' ? null : this.#expiry(at, ttlSeconds);
     this.#db
-      .prepare('UPDATE leases SET renewed_at = ?, expires_at = ? WHERE resource = ?')
-      .run(at, expires, resource);
+      .prepare(
+        'UPDATE leases SET renewed_at = ?, expires_at = ? WHERE resource = ? AND claim_token IS ?'
+      )
+      .run(at, expires, resource, current.claimToken);
     this.#logEvent(at, resource, 'renewed', holder, null);
     const renewed = this.get(resource, at);
     return renewed ? {status: 'ok', lease: renewed} : {status: 'not_found'};
   }
 
-  /** `force` is the operator's UI hatch; a normal release requires the holder to match. */
-  release(resource: string, holder: string, force = false, now?: string): LeaseOpOutcome {
+  /** `force` is the operator's UI hatch; a normal release requires the holder and its token. */
+  release(
+    resource: string,
+    holder: string,
+    token: string | null,
+    force = false,
+    now?: string
+  ): LeaseOpOutcome {
     const at = now ?? new Date().toISOString();
     const current = this.get(resource, at);
     if (current === null) return {status: 'not_found'};
-    if (!force && current.holder !== holder) return {status: 'not_holder', current};
-    this.#db.prepare('DELETE FROM leases WHERE resource = ?').run(resource);
+    if (!force) {
+      const stand = standing(current, holder, token);
+      if (stand !== 'ok') return {status: stand, current};
+    }
+    this.#db
+      .prepare('DELETE FROM leases WHERE resource = ? AND claim_token IS ?')
+      .run(resource, current.claimToken);
     this.#logEvent(
       at,
       resource,
@@ -204,25 +252,28 @@ export class LeasesRepository {
   /**
    * Atomic reassignment by the current holder (D23) — release-then-claim has
    * a snipe window between the calls; this has none. Transfer-to-human is the
-   * "please review and commit" case.
+   * "please review and commit" case. An agent recipient gets a fresh token,
+   * returned to the caller to hand over.
    */
   transfer(
     resource: string,
     holder: string,
+    token: string | null,
     to: {holder: string; holderKind: HolderKind; priority?: LeasePriority; ttlSeconds?: number},
     now?: string
   ): LeaseOpOutcome {
     const at = now ?? new Date().toISOString();
     const current = this.get(resource, at);
     if (current === null) return {status: 'not_found'};
-    if (current.holder !== holder) return {status: 'not_holder', current};
+    const stand = standing(current, holder, token);
+    if (stand !== 'ok') return {status: stand, current};
     const human = to.holderKind === 'human';
     this.#db
       .prepare(
         `UPDATE leases
             SET holder = ?, holder_kind = ?, priority = ?, attestation = NULL,
-                claimed_at = ?, renewed_at = ?, expires_at = ?
-          WHERE resource = ?`
+                claimed_at = ?, renewed_at = ?, expires_at = ?, claim_token = ?
+          WHERE resource = ? AND claim_token IS ?`
       )
       .run(
         to.holder,
@@ -231,7 +282,9 @@ export class LeasesRepository {
         at,
         at,
         human ? null : this.#expiry(at, to.ttlSeconds),
-        resource
+        human ? null : randomUUID(),
+        resource,
+        current.claimToken
       );
     this.#logEvent(at, resource, 'transferred', holder, JSON.stringify({to: to.holder}));
     const lease = this.get(resource, at);
@@ -262,17 +315,18 @@ export class LeasesRepository {
     return new Date(Date.parse(now) + ttl * 1000).toISOString();
   }
 
-  #write(req: ClaimRequest, claimedAt: string, now: string): Lease {
+  /** `token` keeps a renewed claim's token; a new claim gets a fresh one (none for a human). */
+  #write(req: ClaimRequest, claimedAt: string, now: string, token?: string | null): Lease {
     const human = req.holderKind === 'human';
     this.#db
       .prepare(
-        `INSERT INTO leases (resource, holder, holder_kind, priority, attestation, claimed_at, renewed_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO leases (resource, holder, holder_kind, priority, attestation, claimed_at, renewed_at, expires_at, claim_token)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(resource) DO UPDATE SET
            holder = excluded.holder, holder_kind = excluded.holder_kind,
            priority = excluded.priority, attestation = excluded.attestation,
            claimed_at = excluded.claimed_at, renewed_at = excluded.renewed_at,
-           expires_at = excluded.expires_at`
+           expires_at = excluded.expires_at, claim_token = excluded.claim_token`
       )
       .run(
         req.resource,
@@ -282,7 +336,8 @@ export class LeasesRepository {
         req.attestation ?? null,
         claimedAt,
         now,
-        human ? null : this.#expiry(now, req.ttlSeconds)
+        human ? null : this.#expiry(now, req.ttlSeconds),
+        human ? null : (token ?? randomUUID())
       );
     const lease = this.get(req.resource, now);
     if (!lease) throw new Error(`lease write for ${req.resource} did not land`);

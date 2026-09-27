@@ -121,7 +121,7 @@ export const cleanupLint = (db: DatabaseSync): CleanupLintSummary => {
                 resolved_by   = 'record-deleted-backfill',
                 claimed_by    = NULL,
                 claimed_at    = NULL,
-                claim_expires = NULL
+                claim_expires = NULL, claim_token = NULL
           WHERE status IN ('pending', 'claimed')
             AND subject_id IS NOT NULL
             AND NOT EXISTS (

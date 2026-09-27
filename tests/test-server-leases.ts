@@ -96,31 +96,62 @@ test('leases: claim → list → renew → release round-trip', async t => {
     t.equal(claim.body.status, 'claimed');
     t.equal(claim.body.lease.holder_kind, 'agent', 'kind defaults to agent');
     t.ok(claim.body.lease.expires_at, 'agent lease expires');
+    const token = claim.body.claim_token as string;
+    t.ok(typeof token === 'string' && token.length > 0, 'an agent claim returns a token');
+    t.equal(claim.body.lease.claim_token, undefined, 'the lease object carries no token');
 
     const list = await api(`${ctx.url}/leases`, 'GET');
     t.equal(list.body.count, 1);
     t.equal(list.body.items[0].resource, REPO);
+    t.equal(list.body.items[0].claim_token, undefined, 'a listing never shows the token');
 
     const single = await api(`${ctx.url}/leases?resource=${encodeURIComponent(REPO)}`, 'GET');
     t.equal(single.body.count, 1, 'single-resource filter, same shape');
 
-    const reclaim = await api(`${ctx.url}/leases/claim`, 'POST', {
+    const nameOnly = await api(`${ctx.url}/leases/claim`, 'POST', {
       resource: REPO,
       holder: 'nuke/session-a',
       priority: 'cwd'
     });
-    t.equal(reclaim.body.status, 'renewed', 're-claim by holder is a renew');
+    t.equal(nameOnly.status, 409, 're-claim by name alone is refused');
+    t.equal(nameOnly.body.code, 'claim_token_mismatch');
+
+    const reclaim = await api(`${ctx.url}/leases/claim`, 'POST', {
+      resource: REPO,
+      holder: 'nuke/session-a',
+      priority: 'cwd',
+      claim_token: token
+    });
+    t.equal(reclaim.body.status, 'renewed', 're-claim with the token is a renew');
+    t.equal(reclaim.body.claim_token, token, 'a renew keeps the token');
+
+    for (const op of ['renew', 'release']) {
+      const bare = await api(`${ctx.url}/leases/${op}`, 'POST', {
+        resource: REPO,
+        holder: 'nuke/session-a'
+      });
+      t.equal(bare.status, 409, `${op} without the token is refused`);
+      t.equal(bare.body.code, 'claim_token_mismatch');
+      const wrong = await api(`${ctx.url}/leases/${op}`, 'POST', {
+        resource: REPO,
+        holder: 'nuke/session-a',
+        claim_token: 'not-the-token'
+      });
+      t.equal(wrong.status, 409, `${op} with another token is refused`);
+    }
 
     const renew = await api(`${ctx.url}/leases/renew`, 'POST', {
       resource: REPO,
       holder: 'nuke/session-a',
+      claim_token: token,
       ttl_seconds: 7200
     });
     t.equal(renew.body.status, 'ok');
 
     const release = await api(`${ctx.url}/leases/release`, 'POST', {
       resource: REPO,
-      holder: 'nuke/session-a'
+      holder: 'nuke/session-a',
+      claim_token: token
     });
     t.equal(release.body.status, 'released');
     const after = await api(`${ctx.url}/leases`, 'GET');
@@ -249,6 +280,42 @@ test('leases: expiry is lazy and logged; expired lease is re-claimable', async t
   }
 });
 
+test('leases: a reused holder name does not inherit the lapsed claim', async t => {
+  const ctx = await startCtx();
+  try {
+    const repo = new LeasesRepository(ctx.db);
+    const t0 = '2026-09-27T00:00:00.000Z';
+    const first = repo.claim({
+      resource: REPO,
+      holder: 'nuke/reused',
+      holderKind: 'agent',
+      priority: 'side',
+      ttlSeconds: 60,
+      now: t0
+    });
+    const firstToken = first.status === 'claimed' ? first.lease.claimToken : null;
+    const later = '2026-09-27T00:02:00.000Z';
+    const second = repo.claim({
+      resource: REPO,
+      holder: 'nuke/reused',
+      holderKind: 'agent',
+      priority: 'side',
+      now: later
+    });
+    t.equal(second.status, 'claimed', 'the lapsed claim is gone, so this is a new one');
+    const secondToken = second.status === 'claimed' ? second.lease.claimToken : null;
+    t.notEqual(secondToken, firstToken, 'with a new token');
+    t.equal(
+      repo.release(REPO, 'nuke/reused', firstToken, false, later).status,
+      'token_mismatch',
+      "the first claim's release leaves the second in place"
+    );
+    t.equal(repo.get(REPO, later)?.claimToken, secondToken);
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
 test('leases: a cwd lease unrenewed past the grace window yields to another cwd claim', async t => {
   const ctx = await startCtx();
   try {
@@ -258,9 +325,11 @@ test('leases: a cwd lease unrenewed past the grace window yields to another cwd 
     const claim = (holder: string, priority: 'cwd' | 'side', minutes: number) =>
       repo.claim({resource: REPO, holder, holderKind: 'agent', priority, now: at(minutes)});
 
-    t.equal(claim('nuke/dead', 'cwd', 0).status, 'claimed');
+    const dead = claim('nuke/dead', 'cwd', 0);
+    t.equal(dead.status, 'claimed');
+    const deadToken = dead.status === 'claimed' ? dead.lease.claimToken : null;
     t.equal(claim('nuke/next', 'cwd', 59).status, 'conflict', 'inside the hour it holds');
-    t.equal(repo.renew(REPO, 'nuke/dead', undefined, at(30)).status, 'ok');
+    t.equal(repo.renew(REPO, 'nuke/dead', deadToken, undefined, at(30)).status, 'ok');
     t.equal(claim('nuke/next', 'cwd', 89).status, 'conflict', 'a renew restarts the hour');
     t.equal(claim('croc/side', 'side', 95).status, 'conflict', 'a side claim gets no grace');
 
@@ -281,7 +350,7 @@ test('leases: a cwd lease unrenewed past the grace window yields to another cwd 
 test('leases: transfer is atomic and rewrites holder attributes', async t => {
   const ctx = await startCtx();
   try {
-    await api(`${ctx.url}/leases/claim`, 'POST', {
+    const claim = await api(`${ctx.url}/leases/claim`, 'POST', {
       resource: REPO,
       holder: 'nuke/session-a',
       priority: 'cwd'
@@ -292,10 +361,33 @@ test('leases: transfer is atomic and rewrites holder attributes', async t => {
       to_holder: 'croc/session-x'
     });
     t.equal(denied.status, 409, 'only the holder transfers');
+    const tokenless = await api(`${ctx.url}/leases/transfer`, 'POST', {
+      resource: REPO,
+      holder: 'nuke/session-a',
+      to_holder: 'croc/session-x'
+    });
+    t.equal(tokenless.body.code, 'claim_token_mismatch', 'the holder transfers with its token');
+
+    const toAgent = await api(`${ctx.url}/leases/transfer`, 'POST', {
+      resource: REPO,
+      holder: 'nuke/session-a',
+      claim_token: claim.body.claim_token,
+      to_holder: 'croc/session-x'
+    });
+    t.equal(toAgent.body.status, 'ok');
+    const agentToken = toAgent.body.claim_token as string;
+    t.ok(agentToken && agentToken !== claim.body.claim_token, 'the recipient gets a new token');
+    const stale = await api(`${ctx.url}/leases/renew`, 'POST', {
+      resource: REPO,
+      holder: 'croc/session-x',
+      claim_token: claim.body.claim_token
+    });
+    t.equal(stale.status, 409, "the transferor's token no longer works");
 
     const toHuman = await api(`${ctx.url}/leases/transfer`, 'POST', {
       resource: REPO,
-      holder: 'nuke/session-a',
+      holder: 'croc/session-x',
+      claim_token: agentToken,
       to_holder: 'eugene',
       to_kind: 'human'
     });
@@ -303,12 +395,18 @@ test('leases: transfer is atomic and rewrites holder attributes', async t => {
     t.equal(toHuman.body.lease.holder, 'eugene');
     t.equal(toHuman.body.lease.expires_at, null, 'transfer-to-human drops expiry');
     t.equal(toHuman.body.lease.priority, null, 'transfer-to-human drops priority');
+    t.equal(toHuman.body.claim_token, undefined, 'a human lease carries no token');
 
     const events = await api(
       `${ctx.url}/leases/events?resource=${encodeURIComponent(REPO)}`,
       'GET'
     );
     t.equal(events.body.items[0].event, 'transferred', 'transfer logged, newest first');
+    const humanRenew = await api(`${ctx.url}/leases/renew`, 'POST', {
+      resource: REPO,
+      holder: 'eugene'
+    });
+    t.equal(humanRenew.body.status, 'ok', 'the operator acts by name');
   } finally {
     await stopCtx(ctx);
   }

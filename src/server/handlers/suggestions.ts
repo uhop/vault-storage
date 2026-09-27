@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {revertExpiredClaims} from '../../records/claims.ts';
 import {EDGE_TYPES, EDGE_TYPE_ALIASES, EVIDENCE_SOURCES, isEvidence} from '../../records/types.ts';
@@ -338,7 +339,14 @@ export const getSuggestionHandler =
 
 interface ResolveBody {
   resolved_by?: string;
+  claim_token?: unknown;
 }
+
+/** A token from the request body: the string, `null` when absent, `undefined` when malformed. */
+const claimTokenOf = (value: unknown): string | null | undefined => {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+};
 
 const parseOptionalBody = async <T extends object>(raw: string): Promise<T | string> => {
   if (raw.trim().length === 0) return {} as T;
@@ -357,25 +365,25 @@ interface ResolvableRow {
   status: string;
   claimed_by: string | null;
   claim_expires: string | null;
+  claim_token: string | null;
 }
 
 /**
- * Whether `resolvedBy` may resolve this row. `null` = allowed; otherwise the
- * 409 to report. A live claim (expiry already handled by
- * `revertExpiredClaims`) is resolvable only by its holder — the caller's
- * `resolved_by` doubles as the holder identity.
+ * Whether a request presenting `token` may settle this row. `null` = allowed;
+ * otherwise the 409 to report. A live claim (expiry already handled by
+ * `revertExpiredClaims`) yields only to the token its claim returned, so two
+ * claims under one holder name stay apart (D67).
  */
 const claimConflict = (
   row: ResolvableRow,
-  resolvedBy: string | null,
-  field = 'resolved_by'
+  token: string | null
 ): {code: string; message: string; details?: Record<string, unknown>} | null => {
   if (row.status === 'pending') return null;
   if (row.status === 'claimed') {
-    if (resolvedBy !== null && resolvedBy === row.claimed_by) return null;
+    if (token !== null && token === row.claim_token) return null;
     return {
       code: 'claimed_by_other',
-      message: `suggestion is claimed by "${row.claimed_by}" until ${row.claim_expires} — pass ${field} matching the holder, or wait for the claim to expire`,
+      message: `suggestion is claimed by "${row.claimed_by}" until ${row.claim_expires} — pass the claim_token its claim returned, or wait for the claim to expire`,
       details: {claimed_by: row.claimed_by, claim_expires: row.claim_expires}
     };
   }
@@ -402,7 +410,7 @@ const flipStatus = (
     .prepare(
       `UPDATE suggestions
           SET status = ?, resolved_at = ?, resolved_by = ?,
-              claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+              claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
         WHERE id = ? AND status IN ('pending', 'claimed')`
     )
     .run(target, now, resolvedBy, id).changes > 0;
@@ -429,16 +437,23 @@ const makeResolveHandler =
       sendError(ctx.res, 400, 'bad_request', body);
       return;
     }
+    const token = claimTokenOf(body.claim_token);
+    if (token === undefined) {
+      sendError(ctx.res, 400, 'bad_request', 'claim_token must be a non-empty string when set');
+      return;
+    }
 
     revertExpiredClaims(deps.db);
     const existing = deps.db
-      .prepare('SELECT status, claimed_by, claim_expires FROM suggestions WHERE id = ?')
+      .prepare(
+        'SELECT status, claimed_by, claim_expires, claim_token FROM suggestions WHERE id = ?'
+      )
       .get(id) as ResolvableRow | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;
     }
-    const conflict = claimConflict(existing, body.resolved_by ?? null);
+    const conflict = claimConflict(existing, token);
     if (conflict) {
       sendError(ctx.res, 409, conflict.code, conflict.message, conflict.details);
       return;
@@ -574,12 +589,13 @@ export const createSuggestionHandler =
  * Move an accepted, rejected, or claimed suggestion back to `pending`,
  * clearing `resolved_at`/`resolved_by` and any claim. Escape hatch for
  * misclicks; on a claimed row it is the explicit claim release (the
- * alternative is waiting out the TTL), allowed only to the holder.
+ * alternative is waiting out the TTL), allowed only to the claim.
  *
- * Body (optional): `{holder?: string}`. A claimed row needs `holder` equal
- * to its `claimed_by` (409 `claimed_by_other` otherwise), so a client whose
- * claim lapsed and was re-claimed cannot free the new holder's claim. A
- * lapsed claim reverts first, so its release is 409 `already_pending`.
+ * Body (optional): `{claim_token?: string}`. A claimed row needs the token
+ * its claim returned (409 `claimed_by_other` otherwise), so a client whose
+ * claim lapsed and was re-claimed cannot free the new claim, even under the
+ * same holder name (D66, D67). A lapsed claim reverts first, so its release
+ * is 409 `already_pending`.
  * 409 `already_pending` when pending; 404 when unknown.
  */
 export const reopenSuggestionHandler =
@@ -599,20 +615,22 @@ export const reopenSuggestionHandler =
       sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
       return;
     }
-    const body = await parseOptionalBody<{holder?: unknown}>(raw);
+    const body = await parseOptionalBody<{claim_token?: unknown}>(raw);
     if (typeof body === 'string') {
       sendError(ctx.res, 400, 'bad_request', body);
       return;
     }
-    const holder = body.holder ?? null;
-    if (holder !== null && (typeof holder !== 'string' || holder.trim().length === 0)) {
-      sendError(ctx.res, 400, 'bad_request', 'holder must be a non-empty string');
+    const token = claimTokenOf(body.claim_token);
+    if (token === undefined) {
+      sendError(ctx.res, 400, 'bad_request', 'claim_token must be a non-empty string when set');
       return;
     }
 
     revertExpiredClaims(deps.db);
     const existing = deps.db
-      .prepare('SELECT status, claimed_by, claim_expires FROM suggestions WHERE id = ?')
+      .prepare(
+        'SELECT status, claimed_by, claim_expires, claim_token FROM suggestions WHERE id = ?'
+      )
       .get(id) as ResolvableRow | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
@@ -622,8 +640,7 @@ export const reopenSuggestionHandler =
       sendError(ctx.res, 409, 'already_pending', 'suggestion is already pending');
       return;
     }
-    const conflict =
-      existing.status === 'claimed' ? claimConflict(existing, holder, 'holder') : null;
+    const conflict = existing.status === 'claimed' ? claimConflict(existing, token) : null;
     if (conflict) {
       sendError(ctx.res, 409, conflict.code, conflict.message, conflict.details);
       return;
@@ -632,10 +649,10 @@ export const reopenSuggestionHandler =
       .prepare(
         `UPDATE suggestions
             SET status = 'pending', resolved_at = NULL, resolved_by = NULL,
-                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
-          WHERE id = ? AND status = ? AND claimed_by IS ?`
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
+          WHERE id = ? AND status = ? AND claim_token IS ?`
       )
-      .run(id, existing.status, existing.claimed_by).changes;
+      .run(id, existing.status, existing.claim_token).changes;
     if (changed === 0) {
       sendError(ctx.res, 409, 'conflict', 'suggestion changed while reopening; read it again');
       return;
@@ -762,14 +779,15 @@ export const claimSuggestionsHandler =
     ).map(r => r.id);
 
     const expires = new Date(now.getTime() + ttl * 1000).toISOString();
+    const token = randomUUID();
     if (ids.length > 0) {
       deps.db
         .prepare(
           `UPDATE suggestions
-              SET status = 'claimed', claimed_by = ?, claimed_at = ?, claim_expires = ?
+              SET status = 'claimed', claimed_by = ?, claimed_at = ?, claim_expires = ?, claim_token = ?
             WHERE id IN (${ids.map(() => '?').join(',')}) AND status = 'pending'`
         )
-        .run(holder, nowIso, expires, ...ids);
+        .run(holder, nowIso, expires, token, ...ids);
     }
 
     const items =
@@ -797,6 +815,7 @@ export const claimSuggestionsHandler =
       holder,
       claimed: items.length,
       claim_expires: items.length > 0 ? expires : null,
+      claim_token: items.length > 0 ? token : null,
       remaining_pending: remaining,
       items
     });
@@ -833,9 +852,9 @@ const payloadString = (payload: Record<string, unknown>, key: string): string | 
  * judgment; the ceremony (per-id resolve + FM side-effect write, ~2 HTTP
  * calls per item) collapses into one request.
  *
- * Body: `{resolved_by?: string, items: [{id, decision: 'accept'|'reject',
- * edge_type?}]}` (≤ 100 items). `resolved_by` doubles as the claim holder
- * for claimed items.
+ * Body: `{resolved_by?: string, claim_token?: string, items: [{id,
+ * decision: 'accept'|'reject', edge_type?}]}` (≤ 100 items). A claimed item
+ * needs the `claim_token` its claim returned; `resolved_by` is recorded.
  *
  * Side effects by kind:
  * - `tag_suggestion` accept → the tag is realized on the record's FM
@@ -887,6 +906,11 @@ export const resolveBatchSuggestionsHandler =
       return;
     }
     const resolvedBy = typeof resolvedByRaw === 'string' ? resolvedByRaw : null;
+    const token = claimTokenOf(body['claim_token']);
+    if (token === undefined) {
+      sendError(ctx.res, 400, 'bad_request', 'claim_token must be a non-empty string when set');
+      return;
+    }
 
     const itemsRaw = body['items'];
     if (!Array.isArray(itemsRaw) || itemsRaw.length === 0 || itemsRaw.length > BATCH_MAX) {
@@ -923,7 +947,7 @@ export const resolveBatchSuggestionsHandler =
 
       const row = deps.db
         .prepare(
-          `SELECT id, kind, payload, status, claimed_by, claim_expires
+          `SELECT id, kind, payload, status, claimed_by, claim_expires, claim_token
              FROM suggestions WHERE id = ?`
         )
         .get(id) as
@@ -934,13 +958,14 @@ export const resolveBatchSuggestionsHandler =
             status: string;
             claimed_by: string | null;
             claim_expires: string | null;
+            claim_token: string | null;
           }
         | undefined;
       if (!row) {
         fail(id, 'suggestion_not_found', `no suggestion with id ${id}`);
         continue;
       }
-      const conflict = claimConflict(row, resolvedBy);
+      const conflict = claimConflict(row, token);
       if (conflict) {
         fail(id, conflict.code, conflict.message);
         continue;

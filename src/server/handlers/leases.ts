@@ -106,6 +106,18 @@ const requireString = (
   return v;
 };
 
+/** The optional `claim_token`: the string, `null` when absent; a malformed one is answered (400) and returns undefined. */
+const parseToken = (
+  ctx: Parameters<Handler>[0],
+  body: Record<string, unknown>
+): string | null | undefined => {
+  const v = body['claim_token'];
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'string' && v.length > 0) return v;
+  sendError(ctx.res, 400, 'bad_request', 'claim_token must be a non-empty string when set');
+  return undefined;
+};
+
 const parseTtl = (
   ctx: Parameters<Handler>[0],
   body: Record<string, unknown>
@@ -131,10 +143,12 @@ const parseTtl = (
 
 /**
  * POST /leases/claim — atomic claim; a loser gets a 409, never a silent
- * split. Idempotent for the current holder (re-claim = renew). Preemption per
- * the D23 lattice: human > cwd agent > side agent, and a cwd claim also takes
- * a cwd lease unrenewed for an hour (D63). A preemption answers with `prior`,
- * the lease it replaced.
+ * split. Idempotent for the current holder presenting its `claim_token`
+ * (re-claim = renew); the same name without it is 409 `claim_token_mismatch`.
+ * Preemption per the D23 lattice: human > cwd agent > side agent, and a cwd
+ * claim also takes a cwd lease unrenewed for an hour (D63). A preemption
+ * answers with `prior`, the lease it replaced. An agent claim answers with
+ * `claim_token`, which only this response carries (D67).
  */
 export const claimLeaseHandler =
   (deps: LeaseDeps): Handler =>
@@ -182,6 +196,8 @@ export const claimLeaseHandler =
 
     const ttl = parseTtl(ctx, body);
     if (ttl === null) return;
+    const token = parseToken(ctx, body);
+    if (token === undefined) return;
 
     if (kind === 'human' && (priorityRaw !== undefined || ttl !== undefined)) {
       sendError(
@@ -199,10 +215,15 @@ export const claimLeaseHandler =
       holderKind: kind,
       ...(priorityRaw !== undefined ? {priority: priorityRaw as LeasePriority} : {}),
       ...(attestationRaw !== undefined ? {attestation: attestationRaw as string} : {}),
-      ...(ttl !== undefined ? {ttlSeconds: ttl} : {})
+      ...(ttl !== undefined ? {ttlSeconds: ttl} : {}),
+      ...(token !== null ? {claimToken: token} : {})
     };
 
     const outcome = new LeasesRepository(deps.db).claim(req);
+    if (outcome.status === 'token_mismatch') {
+      sendTokenMismatch(ctx, resource, outcome.current);
+      return;
+    }
     if (outcome.status === 'conflict') {
       sendError(
         ctx.res,
@@ -218,11 +239,21 @@ export const claimLeaseHandler =
     sendJson(ctx.res, 200, {
       status: outcome.status,
       lease: toApi(outcome.lease),
+      ...(outcome.lease.claimToken !== null ? {claim_token: outcome.lease.claimToken} : {}),
       ...(outcome.status === 'preempted' ? {prior: toApi(outcome.prior)} : {})
     });
   };
 
-/** POST /leases/renew — holder must match; refreshes the TTL (no-op expiry for humans). */
+const sendTokenMismatch = (ctx: Parameters<Handler>[0], resource: string, current: Lease): void =>
+  sendError(
+    ctx.res,
+    409,
+    'claim_token_mismatch',
+    `${resource} is held under ${current.holder} by a claim whose claim_token was not presented`,
+    {current: toApi(current)}
+  );
+
+/** POST /leases/renew — holder and its `claim_token` must match; refreshes the TTL (no-op expiry for humans). */
 export const renewLeaseHandler =
   (deps: LeaseDeps): Handler =>
   async ctx => {
@@ -236,12 +267,14 @@ export const renewLeaseHandler =
     if (holder === null) return;
     const ttl = parseTtl(ctx, body);
     if (ttl === null) return;
+    const token = parseToken(ctx, body);
+    if (token === undefined) return;
 
-    const outcome = new LeasesRepository(deps.db).renew(resource, holder, ttl);
+    const outcome = new LeasesRepository(deps.db).renew(resource, holder, token, ttl);
     respondToOp(ctx, resource, holder, outcome);
   };
 
-/** POST /leases/release — holder must match unless `force` (the operator's hatch). */
+/** POST /leases/release — holder and its `claim_token` must match unless `force` (the operator's hatch). */
 export const releaseLeaseHandler =
   (deps: LeaseDeps): Handler =>
   async ctx => {
@@ -258,12 +291,18 @@ export const releaseLeaseHandler =
       sendError(ctx.res, 400, 'bad_request', 'force must be a boolean when set');
       return;
     }
+    const token = parseToken(ctx, body);
+    if (token === undefined) return;
 
-    const outcome = new LeasesRepository(deps.db).release(resource, holder, force === true);
+    const outcome = new LeasesRepository(deps.db).release(resource, holder, token, force === true);
     respondToOp(ctx, resource, holder, outcome);
   };
 
-/** POST /leases/transfer — atomic reassignment by the current holder (D23). */
+/**
+ * POST /leases/transfer — atomic reassignment by the current holder and its
+ * `claim_token` (D23). An agent recipient's new token comes back as
+ * `claim_token`, for the caller to hand over.
+ */
 export const transferLeaseHandler =
   (deps: LeaseDeps): Handler =>
   async ctx => {
@@ -299,8 +338,10 @@ export const transferLeaseHandler =
     }
     const ttl = parseTtl(ctx, body);
     if (ttl === null) return;
+    const token = parseToken(ctx, body);
+    if (token === undefined) return;
 
-    const outcome = new LeasesRepository(deps.db).transfer(resource, holder, {
+    const outcome = new LeasesRepository(deps.db).transfer(resource, holder, token, {
       holder: toHolder,
       holderKind: toKindRaw as HolderKind,
       ...(toPriorityRaw !== undefined ? {priority: toPriorityRaw as LeasePriority} : {}),
@@ -317,7 +358,11 @@ const respondToOp = (
 ): void => {
   switch (outcome.status) {
     case 'ok':
-      sendJson(ctx.res, 200, {status: 'ok', lease: toApi(outcome.lease)});
+      sendJson(ctx.res, 200, {
+        status: 'ok',
+        lease: toApi(outcome.lease),
+        ...(outcome.lease.claimToken !== null ? {claim_token: outcome.lease.claimToken} : {})
+      });
       return;
     case 'released':
       sendJson(ctx.res, 200, {status: 'released', resource});
@@ -335,6 +380,9 @@ const respondToOp = (
           current: toApi(outcome.current)
         }
       );
+      return;
+    case 'token_mismatch':
+      sendTokenMismatch(ctx, resource, outcome.current);
       return;
   }
 };

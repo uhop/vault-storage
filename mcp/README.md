@@ -89,7 +89,7 @@ The tools map to the REST surface, grouped by purpose:
   `vault_accept_suggestion`, `vault_reject_suggestion`,
   `vault_resolve_suggestions_batch` (≤ 100 decisions per call, mechanical
   tag/edge side effects applied server-side), `vault_reopen_suggestion`
-  (also the explicit claim release, for the claim's holder only), `vault_create_suggestion`
+  (also the explicit claim release, with the claim's `claim_token`), `vault_create_suggestion`
 - **Queue items** — `vault_queue_top`, `vault_queue_ready`, `vault_queue_blocked`,
   `vault_queue_by_section`, `vault_queue_by_priority`, `vault_queue_by_project`,
   `vault_queue_project_archive` (all seven take `fields` — `"a,b"` keeps,
@@ -164,8 +164,12 @@ beside them. Common codes:
 - `empty_body` / `null_body` — the write would leave the document with no
   content; use `vault_delete_file` to remove one
 - `claimed_by_other` — the suggestion, repo lease, or handoff is held by
-  another holder (`details.current` carries the current lease on
-  `vault_lease_*`, the current handoff on `vault_handoff_*`)
+  another holder, or (suggestions) the `claim_token` is missing or another
+  claim's (`details.current` carries the current lease on `vault_lease_*`,
+  the current handoff on `vault_handoff_*`)
+- `claim_token_mismatch` — your holder name holds the lease or handoff, but
+  under a claim whose `claim_token` you did not pass; a claim returns its
+  token once, and renew, release, transfer, and resolve need it
 - `lease_not_found` — renew/release/transfer on a resource nothing holds;
   after an expiry, re-claim instead
 - `handoff_not_found` — no handoff with that id (a resolved one stays

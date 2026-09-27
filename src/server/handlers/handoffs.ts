@@ -376,7 +376,32 @@ export const createHandoffHandler =
     sendJson(ctx.res, 200, {status: outcome.status, handoff: toApi(outcome.handoff)});
   };
 
-/** POST /handoffs/claim — open → claimed; re-claim by the claimant renews the TTL. */
+/** The optional `claim_token`: the string, `null` when absent; a malformed one is answered (400) and returns undefined. */
+const parseToken = (
+  ctx: Parameters<Handler>[0],
+  body: Record<string, unknown>
+): string | null | undefined => {
+  const v = body['claim_token'];
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'string' && v.length > 0) return v;
+  sendError(ctx.res, 400, 'bad_request', 'claim_token must be a non-empty string when set');
+  return undefined;
+};
+
+const sendTokenMismatch = (ctx: Parameters<Handler>[0], id: string, current: Handoff): void =>
+  sendError(
+    ctx.res,
+    409,
+    'claim_token_mismatch',
+    `${id} is claimed by ${current.claimedBy} under a claim whose claim_token was not presented`,
+    {current: toApi(current)}
+  );
+
+/**
+ * POST /handoffs/claim — open → claimed, answering with a `claim_token` that
+ * only this response carries (D67); a re-claim by the claimant presenting it
+ * renews the TTL, and the same name without it is 409 `claim_token_mismatch`.
+ */
 export const claimHandoffHandler =
   (deps: HandoffDeps): Handler =>
   async ctx => {
@@ -390,12 +415,26 @@ export const claimHandoffHandler =
     if (holder === null) return;
     const ttl = parseTtl(ctx, body);
     if (ttl === null) return;
+    const token = parseToken(ctx, body);
+    if (token === undefined) return;
 
-    const outcome = new HandoffsRepository(deps.db, deps.vaultDataPath).claim(id, holder, ttl);
+    const outcome = new HandoffsRepository(deps.db, deps.vaultDataPath).claim(
+      id,
+      holder,
+      token,
+      ttl
+    );
     switch (outcome.status) {
       case 'claimed':
       case 'renewed':
-        sendJson(ctx.res, 200, {status: outcome.status, handoff: toApi(outcome.handoff)});
+        sendJson(ctx.res, 200, {
+          status: outcome.status,
+          handoff: toApi(outcome.handoff),
+          claim_token: outcome.handoff.claimToken
+        });
+        return;
+      case 'token_mismatch':
+        sendTokenMismatch(ctx, id, outcome.current);
         return;
       case 'not_found':
         sendError(ctx.res, 404, 'handoff_not_found', `no handoff: ${id}`);
@@ -423,7 +462,8 @@ export const claimHandoffHandler =
  * POST /handoffs/resolve — the claimant's verdict: done | rejected |
  * returned. done/rejected archive into vault-data and clear the spool entry;
  * returned reopens the same handoff with the critique appended to notes
- * (note is mandatory there — a return without a critique is a drop).
+ * (note is mandatory there — a return without a critique is a drop). The
+ * claimant presents the `claim_token` its claim returned.
  */
 export const resolveHandoffHandler =
   (deps: HandoffDeps): Handler =>
@@ -450,6 +490,8 @@ export const resolveHandoffHandler =
       sendError(ctx.res, 400, 'bad_request', 'result must be an object when set');
       return;
     }
+    const token = parseToken(ctx, body);
+    if (token === undefined) return;
     const noteRaw = body['note'];
     if (noteRaw !== undefined && (typeof noteRaw !== 'string' || noteRaw.length === 0)) {
       sendError(ctx.res, 400, 'bad_request', 'note must be a non-empty string when set');
@@ -469,6 +511,7 @@ export const resolveHandoffHandler =
     const outcome = repo.resolve(
       id,
       holder,
+      token,
       resolution as 'done' | 'rejected' | 'returned',
       resultRaw as Record<string, unknown> | undefined,
       noteRaw as string | undefined
@@ -498,6 +541,9 @@ export const resolveHandoffHandler =
           `${id} is claimed by ${outcome.current.claimedBy}, not ${holder}`,
           {current: toApi(outcome.current)}
         );
+        return;
+      case 'token_mismatch':
+        sendTokenMismatch(ctx, id, outcome.current);
         return;
     }
 

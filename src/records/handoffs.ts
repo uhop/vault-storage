@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
 import {uuidv7} from '../util/uuid.ts';
 import {
@@ -114,6 +115,8 @@ export interface Handoff {
   claimedBy: string | null;
   claimedAt: string | null;
   claimExpires: string | null;
+  /** Issued on claim, presented on renew and resolve (D67); never serialized to clients but the claimer. */
+  claimToken: string | null;
   result: Record<string, unknown> | null;
   notes: HandoffNote[];
   touches: HandoffTouch[];
@@ -168,13 +171,15 @@ export type ClaimHandoffOutcome =
   | {status: 'claimed' | 'renewed'; handoff: Handoff}
   | {status: 'not_found'}
   | {status: 'not_open'; current: Handoff}
-  | {status: 'claimed_by_other'; current: Handoff};
+  | {status: 'claimed_by_other'; current: Handoff}
+  | {status: 'token_mismatch'; current: Handoff};
 
 export type ResolveOutcome =
   | {status: 'ok'; handoff: Handoff}
   | {status: 'not_found'}
   | {status: 'not_claimed'; current: Handoff}
-  | {status: 'not_holder'; current: Handoff};
+  | {status: 'not_holder'; current: Handoff}
+  | {status: 'token_mismatch'; current: Handoff};
 
 export type ResubmitOutcome =
   | {status: 'ok'; handoff: Handoff}
@@ -218,6 +223,7 @@ interface HandoffRow {
   claimed_by: string | null;
   claimed_at: string | null;
   claim_expires: string | null;
+  claim_token: string | null;
   result: string | null;
   notes: string;
   touches: string;
@@ -243,6 +249,7 @@ const toHandoff = (row: HandoffRow): Handoff => ({
   claimedBy: row.claimed_by,
   claimedAt: row.claimed_at,
   claimExpires: row.claim_expires,
+  claimToken: row.claim_token,
   result: row.result === null ? null : (JSON.parse(row.result) as Record<string, unknown>),
   notes: JSON.parse(row.notes) as HandoffNote[],
   touches: JSON.parse(row.touches ?? '[]') as HandoffTouch[],
@@ -271,6 +278,7 @@ const toSidecar = (h: Handoff): SpoolSidecar => ({
   ...(h.claimedBy !== null ? {claimed_by: h.claimedBy} : {}),
   ...(h.claimedAt !== null ? {claimed_at: h.claimedAt} : {}),
   ...(h.claimExpires !== null ? {claim_expires: h.claimExpires} : {}),
+  ...(h.claimToken !== null ? {claim_token: h.claimToken} : {}),
   ...(h.result !== null ? {result: h.result} : {}),
   notes: h.notes,
   ...(h.touches.length > 0 ? {touches: h.touches} : {}),
@@ -380,6 +388,7 @@ export class HandoffsRepository {
       claimedBy: null,
       claimedAt: null,
       claimExpires: null,
+      claimToken: null,
       result: null,
       notes: [],
       touches: req.touches ?? [],
@@ -486,21 +495,33 @@ export class HandoffsRepository {
     return handoff;
   }
 
-  /** open → claimed; idempotent re-claim by the current claimant is a renew. */
-  claim(id: string, holder: string, ttlSeconds?: number, now?: string): ClaimHandoffOutcome {
+  /**
+   * open → claimed with a fresh token; a re-claim by the current claimant
+   * presenting that token is a renew, the same name without it is
+   * `token_mismatch`.
+   */
+  claim(
+    id: string,
+    holder: string,
+    token: string | null,
+    ttlSeconds?: number,
+    now?: string
+  ): ClaimHandoffOutcome {
     const at = now ?? new Date().toISOString();
     const current = this.get(id, at);
     if (current === null) return {status: 'not_found'};
 
     if (current.status === 'claimed') {
       if (current.claimedBy !== holder) return {status: 'claimed_by_other', current};
-      const renewed = this.#applyClaim(current, holder, ttlSeconds, at);
+      if (token === null || token !== current.claimToken)
+        return {status: 'token_mismatch', current};
+      const renewed = this.#applyClaim(current, holder, token, ttlSeconds, at);
       this.#logEvent(at, id, 'claimed', holder, JSON.stringify({renewed: true}));
       return {status: 'renewed', handoff: renewed};
     }
     if (current.status !== 'open') return {status: 'not_open', current};
 
-    const claimed = this.#applyClaim(current, holder, ttlSeconds, at);
+    const claimed = this.#applyClaim(current, holder, randomUUID(), ttlSeconds, at);
     moveEntry(this.#vaultDataPath, claimed.project, id, 'open', 'claimed');
     this.#logEvent(at, id, 'claimed', holder, null);
     return {status: 'claimed', handoff: claimed};
@@ -515,6 +536,7 @@ export class HandoffsRepository {
   resolve(
     id: string,
     holder: string,
+    token: string | null,
     resolution: 'done' | 'rejected' | 'returned',
     result?: Record<string, unknown>,
     note?: string,
@@ -525,6 +547,7 @@ export class HandoffsRepository {
     if (current === null) return {status: 'not_found'};
     if (current.status !== 'claimed') return {status: 'not_claimed', current};
     if (current.claimedBy !== holder) return {status: 'not_holder', current};
+    if (token === null || token !== current.claimToken) return {status: 'token_mismatch', current};
 
     const next: Handoff = {
       ...current,
@@ -533,6 +556,7 @@ export class HandoffsRepository {
       claimedBy: null,
       claimedAt: null,
       claimExpires: null,
+      claimToken: null,
       result: resolution === 'returned' ? null : (result ?? null),
       notes:
         note !== undefined ? [...current.notes, {author: holder, at, text: note}] : current.notes
@@ -648,6 +672,7 @@ export class HandoffsRepository {
   #applyClaim(
     current: Handoff,
     holder: string,
+    token: string,
     ttlSeconds: number | undefined,
     at: string
   ): Handoff {
@@ -658,7 +683,8 @@ export class HandoffsRepository {
       updated: at,
       claimedBy: holder,
       claimedAt: current.status === 'claimed' ? current.claimedAt : at,
-      claimExpires: new Date(Date.parse(at) + ttl * 1000).toISOString()
+      claimExpires: new Date(Date.parse(at) + ttl * 1000).toISOString(),
+      claimToken: token
     };
     this.#update(next);
     writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: current.status});
@@ -673,6 +699,7 @@ export class HandoffsRepository {
       claimedBy: null,
       claimedAt: null,
       claimExpires: null,
+      claimToken: null,
       result: null // an open handoff carries no verdict (schema CHECK)
     };
     const exists = this.#db.prepare('SELECT 1 FROM handoffs WHERE id = ?').get(handoff.id);
@@ -686,12 +713,14 @@ export class HandoffsRepository {
   #fromSpool(entry: SpoolEntry): Handoff {
     const s = entry.sidecar;
     // Directory is truth: claim fields are honored only inside claimed/ and
-    // only as a complete triple; a verdict only inside done/ or rejected/.
+    // only as a complete set, token included (a claim from before D67 has
+    // none and reverts); a verdict only inside done/ or rejected/.
     const claimed =
       entry.status === 'claimed' &&
       s.claimed_by !== undefined &&
       s.claimed_at !== undefined &&
-      s.claim_expires !== undefined;
+      s.claim_expires !== undefined &&
+      s.claim_token !== undefined;
     const resolved = entry.status === 'done' || entry.status === 'rejected';
     return {
       id: s.id,
@@ -708,6 +737,7 @@ export class HandoffsRepository {
       claimedBy: claimed ? (s.claimed_by as string) : null,
       claimedAt: claimed ? (s.claimed_at as string) : null,
       claimExpires: claimed ? (s.claim_expires as string) : null,
+      claimToken: claimed ? (s.claim_token as string) : null,
       result: resolved ? (s.result ?? null) : null,
       notes: Array.isArray(s.notes) ? s.notes : [],
       touches: Array.isArray(s.touches) ? (s.touches as HandoffTouch[]) : [],
@@ -731,9 +761,9 @@ export class HandoffsRepository {
         `INSERT INTO handoffs (
            id, idempotency_key, project, to_role, kind, ref_type, ref_value,
            from_host, from_session, from_repo, body, status, created, updated,
-           claimed_by, claimed_at, claim_expires, result, notes,
+           claimed_by, claimed_at, claim_expires, claim_token, result, notes,
            touches, verifications, base_sha
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         h.id,
@@ -753,6 +783,7 @@ export class HandoffsRepository {
         h.claimedBy,
         h.claimedAt,
         h.claimExpires,
+        h.claimToken,
         h.result === null ? null : JSON.stringify(h.result),
         JSON.stringify(h.notes),
         JSON.stringify(h.touches),
@@ -766,7 +797,7 @@ export class HandoffsRepository {
       .prepare(
         `UPDATE handoffs
             SET status = ?, updated = ?, claimed_by = ?, claimed_at = ?, claim_expires = ?,
-                result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
+                claim_token = ?, result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
                 from_host = ?, from_session = ?, from_repo = ?,
                 touches = ?, verifications = ?, base_sha = ?
           WHERE id = ?`
@@ -777,6 +808,7 @@ export class HandoffsRepository {
         h.claimedBy,
         h.claimedAt,
         h.claimExpires,
+        h.claimToken,
         h.result === null ? null : JSON.stringify(h.result),
         JSON.stringify(h.notes),
         h.ref?.type ?? null,

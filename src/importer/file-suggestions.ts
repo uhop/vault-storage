@@ -459,7 +459,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       keys =>
         `UPDATE suggestions
             SET status = 'accepted', resolved_at = ?, resolved_by = ?,
-                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
           WHERE kind = '${this.#kind}' AND status IN ('pending', 'claimed') AND ${matchClause(keys)}`
     );
     return Number(stmt.run(now, resolvedBy, ...entries.map(e => e[1])).changes);
@@ -487,7 +487,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       () =>
         `UPDATE suggestions
             SET status = 'accepted', resolved_at = ?, resolved_by = ?,
-                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
           WHERE id = ?`
     );
     return stmt.run(now, resolvedBy, id).changes > 0;
@@ -501,7 +501,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       () =>
         `UPDATE suggestions
             SET status = 'rejected', resolved_at = ?, resolved_by = ?,
-                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
           WHERE id = ? AND status IN ('pending', 'claimed')`
     );
     return stmt.run(now, resolvedBy, id).changes > 0;

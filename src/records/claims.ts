@@ -11,7 +11,7 @@ export const revertExpiredClaims = (db: DatabaseSync, now?: string): number =>
     db
       .prepare(
         `UPDATE suggestions
-            SET status = 'pending', claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
+            SET status = 'pending', claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
           WHERE status = 'claimed' AND claim_expires < ?`
       )
       .run(now ?? new Date().toISOString()).changes

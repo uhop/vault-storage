@@ -158,10 +158,13 @@ test('claim: batch reservation, holder-scoped resolution, release', async t => {
     t.equal(claim.body.claimed, 2);
     t.equal(claim.body.remaining_pending, 1);
     t.ok(typeof claim.body.claim_expires === 'string');
+    const token = claim.body.claim_token as string;
+    t.ok(typeof token === 'string' && token.length > 0, 'a claim returns one token for the batch');
     for (const item of claim.body.items) {
       t.equal(item.status, 'claimed');
       t.equal(item.claimed_by, 'sweep-A');
       t.ok(item.claim_expires !== null);
+      t.equal(item.claim_token, undefined, 'items never carry the token');
     }
 
     // Claimed items are out of the pending pool; a second claimer gets the rest.
@@ -175,19 +178,29 @@ test('claim: batch reservation, holder-scoped resolution, release', async t => {
 
     const claimedId = claim.body.items[0].id as string;
 
-    // Wrong holder → 409; no holder at all → 409.
+    // Another claim's token → 409; the holder's name without the token → 409.
     const wrong = await api(`${url}/suggestions/${claimedId}/accept`, 'POST', {
-      resolved_by: 'sweep-B'
+      resolved_by: 'sweep-B',
+      claim_token: second.body.claim_token
     });
     t.equal(wrong.status, 409);
     t.equal(wrong.body.code, 'claimed_by_other');
     t.equal(wrong.body.details.claimed_by, 'sweep-A');
+    const nameOnly = await api(`${url}/suggestions/${claimedId}/accept`, 'POST', {
+      resolved_by: 'sweep-A'
+    });
+    t.equal(nameOnly.status, 409);
     const anonymous = await api(`${url}/suggestions/${claimedId}/accept`, 'POST');
     t.equal(anonymous.status, 409);
+    const badToken = await api(`${url}/suggestions/${claimedId}/accept`, 'POST', {
+      claim_token: 7
+    });
+    t.equal(badToken.status, 400);
 
-    // The holder resolves; claim columns are cleared.
+    // The claim resolves; claim columns are cleared.
     const ok = await api(`${url}/suggestions/${claimedId}/accept`, 'POST', {
-      resolved_by: 'sweep-A'
+      resolved_by: 'sweep-A',
+      claim_token: token
     });
     t.equal(ok.status, 200);
     t.equal(ok.body.status, 'accepted');
@@ -195,27 +208,29 @@ test('claim: batch reservation, holder-scoped resolution, release', async t => {
     t.equal(ok.body.claimed_by, null);
     t.equal(ok.body.claim_expires, null);
 
-    // Reopen releases a claim without waiting for the TTL, for the holder only.
+    // Reopen releases a claim without waiting for the TTL, for the claim only.
     const heldId = claim.body.items[1].id as string;
     const anonymousRelease = await api(`${url}/suggestions/${heldId}/reopen`, 'POST');
     t.equal(anonymousRelease.status, 409);
     t.equal(anonymousRelease.body.code, 'claimed_by_other');
-    t.matchString(anonymousRelease.body.error, /pass holder/);
+    t.matchString(anonymousRelease.body.error, /pass the claim_token/);
     const otherRelease = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {
-      holder: 'sweep-B'
+      claim_token: second.body.claim_token
     });
     t.equal(otherRelease.status, 409);
     t.equal(otherRelease.body.details.claimed_by, 'sweep-A');
-    const badHolder = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {holder: ''});
-    t.equal(badHolder.status, 400);
+    const emptyToken = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {
+      claim_token: ''
+    });
+    t.equal(emptyToken.status, 400);
     const released = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {
-      holder: 'sweep-A'
+      claim_token: token
     });
     t.equal(released.status, 200);
     t.equal(released.body.status, 'pending');
     t.equal(released.body.claimed_by, null);
 
-    // A resolved row reopens without a holder (misclick undo).
+    // A resolved row reopens without a token (misclick undo).
     const undone = await api(`${url}/suggestions/${claimedId}/reopen`, 'POST');
     t.equal(undone.status, 200);
     t.equal(undone.body.status, 'pending');
@@ -271,12 +286,12 @@ test('claim: expired claims lazily revert to pending', async t => {
   }
 });
 
-test('claim: a lapsed holder cannot release the next claim', async t => {
+test('claim: a lapsed claim cannot release the next one, under any name', async t => {
   const ctx = await startCtx();
   try {
     const {url, db} = ctx;
     const id = await createSuggestion(url, 'contradiction_candidate', {note: 'lapse'});
-    await api(`${url}/suggestions/claim`, 'POST', {
+    const first = await api(`${url}/suggestions/claim`, 'POST', {
       kind: 'contradiction_candidate',
       holder: 'sweep-A'
     });
@@ -285,23 +300,34 @@ test('claim: a lapsed holder cannot release the next claim', async t => {
     );
 
     // A's lapsed claim reverts on reopen itself.
-    const lapsed = await api(`${url}/suggestions/${id}/reopen`, 'POST', {holder: 'sweep-A'});
+    const lapsed = await api(`${url}/suggestions/${id}/reopen`, 'POST', {
+      claim_token: first.body.claim_token
+    });
     t.equal(lapsed.status, 409);
     t.equal(lapsed.body.code, 'already_pending');
 
+    // The next sweep reuses the name, as two same-day sweeps can.
     const reclaim = await api(`${url}/suggestions/claim`, 'POST', {
       kind: 'contradiction_candidate',
-      holder: 'sweep-B'
+      holder: 'sweep-A'
     });
     t.equal(reclaim.body.claimed, 1);
+    t.notEqual(reclaim.body.claim_token, first.body.claim_token);
 
-    // The stale client's release leaves B's claim in place.
-    const stale = await api(`${url}/suggestions/${id}/reopen`, 'POST', {holder: 'sweep-A'});
+    // The stale client's release leaves the new claim in place.
+    const stale = await api(`${url}/suggestions/${id}/reopen`, 'POST', {
+      claim_token: first.body.claim_token
+    });
     t.equal(stale.status, 409);
     t.equal(stale.body.code, 'claimed_by_other');
+    const staleResolve = await api(`${url}/suggestions/${id}/accept`, 'POST', {
+      resolved_by: 'sweep-A',
+      claim_token: first.body.claim_token
+    });
+    t.equal(staleResolve.status, 409, 'nor resolve it');
     const row = await api(`${url}/suggestions/${id}`, 'GET');
     t.equal(row.body.status, 'claimed');
-    t.equal(row.body.claimed_by, 'sweep-B');
+    t.equal(row.body.claimed_by, 'sweep-A');
   } finally {
     await stopCtx(ctx);
   }
@@ -316,7 +342,7 @@ test('resolve-batch: plain kinds, per-item errors, claimed holder rule', async t
     const c = await createSuggestion(url, 'contradiction_candidate', {note: 'c'});
     await api(`${url}/suggestions/${c}/accept`, 'POST', {resolved_by: 'earlier'});
     const d = await createSuggestion(url, 'contradiction_candidate', {note: 'd'});
-    await api(`${url}/suggestions/claim`, 'POST', {
+    const otherClaim = await api(`${url}/suggestions/claim`, 'POST', {
       kind: 'contradiction_candidate',
       holder: 'other-session',
       limit: 1
@@ -346,9 +372,10 @@ test('resolve-batch: plain kinds, per-item errors, claimed holder rule', async t
     t.equal((byId.get('no-such-id') as any).error.code, 'suggestion_not_found');
     t.equal((byId.get(d) as any).error.code, 'bad_item');
 
-    // The claim holder can batch-resolve its own items.
+    // The claim can batch-resolve its own items.
     const held = await api(`${url}/suggestions/resolve-batch`, 'POST', {
       resolved_by: 'other-session',
+      claim_token: otherClaim.body.claim_token,
       items: [{id: a, decision: 'accept'}]
     });
     t.equal(held.body.accepted, 1);

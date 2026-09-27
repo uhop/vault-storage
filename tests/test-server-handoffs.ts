@@ -1,5 +1,5 @@
 import test from 'tape-six';
-import {existsSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
@@ -347,10 +347,11 @@ test('handoffs: verification is bound to the artifact on record; stale shows, re
       'verification logged'
     );
 
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed1 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     const done = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed1.body.claim_token,
       resolution: 'done'
     });
     t.equal(done.body.status, 'ok');
@@ -392,10 +393,11 @@ test('handoffs: resubmit replaces touches, and a restart rebuilds them from the 
       createPayload('k-r1', {touches: [{kind: 'file', key: 'a.ts', operation: 'modify'}]})
     );
     const id = created.body.handoff.id as string;
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed2 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed2.body.claim_token,
       resolution: 'returned',
       note: 'split it'
     });
@@ -452,9 +454,22 @@ test('handoffs: claim → resolve(done) archives into vault-data and clears the 
     const claim = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     t.equal(claim.body.status, 'claimed');
     t.ok(claim.body.handoff.claim_expires, 'claim carries a TTL');
+    const token = claim.body.claim_token as string;
+    t.ok(typeof token === 'string' && token.length > 0, 'a claim returns a token');
+    t.equal(claim.body.handoff.claim_token, undefined, 'the handoff object carries no token');
+    const read = await api(`${ctx.url}/handoffs/${id}`, 'GET');
+    t.equal(read.body.claim_token, undefined, 'a read never shows the token');
 
-    const reclaim = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
-    t.equal(reclaim.body.status, 'renewed', 're-claim by the claimant is a renew');
+    const nameOnly = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    t.equal(nameOnly.status, 409, 're-claim by name alone is refused');
+    t.equal(nameOnly.body.code, 'claim_token_mismatch');
+    const reclaim = await api(`${ctx.url}/handoffs/claim`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      claim_token: token
+    });
+    t.equal(reclaim.body.status, 'renewed', 're-claim with the token is a renew');
+    t.equal(reclaim.body.claim_token, token, 'a renew keeps the token');
 
     const otherClaim = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'croc/other'});
     t.equal(otherClaim.status, 409);
@@ -466,10 +481,18 @@ test('handoffs: claim → resolve(done) archives into vault-data and clears the 
       resolution: 'done'
     });
     t.equal(wrongHolder.status, 409, 'only the claimant resolves');
+    const tokenless = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
+      id,
+      holder: 'nuke/owner',
+      resolution: 'done'
+    });
+    t.equal(tokenless.status, 409, 'the claimant resolves with its token');
+    t.equal(tokenless.body.code, 'claim_token_mismatch');
 
     const done = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: token,
       resolution: 'done',
       result: {merged: true}
     });
@@ -501,11 +524,12 @@ test('handoffs: the review loop — returned reopens the same record', async t =
   try {
     const created = await api(`${ctx.url}/handoffs`, 'POST', createPayload('k-3'));
     const id = created.body.handoff.id as string;
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed3 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
 
     const noNote = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed3.body.claim_token,
       resolution: 'returned'
     });
     t.equal(noNote.status, 400, 'returned requires the critique note');
@@ -513,6 +537,7 @@ test('handoffs: the review loop — returned reopens the same record', async t =
     const returned = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed3.body.claim_token,
       resolution: 'returned',
       note: 'Tests are missing for the matcher edge case.'
     });
@@ -554,10 +579,11 @@ test('handoffs: the review loop — returned reopens the same record', async t =
     });
     t.equal(note.body.handoff.notes.length, 2, 'notes are append-only discussion');
 
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed4 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed4.body.claim_token,
       resolution: 'done'
     });
     const lateNote = await api(`${ctx.url}/handoffs/note`, 'POST', {id, author: 'x', text: 'y'});
@@ -586,7 +612,7 @@ test('handoffs: claim expiry is lazy, logged, and reverts to open', async t => {
       body: 'Run the browser suite.',
       now: t0
     });
-    repo.claim(handoff.id, 'nuke/owner', 60, t0);
+    repo.claim(handoff.id, 'nuke/owner', null, 60, t0);
     const later = '2026-08-10T00:02:00.000Z';
     const after = repo.get(handoff.id, later);
     t.equal(after?.status, 'open', 'expired claim reverted on next touch');
@@ -607,6 +633,7 @@ test('handoffs: rebuilt from the spool on server start — files are truth', asy
   const first = await startCtx();
   let id1 = '';
   let id2 = '';
+  let token2 = '';
   try {
     const a = await api(`${first.url}/handoffs`, 'POST', createPayload('k-r1'));
     id1 = a.body.handoff.id;
@@ -621,7 +648,11 @@ test('handoffs: rebuilt from the spool on server start — files are truth', asy
       createPayload('k-r2', {kind: 'answer-question', ref: undefined})
     );
     id2 = b.body.handoff.id;
-    await api(`${first.url}/handoffs/claim`, 'POST', {id: id2, holder: 'nuke/owner'});
+    const claimed = await api(`${first.url}/handoffs/claim`, 'POST', {
+      id: id2,
+      holder: 'nuke/owner'
+    });
+    token2 = claimed.body.claim_token;
   } finally {
     await stopCtx(first, true);
   }
@@ -637,6 +668,37 @@ test('handoffs: rebuilt from the spool on server start — files are truth', asy
     const two = await api(`${second.url}/handoffs/${id2}`, 'GET');
     t.equal(two.body.status, 'claimed', 'live claim survives (TTL is wall-clock)');
     t.equal(two.body.claimed_by, 'nuke/owner');
+    const renewed = await api(`${second.url}/handoffs/claim`, 'POST', {
+      id: id2,
+      holder: 'nuke/owner',
+      claim_token: token2
+    });
+    t.equal(renewed.body.status, 'renewed', 'the claim token survives the restart too');
+  } finally {
+    await stopCtx(second);
+  }
+});
+
+test('handoffs: a spooled claim without a token reverts on start', async t => {
+  const first = await startCtx();
+  let id = '';
+  try {
+    const created = await api(`${first.url}/handoffs`, 'POST', createPayload('k-pre'));
+    id = created.body.handoff.id;
+    await api(`${first.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+  } finally {
+    await stopCtx(first, true);
+  }
+  const sidecar = join(first.root, 'handoff', 'deep6', 'claimed', `${id}.md`);
+  const text = readFileSync(sidecar, 'utf8');
+  t.ok(/^\s*claim_token: /m.test(text), 'the claim token is spooled');
+  writeFileSync(sidecar, text.replace(/^\s*claim_token: .*\n/m, ''));
+
+  const second = await startCtx(first.root);
+  try {
+    const row = await api(`${second.url}/handoffs/${id}`, 'GET');
+    t.equal(row.body.status, 'open', 'a claim from before D67 reverts to open');
+    t.equal(row.body.claimed_by, null);
   } finally {
     await stopCtx(second);
   }
@@ -655,10 +717,11 @@ test('handoffs: crash between resolve and archive completes on next start', asyn
     from: {host: 'mba', session: 's'},
     body: 'Apply the queued patch.'
   });
-  repo.claim(handoff.id, 'nuke/owner');
+  const claimed = repo.claim(handoff.id, 'nuke/owner', null);
+  const token = claimed.status === 'claimed' ? claimed.handoff.claimToken : null;
   // Repository-level resolve only: the archival step (normally the handler's)
   // never runs — the crash window.
-  repo.resolve(handoff.id, 'nuke/owner', 'done', {merged: true});
+  repo.resolve(handoff.id, 'nuke/owner', token, 'done', {merged: true});
   db.close();
 
   const ctx = await startCtx(root);
@@ -741,7 +804,7 @@ test('handoffs: artifact travels with the status transitions and dies with the e
       body: PATCH
     });
 
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed6 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     t.ok(
       existsSync(join(ctx.root, 'handoff', 'deep6', 'claimed', `${id}.patch`)),
       'artifact renamed into claimed/ with the sidecar'
@@ -750,6 +813,7 @@ test('handoffs: artifact travels with the status transitions and dies with the e
     await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed6.body.claim_token,
       resolution: 'returned',
       note: 'rebase it'
     });
@@ -771,10 +835,11 @@ test('handoffs: artifact travels with the status transitions and dies with the e
     );
 
     await api(`${ctx.url}/handoffs/resubmit`, 'POST', {id});
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed7 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     const done = await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed7.body.claim_token,
       resolution: 'done'
     });
     t.equal(done.body.status, 'ok');
@@ -837,10 +902,11 @@ test('handoffs: artifact guards — cap, empty, unknown ext, resolved, absent', 
       'a refused upload writes nothing'
     );
 
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
+    const claimed8 = await api(`${ctx.url}/handoffs/claim`, 'POST', {id, holder: 'nuke/owner'});
     await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id,
       holder: 'nuke/owner',
+      claim_token: claimed8.body.claim_token,
       resolution: 'done'
     });
     const late = await fetch(`${ctx.url}/handoffs/${id}/artifact`, {
@@ -895,10 +961,14 @@ test('handoffs: resume bundle inherits the inbox; brief counts pending', async t
       createPayload('k-b2', {project: 'myproj'})
     );
     const rid = returned.body.handoff.id;
-    await api(`${ctx.url}/handoffs/claim`, 'POST', {id: rid, holder: 'nuke/owner'});
+    const claimed9 = await api(`${ctx.url}/handoffs/claim`, 'POST', {
+      id: rid,
+      holder: 'nuke/owner'
+    });
     await api(`${ctx.url}/handoffs/resolve`, 'POST', {
       id: rid,
       holder: 'nuke/owner',
+      claim_token: claimed9.body.claim_token,
       resolution: 'returned',
       note: 'needs a rebase'
     });

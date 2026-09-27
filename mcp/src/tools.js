@@ -795,17 +795,22 @@ export const registerTools = (mcp, client) => {
     )
   );
 
+  const CLAIM_TOKEN = z
+    .string()
+    .min(1)
+    .describe('The claim_token the claim returned; required while the claim is live');
+
   mcp.registerTool(
     'vault_claim_suggestions',
     {
       description:
-        'Atomically reserve a batch of pending suggestions of one kind for this triage session (oldest first). Claimed items leave the pending pool; resolving them requires resolved_by = holder until the TTL lapses (expired claims lazily revert to pending, so a crashed holder costs at most the TTL). De-conflicts concurrent same-kind triage agents and overlapping sweeps. Release a claimed item early with vault_reopen_suggestion. `expand: "context"` inlines the same per-item triage context as vault_list_suggestions. Returns {kind, holder, claimed, claim_expires, remaining_pending, items} — `claimed` is how many you actually got (fewer than limit means the queue ran dry), and `remaining_pending` is what is left for other agents.',
+        'Atomically reserve a batch of pending suggestions of one kind for this triage session (oldest first). Claimed items leave the pending pool; resolving or releasing them needs the returned claim_token until the TTL lapses (expired claims lazily revert to pending, so a crashed holder costs at most the TTL). Keep the token: only this response carries it, and the holder name alone settles nothing. De-conflicts concurrent same-kind triage agents and overlapping sweeps. Release a claimed item early with vault_reopen_suggestion. `expand: "context"` inlines the same per-item triage context as vault_list_suggestions. Returns {kind, holder, claimed, claim_expires, claim_token, remaining_pending, items} — `claimed` is how many you actually got (fewer than limit means the queue ran dry), and `remaining_pending` is what is left for other agents.',
       inputSchema: {
         kind: SUGGESTION_KIND,
         holder: z
           .string()
           .min(1)
-          .describe('Claim owner label; pass the same value as resolved_by when resolving'),
+          .describe('Claim owner label, recorded; the returned claim_token is what settles'),
         limit: z.number().int().min(1).max(100).optional().default(100),
         ttl_seconds: z.number().int().min(60).max(21600).optional().default(1800),
         expand: z.enum(['context']).optional()
@@ -820,16 +825,17 @@ export const registerTools = (mcp, client) => {
     'vault_accept_suggestion',
     {
       description:
-        'Mark a pending (or own-claimed) suggestion as accepted. The decision is recorded; downstream side-effects (e.g. promoting cites→typed) are handled by separate workflows — or server-side via vault_resolve_suggestions_batch. On a claimed row, resolved_by must equal the claim holder (409 claimed_by_other otherwise). Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.',
+        'Mark a pending (or own-claimed) suggestion as accepted. The decision is recorded; downstream side-effects (e.g. promoting cites→typed) are handled by separate workflows — or server-side via vault_resolve_suggestions_batch. On a claimed row, pass the claim_token its claim returned (409 claimed_by_other otherwise). Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.',
       inputSchema: {
         id: z.string().min(1),
-        resolved_by: z.string().optional()
+        resolved_by: z.string().optional(),
+        claim_token: CLAIM_TOKEN.optional()
       }
     },
-    wrap(async ({id, resolved_by}) =>
+    wrap(async ({id, resolved_by, claim_token}) =>
       client.postJson(
         `/suggestions/${encodeURIComponent(id)}/accept`,
-        resolved_by ? {resolved_by} : undefined
+        resolved_by || claim_token ? {resolved_by, claim_token} : undefined
       )
     )
   );
@@ -838,16 +844,17 @@ export const registerTools = (mcp, client) => {
     'vault_reject_suggestion',
     {
       description:
-        'Mark a pending (or own-claimed) suggestion as rejected. On a claimed row, resolved_by must equal the claim holder (409 claimed_by_other otherwise). Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.',
+        'Mark a pending (or own-claimed) suggestion as rejected. On a claimed row, pass the claim_token its claim returned (409 claimed_by_other otherwise). Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.',
       inputSchema: {
         id: z.string().min(1),
-        resolved_by: z.string().optional()
+        resolved_by: z.string().optional(),
+        claim_token: CLAIM_TOKEN.optional()
       }
     },
-    wrap(async ({id, resolved_by}) =>
+    wrap(async ({id, resolved_by, claim_token}) =>
       client.postJson(
         `/suggestions/${encodeURIComponent(id)}/reject`,
-        resolved_by ? {resolved_by} : undefined
+        resolved_by || claim_token ? {resolved_by, claim_token} : undefined
       )
     )
   );
@@ -856,9 +863,10 @@ export const registerTools = (mcp, client) => {
     'vault_resolve_suggestions_batch',
     {
       description:
-        'Resolve up to 100 suggestions in one call, with mechanical side effects applied server-side: a tag_suggestion accept realizes the tag on the record FM (settles as tag-realized when the tag is in the taxonomy), a reject strips the candidate from agent.tags_suggested; an edge_type accept requires edge_type (a typed value — "cites is correct" is a reject; the alias basis-for declares forward derivation and lands as derived-from with the edge flipped) and pins the FM edges: override (settles as fm-override). Judgment-bearing kinds (new_tag minting, duplicate merges) resolve status-only. resolved_by doubles as the claim holder for claimed items. Always 200: per-item failures land in results[].error (already_resolved, claimed_by_other, …) and never abort the batch. Returns {accepted, rejected, failed, results} — check `failed` and the per-item results before treating a 200 as a clean drain; a successful item is {id, status, resolved_by, side_effect?}, a failed one {id, error: {code, message}}.',
+        'Resolve up to 100 suggestions in one call, with mechanical side effects applied server-side: a tag_suggestion accept realizes the tag on the record FM (settles as tag-realized when the tag is in the taxonomy), a reject strips the candidate from agent.tags_suggested; an edge_type accept requires edge_type (a typed value — "cites is correct" is a reject; the alias basis-for declares forward derivation and lands as derived-from with the edge flipped) and pins the FM edges: override (settles as fm-override). Judgment-bearing kinds (new_tag minting, duplicate merges) resolve status-only. Claimed items need the claim_token their claim returned; resolved_by is recorded. Always 200: per-item failures land in results[].error (already_resolved, claimed_by_other, …) and never abort the batch. Returns {accepted, rejected, failed, results} — check `failed` and the per-item results before treating a 200 as a clean drain; a successful item is {id, status, resolved_by, side_effect?}, a failed one {id, error: {code, message}}.',
       inputSchema: {
         resolved_by: z.string().optional(),
+        claim_token: CLAIM_TOKEN.optional(),
         items: z
           .array(
             z.object({
@@ -873,8 +881,8 @@ export const registerTools = (mcp, client) => {
           .max(100)
       }
     },
-    wrap(async ({resolved_by, items}) =>
-      client.postJson('/suggestions/resolve-batch', resolved_by ? {resolved_by, items} : {items})
+    wrap(async ({resolved_by, claim_token, items}) =>
+      client.postJson('/suggestions/resolve-batch', {resolved_by, claim_token, items})
     )
   );
 
@@ -882,20 +890,16 @@ export const registerTools = (mcp, client) => {
     'vault_reopen_suggestion',
     {
       description:
-        "Move an accepted, rejected, or claimed suggestion back to pending, clearing resolution and claim fields. Escape hatch for misclicks; on a claimed row it is the explicit claim release, and needs holder equal to the claim's holder (409 claimed_by_other otherwise, so a lapsed claimant cannot free the next claim). A lapsed claim has already reverted: 409 already_pending, as for any pending row. Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.",
+        'Move an accepted, rejected, or claimed suggestion back to pending, clearing resolution and claim fields. Escape hatch for misclicks; on a claimed row it is the explicit claim release, and needs the claim_token its claim returned (409 claimed_by_other otherwise, so a lapsed claim cannot free the next one, even under the same holder name). A lapsed claim has already reverted: 409 already_pending, as for any pending row. Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.',
       inputSchema: {
         id: z.string().min(1),
-        holder: z
-          .string()
-          .min(1)
-          .optional()
-          .describe('The claim holder; required to release a claimed row')
+        claim_token: CLAIM_TOKEN.optional()
       }
     },
-    wrap(async ({id, holder}) =>
+    wrap(async ({id, claim_token}) =>
       client.postJson(
         `/suggestions/${encodeURIComponent(id)}/reopen`,
-        holder ? {holder} : undefined
+        claim_token ? {claim_token} : undefined
       )
     )
   );
@@ -953,7 +957,7 @@ export const registerTools = (mcp, client) => {
     'vault_lease_claim',
     {
       description:
-        'Atomically claim (or renew — re-claiming a resource you already hold is a renew, safe to retry) a repo lease. 200 {status: claimed|renewed|preempted, lease}; 409 claimed_by_other with details.current when the holder wins. Preemption lattice: human > cwd agent > side agent — a cwd claim preempts an agent-held side lease, and a cwd lease its holder has not renewed for an hour; nothing preempts a human. A preemption also returns `prior`, the lease it replaced. Side claims from outside the repo require the target checkout to be CLEAN (client-side check, D23): pass attestation "clean at <sha>"; if the tree is dirty, do not claim — tell the operator and work in a worktree. Human holders pass kind: "human" and take no priority/ttl (never preempted, never expire). Default TTL 4h; renew on work bursts; verify the lease before mutating the working tree.',
+        'Atomically claim (or renew — re-claiming a resource you already hold, with its claim_token, is a renew, safe to retry) a repo lease. 200 {status: claimed|renewed|preempted, lease, claim_token}; 409 claimed_by_other with details.current when the holder wins, 409 claim_token_mismatch when your holder name holds it under a token you did not pass. An agent claim returns claim_token, which only this response carries: keep it, since renew, release, and transfer need it (the holder name alone settles nothing). Preemption lattice: human > cwd agent > side agent — a cwd claim preempts an agent-held side lease, and a cwd lease its holder has not renewed for an hour; nothing preempts a human. A preemption also returns `prior`, the lease it replaced. Side claims from outside the repo require the target checkout to be CLEAN (client-side check, D23): pass attestation "clean at <sha>"; if the tree is dirty, do not claim — tell the operator and work in a worktree. Human holders pass kind: "human" and take no priority/ttl (never preempted, never expire). Default TTL 4h; renew on work bursts; verify the lease before mutating the working tree.',
       inputSchema: {
         resource: z.string().min(1).describe('e.g. "repo:github.com/uhop/deep6"'),
         holder: z.string().min(1).describe('Unique holder id, e.g. "<host>/<session>"'),
@@ -966,17 +970,19 @@ export const registerTools = (mcp, client) => {
           .min(1)
           .optional()
           .describe('Side-claim clean-tree evidence, e.g. "clean at abc1234"'),
-        ttl_seconds: z.number().int().min(60).max(86400).optional()
+        ttl_seconds: z.number().int().min(60).max(86400).optional(),
+        claim_token: CLAIM_TOKEN.optional().describe('To renew a claim you hold')
       }
     },
-    wrap(async ({resource, holder, kind, priority, attestation, ttl_seconds}) =>
+    wrap(async ({resource, holder, kind, priority, attestation, ttl_seconds, claim_token}) =>
       client.postJson('/leases/claim', {
         resource,
         holder,
         ...(kind !== 'agent' ? {kind} : {}),
         priority,
         attestation,
-        ttl_seconds
+        ttl_seconds,
+        claim_token
       })
     )
   );
@@ -985,15 +991,16 @@ export const registerTools = (mcp, client) => {
     'vault_lease_renew',
     {
       description:
-        'Renew a held lease (holder must match; 409 claimed_by_other with details.current otherwise, 404 lease_not_found when nothing holds the resource — after an expiry, re-claim instead). Returns {status: "ok", lease}.',
+        'Renew a held lease (holder and its claim_token must match; 409 claimed_by_other or claim_token_mismatch with details.current otherwise, 404 lease_not_found when nothing holds the resource — after an expiry, re-claim instead). A human lease takes no token. Returns {status: "ok", lease, claim_token}.',
       inputSchema: {
         resource: z.string().min(1),
         holder: z.string().min(1),
+        claim_token: CLAIM_TOKEN.optional(),
         ttl_seconds: z.number().int().min(60).max(86400).optional()
       }
     },
-    wrap(async ({resource, holder, ttl_seconds}) =>
-      client.postJson('/leases/renew', {resource, holder, ttl_seconds})
+    wrap(async ({resource, holder, claim_token, ttl_seconds}) =>
+      client.postJson('/leases/renew', {resource, holder, claim_token, ttl_seconds})
     )
   );
 
@@ -1001,15 +1008,16 @@ export const registerTools = (mcp, client) => {
     'vault_lease_release',
     {
       description:
-        'Release a lease. Holder must match unless force: true — the operator\'s hatch, which releases regardless and logs who it was forced from. Returns {status: "released", resource}; 404 when nothing is held.',
+        'Release a lease. Holder and its claim_token must match unless force: true — the operator\'s hatch, which releases regardless and logs who it was forced from. Returns {status: "released", resource}; 404 when nothing is held.',
       inputSchema: {
         resource: z.string().min(1),
         holder: z.string().min(1),
+        claim_token: CLAIM_TOKEN.optional(),
         force: z.boolean().optional()
       }
     },
-    wrap(async ({resource, holder, force}) =>
-      client.postJson('/leases/release', {resource, holder, force})
+    wrap(async ({resource, holder, claim_token, force}) =>
+      client.postJson('/leases/release', {resource, holder, claim_token, force})
     )
   );
 
@@ -1017,20 +1025,22 @@ export const registerTools = (mcp, client) => {
     'vault_lease_transfer',
     {
       description:
-        'Atomically reassign a held lease to to_holder (current holder only; no release-then-claim snipe window). Transfer to to_kind: "human" is the "please review and commit" case and drops priority/expiry. Returns {status: "ok", lease}.',
+        'Atomically reassign a held lease to to_holder (current holder with its claim_token only; no release-then-claim snipe window). Transfer to to_kind: "human" is the "please review and commit" case and drops priority/expiry. An agent recipient gets a new claim_token in the response, for you to hand over. Returns {status: "ok", lease, claim_token?}.',
       inputSchema: {
         resource: z.string().min(1),
         holder: z.string().min(1).describe('Current holder — must match'),
+        claim_token: CLAIM_TOKEN.optional(),
         to_holder: z.string().min(1),
         to_kind: HOLDER_KIND.optional().default('agent'),
         to_priority: LEASE_PRIORITY.optional().describe('For agent recipients; default side'),
         ttl_seconds: z.number().int().min(60).max(86400).optional()
       }
     },
-    wrap(async ({resource, holder, to_holder, to_kind, to_priority, ttl_seconds}) =>
+    wrap(async ({resource, holder, claim_token, to_holder, to_kind, to_priority, ttl_seconds}) =>
       client.postJson('/leases/transfer', {
         resource,
         holder,
+        claim_token,
         to_holder,
         ...(to_kind !== 'agent' ? {to_kind} : {}),
         to_priority,
@@ -1123,15 +1133,16 @@ export const registerTools = (mcp, client) => {
     'vault_handoff_claim',
     {
       description:
-        'Claim an open handoff for review (open → claimed; re-claim by the same holder renews the TTL). Returns {status: "claimed" | "renewed", handoff}; 404 handoff_not_found; 409 claimed_by_other or not_open, both with details.current. Claims expire lazily (default TTL 30 min) — a dead claimant never wedges the work; resolve before the TTL or renew.',
+        'Claim an open handoff for review (open → claimed; a re-claim by the same holder with its claim_token renews the TTL). Returns {status: "claimed" | "renewed", handoff, claim_token}: keep the token, since only this response carries it and resolve needs it. 404 handoff_not_found; 409 claimed_by_other, claim_token_mismatch, or not_open, all with details.current. Claims expire lazily (default TTL 30 min) — a dead claimant never wedges the work; resolve before the TTL or renew.',
       inputSchema: {
         id: z.string().min(1),
         holder: z.string().min(1).describe('Unique holder id, e.g. "<host>/<session>"'),
-        ttl_seconds: z.number().int().min(60).max(86400).optional()
+        ttl_seconds: z.number().int().min(60).max(86400).optional(),
+        claim_token: CLAIM_TOKEN.optional().describe('To renew a claim you hold')
       }
     },
-    wrap(async ({id, holder, ttl_seconds}) =>
-      client.postJson('/handoffs/claim', {id, holder, ttl_seconds})
+    wrap(async ({id, holder, ttl_seconds, claim_token}) =>
+      client.postJson('/handoffs/claim', {id, holder, ttl_seconds, claim_token})
     )
   );
 
@@ -1139,10 +1150,11 @@ export const registerTools = (mcp, client) => {
     'vault_handoff_resolve',
     {
       description:
-        'The claimant\'s verdict on a claimed handoff (D23 review loop). resolution: "done" (merged — own any conflicts) | "rejected" | "returned" (rework: reopens the same handoff for its submitter; note is mandatory — it is the critique). done/rejected archive the record into projects/<project>/handoff-archive.md and clear the spool entry; the response then carries archived_to. Returns {status: "ok", handoff, archived_to?}; 404 handoff_not_found; 409 not_claimed or claimed_by_other with details.current.',
+        'The claimant\'s verdict on a claimed handoff (D23 review loop). resolution: "done" (merged — own any conflicts) | "rejected" | "returned" (rework: reopens the same handoff for its submitter; note is mandatory — it is the critique). done/rejected archive the record into projects/<project>/handoff-archive.md and clear the spool entry; the response then carries archived_to. Pass the claim_token the claim returned. Returns {status: "ok", handoff, archived_to?}; 404 handoff_not_found; 409 not_claimed, claimed_by_other, or claim_token_mismatch with details.current.',
       inputSchema: {
         id: z.string().min(1),
         holder: z.string().min(1).describe('Must match the claimant'),
+        claim_token: CLAIM_TOKEN,
         resolution: z.enum(['done', 'rejected', 'returned']),
         result: z
           .record(z.unknown())
@@ -1151,8 +1163,8 @@ export const registerTools = (mcp, client) => {
         note: z.string().min(1).optional().describe('Appended to notes; mandatory for returned')
       }
     },
-    wrap(async ({id, holder, resolution, result, note}) =>
-      client.postJson('/handoffs/resolve', {id, holder, resolution, result, note})
+    wrap(async ({id, holder, claim_token, resolution, result, note}) =>
+      client.postJson('/handoffs/resolve', {id, holder, claim_token, resolution, result, note})
     )
   );
 

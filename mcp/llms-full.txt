@@ -168,9 +168,10 @@ Review queue:
   stored data, false for a similarity threshold's or an agent's finding;
   vault_create_suggestion validates a given evidence and defaults it to
   {agent, false}.
-- vault_claim_suggestions — reserve a batch under a holder with a TTL;
-  vault_reopen_suggestion doubles as the explicit claim release, and takes
-  the holder: a claimed row is released only for the holder that claimed it.
+- vault_claim_suggestions — reserve a batch under a holder with a TTL; the
+  response carries a claim_token, once. Accept, reject, resolve-batch, and
+  vault_reopen_suggestion (the explicit claim release) settle a claimed row
+  only with that token; the holder name alone settles nothing.
 - vault_accept_suggestion / vault_reject_suggestion — single decisions.
 - vault_resolve_suggestions_batch — ≤ 100 decisions; mechanical tag/edge side
   effects applied server-side; per-item failures in results[].error.
@@ -191,8 +192,11 @@ Repo leases (agent coordination — who may edit which repo working tree; flat
 
 - vault_lease_list — current leases; ?resource filters to one, same shape.
 - vault_lease_claim — atomic claim/renew/preempt; 409 claimed_by_other with
-  the current lease. Precedence: human > cwd agent > side agent, and a cwd
-  lease unrenewed for an hour yields to a cwd claim (server ≥ 2026-09-19;
+  the current lease. An agent claim returns claim_token, once; renew,
+  release, transfer, and a renewing re-claim present it (409
+  claim_token_mismatch otherwise). A human lease has none. Precedence:
+  human > cwd agent > side agent, and a cwd lease unrenewed for an hour
+  yields to a cwd claim (server ≥ 2026-09-19;
   the answer then carries prior); side claims attest a clean checkout
   ("clean at <sha>").
 - vault_lease_renew, vault_lease_release (force = operator hatch),
@@ -215,7 +219,9 @@ restart; resolved ones archive into projects/<project>/handoff-archive.md):
   handoffs to the same role on the same kind+key, only when there are any.
 - vault_handoff_get — the poller's read; watch status flip to
   done | rejected | returned.
-- vault_handoff_claim — open → claimed; lazy claim expiry (default 30 min).
+- vault_handoff_claim — open → claimed, returning claim_token once;
+  vault_handoff_resolve and a renewing re-claim present it; lazy claim expiry
+  (default 30 min).
 - vault_handoff_resolve — done | rejected (archives + clears the spool,
   returns archived_to) | returned (mandatory critique note; reopens the same
   record).

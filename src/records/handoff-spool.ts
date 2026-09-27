@@ -56,6 +56,7 @@ export interface SpoolSidecar {
   claimed_by?: string;
   claimed_at?: string;
   claim_expires?: string;
+  claim_token?: string;
   result?: Record<string, unknown>;
   notes: {author: string; at: string; text: string}[];
   touches?: {kind: string; key: string; operation: string}[];
