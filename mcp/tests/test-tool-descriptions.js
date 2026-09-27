@@ -57,6 +57,13 @@ const REQUIRED_MENTIONS = {
   vault_suggestions_summary: ['statuses', 'total', 'by_kind'],
   vault_neighborhood: ['root_id', 'layers', 'edges', 'direction'],
   vault_similar: ['root_id', 'distance', 'score'],
+  vault_enrichment_delta: [
+    'agent_current',
+    'baseline',
+    'added_chunks',
+    'removed_bytes',
+    'changed_fraction'
+  ],
   vault_backlinks: ['as_of', 'edge', 'from_record', 'offset', 'total'],
   // Conditional fields are the worst case of this defect class: they are
   // absent from a canonical-name probe, so only source review finds them.

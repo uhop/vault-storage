@@ -9,6 +9,7 @@ import type {Embedder} from '../embeddings/types.ts';
 import {ChildProcessEmbedder} from '../embeddings/child-embedder.ts';
 import {startupReindex} from '../maintenance/startup-reindex.ts';
 import {backfillChunkTextHashes} from '../maintenance/backfill-chunk-text-hashes.ts';
+import {backfillEnrichmentBaselines} from '../maintenance/backfill-enrichment-baselines.ts';
 import {backfillDocVecs} from '../maintenance/backfill-doc-vecs.ts';
 import {readServerEnv} from './env.ts';
 import {startScanScheduler, type ScanSchedulerHandle} from '../maintenance/scan-scheduler.ts';
@@ -111,6 +112,13 @@ export const main = async (): Promise<void> => {
     process.stdout.write(
       `vault-storage: chunk text-hash backfill — ${textHashes.written} written, ` +
         `${textHashes.skipped} skipped (${textHashes.durationMs} ms)\n`
+    );
+  }
+  const baselines = await backfillEnrichmentBaselines(db);
+  if (baselines.written > 0) {
+    process.stdout.write(
+      `vault-storage: enrichment baseline backfill — ${baselines.written} written, ` +
+        `${baselines.skipped} stale (${baselines.durationMs} ms)\n`
     );
   }
 

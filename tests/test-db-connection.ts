@@ -15,7 +15,11 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 26, 'schema version is 26 after all migrations through the claim tokens');
+  t.equal(
+    result.current,
+    27,
+    'schema version is 27 after all migrations through the enrichment baselines'
+  );
   t.deepEqual(
     result.applied,
     [
@@ -44,7 +48,8 @@ test('runs the init migration and creates required tables', t => {
       '0023_chunk_text_hash.sql',
       '0024_record_summary_vec.sql',
       '0025_body_field_observations.sql',
-      '0026_claim_tokens.sql'
+      '0026_claim_tokens.sql',
+      '0027_enrichment_baselines.sql'
     ],
     'all migrations applied in order'
   );
@@ -55,7 +60,8 @@ test('runs the init migration and creates required tables', t => {
         name !== '0023_chunk_text_hash.sql' &&
         name !== '0024_record_summary_vec.sql' &&
         name !== '0025_body_field_observations.sql' &&
-        name !== '0026_claim_tokens.sql'
+        name !== '0026_claim_tokens.sql' &&
+        name !== '0027_enrichment_baselines.sql'
     ),
     'every migration forces a full import except the ones marked no-reindex'
   );
@@ -69,6 +75,7 @@ test('runs the init migration and creates required tables', t => {
   for (const required of [
     'chunks',
     'edges',
+    'enrichment_baselines',
     'meta',
     'queue_items',
     'records',
@@ -93,13 +100,14 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     ALTER TABLE leases DROP COLUMN claim_token;
     ALTER TABLE handoffs DROP COLUMN claim_token;
     ALTER TABLE suggestions DROP COLUMN claim_token;
+    DROP TABLE enrichment_baselines;
     UPDATE meta SET value = '25' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created, claimed_by, claimed_at, claim_expires)
       VALUES ('s1', 'duplicate', '{}', 'claimed', '2026-09-26T00:00:00Z', 'sweep-A',
               '2026-09-26T00:00:00Z', '2999-01-01T00:00:00Z');
   `);
   const result = runMigrations(db);
-  t.deepEqual(result.applied, ['0026_claim_tokens.sql']);
+  t.deepEqual(result.applied, ['0026_claim_tokens.sql', '0027_enrichment_baselines.sql']);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
     {status: 'pending', claimed_by: null, claim_token: null},
@@ -113,7 +121,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 26, 'schema version stays at 26');
+  t.equal(second.current, 27, 'schema version stays at 27');
   db.close();
 });
 
@@ -172,9 +180,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0023_chunk_text_hash.sql',
       '0024_record_summary_vec.sql',
       '0025_body_field_observations.sql',
-      '0026_claim_tokens.sql'
+      '0026_claim_tokens.sql',
+      '0027_enrichment_baselines.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0026)'
+    'migrations from schema 9 onward applied (0010–0027)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {

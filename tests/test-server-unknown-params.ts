@@ -51,6 +51,7 @@ const ROUTES: Array<[string, string]> = [
   ['GET', '/sections'],
   ['GET', '/sections/nope/neighborhood'],
   ['GET', '/sections/nope/similar'],
+  ['GET', '/sections/nope/enrichment-delta'],
   ['GET', '/sections/nope/backlinks'],
   ['GET', '/sections/nope/meta'],
   ['GET', '/sections/nope/fm'],

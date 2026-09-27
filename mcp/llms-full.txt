@@ -163,6 +163,8 @@ Graph insight:
 - vault_similar — embedding nearest neighbours; distance and score run in
   opposite directions (score = 1 - distance/2).
 - vault_backlinks — inbound typed edges; paginated envelope.
+- vault_enrichment_delta — the chunks added to a body since its agent: block
+  was current, with changed_fraction; baseline: null means read the whole body.
 
 Review queue:
 

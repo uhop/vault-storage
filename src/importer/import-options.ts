@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
 import {QueueItemsRepository} from '../queue/repo.ts';
 import {SuggestionFiler} from './file-suggestions.ts';
 import type {ImportFileOptions} from './import-file.ts';
@@ -13,5 +14,6 @@ export const fullImportOptions = (db: DatabaseSync): Required<ImportFileOptions>
   agentStale: new SuggestionFiler(db, 'agent_enrichment_stale'),
   tagSuggestion: new SuggestionFiler(db, 'tag_suggestion'),
   archiveCandidate: new SuggestionFiler(db, 'archive_candidate'),
-  queueItems: new QueueItemsRepository(db)
+  queueItems: new QueueItemsRepository(db),
+  enrichmentBaselines: new EnrichmentBaselineRepository(db)
 });

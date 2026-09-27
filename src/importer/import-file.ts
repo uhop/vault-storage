@@ -1,4 +1,5 @@
 import {readFileSync} from 'node:fs';
+import type {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {parseQueueFile} from '../queue/parse.ts';
 import type {ApplyResult, QueueItemsRepository} from '../queue/repo.ts';
@@ -134,6 +135,12 @@ export interface ImportFileOptions {
    * that re-imports its file leaves the queue slices current too.
    */
   queueItems?: QueueItemsRepository;
+  /**
+   * When provided, records the body's chunk set as the enrichment baseline
+   * whenever the `agent:` block is current, so a later stale refresh can read
+   * only the chunks added since.
+   */
+  enrichmentBaselines?: EnrichmentBaselineRepository;
 }
 
 /**
@@ -305,6 +312,10 @@ export const importFile = (
         now
       );
     }
+  }
+
+  if (options.enrichmentBaselines && agent.summary !== null && agent.derivedFromHash === bodyHash) {
+    options.enrichmentBaselines.record(recordId, body, bodyHash, now);
   }
 
   let queue: ApplyResult | null = null;

@@ -83,7 +83,9 @@ The tools map to the REST surface, grouped by purpose:
 - **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`,
   `vault_tag_update` (rewrite a description after minting), `vault_tag_add` /
   `vault_tag_remove` (one tag on one record)
-- **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
+- **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`,
+  `vault_enrichment_delta` (the chunks added to a body since its `agent:` block
+  was current, for a refresh that reads the change instead of the whole note)
 - **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
   per-item record briefs + tag taxonomy info), `vault_read_suggestion`,
   `vault_suggestions_summary`, `vault_claim_suggestions` (reserve a batch

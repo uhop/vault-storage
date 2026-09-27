@@ -47,6 +47,7 @@ import {
 } from './handlers/queue.ts';
 import {simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
+import {enrichmentDeltaHandler} from './handlers/enrichment-delta.ts';
 import {
   acceptSuggestionHandler,
   claimSuggestionsHandler,
@@ -194,6 +195,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/sections', listRecordsHandler({db: opts.db}));
   router.get('/sections/{id}/neighborhood', neighborhoodHandler({db: opts.db, records, edges}));
   router.get('/sections/{id}/similar', similarHandler({db: opts.db, records}));
+  router.get('/sections/{id}/enrichment-delta', enrichmentDeltaHandler({db: opts.db, records}));
   router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db, records, edges}));
   router.get('/sections/{id}/meta', getRecordMetaHandler({records}));
   const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, records};

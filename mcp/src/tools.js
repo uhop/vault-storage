@@ -696,6 +696,20 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_enrichment_delta',
+    {
+      description:
+        'What changed in a record’s body since its agent: block was last current, so a stale enrichment refresh can read the change instead of the whole note. Returns {record_id, file_path, body_hash, body_bytes, agent_current, baseline} and, when baseline is non-null, {chunks: {total, added, removed}, added_bytes, removed_bytes, changed_fraction, added_chunks: [{index, text}]} — added_chunks carries the text of every chunk not in the baseline (an appended section arrives as its own chunks, with its heading path prefixed); removed chunks are counted, never returned, since the baseline keeps hashes only. changed_fraction is (added_bytes + removed_bytes) over the larger chunk-set size; past about 0.4, re-read the whole body. baseline: null means no baseline exists (never enriched, or stale at a full reindex), so read the whole body. Unpaginated.',
+      inputSchema: {
+        record_id: z.string().min(1)
+      }
+    },
+    wrap(async ({record_id}) =>
+      client.getJson(`/sections/${encodeURIComponent(record_id)}/enrichment-delta`)
+    )
+  );
+
+  mcp.registerTool(
     'vault_backlinks',
     {
       description:
