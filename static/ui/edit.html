@@ -555,6 +555,8 @@ ready: false
         dirty: false,
         draftId: null,
         draftText: null,
+        // Bumped by every draft write, so a response that lands after a newer one is ignored.
+        draftSeq: 0,
         draftTimer: null,
         lastSavedAt: null
       };
@@ -599,6 +601,7 @@ ready: false
         state.draftTimer = null;
         const text = editor.value;
         if (!state.dirty || text === state.draftText) return;
+        const seq = ++state.draftSeq;
         try {
           const draft = await apiJson('/drafts', {
             method: 'PUT',
@@ -610,15 +613,17 @@ ready: false
               text
             })
           });
+          if (seq !== state.draftSeq) return;
           state.draftId = draft.id;
           state.draftText = text;
           if (state.dirty) setStatus('editing', `unsaved; draft kept ${fmtTime(new Date())}`);
         } catch {
-          setStatus('offline', 'draft not kept');
+          if (seq === state.draftSeq) setStatus('offline', 'draft not kept');
         }
       }
 
       async function dropDraft() {
+        ++state.draftSeq;
         const id = state.draftId;
         state.draftId = null;
         state.draftText = null;
@@ -631,6 +636,7 @@ ready: false
       }
 
       const offerDraft = draft => {
+        ++state.draftSeq;
         state.draftId = draft.id;
         state.draftText = draft.text;
         const stale =
