@@ -67,7 +67,8 @@ export class VaultClient {
   async getTextWithMeta(path, query = {}) {
     const res = await this.#request('GET', this.url(path, query));
     if (!res.ok) await this.#throwFromResponse(res);
-    const etag = res.headers.get('etag');
+    // A compressed read's tag carries its coding (server D70); the document's tag has none.
+    const etag = res.headers.get('etag')?.replace(/-(?:zstd|br|gzip)"$/, '"') ?? null;
     return {
       text: await res.text(),
       etag,

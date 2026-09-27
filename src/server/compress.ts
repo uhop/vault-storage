@@ -25,6 +25,37 @@ const COMPRESSIBLE = /^(?:text\/|application\/(?:json|javascript|xml)|image\/svg
 
 export const isCompressible = (contentType: string): boolean => COMPRESSIBLE.test(contentType);
 
+const CODING_SUFFIX = /-(?:zstd|br|gzip)$/;
+
+/**
+ * RFC 9110 § 8.8.3.3: a strong tag names one coding's bytes, so a coded body
+ * carries its own (`"X-gzip"`, Apache's shape). A weak tag may be shared, and
+ * `W/` already means a composed view to clients.
+ */
+const codedEtag = (etag: string, encoding: Encoding): string =>
+  etag.startsWith('"') ? `${etag.slice(0, -1)}-${encoding}"` : etag;
+
+/** The entity-tags of an `If-Match` or `If-None-Match` header, as sent. */
+export const entityTags = (header: string): string[] =>
+  header
+    .split(',')
+    .map(v => v.trim())
+    .filter(v => v.length > 0);
+
+/**
+ * One tag's opaque value, with `W/`, the quotes, and any coding suffix off:
+ * every coding of one representation compares equal. Bare unquoted values
+ * are accepted for caller convenience.
+ */
+export const entityValue = (tag: string): string => {
+  const strong = tag.startsWith('W/') ? tag.slice(2) : tag;
+  const value =
+    strong.length >= 2 && strong.startsWith('"') && strong.endsWith('"')
+      ? strong.slice(1, -1)
+      : strong;
+  return value.replace(CODING_SUFFIX, '');
+};
+
 /** `gzip, br;q=0.5, *;q=0.1` → the weight each coding carries, `*` included. */
 const weights = (header: string): Map<string, number> => {
   const out = new Map<string, number>();
@@ -72,7 +103,10 @@ const writeOut = (
     ...headers,
     'Content-Length': body.byteLength.toString()
   };
-  if (encoding !== null) head['Content-Encoding'] = encoding;
+  if (encoding !== null) {
+    head['Content-Encoding'] = encoding;
+    if (head['ETag'] !== undefined) head['ETag'] = codedEtag(head['ETag'], encoding);
+  }
   res.writeHead(status, head);
   res.end(body);
 };

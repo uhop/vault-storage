@@ -530,7 +530,11 @@ ready: false
         return `raw/${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.md`;
       };
       const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
-      const etagOf = res => (res.headers.get('ETag') ?? '').replace(/^W\//, '').replace(/"/g, '');
+      const etagOf = res =>
+        (res.headers.get('ETag') ?? '')
+          .replace(/^W\//, '')
+          .replace(/"/g, '')
+          .replace(/-(?:zstd|br|gzip)$/, '');
 
       const unitFromUrl = () => {
         if (params.has('section')) {

@@ -4,6 +4,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
 import {contentHash} from '../util/hash.ts';
 import {normalizeTag} from '../migration/tags.ts';
+import {entityTags, entityValue} from './compress.ts';
 import {
   AGENT_COMPLEXITY,
   DECLARED_EDGE_TYPES,
@@ -248,18 +249,11 @@ export class WriterError extends Error {
 export const documentEtag = (documentBytes: string): string => contentHash(documentBytes);
 
 /**
- * Parse an `If-Match` header into its entity-tag values: handles the
- * comma-separated list form, optional `W/` weak prefixes (treated as their
- * opaque value — we never emit weak tags), surrounding quotes, and the `*`
- * wildcard. Bare unquoted hashes are accepted for caller convenience.
+ * Parse an `If-Match` header into its entity-tag values: the list form, `W/`
+ * prefixes, quotes, the `*` wildcard, and the coding suffix a compressed read
+ * carries (D70), so the tag of any coding the client read matches.
  */
-export const parseIfMatch = (header: string): string[] =>
-  header
-    .split(',')
-    .map(v => v.trim())
-    .filter(v => v.length > 0)
-    .map(v => (v.startsWith('W/') ? v.slice(2) : v))
-    .map(v => (v.startsWith('"') && v.endsWith('"') && v.length >= 2 ? v.slice(1, -1) : v));
+export const parseIfMatch = (header: string): string[] => entityTags(header).map(entityValue);
 
 export interface WriteOptions {
   /** Vault-relative path. Source of truth for where to write. */

@@ -1,6 +1,6 @@
 import {readFile, stat} from 'node:fs/promises';
 import {extname, join, resolve, sep} from 'node:path';
-import {sendBuffer} from '../compress.ts';
+import {entityTags, entityValue, sendBuffer} from '../compress.ts';
 import {sendError} from '../responses.ts';
 import type {Handler} from '../router.ts';
 
@@ -76,10 +76,16 @@ export const staticHandler =
     }
 
     const etag = etagFor(info.size, info.mtimeMs);
-    const reqEtag = ctx.req.headers['if-none-match'];
-    if (reqEtag === etag) {
+    const sent = ctx.req.headers['if-none-match'];
+    const value = entityValue(etag);
+    // The client revalidates the coding it holds, so the 304 names that one's tag.
+    const matched =
+      typeof sent === 'string'
+        ? entityTags(sent).find(tag => tag === '*' || entityValue(tag) === value)
+        : undefined;
+    if (matched !== undefined) {
       ctx.res.writeHead(304, {
-        ETag: etag,
+        ETag: matched === '*' ? etag : matched,
         'Cache-Control': 'no-cache',
         Vary: 'Accept-Encoding'
       });

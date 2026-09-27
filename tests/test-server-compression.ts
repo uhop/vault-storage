@@ -1,4 +1,4 @@
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {request} from 'node:http';
 import type {IncomingHttpHeaders, ServerResponse} from 'node:http';
 import {tmpdir} from 'node:os';
@@ -81,11 +81,14 @@ const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => 
     join(dir, 'pic.png'),
     Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from(BIG)])
   );
+  const data = join(dir, 'data');
+  mkdirSync(join(data, 'notes'), {recursive: true});
+  writeFileSync(join(data, 'notes', 'big.md'), `---\ntitle: Big\n---\n\n${BIG}`);
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   const handle = await startServer({
     db,
-    env: makeEnv(dir),
+    env: {...makeEnv(dir), vaultDataPath: data},
     schemaVersion: migration.current,
     embedder: new FakeEmbedder()
   });
@@ -243,5 +246,54 @@ test('a revalidated static file stays a 304 with no coding', async t => {
     t.equal(second.body.byteLength, 0, 'no body on a 304');
     t.equal(second.headers['content-encoding'], undefined, 'and no coding on a 304');
     t.equal(second.headers['vary'], 'Accept-Encoding', 'Vary matches what a 200 would carry');
+  });
+});
+
+test('each coding of a static file carries its own strong tag and revalidates to it', async t => {
+  await withServer(async url => {
+    const tags = new Set<string>();
+    for (const coding of ['identity', 'gzip', 'br', 'zstd']) {
+      const first = await raw(`${url}/ui/big.js`, {'Accept-Encoding': coding});
+      const etag = first.headers['etag'] as string;
+      const coded = coding === 'identity' ? undefined : coding;
+      t.equal(first.headers['content-encoding'], coded, `${coding}: served as asked`);
+      t.ok(
+        coded === undefined ? !/-(?:zstd|br|gzip)"$/.test(etag) : etag.endsWith(`-${coding}"`),
+        `${coding}: ${etag}`
+      );
+      tags.add(etag);
+      const again = await raw(`${url}/ui/big.js`, {
+        'Accept-Encoding': coding,
+        'If-None-Match': etag
+      });
+      t.equal(again.status, 304, `${coding}: revalidates`);
+      t.equal(again.headers['etag'], etag, `${coding}: the 304 names the tag the client holds`);
+    }
+    t.equal(tags.size, 4, 'four codings, four tags');
+  });
+});
+
+test('the tag of a compressed read is accepted back as If-Match', async t => {
+  await withServer(async url => {
+    const auth = {Authorization: `Bearer ${TEST_TOKEN}`};
+    const read = await raw(`${url}/vault/notes/big.md`, {...auth, 'Accept-Encoding': 'gzip'});
+    t.equal(read.headers['content-encoding'], 'gzip');
+    const etag = read.headers['etag'] as string;
+    t.ok(etag.endsWith('-gzip"'), `coded tag ${etag}`);
+    const text = gunzipSync(read.body).toString('utf8');
+    const put = await fetch(`${url}/vault/notes/big.md`, {
+      method: 'PUT',
+      headers: {...auth, 'Content-Type': 'text/markdown', 'If-Match': etag},
+      body: text.replace('# Heading', '# Changed')
+    });
+    t.equal(put.status, 204, 'the write lands');
+    const stale = await fetch(`${url}/vault/notes/big.md`, {
+      method: 'PUT',
+      headers: {...auth, 'Content-Type': 'text/markdown', 'If-Match': etag},
+      body: text
+    });
+    t.equal(stale.status, 412, 'and the same tag is stale after it');
+    const body = (await stale.json()) as {details?: {current_etag?: string}};
+    t.equal(`"${body.details?.current_etag}"`, put.headers.get('etag'), '412 names the bare tag');
   });
 });
