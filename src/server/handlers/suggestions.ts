@@ -397,23 +397,28 @@ const claimConflict = (
  * Flip an unresolved (pending/claimed) row, clearing any claim. Guarded on
  * status so a resolution-on-contact settle that raced ahead (e.g. a
  * tag-realized auto-accept during a side-effect re-import) is never
- * overwritten. Returns false when the guard skipped the write.
+ * overwritten, and on the claim token as read so another writer's claim is
+ * never settled (D69). Returns false when the guard skipped the write.
  */
 const flipStatus = (
   db: DatabaseSync,
   id: string,
   target: 'accepted' | 'rejected',
   resolvedBy: string | null,
-  now: string
+  now: string,
+  token: string | null
 ): boolean =>
   db
     .prepare(
       `UPDATE suggestions
           SET status = ?, resolved_at = ?, resolved_by = ?,
               claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
-        WHERE id = ? AND status IN ('pending', 'claimed')`
+        WHERE id = ? AND status IN ('pending', 'claimed') AND claim_token IS ?`
     )
-    .run(target, now, resolvedBy, id).changes > 0;
+    .run(target, now, resolvedBy, id, token).changes > 0;
+
+const UNSETTLED = new Set(['pending', 'claimed']);
+const CHANGED_WHILE_RESOLVING = 'suggestion changed while resolving; read it again';
 
 const makeResolveHandler =
   (deps: SuggestionsDeps, target: 'accepted' | 'rejected'): Handler =>
@@ -459,11 +464,22 @@ const makeResolveHandler =
       return;
     }
 
-    flipStatus(deps.db, id, target, body.resolved_by ?? null, new Date().toISOString());
+    const flipped = flipStatus(
+      deps.db,
+      id,
+      target,
+      body.resolved_by ?? null,
+      new Date().toISOString(),
+      existing.claim_token
+    );
 
     const updated = deps.db
       .prepare(`SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`)
       .get(id) as unknown as SuggestionRow;
+    if (!flipped && UNSETTLED.has(updated.status)) {
+      sendError(ctx.res, 409, 'conflict', CHANGED_WHILE_RESOLVING);
+      return;
+    }
     sendJson(ctx.res, 200, rowToJson(updated));
   };
 
@@ -796,10 +812,10 @@ export const claimSuggestionsHandler =
             deps.db
               .prepare(
                 `SELECT ${ROW_COLUMNS} FROM suggestions
-                  WHERE id IN (${ids.map(() => '?').join(',')})
+                  WHERE id IN (${ids.map(() => '?').join(',')}) AND claim_token = ?
                   ORDER BY created`
               )
-              .all(...ids) as unknown[] as SuggestionRow[]
+              .all(...ids, token) as unknown[] as SuggestionRow[]
           ).map(rowToJson)
         : [];
     if (expand === 'context') attachContext(deps.db, items);
@@ -984,6 +1000,7 @@ export const resolveBatchSuggestionsHandler =
 
       const now = new Date().toISOString();
       let sideEffect: Record<string, unknown> | undefined;
+      let flipped: boolean;
       try {
         if (decision === 'accept') {
           if (row.kind === 'tag_suggestion') {
@@ -1012,14 +1029,14 @@ export const resolveBatchSuggestionsHandler =
             }
             sideEffect = applyEdgeOverride(deps, fromRecord, toPath, edgeType);
           }
-          flipStatus(deps.db, id, 'accepted', resolvedBy, now);
+          flipped = flipStatus(deps.db, id, 'accepted', resolvedBy, now, row.claim_token);
         } else {
           if (row.kind === 'tag_suggestion') {
             const tag = payloadString(payload, 'tag');
             const recordId = payloadString(payload, 'record_id');
             if (tag && recordId) sideEffect = stripSuggestedTag(deps, recordId, tag);
           }
-          flipStatus(deps.db, id, 'rejected', resolvedBy, now);
+          flipped = flipStatus(deps.db, id, 'rejected', resolvedBy, now, row.claim_token);
         }
       } catch (err) {
         if (err instanceof EffectError || err instanceof WriterError) {
@@ -1032,6 +1049,10 @@ export const resolveBatchSuggestionsHandler =
       const final = deps.db
         .prepare('SELECT status, resolved_by FROM suggestions WHERE id = ?')
         .get(id) as {status: string; resolved_by: string | null};
+      if (!flipped && UNSETTLED.has(final.status)) {
+        fail(id, 'conflict', CHANGED_WHILE_RESOLVING);
+        continue;
+      }
       if (final.status === 'accepted') ++accepted;
       else if (final.status === 'rejected') ++rejected;
       results.push({

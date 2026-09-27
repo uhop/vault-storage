@@ -153,7 +153,9 @@ beside them. Common codes:
 
 - `auth_failed` — `VAULT_API_TOKEN` missing or wrong
 - `not_found` — record/file/tag/suggestion absent
-- `conflict` — already-resolved suggestion, etc.
+- `conflict` — the destination of a move or supersede is taken, the tag is
+  already in the taxonomy, or a suggestion changed between the server's
+  check and its write (read it again)
 - `replace_assert_failed` — `vault_replace` target missing, or ambiguous
   without `all` (`details.occurrences` carries the count)
 - `section_assert_failed` — `vault_read_section` / `vault_replace_section`

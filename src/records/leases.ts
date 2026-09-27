@@ -23,6 +23,11 @@ export const MIN_LEASE_TTL_SECONDS = 60;
 export const MAX_LEASE_TTL_SECONDS = 24 * 3600;
 /** Ruled 2026-09-19: past the gate's 15 min renew throttle, short of the 4 h TTL a dead session's lease used to hold. */
 export const STALE_CWD_LEASE_SECONDS = 3600;
+/** A write fenced on the row as read re-decides on a miss; a miss needs a second writer process (D69). */
+const FENCE_ATTEMPTS = 3;
+
+const lostRaces = (op: string, resource: string): Error =>
+  new Error(`lease ${op} for ${resource} lost ${FENCE_ATTEMPTS} races with another writer`);
 
 export interface Lease {
   resource: string;
@@ -130,11 +135,20 @@ export class LeasesRepository {
     const expired = this.#db
       .prepare('SELECT * FROM leases WHERE expires_at IS NOT NULL AND expires_at < ?')
       .all(at) as unknown[] as LeaseRow[];
+    let dropped = 0;
     for (const row of expired) {
-      this.#db.prepare('DELETE FROM leases WHERE resource = ?').run(row.resource);
+      // A renew in the gap moves expires_at: skip, the next read sweeps again.
+      const changed = this.#db
+        .prepare(
+          `DELETE FROM leases
+            WHERE resource = ? AND holder = ? AND claim_token IS ? AND expires_at = ?`
+        )
+        .run(row.resource, row.holder, row.claim_token, row.expires_at).changes;
+      if (changed === 0) continue;
       this.#logEvent(at, row.resource, 'expired', row.holder, null);
+      ++dropped;
     }
-    return expired.length;
+    return dropped;
   }
 
   list(now?: string): Lease[] {
@@ -160,26 +174,30 @@ export class LeasesRepository {
    */
   claim(req: ClaimRequest): ClaimOutcome {
     const now = req.now ?? new Date().toISOString();
-    this.expireLazy(now);
-    const current = this.get(req.resource, now);
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(req.resource, now);
 
-    if (current === null) {
-      const lease = this.#write(req, now, now);
-      this.#logEvent(now, req.resource, 'claimed', req.holder, this.#detail(req));
-      return {status: 'claimed', lease};
-    }
-
-    if (current.holder === req.holder) {
-      if (standing(current, req.holder, req.claimToken ?? null) !== 'ok') {
-        return {status: 'token_mismatch', current};
+      if (current === null) {
+        const lease = this.#insert(req, now);
+        if (lease === null) continue;
+        this.#logEvent(now, req.resource, 'claimed', req.holder, this.#detail(req));
+        return {status: 'claimed', lease};
       }
-      const lease = this.#write(req, current.claimedAt, now, current.claimToken);
-      this.#logEvent(now, req.resource, 'renewed', req.holder, null);
-      return {status: 'renewed', lease};
-    }
 
-    if (this.#mayPreempt(req, current, now)) {
-      const lease = this.#write(req, now, now);
+      if (current.holder === req.holder) {
+        if (standing(current, req.holder, req.claimToken ?? null) !== 'ok') {
+          return {status: 'token_mismatch', current};
+        }
+        const lease = this.#replace(req, current, current.claimedAt, now, current.claimToken);
+        if (lease === null) continue;
+        this.#logEvent(now, req.resource, 'renewed', req.holder, null);
+        return {status: 'renewed', lease};
+      }
+
+      if (!this.#mayPreempt(req, current, now)) return {status: 'conflict', current};
+
+      const lease = this.#replace(req, current, now, now);
+      if (lease === null) continue;
       const stale = req.holderKind === 'agent' && current.priority === 'cwd';
       this.#logEvent(
         now,
@@ -194,8 +212,7 @@ export class LeasesRepository {
       );
       return {status: 'preempted', lease, prior: current};
     }
-
-    return {status: 'conflict', current};
+    throw lostRaces('claim', req.resource);
   }
 
   renew(
@@ -206,19 +223,24 @@ export class LeasesRepository {
     now?: string
   ): LeaseOpOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(resource, at);
-    if (current === null) return {status: 'not_found'};
-    const stand = standing(current, holder, token);
-    if (stand !== 'ok') return {status: stand, current};
-    const expires = current.holderKind === 'human' ? null : this.#expiry(at, ttlSeconds);
-    this.#db
-      .prepare(
-        'UPDATE leases SET renewed_at = ?, expires_at = ? WHERE resource = ? AND claim_token IS ?'
-      )
-      .run(at, expires, resource, current.claimToken);
-    this.#logEvent(at, resource, 'renewed', holder, null);
-    const renewed = this.get(resource, at);
-    return renewed ? {status: 'ok', lease: renewed} : {status: 'not_found'};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(resource, at);
+      if (current === null) return {status: 'not_found'};
+      const stand = standing(current, holder, token);
+      if (stand !== 'ok') return {status: stand, current};
+      const expires = current.holderKind === 'human' ? null : this.#expiry(at, ttlSeconds);
+      const changed = this.#db
+        .prepare(
+          `UPDATE leases SET renewed_at = ?, expires_at = ?
+            WHERE resource = ? AND holder = ? AND claim_token IS ?`
+        )
+        .run(at, expires, resource, current.holder, current.claimToken).changes;
+      if (changed === 0) continue;
+      this.#logEvent(at, resource, 'renewed', holder, null);
+      const renewed = this.get(resource, at);
+      return renewed ? {status: 'ok', lease: renewed} : {status: 'not_found'};
+    }
+    throw lostRaces('renew', resource);
   }
 
   /** `force` is the operator's UI hatch; a normal release requires the holder and its token. */
@@ -230,23 +252,27 @@ export class LeasesRepository {
     now?: string
   ): LeaseOpOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(resource, at);
-    if (current === null) return {status: 'not_found'};
-    if (!force) {
-      const stand = standing(current, holder, token);
-      if (stand !== 'ok') return {status: stand, current};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(resource, at);
+      if (current === null) return {status: 'not_found'};
+      if (!force) {
+        const stand = standing(current, holder, token);
+        if (stand !== 'ok') return {status: stand, current};
+      }
+      const changed = this.#db
+        .prepare('DELETE FROM leases WHERE resource = ? AND holder = ? AND claim_token IS ?')
+        .run(resource, current.holder, current.claimToken).changes;
+      if (changed === 0) continue;
+      this.#logEvent(
+        at,
+        resource,
+        'released',
+        holder,
+        force && current.holder !== holder ? JSON.stringify({forced_from: current.holder}) : null
+      );
+      return {status: 'released'};
     }
-    this.#db
-      .prepare('DELETE FROM leases WHERE resource = ? AND claim_token IS ?')
-      .run(resource, current.claimToken);
-    this.#logEvent(
-      at,
-      resource,
-      'released',
-      holder,
-      force && current.holder !== holder ? JSON.stringify({forced_from: current.holder}) : null
-    );
-    return {status: 'released'};
+    throw lostRaces('release', resource);
   }
 
   /**
@@ -263,32 +289,37 @@ export class LeasesRepository {
     now?: string
   ): LeaseOpOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(resource, at);
-    if (current === null) return {status: 'not_found'};
-    const stand = standing(current, holder, token);
-    if (stand !== 'ok') return {status: stand, current};
     const human = to.holderKind === 'human';
-    this.#db
-      .prepare(
-        `UPDATE leases
-            SET holder = ?, holder_kind = ?, priority = ?, attestation = NULL,
-                claimed_at = ?, renewed_at = ?, expires_at = ?, claim_token = ?
-          WHERE resource = ? AND claim_token IS ?`
-      )
-      .run(
-        to.holder,
-        to.holderKind,
-        human ? null : (to.priority ?? 'side'),
-        at,
-        at,
-        human ? null : this.#expiry(at, to.ttlSeconds),
-        human ? null : randomUUID(),
-        resource,
-        current.claimToken
-      );
-    this.#logEvent(at, resource, 'transferred', holder, JSON.stringify({to: to.holder}));
-    const lease = this.get(resource, at);
-    return lease ? {status: 'ok', lease} : {status: 'not_found'};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(resource, at);
+      if (current === null) return {status: 'not_found'};
+      const stand = standing(current, holder, token);
+      if (stand !== 'ok') return {status: stand, current};
+      const changed = this.#db
+        .prepare(
+          `UPDATE leases
+              SET holder = ?, holder_kind = ?, priority = ?, attestation = NULL,
+                  claimed_at = ?, renewed_at = ?, expires_at = ?, claim_token = ?
+            WHERE resource = ? AND holder = ? AND claim_token IS ?`
+        )
+        .run(
+          to.holder,
+          to.holderKind,
+          human ? null : (to.priority ?? 'side'),
+          at,
+          at,
+          human ? null : this.#expiry(at, to.ttlSeconds),
+          human ? null : randomUUID(),
+          resource,
+          current.holder,
+          current.claimToken
+        ).changes;
+      if (changed === 0) continue;
+      this.#logEvent(at, resource, 'transferred', holder, JSON.stringify({to: to.holder}));
+      const lease = this.get(resource, at);
+      return lease ? {status: 'ok', lease} : {status: 'not_found'};
+    }
+    throw lostRaces('transfer', resource);
   }
 
   events(resource?: string, limit = 100): LeaseEvent[] {
@@ -315,32 +346,60 @@ export class LeasesRepository {
     return new Date(Date.parse(now) + ttl * 1000).toISOString();
   }
 
-  /** `token` keeps a renewed claim's token; a new claim gets a fresh one (none for a human). */
-  #write(req: ClaimRequest, claimedAt: string, now: string, token?: string | null): Lease {
-    const human = req.holderKind === 'human';
-    this.#db
+  /** Null when another writer created the row first. */
+  #insert(req: ClaimRequest, now: string): Lease | null {
+    const changed = this.#db
       .prepare(
         `INSERT INTO leases (resource, holder, holder_kind, priority, attestation, claimed_at, renewed_at, expires_at, claim_token)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(resource) DO UPDATE SET
-           holder = excluded.holder, holder_kind = excluded.holder_kind,
-           priority = excluded.priority, attestation = excluded.attestation,
-           claimed_at = excluded.claimed_at, renewed_at = excluded.renewed_at,
-           expires_at = excluded.expires_at, claim_token = excluded.claim_token`
+         ON CONFLICT(resource) DO NOTHING`
+      )
+      .run(req.resource, ...this.#values(req, now, now)).changes;
+    return changed === 0 ? null : this.#landed(req.resource, now);
+  }
+
+  /** Overwrites `current` as read; null when another writer changed it first. */
+  #replace(
+    req: ClaimRequest,
+    current: Lease,
+    claimedAt: string,
+    now: string,
+    token?: string | null
+  ): Lease | null {
+    const changed = this.#db
+      .prepare(
+        `UPDATE leases
+            SET holder = ?, holder_kind = ?, priority = ?, attestation = ?,
+                claimed_at = ?, renewed_at = ?, expires_at = ?, claim_token = ?
+          WHERE resource = ? AND holder = ? AND claim_token IS ?`
       )
       .run(
+        ...this.#values(req, claimedAt, now, token),
         req.resource,
-        req.holder,
-        req.holderKind,
-        human ? null : (req.priority ?? 'side'),
-        req.attestation ?? null,
-        claimedAt,
-        now,
-        human ? null : this.#expiry(now, req.ttlSeconds),
-        human ? null : (token ?? randomUUID())
-      );
-    const lease = this.get(req.resource, now);
-    if (!lease) throw new Error(`lease write for ${req.resource} did not land`);
+        current.holder,
+        current.claimToken
+      ).changes;
+    return changed === 0 ? null : this.#landed(req.resource, now);
+  }
+
+  /** `token` keeps a renewed claim's token; a new claim gets a fresh one (none for a human). */
+  #values(req: ClaimRequest, claimedAt: string, now: string, token?: string | null) {
+    const human = req.holderKind === 'human';
+    return [
+      req.holder,
+      req.holderKind,
+      human ? null : (req.priority ?? 'side'),
+      req.attestation ?? null,
+      claimedAt,
+      now,
+      human ? null : this.#expiry(now, req.ttlSeconds),
+      human ? null : (token ?? randomUUID())
+    ];
+  }
+
+  #landed(resource: string, now: string): Lease {
+    const lease = this.get(resource, now);
+    if (!lease) throw new Error(`lease write for ${resource} did not land`);
     return lease;
   }
 

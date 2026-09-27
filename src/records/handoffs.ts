@@ -93,6 +93,11 @@ export {HANDOFF_STATUSES, type HandoffStatus};
 export const DEFAULT_CLAIM_TTL_SECONDS = 1800; // a review burst, not a lease: 30 min like suggestion claims
 export const MIN_CLAIM_TTL_SECONDS = 60;
 export const MAX_CLAIM_TTL_SECONDS = 86400;
+/** A write fenced on the row as read re-decides on a miss; a miss needs a second writer process (D69). */
+const FENCE_ATTEMPTS = 3;
+
+const lostRaces = (op: string, id: string): Error =>
+  new Error(`handoff ${op} for ${id} lost ${FENCE_ATTEMPTS} races with another writer`);
 
 export interface HandoffNote {
   author: string;
@@ -361,8 +366,9 @@ export class HandoffsRepository {
     const rows = this.#db
       .prepare(`SELECT * FROM handoffs WHERE status = 'claimed' AND claim_expires < ?`)
       .all(at) as unknown[] as HandoffRow[];
-    for (const row of rows) this.#revertClaim(toHandoff(row), at);
-    return rows.length;
+    let reverted = 0;
+    for (const row of rows) if (this.#revertClaim(toHandoff(row), at)) ++reverted;
+    return reverted;
   }
 
   /** Idempotent by key: a retry after an ambiguous failure returns the original. */
@@ -459,24 +465,34 @@ export class HandoffsRepository {
     now?: string
   ): ArtifactOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(id, at);
-    if (current === null) return {status: 'not_found'};
-    if (current.status === 'done' || current.status === 'rejected') {
-      return {status: 'resolved', current};
-    }
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(id, at);
+      if (current === null) return {status: 'not_found'};
+      if (current.status === 'done' || current.status === 'rejected') {
+        return {status: 'resolved', current};
+      }
 
-    const info = writeArtifact(this.#vaultDataPath, current.project, current.status, id, ext, data);
-    const next: Handoff = {
-      ...current,
-      ref: {type: SPOOL_REF_TYPE, value: `${id}.${ext}`},
-      updated: at,
-      baseSha: ext === 'patch' ? parseBaseCommit(data) : null,
-      artifact: info
-    };
-    this.#update(next);
-    writeSidecar(this.#vaultDataPath, this.#toSpool(next));
-    this.#logEvent(at, id, 'artifact', actor, JSON.stringify(info));
-    return {status: 'ok', handoff: next, artifact: info};
+      const fields = {
+        ref: {type: SPOOL_REF_TYPE, value: `${id}.${ext}`},
+        updated: at,
+        baseSha: ext === 'patch' ? parseBaseCommit(data) : null
+      };
+      // Row before file: a lost race writes nothing (D254).
+      if (!this.#update({...current, ...fields}, current)) continue;
+      const info = writeArtifact(
+        this.#vaultDataPath,
+        current.project,
+        current.status,
+        id,
+        ext,
+        data
+      );
+      const next: Handoff = {...current, ...fields, artifact: info};
+      writeSidecar(this.#vaultDataPath, this.#toSpool(next));
+      this.#logEvent(at, id, 'artifact', actor, JSON.stringify(info));
+      return {status: 'ok', handoff: next, artifact: info};
+    }
+    throw lostRaces('artifact upload', id);
   }
 
   getArtifact(id: string, now?: string): {ext: ArtifactExt; data: Buffer} | null {
@@ -508,23 +524,28 @@ export class HandoffsRepository {
     now?: string
   ): ClaimHandoffOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(id, at);
-    if (current === null) return {status: 'not_found'};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(id, at);
+      if (current === null) return {status: 'not_found'};
 
-    if (current.status === 'claimed') {
-      if (current.claimedBy !== holder) return {status: 'claimed_by_other', current};
-      if (token === null || token !== current.claimToken)
-        return {status: 'token_mismatch', current};
-      const renewed = this.#applyClaim(current, holder, token, ttlSeconds, at);
-      this.#logEvent(at, id, 'claimed', holder, JSON.stringify({renewed: true}));
-      return {status: 'renewed', handoff: renewed};
+      if (current.status === 'claimed') {
+        if (current.claimedBy !== holder) return {status: 'claimed_by_other', current};
+        if (token === null || token !== current.claimToken)
+          return {status: 'token_mismatch', current};
+        const renewed = this.#applyClaim(current, holder, token, ttlSeconds, at);
+        if (renewed === null) continue;
+        this.#logEvent(at, id, 'claimed', holder, JSON.stringify({renewed: true}));
+        return {status: 'renewed', handoff: renewed};
+      }
+      if (current.status !== 'open') return {status: 'not_open', current};
+
+      const claimed = this.#applyClaim(current, holder, randomUUID(), ttlSeconds, at);
+      if (claimed === null) continue;
+      moveEntry(this.#vaultDataPath, claimed.project, id, 'open', 'claimed');
+      this.#logEvent(at, id, 'claimed', holder, null);
+      return {status: 'claimed', handoff: claimed};
     }
-    if (current.status !== 'open') return {status: 'not_open', current};
-
-    const claimed = this.#applyClaim(current, holder, randomUUID(), ttlSeconds, at);
-    moveEntry(this.#vaultDataPath, claimed.project, id, 'open', 'claimed');
-    this.#logEvent(at, id, 'claimed', holder, null);
-    return {status: 'claimed', handoff: claimed};
+    throw lostRaces('claim', id);
   }
 
   /**
@@ -543,29 +564,33 @@ export class HandoffsRepository {
     now?: string
   ): ResolveOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(id, at);
-    if (current === null) return {status: 'not_found'};
-    if (current.status !== 'claimed') return {status: 'not_claimed', current};
-    if (current.claimedBy !== holder) return {status: 'not_holder', current};
-    if (token === null || token !== current.claimToken) return {status: 'token_mismatch', current};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(id, at);
+      if (current === null) return {status: 'not_found'};
+      if (current.status !== 'claimed') return {status: 'not_claimed', current};
+      if (current.claimedBy !== holder) return {status: 'not_holder', current};
+      if (token === null || token !== current.claimToken)
+        return {status: 'token_mismatch', current};
 
-    const next: Handoff = {
-      ...current,
-      status: resolution === 'returned' ? 'returned' : resolution,
-      updated: at,
-      claimedBy: null,
-      claimedAt: null,
-      claimExpires: null,
-      claimToken: null,
-      result: resolution === 'returned' ? null : (result ?? null),
-      notes:
-        note !== undefined ? [...current.notes, {author: holder, at, text: note}] : current.notes
-    };
-    this.#update(next);
-    writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'claimed'});
-    moveEntry(this.#vaultDataPath, next.project, id, 'claimed', next.status);
-    this.#logEvent(at, id, resolution, holder, null);
-    return {status: 'ok', handoff: next};
+      const next: Handoff = {
+        ...current,
+        status: resolution === 'returned' ? 'returned' : resolution,
+        updated: at,
+        claimedBy: null,
+        claimedAt: null,
+        claimExpires: null,
+        claimToken: null,
+        result: resolution === 'returned' ? null : (result ?? null),
+        notes:
+          note !== undefined ? [...current.notes, {author: holder, at, text: note}] : current.notes
+      };
+      if (!this.#update(next, current)) continue;
+      writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'claimed'});
+      moveEntry(this.#vaultDataPath, next.project, id, 'claimed', next.status);
+      this.#logEvent(at, id, resolution, holder, null);
+      return {status: 'ok', handoff: next};
+    }
+    throw lostRaces('resolve', id);
   }
 
   /** returned → open: rework submitted, same record, same id. */
@@ -580,32 +605,35 @@ export class HandoffsRepository {
     now?: string
   ): ResubmitOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(id, at);
-    if (current === null) return {status: 'not_found'};
-    if (current.status !== 'returned') return {status: 'not_returned', current};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(id, at);
+      if (current === null) return {status: 'not_found'};
+      if (current.status !== 'returned') return {status: 'not_returned', current};
 
-    const next: Handoff = {
-      ...current,
-      status: 'open',
-      updated: at,
-      ...(updates.ref !== undefined ? {ref: updates.ref} : {}),
-      ...(updates.body !== undefined ? {body: updates.body} : {}),
-      ...(updates.touches !== undefined ? {touches: updates.touches} : {}),
-      ...(updates.from !== undefined
-        ? {
-            from: {
-              host: updates.from.host,
-              session: updates.from.session,
-              repo: updates.from.repo ?? null
+      const next: Handoff = {
+        ...current,
+        status: 'open',
+        updated: at,
+        ...(updates.ref !== undefined ? {ref: updates.ref} : {}),
+        ...(updates.body !== undefined ? {body: updates.body} : {}),
+        ...(updates.touches !== undefined ? {touches: updates.touches} : {}),
+        ...(updates.from !== undefined
+          ? {
+              from: {
+                host: updates.from.host,
+                session: updates.from.session,
+                repo: updates.from.repo ?? null
+              }
             }
-          }
-        : {})
-    };
-    this.#update(next);
-    writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'returned'});
-    moveEntry(this.#vaultDataPath, next.project, id, 'returned', 'open');
-    this.#logEvent(at, id, 'resubmitted', `${next.from.host}/${next.from.session}`, null);
-    return {status: 'ok', handoff: next};
+          : {})
+      };
+      if (!this.#update(next, current)) continue;
+      writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'returned'});
+      moveEntry(this.#vaultDataPath, next.project, id, 'returned', 'open');
+      this.#logEvent(at, id, 'resubmitted', `${next.from.host}/${next.from.session}`, null);
+      return {status: 'ok', handoff: next};
+    }
+    throw lostRaces('resubmit', id);
   }
 
   /** A gate's result bound to the sha it ran on — append-only, refused once resolved. */
@@ -615,44 +643,50 @@ export class HandoffsRepository {
     now?: string
   ): VerifyOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(id, at);
-    if (current === null) return {status: 'not_found'};
-    if (current.status === 'done' || current.status === 'rejected') {
-      return {status: 'resolved', current};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(id, at);
+      if (current === null) return {status: 'not_found'};
+      if (current.status === 'done' || current.status === 'rejected') {
+        return {status: 'resolved', current};
+      }
+      const entry: HandoffVerification = {
+        ...record,
+        at,
+        artifact_sha256: current.artifact?.sha256 ?? null
+      };
+      const next: Handoff = {
+        ...current,
+        updated: at,
+        verifications: [...current.verifications, entry]
+      };
+      if (!this.#update(next, current)) continue;
+      writeSidecar(this.#vaultDataPath, this.#toSpool(next));
+      this.#logEvent(at, id, 'verified', record.by, JSON.stringify(entry));
+      return {status: 'ok', handoff: next};
     }
-    const entry: HandoffVerification = {
-      ...record,
-      at,
-      artifact_sha256: current.artifact?.sha256 ?? null
-    };
-    const next: Handoff = {
-      ...current,
-      updated: at,
-      verifications: [...current.verifications, entry]
-    };
-    this.#update(next);
-    writeSidecar(this.#vaultDataPath, this.#toSpool(next));
-    this.#logEvent(at, id, 'verified', record.by, JSON.stringify(entry));
-    return {status: 'ok', handoff: next};
+    throw lostRaces('verify', id);
   }
 
   /** Append-only discussion, attached to the work — refused once resolved. */
   note(id: string, author: string, text: string, now?: string): NoteOutcome {
     const at = now ?? new Date().toISOString();
-    const current = this.get(id, at);
-    if (current === null) return {status: 'not_found'};
-    if (current.status === 'done' || current.status === 'rejected') {
-      return {status: 'resolved', current};
+    for (let attempt = 0; attempt < FENCE_ATTEMPTS; ++attempt) {
+      const current = this.get(id, at);
+      if (current === null) return {status: 'not_found'};
+      if (current.status === 'done' || current.status === 'rejected') {
+        return {status: 'resolved', current};
+      }
+      const next: Handoff = {
+        ...current,
+        updated: at,
+        notes: [...current.notes, {author, at, text}]
+      };
+      if (!this.#update(next, current)) continue;
+      writeSidecar(this.#vaultDataPath, this.#toSpool(next));
+      this.#logEvent(at, id, 'note', author, null);
+      return {status: 'ok', handoff: next};
     }
-    const next: Handoff = {
-      ...current,
-      updated: at,
-      notes: [...current.notes, {author, at, text}]
-    };
-    this.#update(next);
-    writeSidecar(this.#vaultDataPath, this.#toSpool(next));
-    this.#logEvent(at, id, 'note', author, null);
-    return {status: 'ok', handoff: next};
+    throw lostRaces('note', id);
   }
 
   /** Archival completed: the spool entry (all `<id>.*` siblings) is cleared. */
@@ -675,7 +709,7 @@ export class HandoffsRepository {
     token: string,
     ttlSeconds: number | undefined,
     at: string
-  ): Handoff {
+  ): Handoff | null {
     const ttl = ttlSeconds ?? DEFAULT_CLAIM_TTL_SECONDS;
     const next: Handoff = {
       ...current,
@@ -686,12 +720,13 @@ export class HandoffsRepository {
       claimExpires: new Date(Date.parse(at) + ttl * 1000).toISOString(),
       claimToken: token
     };
-    this.#update(next);
+    if (!this.#update(next, current)) return null;
     writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: current.status});
     return next;
   }
 
-  #revertClaim(handoff: Handoff, at: string): void {
+  /** A lost race skips: the next read sweeps again. */
+  #revertClaim(handoff: Handoff, at: string): boolean {
     const next: Handoff = {
       ...handoff,
       status: 'open',
@@ -703,11 +738,12 @@ export class HandoffsRepository {
       result: null // an open handoff carries no verdict (schema CHECK)
     };
     const exists = this.#db.prepare('SELECT 1 FROM handoffs WHERE id = ?').get(handoff.id);
-    if (exists) this.#update(next);
-    else this.#insert(next);
+    if (!exists) this.#insert(next);
+    else if (!this.#update(next, handoff)) return false;
     writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'claimed'});
     moveEntry(this.#vaultDataPath, next.project, next.id, 'claimed', 'open');
     this.#logEvent(at, next.id, 'claim_expired', handoff.claimedBy, null);
+    return true;
   }
 
   #fromSpool(entry: SpoolEntry): Handoff {
@@ -792,36 +828,42 @@ export class HandoffsRepository {
       );
   }
 
-  #update(h: Handoff): void {
-    this.#db
-      .prepare(
-        `UPDATE handoffs
-            SET status = ?, updated = ?, claimed_by = ?, claimed_at = ?, claim_expires = ?,
-                claim_token = ?, result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
-                from_host = ?, from_session = ?, from_repo = ?,
-                touches = ?, verifications = ?, base_sha = ?
-          WHERE id = ?`
-      )
-      .run(
-        h.status,
-        h.updated,
-        h.claimedBy,
-        h.claimedAt,
-        h.claimExpires,
-        h.claimToken,
-        h.result === null ? null : JSON.stringify(h.result),
-        JSON.stringify(h.notes),
-        h.ref?.type ?? null,
-        h.ref?.value ?? null,
-        h.body,
-        h.from.host,
-        h.from.session,
-        h.from.repo,
-        JSON.stringify(h.touches),
-        JSON.stringify(h.verifications),
-        h.baseSha,
-        h.id
-      );
+  /** Writes `h` over `read` as read; false when another writer changed the row first (D69). */
+  #update(h: Handoff, read: Handoff): boolean {
+    return (
+      this.#db
+        .prepare(
+          `UPDATE handoffs
+              SET status = ?, updated = ?, claimed_by = ?, claimed_at = ?, claim_expires = ?,
+                  claim_token = ?, result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
+                  from_host = ?, from_session = ?, from_repo = ?,
+                  touches = ?, verifications = ?, base_sha = ?
+            WHERE id = ? AND status = ? AND updated = ? AND claim_token IS ?`
+        )
+        .run(
+          h.status,
+          h.updated,
+          h.claimedBy,
+          h.claimedAt,
+          h.claimExpires,
+          h.claimToken,
+          h.result === null ? null : JSON.stringify(h.result),
+          JSON.stringify(h.notes),
+          h.ref?.type ?? null,
+          h.ref?.value ?? null,
+          h.body,
+          h.from.host,
+          h.from.session,
+          h.from.repo,
+          JSON.stringify(h.touches),
+          JSON.stringify(h.verifications),
+          h.baseSha,
+          h.id,
+          read.status,
+          read.updated,
+          read.claimToken
+        ).changes > 0
+    );
   }
 
   #logEvent(
