@@ -150,6 +150,8 @@ The table above is a selection. The full surface also covers search (`POST /sear
 
 ### CLI subcommands
 
+Only `serve` runs against the live database. The others open a database directly, so point them at a scratch or development database (`VAULT_DB_PATH`), never at one a running server uses: the server is the only process that touches the live database, and everything else goes through the API.
+
 ```bash
 node src/index.ts info                           # DB version + record count
 node src/index.ts import <vault-path>            # import a directory + embed

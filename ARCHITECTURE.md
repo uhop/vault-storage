@@ -48,7 +48,7 @@ Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors; `nearest` ranks rec
 
 ## DB layer (`src/db/`)
 
-- **`connection.ts`** — `node:sqlite` `DatabaseSync` + `sqlite-vec` extension, `sha256_hex` SQL function, FK enforcement, WAL.
+- **`connection.ts`** — `node:sqlite` `DatabaseSync` + `sqlite-vec` extension, `sha256_hex` SQL function, FK enforcement, WAL. The server is the only process that opens the live database (D72); the CLI's `import`, `migrate`, and `info` are for a development database.
 - **`migrate.ts`** — applies `schema/NNNN_*.sql` in numeric order, each in its own transaction (`-- migrate:no-transaction` opt-out for table rebuilds). A migration carrying a `-- migrate:no-reindex` line changes nothing the importer derives, so it does not force the startup full import; `MigrationResult.reindex` lists the ones that do.
 - **`schema/`** — append-only numbered migrations (`0001_init.sql` …). Notable: 0004 doc-vecs, 0005/0006 agent enrichment, 0008 queue_items, 0013 FTS5 lexical index, 0023 `chunks.text_hash` (filled for existing chunk sets of unsummarized records by `backfillChunkTextHashes` at startup), 0024 `record_summary_vec`, 0022 partial expression indexes on the suggestion identity keys (their expressions must match `column()` in `file-suggestions.ts`, or the planner scans). A migration that rebuilds `records` must drop + recreate + `'rebuild'` the FTS5 external-content index.
 - **`meta.ts`** — typed KV: `schema_version`, `last_indexed_commit`, `content_generation`, git-sync failure ledger.
