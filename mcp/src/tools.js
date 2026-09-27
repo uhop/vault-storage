@@ -882,11 +882,21 @@ export const registerTools = (mcp, client) => {
     'vault_reopen_suggestion',
     {
       description:
-        'Move an accepted, rejected, or claimed suggestion back to pending, clearing resolution and claim fields. Escape hatch for misclicks; on a claimed row it is the explicit claim release. 409 when already pending. Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.',
-      inputSchema: {id: z.string().min(1)}
+        "Move an accepted, rejected, or claimed suggestion back to pending, clearing resolution and claim fields. Escape hatch for misclicks; on a claimed row it is the explicit claim release, and needs holder equal to the claim's holder (409 claimed_by_other otherwise, so a lapsed claimant cannot free the next claim). A lapsed claim has already reverted: 409 already_pending, as for any pending row. Returns the full suggestion row {id, kind, subject_id, status, payload, created, resolved_at, resolved_by, claimed_by, claimed_at, claim_expires}.",
+      inputSchema: {
+        id: z.string().min(1),
+        holder: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('The claim holder; required to release a claimed row')
+      }
     },
-    wrap(async ({id}) =>
-      client.postJson(`/suggestions/${encodeURIComponent(id)}/reopen`, undefined)
+    wrap(async ({id, holder}) =>
+      client.postJson(
+        `/suggestions/${encodeURIComponent(id)}/reopen`,
+        holder ? {holder} : undefined
+      )
     )
   );
 

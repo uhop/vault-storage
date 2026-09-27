@@ -22,7 +22,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /suggestions/resolve-batch': ['items', 'resolved_by'],
   'POST /suggestions/{id}/accept': ['resolved_by'],
   'POST /suggestions/{id}/reject': ['resolved_by'],
-  'POST /suggestions/{id}/reopen': [],
+  'POST /suggestions/{id}/reopen': ['holder'],
   'PUT /vault/{path}': ['frontmatter', 'body'],
   'POST /vault/edit': [
     'path',

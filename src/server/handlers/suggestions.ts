@@ -340,14 +340,14 @@ interface ResolveBody {
   resolved_by?: string;
 }
 
-const parseResolveBody = async (raw: string): Promise<ResolveBody | string> => {
-  if (raw.trim().length === 0) return {};
+const parseOptionalBody = async <T extends object>(raw: string): Promise<T | string> => {
+  if (raw.trim().length === 0) return {} as T;
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return 'request body must be a JSON object';
     }
-    return parsed as ResolveBody;
+    return parsed as T;
   } catch (err) {
     return `invalid JSON: ${(err as Error).message}`;
   }
@@ -367,14 +367,15 @@ interface ResolvableRow {
  */
 const claimConflict = (
   row: ResolvableRow,
-  resolvedBy: string | null
+  resolvedBy: string | null,
+  field = 'resolved_by'
 ): {code: string; message: string; details?: Record<string, unknown>} | null => {
   if (row.status === 'pending') return null;
   if (row.status === 'claimed') {
     if (resolvedBy !== null && resolvedBy === row.claimed_by) return null;
     return {
       code: 'claimed_by_other',
-      message: `suggestion is claimed by "${row.claimed_by}" until ${row.claim_expires} — pass resolved_by matching the holder, or wait for the claim to expire`,
+      message: `suggestion is claimed by "${row.claimed_by}" until ${row.claim_expires} — pass ${field} matching the holder, or wait for the claim to expire`,
       details: {claimed_by: row.claimed_by, claim_expires: row.claim_expires}
     };
   }
@@ -423,7 +424,7 @@ const makeResolveHandler =
       sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
       return;
     }
-    const body = await parseResolveBody(raw);
+    const body = await parseOptionalBody<ResolveBody>(raw);
     if (typeof body === 'string') {
       sendError(ctx.res, 400, 'bad_request', body);
       return;
@@ -573,20 +574,46 @@ export const createSuggestionHandler =
  * Move an accepted, rejected, or claimed suggestion back to `pending`,
  * clearing `resolved_at`/`resolved_by` and any claim. Escape hatch for
  * misclicks; on a claimed row it is the explicit claim release (the
- * alternative is waiting out the TTL). 409 when the suggestion is already
- * pending; 404 when unknown.
+ * alternative is waiting out the TTL), allowed only to the holder.
+ *
+ * Body (optional): `{holder?: string}`. A claimed row needs `holder` equal
+ * to its `claimed_by` (409 `claimed_by_other` otherwise), so a client whose
+ * claim lapsed and was re-claimed cannot free the new holder's claim. A
+ * lapsed claim reverts first, so its release is 409 `already_pending`.
+ * 409 `already_pending` when pending; 404 when unknown.
  */
 export const reopenSuggestionHandler =
   (deps: SuggestionsDeps): Handler =>
-  ctx => {
+  async ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing suggestion id');
       return;
     }
-    const existing = deps.db.prepare('SELECT id, status FROM suggestions WHERE id = ?').get(id) as
-      {id: string; status: string} | undefined;
+
+    let raw: string;
+    try {
+      raw = await readBodyText(ctx.req);
+    } catch (err) {
+      sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+      return;
+    }
+    const body = await parseOptionalBody<{holder?: unknown}>(raw);
+    if (typeof body === 'string') {
+      sendError(ctx.res, 400, 'bad_request', body);
+      return;
+    }
+    const holder = body.holder ?? null;
+    if (holder !== null && (typeof holder !== 'string' || holder.trim().length === 0)) {
+      sendError(ctx.res, 400, 'bad_request', 'holder must be a non-empty string');
+      return;
+    }
+
+    revertExpiredClaims(deps.db);
+    const existing = deps.db
+      .prepare('SELECT status, claimed_by, claim_expires FROM suggestions WHERE id = ?')
+      .get(id) as ResolvableRow | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;
@@ -595,14 +622,24 @@ export const reopenSuggestionHandler =
       sendError(ctx.res, 409, 'already_pending', 'suggestion is already pending');
       return;
     }
-    deps.db
+    const conflict =
+      existing.status === 'claimed' ? claimConflict(existing, holder, 'holder') : null;
+    if (conflict) {
+      sendError(ctx.res, 409, conflict.code, conflict.message, conflict.details);
+      return;
+    }
+    const changed = deps.db
       .prepare(
         `UPDATE suggestions
             SET status = 'pending', resolved_at = NULL, resolved_by = NULL,
                 claimed_by = NULL, claimed_at = NULL, claim_expires = NULL
-          WHERE id = ?`
+          WHERE id = ? AND status = ? AND claimed_by IS ?`
       )
-      .run(id);
+      .run(id, existing.status, existing.claimed_by).changes;
+    if (changed === 0) {
+      sendError(ctx.res, 409, 'conflict', 'suggestion changed while reopening; read it again');
+      return;
+    }
     const row = deps.db
       .prepare(`SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`)
       .get(id) as unknown as SuggestionRow;

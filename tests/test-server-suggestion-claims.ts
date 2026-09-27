@@ -195,12 +195,31 @@ test('claim: batch reservation, holder-scoped resolution, release', async t => {
     t.equal(ok.body.claimed_by, null);
     t.equal(ok.body.claim_expires, null);
 
-    // Reopen releases a claim without waiting for the TTL.
+    // Reopen releases a claim without waiting for the TTL, for the holder only.
     const heldId = claim.body.items[1].id as string;
-    const released = await api(`${url}/suggestions/${heldId}/reopen`, 'POST');
+    const anonymousRelease = await api(`${url}/suggestions/${heldId}/reopen`, 'POST');
+    t.equal(anonymousRelease.status, 409);
+    t.equal(anonymousRelease.body.code, 'claimed_by_other');
+    t.matchString(anonymousRelease.body.error, /pass holder/);
+    const otherRelease = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {
+      holder: 'sweep-B'
+    });
+    t.equal(otherRelease.status, 409);
+    t.equal(otherRelease.body.details.claimed_by, 'sweep-A');
+    const badHolder = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {holder: ''});
+    t.equal(badHolder.status, 400);
+    const released = await api(`${url}/suggestions/${heldId}/reopen`, 'POST', {
+      holder: 'sweep-A'
+    });
     t.equal(released.status, 200);
     t.equal(released.body.status, 'pending');
     t.equal(released.body.claimed_by, null);
+
+    // A resolved row reopens without a holder (misclick undo).
+    const undone = await api(`${url}/suggestions/${claimedId}/reopen`, 'POST');
+    t.equal(undone.status, 200);
+    t.equal(undone.body.status, 'pending');
+    t.equal(undone.body.resolved_by, null);
 
     // Validation surface.
     const badKind = await api(`${url}/suggestions/claim`, 'POST', {kind: 'nope', holder: 'x'});
@@ -247,6 +266,42 @@ test('claim: expired claims lazily revert to pending', async t => {
     });
     t.equal(reclaim.body.claimed, 1);
     t.equal(reclaim.body.items[0].claimed_by, 'sweep-B');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('claim: a lapsed holder cannot release the next claim', async t => {
+  const ctx = await startCtx();
+  try {
+    const {url, db} = ctx;
+    const id = await createSuggestion(url, 'contradiction_candidate', {note: 'lapse'});
+    await api(`${url}/suggestions/claim`, 'POST', {
+      kind: 'contradiction_candidate',
+      holder: 'sweep-A'
+    });
+    db.prepare(`UPDATE suggestions SET claim_expires = '2000-01-01T00:00:00Z' WHERE id = ?`).run(
+      id
+    );
+
+    // A's lapsed claim reverts on reopen itself.
+    const lapsed = await api(`${url}/suggestions/${id}/reopen`, 'POST', {holder: 'sweep-A'});
+    t.equal(lapsed.status, 409);
+    t.equal(lapsed.body.code, 'already_pending');
+
+    const reclaim = await api(`${url}/suggestions/claim`, 'POST', {
+      kind: 'contradiction_candidate',
+      holder: 'sweep-B'
+    });
+    t.equal(reclaim.body.claimed, 1);
+
+    // The stale client's release leaves B's claim in place.
+    const stale = await api(`${url}/suggestions/${id}/reopen`, 'POST', {holder: 'sweep-A'});
+    t.equal(stale.status, 409);
+    t.equal(stale.body.code, 'claimed_by_other');
+    const row = await api(`${url}/suggestions/${id}`, 'GET');
+    t.equal(row.body.status, 'claimed');
+    t.equal(row.body.claimed_by, 'sweep-B');
   } finally {
     await stopCtx(ctx);
   }

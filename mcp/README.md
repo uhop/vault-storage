@@ -89,7 +89,7 @@ The tools map to the REST surface, grouped by purpose:
   `vault_accept_suggestion`, `vault_reject_suggestion`,
   `vault_resolve_suggestions_batch` (≤ 100 decisions per call, mechanical
   tag/edge side effects applied server-side), `vault_reopen_suggestion`
-  (also the explicit claim release), `vault_create_suggestion`
+  (also the explicit claim release, for the claim's holder only), `vault_create_suggestion`
 - **Queue items** — `vault_queue_top`, `vault_queue_ready`, `vault_queue_blocked`,
   `vault_queue_by_section`, `vault_queue_by_priority`, `vault_queue_by_project`,
   `vault_queue_project_archive` (all seven take `fields` — `"a,b"` keeps,

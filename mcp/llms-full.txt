@@ -169,7 +169,8 @@ Review queue:
   vault_create_suggestion validates a given evidence and defaults it to
   {agent, false}.
 - vault_claim_suggestions — reserve a batch under a holder with a TTL;
-  vault_reopen_suggestion doubles as the explicit claim release.
+  vault_reopen_suggestion doubles as the explicit claim release, and takes
+  the holder: a claimed row is released only for the holder that claimed it.
 - vault_accept_suggestion / vault_reject_suggestion — single decisions.
 - vault_resolve_suggestions_batch — ≤ 100 decisions; mechanical tag/edge side
   effects applied server-side; per-item failures in results[].error.
