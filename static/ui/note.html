@@ -75,6 +75,11 @@
         content-visibility: auto;
         contain-intrinsic-size: auto 20em;
       }
+      /* ?perf=1's height report: every section laid out, contained as when it renders. */
+      #doc.laid-out > section {
+        content-visibility: visible;
+        contain: layout style paint;
+      }
       /* Containment stops margins collapsing across sections; this restores the gap above a heading. */
       /* Containment stops margins collapsing out of a section, so drop the trailing margins that
          used to collapse into the next heading's: the last block's, down its chain of last children. */
@@ -283,6 +288,59 @@
         }
       };
 
+      // Em per unit, fitted on six notes in Chromium and Playwright WebKit (D71): a wrapped
+      // text line, a code line, a table row, every block's margin, a heading, a folded block.
+      const EM = {line: 1.75, code: 1.6, row: 5, block: 0.4, heading: 1.5, folded: 1.25};
+
+      // An unrendered section's height from its text, so the scrollbar is near its final size.
+      const estimator = () => {
+        const doc = $('#doc');
+        const cs = getComputedStyle(doc);
+        const ctx = document.createElement('canvas').getContext('2d');
+        ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        const sample = 'The quick brown fox jumps over the lazy dog, `code` 1234567890. ';
+        const perChar = ctx.measureText(sample).width / sample.length;
+        const width = doc.clientWidth;
+        const lines = (text, w) => Math.max(1, Math.ceil((text.length * perChar) / w));
+        const ownText = li =>
+          [...li.childNodes]
+            .filter(n => !(n.nodeType === Node.ELEMENT_NODE && /^[OU]L$/.test(n.tagName)))
+            .map(n => n.textContent)
+            .join('');
+        return section => {
+          let em = 0;
+          for (const el of section.children) {
+            em += EM.block;
+            if (/^H[1-6]$/.test(el.tagName)) em += EM.heading;
+            else if (el.tagName === 'DETAILS') em += EM.folded;
+            else if (el.tagName === 'PRE') em += EM.code * el.textContent.split('\n').length;
+            else if (el.tagName === 'TABLE') em += EM.row * el.querySelectorAll('tr').length;
+            else {
+              const items = el.querySelectorAll('li');
+              if (!items.length) em += EM.line * lines(el.textContent, width);
+              else for (const li of items) em += EM.line * lines(ownText(li), width * 0.93);
+            }
+          }
+          return em;
+        };
+      };
+
+      // Under ?perf=1, after the load: how far the estimate is from the laid-out height. It lays
+      // out a copy, since laying out the page itself changes the sizes its sections remember.
+      const reportHeights = () => {
+        const doc = $('#doc');
+        const estimated = doc.getBoundingClientRect().height;
+        const copy = doc.cloneNode(true);
+        copy.classList.add('laid-out');
+        doc.after(copy);
+        const laidOut = copy.getBoundingClientRect().height;
+        copy.remove();
+        mark(
+          'view: height',
+          `${Math.round(estimated)} px estimated, ${Math.round(laidOut)} px laid out`
+        );
+      };
+
       // One section per top-level heading, the unit #doc > section skips.
       const sectioned = html => {
         const tpl = document.createElement('template');
@@ -296,6 +354,11 @@
           }
           section.append(node);
         }
+        time('view: estimate', () => {
+          const estimate = estimator();
+          for (const s of out.children)
+            s.style.containIntrinsicSize = `auto ${estimate(s).toFixed(1)}em`;
+        });
         return out;
       };
 
@@ -334,6 +397,7 @@
           fetchBacklinks();
           if (!note.composed) noteDrafts(note.sections);
           mark('view: done');
+          if (perfOn) setTimeout(reportHeights);
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();
