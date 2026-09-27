@@ -112,6 +112,11 @@ export class VaultClient {
     if (!res.ok) await this.#throwFromResponse(res);
   }
 
+  /** A DELETE whose route answers with a JSON body. */
+  async deleteJson(path) {
+    return this.#parseJson(await this.#request('DELETE', this.url(path)));
+  }
+
   async postJson(path, body, query = {}) {
     const init = {};
     if (body !== undefined) {

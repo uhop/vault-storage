@@ -506,7 +506,7 @@ export const registerTools = (mcp, client) => {
     'vault_patch_fm',
     {
       description:
-        'Add or remove members of a frontmatter array (`/related`, `/tags`, `/agent/tags_suggested`, …) on one record, server-side and atomically. The body is never round-tripped, so this cannot clobber the document — the right tool for "add one related: entry", which would otherwise mean rewriting the whole note. Value-based set semantics: add appends unless a structurally-equal member exists, remove drops every equal member, both idempotent. Paths are JSON Pointers addressing the array itself, not an element. All-or-nothing: nothing is written unless every op validates, and a no-op request skips the write entirely. Returns {changed, results: [{op, path, changed, array}]} with each resulting array, so no re-read is needed.',
+        'Add or remove members of a frontmatter array (`/related`, `/agent/tags_suggested`, …) on one record, server-side and atomically. Not `/tags`: the server refuses it (400 `protected_field`), since tags are checked against the taxonomy shape rule; use vault_tag_add / vault_tag_remove. The body is never round-tripped, so this cannot clobber the document — the right tool for "add one related: entry", which would otherwise mean rewriting the whole note. Value-based set semantics: add appends unless a structurally-equal member exists, remove drops every equal member, both idempotent. Paths are JSON Pointers addressing the array itself, not an element. All-or-nothing: nothing is written unless every op validates, and a no-op request skips the write entirely. Returns {changed, results: [{op, path, changed, array}]} with each resulting array, so no re-read is needed.',
       inputSchema: {
         record_id: z.string().min(1).describe('Record id (not a path) — from vault_list_pieces'),
         ops: z
@@ -522,6 +522,38 @@ export const registerTools = (mcp, client) => {
     },
     wrap(async ({record_id, ops}) =>
       client.patchJson(`/sections/${encodeURIComponent(record_id)}/fm`, {ops})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_tag_add',
+    {
+      description:
+        "Add one tag to a record's frontmatter `tags:`, server-side and atomically (no body round-trip), then re-import it. Idempotent: an existing tag is a 200 no-op, which still re-imports, so a pending tag_suggestion for it settles. The tag must match [a-z0-9][a-z0-9-]* (400 `invalid_tag`); it is stored as given, and the import maps an alias to its canonical. Returns {tags}, the resulting array.",
+      inputSchema: {
+        record_id: z.string().min(1).describe('Record id (not a path) — from vault_list_pieces'),
+        tag: z.string().min(1)
+      }
+    },
+    wrap(async ({record_id, tag}) =>
+      client.postJson(`/sections/${encodeURIComponent(record_id)}/tags`, {tag})
+    )
+  );
+
+  mcp.registerTool(
+    'vault_tag_remove',
+    {
+      description:
+        "Remove one tag from a record's frontmatter `tags:`, server-side and atomically. Idempotent: a tag not present is a 200 no-op. Matched literally against the stored array, so passing an alias when the note carries the canonical (or the reverse) removes nothing; read the record's frontmatter first when unsure. Returns {tags}, the resulting array.",
+      inputSchema: {
+        record_id: z.string().min(1).describe('Record id (not a path) — from vault_list_pieces'),
+        tag: z.string().min(1)
+      }
+    },
+    wrap(async ({record_id, tag}) =>
+      client.deleteJson(
+        `/sections/${encodeURIComponent(record_id)}/tags/${encodeURIComponent(tag)}`
+      )
     )
   );
 

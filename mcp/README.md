@@ -58,7 +58,8 @@ The tools map to the REST surface, grouped by purpose:
   `vault_move_item` (one queue item by its bold title — removed, inserted
   into a section, or moved between documents with a trail after the title,
   the queue-to-archive move as one request), `vault_patch_fm` (add/remove
-  one frontmatter array member). All of them are atomic
+  one frontmatter array member, `tags:` excepted), `vault_tag_add` /
+  `vault_tag_remove` (one `tags:` member). All of them are atomic
   server-side ops whose blast radius is the thing being changed, so they
   cannot lose the rest of the document. Prefer them over whole-document
   writes.
@@ -80,7 +81,8 @@ The tools map to the REST surface, grouped by purpose:
   machine), `vault_run_scans` (all four suggestion-filing scans in one
   pass)
 - **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`,
-  `vault_tag_update` (rewrite a description after minting)
+  `vault_tag_update` (rewrite a description after minting), `vault_tag_add` /
+  `vault_tag_remove` (one tag on one record)
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`
 - **Review queue** — `vault_list_suggestions` (`expand: "context"` inlines
   per-item record briefs + tag taxonomy info), `vault_read_suggestion`,

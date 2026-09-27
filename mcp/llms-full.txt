@@ -105,8 +105,12 @@ Narrow writes (atomic server-side ops; prefer these over whole-document writes):
   headings; expected_hash (the read's hash) makes a changed section a 409
   section_changed with details.current_hash. Returns {path, etag, heading,
   level, occurrence, hash}.
-- vault_patch_fm — add/remove one frontmatter array member (related:, tags:…);
-  echoes the resulting array.
+- vault_patch_fm — add/remove one frontmatter array member (related:,
+  agent.tags_suggested…); echoes the resulting array. Not tags:, which the
+  server refuses (400 protected_field).
+- vault_tag_add / vault_tag_remove — one tags: member on one record, atomic
+  and idempotent; add checks the tag's shape (400 invalid_tag) and
+  re-imports, so a pending tag_suggestion settles. Echoes {tags}.
 - vault_remove_item / vault_insert_item — one queue item by its bold title
   (normalized, exactly once; 409 item_assert_failed): removed with its
   continuation lines (the text comes back as `removed`; an Active, Backlog,
