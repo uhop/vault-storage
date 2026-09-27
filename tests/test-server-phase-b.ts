@@ -402,6 +402,94 @@ test('GET /tags returns counts envelope', async t => {
   }
 });
 
+test('GET /tags sorts by count or name, filters by substring, and rejects an unknown sort', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const betaId = await findId(ctx.url, 'topics/beta.md');
+      const gammaId = await findId(ctx.url, 'topics/gamma.md');
+      seedTags(ctx.db, [
+        {recordId: alphaId, tag: 'docker'},
+        {recordId: betaId, tag: 'docker'},
+        {recordId: gammaId, tag: 'docker'},
+        {recordId: alphaId, tag: 'k8s'},
+        {recordId: betaId, tag: 'k8s'},
+        {recordId: alphaId, tag: 'ansible'}
+      ]);
+      const names = async (query: string): Promise<string[]> => {
+        const r = await fetchAuthed(`${ctx.url}/tags?${query}`);
+        t.equal(r.status, 200, `${query}: 200 ok`);
+        return (r.body as {items: Array<{tag: string}>}).items.map(i => i.tag);
+      };
+
+      t.deepEqual(await names(''), ['docker', 'k8s', 'ansible'], 'default: most used first');
+      t.deepEqual(await names('sort=count_asc'), ['ansible', 'k8s', 'docker'], 'least used first');
+      t.deepEqual(await names('sort=tag_asc'), ['ansible', 'docker', 'k8s'], 'A to Z');
+      t.deepEqual(await names('sort=tag'), ['k8s', 'docker', 'ansible'], 'Z to A');
+      t.deepEqual(await names('contains=ck'), ['docker'], 'substring filter');
+      t.deepEqual(
+        await names('contains=%25'),
+        [],
+        'a LIKE wildcard in the filter matches literally'
+      );
+
+      const paged = await fetchAuthed(`${ctx.url}/tags?sort=tag_asc&limit=2&offset=2`);
+      const env = paged.body as {items: Array<{tag: string}>; total: number};
+      t.deepEqual(
+        env.items.map(i => i.tag),
+        ['k8s'],
+        'offset pages through the sorted list'
+      );
+      t.equal(env.total, 3, 'total counts every tag');
+
+      const bad = await fetchAuthed(`${ctx.url}/tags?sort=popularity`);
+      t.equal(bad.status, 400, 'unknown sort is a 400');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('GET /tags/{tag}/records returns the most recently updated first', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const betaId = await findId(ctx.url, 'topics/beta.md');
+      const gammaId = await findId(ctx.url, 'topics/gamma.md');
+      seedTags(ctx.db, [
+        {recordId: alphaId, tag: 'docker'},
+        {recordId: betaId, tag: 'docker'},
+        {recordId: gammaId, tag: 'docker'}
+      ]);
+      const setUpdated = ctx.db.prepare('UPDATE records SET updated = ? WHERE record_id = ?');
+      setUpdated.run('2026-01-01', alphaId);
+      setUpdated.run('2026-03-01', betaId);
+      setUpdated.run('2026-02-01', gammaId);
+
+      const r = await fetchAuthed(`${ctx.url}/tags/docker/records?limit=2`);
+      const env = r.body as {items: Array<{file_path: string}>; total: number};
+      t.deepEqual(
+        env.items.map(i => i.file_path),
+        ['topics/beta.md', 'topics/gamma.md'],
+        'newest first, limited'
+      );
+      t.equal(env.total, 3, 'total counts every tagged record');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('GET /tags/{tag}/records lists records carrying the tag', async t => {
   const {root, cleanup} = setup();
   try {

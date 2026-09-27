@@ -721,9 +721,11 @@ export const registerTools = (mcp, client) => {
     'vault_list_tags',
     {
       description:
-        'List the managed tag taxonomy. Returns the paginated envelope {items: [{tag, record_count}], offset, limit, total}; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'List the managed tag taxonomy. Filter by `prefix` or by `contains` (a substring of the tag name); `sort` is `count` (default, most used first), `count_asc`, `tag_asc` (A to Z), or `tag` (Z to A). Returns the paginated envelope {items: [{tag, record_count}], offset, limit, total}; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         prefix: z.string().optional(),
+        contains: z.string().optional(),
+        sort: z.enum(['count', 'count_asc', 'tag', 'tag_asc']).optional(),
         offset: z.number().int().min(0).optional().default(0),
         limit: z.number().int().min(1).max(100).optional().default(20)
       }
@@ -762,7 +764,7 @@ export const registerTools = (mcp, client) => {
     'vault_records_by_tag',
     {
       description:
-        'List records carrying a tag; aliases resolve to canonical form. Returns {tag, items, offset, limit, total} where `tag` is the canonical name; passing an alias additionally sets `alias_for` and `requested`, which is how you detect the redirect. Items are record rows WITHOUT body, carrying agent_summary + agent_derived_from_hash. Page by items.length (limit caps at 100). 404 tag_not_found when the tag is not in the taxonomy — distinct from a known tag with zero records, which is a 200 with total 0. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'List records carrying a tag, most recently updated first; aliases resolve to canonical form. Returns {tag, items, offset, limit, total} where `tag` is the canonical name; passing an alias additionally sets `alias_for` and `requested`, which is how you detect the redirect. Items are record rows WITHOUT body, carrying agent_summary + agent_derived_from_hash. Page by items.length (limit caps at 100). 404 tag_not_found when the tag is not in the taxonomy — distinct from a known tag with zero records, which is a 200 with total 0. Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         tag: z.string().min(1),
         offset: z.number().int().min(0).optional().default(0),

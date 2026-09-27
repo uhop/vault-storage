@@ -150,7 +150,8 @@ Maintenance:
 
 Tags:
 
-- vault_list_tags — taxonomy listing; paginated envelope.
+- vault_list_tags — taxonomy listing, filtered by `prefix` or `contains`, sorted by
+  `count` (default), `count_asc`, `tag_asc`, or `tag`; paginated envelope.
 - vault_tag_info — one taxonomy row (requested appears on alias lookups).
 - vault_records_by_tag — records carrying a tag (alias-aware; alias_for +
   requested on alias hits); paginated envelope.

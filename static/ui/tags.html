@@ -16,7 +16,13 @@
         performance.mark('head script');
         const token = localStorage.getItem('vault.token');
         if (!token) return;
-        const urls = ['/tags?limit=1000'];
+        const sorts = ['count', 'count_asc', 'tag', 'tag_asc'];
+        let sort = 'count';
+        try {
+          const s = localStorage.getItem('vault.tags.sort');
+          if (sorts.includes(s)) sort = s;
+        } catch {}
+        const urls = [`/tags?limit=100&sort=${sort}`];
         const early = (window.__early ??= new Map());
         for (const url of urls) {
           const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
@@ -118,6 +124,27 @@
       .records-pane {
         min-height: 12rem;
       }
+      .tag-sort {
+        display: flex;
+        gap: 0.4rem;
+        margin-bottom: 0.6rem;
+      }
+      .tag-sort select {
+        flex: 1;
+        padding: 0.35rem 0.5rem;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .tag-sort button {
+        min-width: 2.4rem;
+      }
+      .more {
+        margin-top: 0.6rem;
+        width: 100%;
+      }
     </style>
   </head>
   <body class="fmw">
@@ -146,11 +173,20 @@
             autocomplete="off"
             spellcheck="false"
           />
+          <div class="tag-sort">
+            <select id="tag-sort-field" aria-label="Sort tags by">
+              <option value="count">By popularity</option>
+              <option value="tag">By name</option>
+            </select>
+            <button type="button" id="tag-sort-order"></button>
+          </div>
           <ul id="tag-list" class="tag-list"></ul>
+          <button type="button" id="tag-more" class="more" hidden>Load more</button>
         </section>
         <section class="records-pane">
           <h2 id="records-heading">Pick a tag</h2>
           <div id="records"></div>
+          <button type="button" id="records-more" class="more" hidden>Load more</button>
         </section>
       </div>
     </main>
@@ -160,17 +196,69 @@
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
 
-      let allTags = [];
-      let activeTag = null;
+      const PAGE = 100;
+      const SORTS = ['count', 'count_asc', 'tag', 'tag_asc'];
 
-      const renderTagList = filter => {
-        const f = filter.trim().toLowerCase();
-        const items = f ? allTags.filter(t => t.tag.toLowerCase().includes(f)) : allTags;
-        if (items.length === 0) {
+      let sort = 'count';
+      try {
+        const s = localStorage.getItem('vault.tags.sort');
+        if (SORTS.includes(s)) sort = s;
+      } catch {}
+
+      let tags = [];
+      let tagsTotal = 0;
+      let tagsSeq = 0;
+      let activeTag = null;
+      let records = [];
+      let recordsTotal = 0;
+      let recordsSeq = 0;
+
+      const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
+
+      // Must match the head script's early request for the first page.
+      const tagsUrl = offset => {
+        const filter = $('#tag-filter').value.trim().toLowerCase();
+        return (
+          `/tags?limit=${PAGE}&sort=${sort}` +
+          (filter ? `&contains=${encodeURIComponent(filter)}` : '') +
+          (offset ? `&offset=${offset}` : '')
+        );
+      };
+
+      const renderSortControls = () => {
+        const byName = sort.startsWith('tag');
+        const asc = sort.endsWith('_asc');
+        $('#tag-sort-field').value = byName ? 'tag' : 'count';
+        const btn = $('#tag-sort-order');
+        btn.textContent = asc ? '↑' : '↓';
+        btn.title = byName
+          ? asc
+            ? 'A to Z'
+            : 'Z to A'
+          : asc
+            ? 'Least used first'
+            : 'Most used first';
+        btn.setAttribute('aria-label', `Sort order: ${btn.title}`);
+      };
+
+      const setSort = next => {
+        sort = next;
+        try {
+          localStorage.setItem('vault.tags.sort', sort);
+        } catch {}
+        renderSortControls();
+        loadTags();
+      };
+
+      const renderTagList = () => {
+        const filtered = $('#tag-filter').value.trim() !== '';
+        $('#tag-total').textContent = `· ${tagsTotal} ${filtered ? 'matching' : 'total'}`;
+        $('#tag-more').hidden = tags.length >= tagsTotal;
+        if (tags.length === 0) {
           $('#tag-list').innerHTML = '<li><div class="empty">No tags match.</div></li>';
           return;
         }
-        $('#tag-list').innerHTML = items
+        $('#tag-list').innerHTML = tags
           .map(
             t => `
       <li>
@@ -184,18 +272,23 @@
           .join('');
       };
 
-      const fetchTags = async () => {
-        $('#tag-list').innerHTML =
-          '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
+      const loadTags = async (append = false) => {
+        const seq = ++tagsSeq;
+        if (!append) {
+          $('#tag-list').innerHTML =
+            '<li><div class="empty"><span class="spinner"></span> loading…</div></li>';
+          $('#tag-more').hidden = true;
+        }
         try {
-          const data = await apiJson('/tags?limit=1000');
-          allTags = (Array.isArray(data) ? data : (data.items ?? [])).sort(
-            (a, b) => b.record_count - a.record_count
-          );
-          $('#tag-total').textContent = `· ${allTags.length} total`;
-          renderTagList($('#tag-filter').value);
+          const data = await apiJson(tagsUrl(append ? tags.length : 0));
+          if (seq !== tagsSeq) return;
+          const items = data.items ?? [];
+          tags = append ? tags.concat(items) : items;
+          tagsTotal = data.total ?? tags.length;
+          renderTagList();
         } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') {
+          if (seq !== tagsSeq) return;
+          if (isAuthError(e)) {
             showAuthDialog();
             return;
           }
@@ -206,34 +299,51 @@
 
       const fmtDate = iso => (iso ? iso.slice(0, 10) : '');
 
-      const fetchRecordsForTag = async tag => {
-        activeTag = tag;
-        $$('#tag-list button').forEach(b =>
-          b.setAttribute('aria-current', b.dataset.tag === tag ? 'true' : 'false')
-        );
-        $('#records-heading').textContent = `Records tagged ${tag}`;
-        $('#records').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
-        try {
-          const data = await apiJson(`/tags/${encodeURIComponent(tag)}/records`);
-          const items = Array.isArray(data) ? data : (data.items ?? []);
-          if (items.length === 0) {
-            $('#records').innerHTML = '<div class="empty">No records.</div>';
-            return;
-          }
-          items.sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
-          $('#records').innerHTML = `<div class="fmw-records">${items
-            .map(
-              r => `
+      const renderRecords = () => {
+        $('#records-more').hidden = records.length >= recordsTotal;
+        if (records.length === 0) {
+          $('#records').innerHTML = '<div class="empty">No records.</div>';
+          return;
+        }
+        const shown =
+          records.length < recordsTotal
+            ? `<div class="empty">Showing ${records.length} of ${recordsTotal}, most recently updated first.</div>`
+            : '';
+        $('#records').innerHTML = `${shown}<div class="fmw-records">${records
+          .map(
+            r => `
         <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
           <b>${esc(r.title || r.file_path.split('/').pop())}</b>
           <small>${esc(r.file_path)}</small>
           <small>${esc(r.type ?? '')} · updated ${esc(fmtDate(r.updated))}</small>
         </a>
       `
-            )
-            .join('')}</div>`;
+          )
+          .join('')}</div>`;
+      };
+
+      const loadRecords = async (append = false) => {
+        const seq = ++recordsSeq;
+        const tag = activeTag;
+        if (!append) {
+          $('#records').innerHTML =
+            '<div class="empty"><span class="spinner"></span> loading…</div>';
+          $('#records-more').hidden = true;
+        }
+        try {
+          const offset = append ? records.length : 0;
+          const data = await apiJson(
+            `/tags/${encodeURIComponent(tag)}/records?limit=${PAGE}` +
+              (offset ? `&offset=${offset}` : '')
+          );
+          if (seq !== recordsSeq) return;
+          const items = data.items ?? [];
+          records = append ? records.concat(items) : items;
+          recordsTotal = data.total ?? records.length;
+          renderRecords();
         } catch (e) {
-          if (e.message === 'unauthorized' || e.message === 'no-token') {
+          if (seq !== recordsSeq) return;
+          if (isAuthError(e)) {
             showAuthDialog();
             return;
           }
@@ -241,22 +351,44 @@
         }
       };
 
+      const fetchRecordsForTag = tag => {
+        activeTag = tag;
+        $$('#tag-list button').forEach(b =>
+          b.setAttribute('aria-current', b.dataset.tag === tag ? 'true' : 'false')
+        );
+        $('#records-heading').textContent = `Records tagged ${tag}`;
+        loadRecords();
+      };
+
       const init = async () => {
         if (!getToken()) {
           showAuthDialog();
           return;
         }
-        await fetchTags();
-        // Auto-select tag from URL hash if present.
+        renderSortControls();
+        await loadTags();
         const hashTag = decodeURIComponent(location.hash.replace(/^#/, ''));
-        if (hashTag && allTags.some(t => t.tag === hashTag)) {
-          fetchRecordsForTag(hashTag);
-        }
+        if (hashTag) fetchRecordsForTag(hashTag);
       };
 
       document.addEventListener('token-change', init);
 
-      $('#tag-filter').addEventListener('input', () => renderTagList($('#tag-filter').value));
+      let filterTimer;
+      $('#tag-filter').addEventListener('input', () => {
+        clearTimeout(filterTimer);
+        filterTimer = setTimeout(() => loadTags(), 200);
+      });
+
+      $('#tag-sort-field').addEventListener('change', e =>
+        setSort(e.target.value === 'tag' ? 'tag_asc' : 'count')
+      );
+
+      $('#tag-sort-order').addEventListener('click', () =>
+        setSort(sort.endsWith('_asc') ? sort.slice(0, -'_asc'.length) : `${sort}_asc`)
+      );
+
+      $('#tag-more').addEventListener('click', () => loadTags(true));
+      $('#records-more').addEventListener('click', () => loadRecords(true));
 
       $('#tag-list').addEventListener('click', e => {
         const btn = e.target.closest('button[data-tag]');

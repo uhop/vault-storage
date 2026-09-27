@@ -19,23 +19,50 @@ interface TagsDeps {
 const TAXONOMY_TAG_RE = /^[a-z0-9][a-z0-9-]*$/;
 const ALIAS_RE = /^[^A-Z]+$/; // schema enforces lowercase only; permissive otherwise.
 
+// Same convention as GET /sections: a bare column sorts descending, `_asc` ascending.
+const TAG_SORTS: Record<string, string> = {
+  count: 'record_count DESC, t.tag ASC',
+  count_asc: 'record_count ASC, t.tag ASC',
+  tag: 't.tag DESC',
+  tag_asc: 't.tag ASC'
+};
+
+const likeEscape = (s: string): string => s.replace(/[\\%_]/g, '\\$&');
+
 /**
- * GET /tags?prefix=&offset=&limit=
- * List managed tags with per-tag record_count. Sorted by record_count DESC.
+ * GET /tags?prefix=&contains=&sort=&offset=&limit=
+ * List managed tags with per-tag record_count. `sort` is `count` (default,
+ * most used first), `count_asc`, `tag` (Z to A), or `tag_asc` (A to Z).
  */
 export const listTagsHandler =
   (deps: TagsDeps): Handler =>
   ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['prefix', 'offset', 'limit']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['prefix', 'contains', 'sort', 'offset', 'limit'])))
+      return;
     const {offset, limit} = parsePagination(ctx.query);
-    const prefix = ctx.query['prefix'];
+    const sortKey = ctx.query['sort'] ?? 'count';
+    const orderBy = TAG_SORTS[sortKey];
+    if (orderBy === undefined) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        `unknown sort: ${sortKey} (expected ${Object.keys(TAG_SORTS).join(', ')})`
+      );
+      return;
+    }
 
     const where: string[] = [];
     const bindings: string[] = [];
-    if (prefix !== undefined && prefix.length > 0) {
-      const escaped = prefix.replace(/[\\%_]/g, '\\$&');
+    const prefix = ctx.query['prefix'];
+    if (prefix) {
       where.push("t.tag LIKE ? ESCAPE '\\'");
-      bindings.push(`${escaped}%`);
+      bindings.push(`${likeEscape(prefix)}%`);
+    }
+    const contains = ctx.query['contains'];
+    if (contains) {
+      where.push("t.tag LIKE ? ESCAPE '\\'");
+      bindings.push(`%${likeEscape(contains)}%`);
     }
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -46,7 +73,7 @@ export const listTagsHandler =
         LEFT JOIN tags ON tags.tag = t.tag
         ${whereClause}
        GROUP BY t.tag
-       ORDER BY record_count DESC, t.tag ASC
+       ORDER BY ${orderBy}
        LIMIT ? OFFSET ?`;
     const countSql = `SELECT COUNT(*) AS n FROM tags_taxonomy t ${whereClause}`;
 
@@ -116,7 +143,8 @@ export const tagInfoHandler =
 
 /**
  * GET /tags/{tag}/records?offset=&limit=
- * List records carrying the given tag. Same envelope as `/sections`.
+ * List records carrying the given tag, most recently updated first. Same
+ * envelope as `/sections`.
  */
 export const recordsByTagHandler =
   (deps: TagsDeps): Handler =>
@@ -147,9 +175,11 @@ export const recordsByTagHandler =
 
     const idRows = deps.db
       .prepare(
-        `SELECT record_id FROM tags
-          WHERE tag = ?
-          ORDER BY record_id
+        `SELECT tags.record_id AS record_id
+           FROM tags
+           JOIN records r ON r.record_id = tags.record_id
+          WHERE tags.tag = ?
+          ORDER BY r.updated DESC, tags.record_id
           LIMIT ? OFFSET ?`
       )
       .all(canonical, limit, offset) as unknown[] as {record_id: string}[];
