@@ -480,6 +480,8 @@
         $('#stats').appendChild(card);
       }
 
+      const DRAFT_IDLE_MS = 7 * 86400_000;
+
       function recommendFromSuggestions(summary, details) {
         const recs = [];
         const k = summary.by_kind ?? {};
@@ -537,6 +539,14 @@
           recs.push({
             title: `${k.archive_candidate} retention candidates`,
             why: `Stale records past per-type retention. Per-record judgment: archive in FM, delete, or reject. <a href="/ui/archive-review.html">Review →</a>`
+          });
+        const idle = (details?.drafts ?? []).filter(
+          d => Date.now() - Date.parse(d.updated) > DRAFT_IDLE_MS
+        ).length;
+        if (idle)
+          recs.push({
+            title: `${idle} draft${idle === 1 ? '' : 's'} untouched for a week or more`,
+            why: `Unsaved editor text kept on the server. Open it or discard it. <a href="/ui/drafts.html">Review →</a>`
           });
         if (k.agent_enrichment_stale)
           recs.push({
@@ -716,7 +726,7 @@
         // Suggestions chain — fast (~5ms summary). Renders as soon as raw-inbox +
         // summary land, plus the conditional compaction-candidate fetch.
         const suggestionsP = (async () => {
-          const [rawInbox, summary] = await Promise.all([
+          const [rawInbox, summary, drafts] = await Promise.all([
             apiJson('/maintenance/raw-inbox').then(d => {
               renderRawInboxTile(d);
               return d;
@@ -740,7 +750,11 @@
                 total ? (total > 50 ? 'warn' : '') : 'ok'
               );
               return d;
-            })
+            }),
+            apiJson('/drafts').then(
+              d => d.items,
+              () => []
+            )
           ]);
           let compactFolders = [];
           if (summary.by_kind?.compaction_candidate) {
@@ -763,7 +777,7 @@
           ).flat();
           setRecs(
             'suggestions',
-            recommendFromSuggestions(summary, {compactFolders, rawInbox, reports})
+            recommendFromSuggestions(summary, {compactFolders, rawInbox, reports, drafts})
           );
         })();
 

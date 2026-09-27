@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first requests.
+      (() => {
+        performance.mark('head script');
+        const token = localStorage.getItem('vault.token');
+        if (!token) return;
+        const urls = ['/drafts'];
+        const early = (window.__early ??= new Map());
+        for (const url of urls) {
+          const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+          res.catch(() => {});
+          early.set(url, res);
+        }
+      })();
+    </script>
+    <title>vault-storage — drafts</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      main {
+        max-width: 60rem;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 0 0 0.6rem;
+      }
+      button {
+        padding: 0.35rem 0.75rem;
+        font-size: 0.85rem;
+      }
+      .why {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+      }
+      .bulk {
+        display: flex;
+        gap: 0.6rem;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+      }
+      #rows > .fmw-card {
+        margin-bottom: 0.8rem;
+      }
+      .fmw-card header {
+        display: flex;
+        gap: 0.6rem;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      .fmw-card .path {
+        font-family: var(--mono);
+        font-size: 0.9rem;
+        word-break: break-all;
+        flex: 1;
+        min-width: 14rem;
+      }
+      .fmw-card .unit {
+        font-size: 0.85rem;
+      }
+      .fmw-card header small {
+        white-space: nowrap;
+      }
+      .excerpt {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 4.8rem;
+        overflow: hidden;
+        margin: 0.6rem 0;
+      }
+      .row-actions {
+        display: flex;
+        gap: 0.8rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .state {
+        font-size: 0.85rem;
+        margin-right: auto;
+      }
+      .gone {
+        opacity: 0.5;
+      }
+      .empty {
+        padding: 2rem 1rem;
+        font-size: 0.95rem;
+      }
+      dialog {
+        max-width: 28rem;
+      }
+    </style>
+  </head>
+  <body class="fmw">
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <div id="status"></div>
+      <div id="content">
+        <div class="empty"><span class="spinner"></span> loading drafts…</div>
+      </div>
+    </main>
+    <div class="footer" id="footer"></div>
+
+    <dialog id="confirm-dlg">
+      <h2>Discard drafts</h2>
+      <p id="confirm-body"></p>
+      <div class="dlg-row">
+        <button id="confirm-cancel">Cancel</button>
+        <button id="confirm-ok" class="danger">Discard</button>
+      </div>
+    </dialog>
+
+    <script type="module">
+      import {api, apiJson, esc, existingPaths, getToken, showAuthDialog} from '/ui/api.js';
+      const $ = sel => document.querySelector(sel);
+
+      const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
+
+      const unitName = unit =>
+        unit.kind === 'section'
+          ? unit.heading
+          : unit.kind === 'frontmatter'
+            ? 'the frontmatter'
+            : 'the whole note';
+
+      const editHref = d => {
+        const base = `/ui/edit.html?path=${encodeURIComponent(d.path)}`;
+        if (d.unit.kind === 'frontmatter') return `${base}&frontmatter`;
+        if (d.unit.kind === 'section')
+          return `${base}&section=${encodeURIComponent(d.unit.heading)}&n=${d.unit.occurrence}`;
+        return d.state === 'new' ? `${base}&new=1` : base;
+      };
+
+      const age = iso => {
+        const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+        if (minutes < 60) return `${minutes} min`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 48) return `${hours} h`;
+        return `${Math.round(hours / 24)} d`;
+      };
+
+      // What the draft would land on now; `gone` and `lost` have nothing to land on.
+      const STATES = {
+        current: 'The note is unchanged since this draft began.',
+        stale: 'The note changed after this draft began; saving it replaces those changes.',
+        new: 'A new note, never saved.',
+        gone: 'The note no longer exists.',
+        lost: 'The section is no longer in the note.',
+        composed: 'The note is composed from a folder, which the editor cannot save.',
+        unknown: 'Could not check the note.'
+      };
+      const ORPHANED = new Set(['gone', 'lost']);
+
+      const stateOf = async (d, exists) => {
+        if (!exists) return d.unit.kind === 'document' && d.base_hash === '' ? 'new' : 'gone';
+        const at = `/vault/${encodePath(d.path)}`;
+        try {
+          if (d.unit.kind === 'section') {
+            const r = await apiJson(
+              `${at}?section=${encodeURIComponent(d.unit.heading)}&occurrence=${d.unit.occurrence}`
+            );
+            return r.hash === d.base_hash ? 'current' : 'stale';
+          }
+          // The frontmatter read carries the document's etag too, without the whole note.
+          const r = await apiJson(`${at}?frontmatter=yaml`);
+          const hash = d.unit.kind === 'frontmatter' ? r.hash : r.etag;
+          return hash === d.base_hash ? 'current' : 'stale';
+        } catch (e) {
+          if (e.code === 'section_assert_failed') return 'lost';
+          if (e.code === 'composed_view') return 'composed';
+          if (e.status === 404) return 'gone';
+          return 'unknown';
+        }
+      };
+
+      const confirmDiscard = count =>
+        new Promise(resolve => {
+          $('#confirm-body').textContent =
+            `${count} draft${count === 1 ? '' : 's'} will be deleted from the server. Their text is not saved anywhere else.`;
+          const dlg = $('#confirm-dlg');
+          const close = result => {
+            dlg.close();
+            resolve(result);
+          };
+          $('#confirm-ok').onclick = () => close(true);
+          $('#confirm-cancel').onclick = () => close(false);
+          dlg.showModal();
+        });
+
+      let drafts = [];
+
+      const renderRow = d => `
+        <div class="fmw-card" data-id="${esc(d.id)}">
+          <header>
+            <input type="checkbox" aria-label="select" ${ORPHANED.has(d.state) ? 'checked' : ''} />
+            <div class="path"><a href="/ui/note.html?path=${encodeURIComponent(d.path)}">${esc(d.path)}</a></div>
+            <span class="unit">${esc(unitName(d.unit))}</span>
+            <small title="${esc(d.updated)}">${age(d.updated)} ago</small>
+          </header>
+          <div class="excerpt">${esc(d.text.slice(0, 400))}</div>
+          <div class="row-actions">
+            <span class="state ${ORPHANED.has(d.state) ? 'fmw-bad' : d.state === 'stale' ? 'fmw-warn' : ''}">${STATES[d.state]}</span>
+            ${ORPHANED.has(d.state) ? '' : `<a href="${editHref(d)}">Open in the editor</a>`}
+          </div>
+        </div>`;
+
+      const selected = () =>
+        [...document.querySelectorAll('#rows .fmw-card')]
+          .filter(row => row.querySelector('input').checked && !row.classList.contains('gone'))
+          .map(row => row.dataset.id);
+
+      const syncBulk = () => {
+        const n = selected().length;
+        $('#discard').disabled = n === 0;
+        $('#discard').textContent = `Discard selected (${n})`;
+      };
+
+      const discard = async () => {
+        const ids = selected();
+        if (!ids.length || !(await confirmDiscard(ids.length))) return;
+        let done = 0;
+        const failed = [];
+        for (const id of ids) {
+          try {
+            await api(`/drafts/${id}`, {method: 'DELETE'});
+          } catch (e) {
+            if (e.message === 'unauthorized' || e.message === 'no-token') return showAuthDialog();
+            if (e.status !== 404) {
+              failed.push(e.message);
+              continue;
+            }
+          }
+          ++done;
+          const row = document.querySelector(`[data-id="${id}"]`);
+          row.classList.add('gone');
+          row.querySelector('input').disabled = true;
+        }
+        $('#status').innerHTML = failed.length
+          ? `<div class="err">Discarded ${done}; ${failed.length} failed: ${esc(failed[0])}</div>`
+          : `<div class="fmw-notice ok">Discarded ${done} draft${done === 1 ? '' : 's'}.</div>`;
+        syncBulk();
+      };
+
+      const refresh = async () => {
+        if (!getToken()) return showAuthDialog();
+        let items;
+        try {
+          ({items} = await apiJson('/drafts'));
+        } catch (e) {
+          if (e.message === 'unauthorized' || e.message === 'no-token') return showAuthDialog();
+          $('#content').innerHTML =
+            `<div class="err">Failed to read /drafts: ${esc(e.message)}</div>`;
+          return;
+        }
+        $('#footer').textContent = `${items.length} draft${items.length === 1 ? '' : 's'}`;
+        if (!items.length) {
+          $('#content').innerHTML = `<div class="empty">No unsaved drafts.</div>`;
+          return;
+        }
+        let exist;
+        try {
+          exist = await existingPaths([...new Set(items.map(d => d.path))]);
+        } catch {
+          exist = null;
+        }
+        drafts = await Promise.all(
+          items.map(async d => ({
+            ...d,
+            state: exist === null ? 'unknown' : await stateOf(d, exist.has(d.path))
+          }))
+        );
+        const orphans = drafts.filter(d => ORPHANED.has(d.state)).length;
+        $('#content').innerHTML = `
+          <h2>Drafts <span class="fmw-count">${drafts.length}</span></h2>
+          <div class="why">
+            The editor keeps unsaved text on the server until the note is saved or the draft is
+            discarded. Drafts whose note or section no longer exists are selected;
+            ${orphans ? `${orphans} of them here.` : 'there are none now.'}
+          </div>
+          <div class="bulk"><button id="discard" class="danger">Discard selected</button></div>
+          <div id="rows">${drafts.map(renderRow).join('')}</div>`;
+        $('#discard').addEventListener('click', discard);
+        $('#rows').addEventListener('change', syncBulk);
+        syncBulk();
+      };
+
+      document.addEventListener('token-change', refresh);
+      refresh();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>
