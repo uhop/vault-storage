@@ -231,6 +231,7 @@ const ADDABLE_ORIGINS: ReadonlySet<unknown> = new Set(['manual', 'minted']);
 
 interface UpdateTaxonomyBody {
   description?: unknown;
+  origin?: unknown;
 }
 
 interface AddAliasBody {
@@ -379,13 +380,15 @@ export const addTaxonomyHandler =
   };
 
 /**
- * PATCH /tags/taxonomy/{tag} {description}
+ * PATCH /tags/taxonomy/{tag} {description?, origin?}
  * Rewrite a canonical tag's description, the one field a mint leaves
  * permanent otherwise (an alias that broadens what the tag covers had no
- * route to say so, 2026-09-16). `null` clears it; nothing else on the row
- * moves. An alias is not a row: 404.
+ * route to say so, 2026-09-16); `null` clears it. `origin` re-labels the tag
+ * `manual` (kept by the empty-tag collection) or `minted` (D77). At least one
+ * of the two; nothing else on the row moves. An alias is not a row: 404.
  *
- * 400 — description missing, or neither a string nor null.
+ * 400 — neither field given, a description neither a string nor null, or an
+ *       origin other than manual or minted.
  * 404 — tag not in the taxonomy.
  */
 export const updateTaxonomyHandler =
@@ -409,19 +412,41 @@ export const updateTaxonomyHandler =
       sendError(ctx.res, 400, 'bad_request', body);
       return;
     }
-    const description = body.description;
-    if (description !== null && typeof description !== 'string') {
+    const hasDescription = 'description' in body;
+    const hasOrigin = 'origin' in body;
+    if (!hasDescription && !hasOrigin) {
+      sendError(ctx.res, 400, 'bad_request', 'give description, origin, or both');
+      return;
+    }
+    const {description, origin} = body;
+    if (hasDescription && description !== null && typeof description !== 'string') {
       sendError(ctx.res, 400, 'bad_request', 'description must be a string, or null to clear it');
       return;
     }
+    if (hasOrigin && !ADDABLE_ORIGINS.has(origin)) {
+      sendError(ctx.res, 400, 'bad_request', 'origin must be "manual" or "minted"');
+      return;
+    }
+    const sets = [
+      ...(hasDescription ? ['description = ?'] : []),
+      ...(hasOrigin ? ['origin = ?'] : [])
+    ];
+    const values = [
+      ...(hasDescription ? [description as string | null] : []),
+      ...(hasOrigin ? [origin as string] : [])
+    ];
     const result = deps.db
-      .prepare('UPDATE tags_taxonomy SET description = ? WHERE tag = ?')
-      .run(description, tag);
+      .prepare(`UPDATE tags_taxonomy SET ${sets.join(', ')} WHERE tag = ?`)
+      .run(...values, tag);
     if (Number(result.changes) === 0) {
       sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
       return;
     }
-    sendJson(ctx.res, 200, {tag, description});
+    sendJson(ctx.res, 200, {
+      tag,
+      ...(hasDescription ? {description} : {}),
+      ...(hasOrigin ? {origin} : {})
+    });
   };
 
 /**

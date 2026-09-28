@@ -1859,6 +1859,15 @@ test('PATCH /tags/taxonomy/{tag} rewrites the description and nothing else', asy
       t.equal((alias.body as {code: string}).code, 'tag_not_found');
       const unknown = await patch('nope', {description: 'x'});
       t.equal(unknown.status, 404);
+
+      const kept = await patch('harness', {origin: 'manual'});
+      t.deepEqual(kept.body, {tag: 'harness', origin: 'manual'}, 'origin alone re-labels (D77)');
+      const after = ctx.db
+        .prepare('SELECT description, origin FROM tags_taxonomy WHERE tag = ?')
+        .get('harness') as {description: string | null; origin: string};
+      t.deepEqual({...after}, {description: null, origin: 'manual'}, 'description untouched');
+      const seeded = await patch('harness', {origin: 'seeded'});
+      t.equal(seeded.status, 400, 'seeded is not a caller’s to set');
     } finally {
       await teardown(ctx);
     }

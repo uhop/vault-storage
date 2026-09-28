@@ -14,7 +14,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /sections/{id}/tags': ['tag'],
   'PUT /sections/{id}': ['frontmatter', 'body'],
   'POST /tags/taxonomy': ['tag', 'description', 'origin'],
-  'PATCH /tags/taxonomy/{tag}': ['description'],
+  'PATCH /tags/taxonomy/{tag}': ['description', 'origin'],
   'POST /tags/aliases': ['alias', 'canonical'],
   'POST /suggestions': ['kind', 'subject_id', 'payload', 'evidence'],
   'POST /suggestions/claim': ['kind', 'holder', 'limit', 'ttl_seconds'],
