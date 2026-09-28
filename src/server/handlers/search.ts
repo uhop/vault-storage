@@ -133,7 +133,7 @@ const semanticSearch = async (
 ): Promise<SearchHit[]> => {
   const vec = await embedder.embedQuery(query);
   const repo = new RecordVecRepository(db);
-  const hits = repo.nearest(vec, limit);
+  const hits = await repo.nearest(vec, limit);
   if (hits.length === 0) return [];
 
   const ids = hits.map(h => h.recordId);

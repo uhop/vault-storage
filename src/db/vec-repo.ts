@@ -1,6 +1,6 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
-import {bumpChunkVersion, chunkMatrix, DIM} from './chunk-matrix.ts';
+import {bumpChunkVersion, chunkMatrix, DIM, type ChunkMatrix} from './chunk-matrix.ts';
 import {RecordSummaryVecRepository} from './summary-vec-repo.ts';
 
 export interface NearestHit {
@@ -237,94 +237,88 @@ export class RecordVecRepository {
   }
 
   /**
-   * Top-k records by {@link recordSimilarity} to a query, exact. Candidates
-   * come from a chunk KNN and a summary KNN of `chunkK` rows each. A record
-   * found only by its summary has no chunk above the chunk list's last row: at
-   * or above that row its summary is its score, below it its chunks are read
-   * while they could still reach the k-th score. A record in neither list is
-   * bounded by both lists' last rows, and while that bound beats the k-th score
-   * the lists widen.
+   * Top-k records by {@link recordSimilarity} to a query, exact. Every chunk
+   * is scored in one pass over the chunk matrix (D78), so each record's best
+   * chunk is known. A record in the top k by the better of chunk and summary
+   * is in the top k by chunk or the top k by summary, so the summary KNN only
+   * has to reach k records that have chunks; the union is ranked.
    */
-  nearest(query: Float32Array, k: number, opts: {chunkK?: number} = {}): NearestHit[] {
-    const blob = toBlob(query);
-    // A KNN costs its scan, barely its k (126 ms at k 100, 190 ms at 4,096 on croc's
-    // data), so a wide first list is cheaper than the second scan a narrow one needs.
-    for (let chunkK = opts.chunkK ?? Math.max(k * 20, 200); ; chunkK *= 4) {
-      const chunkRows = this.#nearestChunks.all(blob, chunkK) as unknown[] as {
-        record_id: string;
-        chunk_index: number;
-        distance: number;
-      }[];
-      const summaryRows = this.#summaries.nearest(query, chunkK);
-      const chunkCut =
-        chunkRows.length < chunkK ? -Infinity : similarityOf(chunkRows.at(-1)!.distance);
-      const summaryCut =
-        summaryRows.length < chunkK ? -Infinity : similarityOf(summaryRows.at(-1)!.distance);
+  async nearest(
+    query: Float32Array,
+    k: number,
+    opts: {blockRows?: number} = {}
+  ): Promise<NearestHit[]> {
+    const {matrix, best, bestRow} = await this.#scan(query, 1, null, opts.blockRows);
+    const byChunk: number[] = [];
+    for (let o = 0; o < matrix.ids.length; ++o) if (bestRow[o]! >= 0) byChunk.push(o);
+    byChunk.sort((a, b) => best[a]! - best[b]!);
 
-      const best = new Map<string, {similarity: number; chunkIndex: number}>();
-      for (const r of chunkRows) {
-        if (!Number.isFinite(r.distance)) continue;
-        const similarity = similarityOf(r.distance);
-        const cur = best.get(r.record_id);
-        if (cur === undefined || similarity > cur.similarity) {
-          best.set(r.record_id, {similarity, chunkIndex: r.chunk_index});
-        }
+    const summaries = new Map<string, number>();
+    for (let summaryK = Math.max(k * 2, 20); ; summaryK *= 4) {
+      const rows = this.#summaries.nearest(query, summaryK);
+      summaries.clear();
+      for (const r of rows) {
+        if (Number.isFinite(r.distance) && matrix.idOf.has(r.recordId))
+          summaries.set(r.recordId, similarityOf(r.distance));
       }
-
-      // A null chunkIndex is read only if the record makes the top k.
-      const scored: {recordId: string; similarity: number; chunkIndex: number | null}[] = [];
-      const kth = (): number => (scored.length >= k ? scored[k - 1]!.similarity : -Infinity);
-      const add = (recordId: string, similarity: number, chunkIndex: number | null): void => {
-        scored.push({recordId, similarity, chunkIndex});
-        scored.sort((a, b) => b.similarity - a.similarity);
-      };
-      const summaries = new Map<string, number>();
-      for (const r of summaryRows) {
-        if (Number.isFinite(r.distance)) summaries.set(r.recordId, similarityOf(r.distance));
-      }
-      for (const [recordId, chunk] of best) {
-        const summary = summaries.get(recordId) ?? this.#summarySimilarity(recordId, query);
-        add(recordId, recordSimilarity(chunk.similarity, summary), chunk.chunkIndex);
-      }
-      for (const [recordId, summary] of summaries) {
-        if (best.has(recordId)) continue;
-        // Summary rows arrive in descending similarity, so no later bound is higher.
-        if (!(recordSimilarity(chunkCut, summary) > kth())) break;
-        if (summary >= chunkCut) {
-          add(recordId, summary, null);
-          continue;
-        }
-        const chunk = this.#bestChunk(recordId, query);
-        if (chunk !== null)
-          add(recordId, recordSimilarity(chunk.similarity, summary), chunk.chunkIndex);
-      }
-
-      // Both lists exhausted: both cuts are -Infinity, and so is their bound.
-      if (!(recordSimilarity(chunkCut, summaryCut) > kth())) {
-        return scored.slice(0, k).flatMap(h => {
-          const chunkIndex = h.chunkIndex ?? this.#bestChunk(h.recordId, query)?.chunkIndex;
-          if (chunkIndex === undefined) return [];
-          return [{recordId: h.recordId, distance: distanceOf(h.similarity), chunkIndex}];
-        });
-      }
+      if (summaries.size >= k || rows.length < summaryK) break;
     }
+
+    const candidates = new Set<number>(byChunk.slice(0, k));
+    for (const recordId of [...summaries.keys()].slice(0, k))
+      candidates.add(matrix.idOf.get(recordId)!);
+    return [...candidates]
+      .map(o => {
+        const recordId = matrix.ids[o]!;
+        const summary = summaries.get(recordId) ?? this.#summarySimilarity(recordId, query);
+        const similarity = recordSimilarity(1 - best[o]! / 2, summary);
+        return {
+          recordId,
+          distance: distanceOf(similarity),
+          chunkIndex: matrix.chunkIndex[bestRow[o]!]!
+        };
+      })
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, k);
   }
 
-  #bestChunk(
-    recordId: string,
-    query: Float32Array
-  ): {similarity: number; chunkIndex: number} | null {
-    const chunks = this.getChunks(recordId);
-    let chunkIndex = -1;
-    let similarity = -Infinity;
-    for (let i = 0; i < chunks.length; ++i) {
-      const s = dot(chunks[i]!, query);
-      if (s > similarity) {
-        similarity = s;
-        chunkIndex = i;
+  /**
+   * One pass over the chunk matrix scoring `m` packed query vectors: each
+   * record's smallest squared L2 distance to any of them and the row it came
+   * from. The rows of `skipRecordId` are passed over. It yields every
+   * `blockRows` rows, by default as many as keep a block to 32K row-query
+   * scores (2,048 rows at 16 query chunks, about 50 ms on nuke).
+   */
+  async #scan(
+    queries: Float32Array,
+    m: number,
+    skipRecordId: string | null,
+    blockRows = Math.max(1, Math.floor(32_768 / m))
+  ): Promise<{matrix: ChunkMatrix; best: Float64Array; bestRow: Int32Array}> {
+    const matrix = await chunkMatrix(this.#db);
+    const {n, data, owner, ids} = matrix;
+    const skip = skipRecordId === null ? -1 : (matrix.idOf.get(skipRecordId) ?? -1);
+    const best = new Float64Array(ids.length).fill(Infinity);
+    const bestRow = new Int32Array(ids.length).fill(-1);
+    for (let row = 0; row < n; ++row) {
+      if (row > 0 && row % blockRows === 0) await nextTurn();
+      const o = owner[row]!;
+      if (o === skip) continue;
+      const base = row * DIM;
+      for (let q = 0; q < m; ++q) {
+        const qb = q * DIM;
+        let sum = 0;
+        for (let d = 0; d < DIM; ++d) {
+          const diff = queries[qb + d]! - data[base + d]!;
+          sum += diff * diff;
+        }
+        if (sum < best[o]!) {
+          best[o] = sum;
+          bestRow[o] = row;
+        }
       }
     }
-    return chunkIndex < 0 ? null : {similarity, chunkIndex};
+    return {matrix, best, bestRow};
   }
 
   #summarySimilarity(recordId: string, query: Float32Array): number | null {
@@ -339,9 +333,10 @@ export class RecordVecRepository {
    * chunks. Aggregates by min-distance and excludes the source record itself.
    * Returns empty when the record has no chunks (not yet embedded).
    *
-   * Query chunks are capped at `maxScans` (default 16), sampled evenly across
+   * Query chunks are capped at `maxScans` (default 64), sampled evenly across
    * the record with the first and last always kept: a 1,671-chunk running
-   * file scored with every chunk took 26 s. The query chunks are scored in one
+   * file scored with every chunk took 26 s. Top-15 recall against every chunk
+   * was 74% at 16 and 98% at 64 over records of 17–133 chunks (D78). The query chunks are scored in one
    * exact pass over every stored chunk vector (the cached matrix, D78),
    * yielding to the event loop every `blockRows` rows. Sixteen sqlite-vec KNN
    * scans did this before, one per query chunk, each with a top-`k` window a
@@ -355,7 +350,7 @@ export class RecordVecRepository {
     const allChunks = this.getChunks(recordId);
     if (allChunks.length === 0) return [];
 
-    const maxScans = Math.max(1, opts.maxScans ?? 16);
+    const maxScans = Math.max(1, opts.maxScans ?? 64);
     let chunks = allChunks;
     if (allChunks.length > maxScans) {
       chunks = [];
@@ -372,30 +367,8 @@ export class RecordVecRepository {
     const queries = new Float32Array(m * DIM);
     chunks.forEach((v, i) => queries.set(v, i * DIM));
 
-    const matrix = await chunkMatrix(this.#db);
-    const {n, data, owner, chunkIndex, ids} = matrix;
-    const self = matrix.idOf.get(recordId) ?? -1;
-    const best = new Float64Array(ids.length).fill(Infinity);
-    const bestRow = new Int32Array(ids.length).fill(-1);
-    const blockRows = opts.blockRows ?? 2048;
-    for (let row = 0; row < n; ++row) {
-      if (row > 0 && row % blockRows === 0) await nextTurn();
-      const o = owner[row]!;
-      if (o === self) continue;
-      const base = row * DIM;
-      for (let q = 0; q < m; ++q) {
-        const qb = q * DIM;
-        let sum = 0;
-        for (let d = 0; d < DIM; ++d) {
-          const diff = queries[qb + d]! - data[base + d]!;
-          sum += diff * diff;
-        }
-        if (sum < best[o]!) {
-          best[o] = sum;
-          bestRow[o] = row;
-        }
-      }
-    }
+    const {matrix, best, bestRow} = await this.#scan(queries, m, recordId, opts.blockRows);
+    const {chunkIndex, ids} = matrix;
 
     const hits: NearestHit[] = [];
     for (let o = 0; o < ids.length; ++o) {

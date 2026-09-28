@@ -99,7 +99,7 @@ test('nearest returns closest record (best chunk) ordered by distance', async t 
 
     await t.test('exact match is at distance ~0', async t => {
       const queryVec = await fx.embedder.embed('beta');
-      const hits = fx.vecs.nearest(queryVec, 5);
+      const hits = await fx.vecs.nearest(queryVec, 5);
       t.equal(hits.length, 5, 'returns k records');
       t.equal(hits[0]?.recordId, ids[1], 'beta is the nearest hit');
       t.ok((hits[0]?.distance ?? 1) < 1e-3, 'self-distance is near zero');
@@ -116,7 +116,7 @@ test('nearest returns closest record (best chunk) ordered by distance', async t 
       fx.vecs.setChunks(id6, 'hash-multi', [irrelevant, close]);
 
       const queryVec = await fx.embedder.embed('beta');
-      const hits = fx.vecs.nearest(queryVec, 6);
+      const hits = await fx.vecs.nearest(queryVec, 6);
       const rec = hits.find(h => h.recordId === id6);
       t.ok(rec, 'multi-chunk record is in nearest results');
       t.ok((rec?.distance ?? 1) < 1e-3, 'distance reflects best chunk, not worst');
@@ -124,14 +124,14 @@ test('nearest returns closest record (best chunk) ordered by distance', async t 
 
     await t.test('k limits the result set', async t => {
       const queryVec = await fx.embedder.embed('gamma');
-      const hits = fx.vecs.nearest(queryVec, 2);
+      const hits = await fx.vecs.nearest(queryVec, 2);
       t.equal(hits.length, 2, 'k=2 returns 2');
       t.equal(hits[0]?.recordId, ids[2], 'gamma first');
     });
 
     await t.test('ordered by ascending distance', async t => {
       const queryVec = await fx.embedder.embed('delta');
-      const hits = fx.vecs.nearest(queryVec, 5);
+      const hits = await fx.vecs.nearest(queryVec, 5);
       for (let i = 1; i < hits.length; i++) {
         t.ok(
           (hits[i]?.distance ?? 0) >= (hits[i - 1]?.distance ?? 0),
@@ -184,7 +184,7 @@ test('nearest scores a record by the better of its best chunk and its summary', 
     summaries.set(byChunk, 'h', null, at(0.1, 21));
     fx.vecs.setChunks(neither, 'h', [at(0.5, 12)]);
 
-    const hits = fx.vecs.nearest(query, 3);
+    const hits = await fx.vecs.nearest(query, 3);
     t.deepEqual(
       hits.map(h => h.recordId),
       [bySummary, byChunk, neither],
@@ -200,7 +200,7 @@ test('nearest scores a record by the better of its best chunk and its summary', 
   }
 });
 
-test('nearest matches a brute-force ranking when its candidate lists are short', async t => {
+test('nearest matches a brute-force ranking of chunk and summary', async t => {
   const fx = setup();
   try {
     let seed = 7;
@@ -236,7 +236,7 @@ test('nearest matches a brute-force ranking when its candidate lists are short',
         .slice(0, 5)
         .map(r => r.id);
       t.deepEqual(
-        fx.vecs.nearest(query, 5, {chunkK: 2}).map(h => h.recordId),
+        (await fx.vecs.nearest(query, 5)).map(h => h.recordId),
         expected,
         `query ${q}: the top 5 of a full scan`
       );
@@ -258,16 +258,40 @@ test('nearest ranks a record its summary alone brings in', async t => {
       if (summary) summaries.set(id, 'h', null, summary);
       return id;
     };
-    // With chunkK 2, the chunk list is `lead` and `cut`, the summary list `onTopic` and `lead`,
-    // so every record outside both lists is bounded by 0.9, below lead's 0.92, and nothing widens.
+    // `lead` tops the chunk list and `onTopic` the summary list; the union ranks onTopic first.
     const lead = add('topics/lead.md', at(0.92, 10), at(0.3, 20));
     add('topics/cut.md', at(0.9, 11), null);
     const onTopic = add('topics/on-topic.md', at(0.5, 12), at(0.99, 21));
 
-    const hits = fx.vecs.nearest(query, 1, {chunkK: 2});
+    const hits = await fx.vecs.nearest(query, 1);
     t.equal(hits[0]?.recordId, onTopic, 'the summary-only record, ranked by its summary');
     t.notEqual(hits[0]?.recordId, lead, 'not the best record of the chunk list');
     t.equal(hits[0]?.chunkIndex, 0, 'its chunk index read once it made the top k');
+  } finally {
+    fx.db.close();
+  }
+});
+
+test('nearest looks past summaries of records with no chunks yet (D78)', async t => {
+  const fx = setup();
+  try {
+    const summaries = new RecordSummaryVecRepository(fx.db);
+    const query = at(1, 1);
+    for (let i = 0; i < 25; ++i) {
+      const ghost = uuidv7();
+      fx.records.insert(makeRecord(ghost, `topics/ghost-${i}.md`));
+      summaries.set(ghost, 'h', null, at(0.99, 30 + i));
+    }
+    const real = uuidv7();
+    fx.records.insert(makeRecord(real, 'topics/real.md'));
+    fx.vecs.setChunks(real, 'h', [at(0.2, 10)]);
+    summaries.set(real, 'h', null, at(0.95, 20));
+    const other = uuidv7();
+    fx.records.insert(makeRecord(other, 'topics/other.md'));
+    fx.vecs.setChunks(other, 'h', [at(0.5, 11)]);
+
+    const hits = await fx.vecs.nearest(query, 1);
+    t.equal(hits[0]?.recordId, real, 'ranked by its summary, past 25 chunkless summaries above it');
   } finally {
     fx.db.close();
   }

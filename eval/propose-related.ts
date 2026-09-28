@@ -170,7 +170,7 @@ for (let i = 0; i < Math.min(limit, rows.length); i++) {
   if (!v0Row) continue;
   const queryVec = blobToFloat32(v0Row.embedding);
 
-  const nearest = vecs.nearest(queryVec, args.perNote * 3);
+  const nearest = await vecs.nearest(queryVec, args.perNote * 3);
   let added = 0;
   for (const hit of nearest) {
     if (hit.recordId === r.id) continue;
