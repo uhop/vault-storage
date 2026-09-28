@@ -252,7 +252,7 @@ test('edge types: related: → related-to, body links → cites', async t => {
   }
 });
 
-test('default-cites edges file pending edge_type suggestions (idempotent)', async t => {
+test('default-cites edges file edge_type rows already rejected as default-cites (D76, idempotent)', async t => {
   const fx = setup();
   try {
     writeMd(
@@ -271,7 +271,7 @@ test('default-cites edges file pending edge_type suggestions (idempotent)', asyn
 
     const rows = fx.db
       .prepare(
-        `SELECT id, kind, subject_id, payload, status FROM suggestions WHERE kind = 'edge_type'`
+        `SELECT id, kind, subject_id, payload, status, resolved_by, resolved_at FROM suggestions WHERE kind = 'edge_type'`
       )
       .all() as Array<{
       id: string;
@@ -279,10 +279,14 @@ test('default-cites edges file pending edge_type suggestions (idempotent)', asyn
       subject_id: string;
       payload: string;
       status: string;
+      resolved_by: string;
+      resolved_at: string | null;
     }>;
     t.equal(rows.length, 1, 'exactly one suggestion row');
     t.equal(rows[0]?.subject_id, a!.recordId, 'subject_id is the source record');
-    t.equal(rows[0]?.status, 'pending', 'status pending');
+    t.equal(rows[0]?.status, 'rejected', 'filed already rejected');
+    t.equal(rows[0]?.resolved_by, 'default-cites', 'resolved_by=default-cites');
+    t.ok(rows[0]?.resolved_at, 'resolved_at stamped');
     const payload = JSON.parse(rows[0]!.payload) as {
       from_record: string;
       to_record: string;
@@ -487,6 +491,14 @@ test('keyword-cued body wikilinks are NOT filed as suggestions', async t => {
   }
 });
 
+// A default-cites row reopened for review, as a person does before typing the edge (D76).
+const reopenDefaultCites = (db: DatabaseSync): void => {
+  db.prepare(
+    `UPDATE suggestions SET status = 'pending', resolved_at = NULL, resolved_by = NULL
+      WHERE kind = 'edge_type' AND resolved_by = 'default-cites'`
+  ).run();
+};
+
 test('frontmatter `edges:` overrides default-cites and skips suggestion-filing', async t => {
   const fx = setup();
   try {
@@ -501,6 +513,7 @@ test('frontmatter `edges:` overrides default-cites and skips suggestion-filing',
     const first = importVault(fx.db, fx.root);
     t.equal(first.edges.suggestionsFiled, 1, 'first pass files a suggestion');
     t.equal(first.edges.fmOverridesApplied, 0, 'no FM overrides yet');
+    reopenDefaultCites(fx.db);
 
     const records = new RecordsRepository(fx.db);
     const edges = new EdgesRepository(fx.db);
@@ -562,6 +575,7 @@ test('dropping the body wikilink rejects the pending edge_type suggestion as lin
     writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
     const first = importVault(fx.db, fx.root);
     t.equal(first.edges.suggestionsFiled, 1, 'first pass files a suggestion');
+    reopenDefaultCites(fx.db);
 
     const rows = () =>
       fx.db
@@ -594,7 +608,7 @@ test('dropping the body wikilink rejects the pending edge_type suggestion as lin
       rows(),
       [
         {status: 'rejected', resolved_by: 'link-removed'},
-        {status: 'pending', resolved_by: null}
+        {status: 'rejected', resolved_by: 'default-cites'}
       ],
       'both rows kept'
     );
@@ -613,6 +627,7 @@ test('a pending edge_type row with a dangling to_record survives while the link 
     );
     writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
     importVault(fx.db, fx.root);
+    reopenDefaultCites(fx.db);
     // The 2026-07-12 shape: b was deleted and recreated, so to_record names no record.
     fx.db
       .prepare(

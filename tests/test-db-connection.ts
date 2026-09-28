@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    27,
-    'schema version is 27 after all migrations through the enrichment baselines'
+    28,
+    'schema version is 28 after all migrations through the default-cites settle'
   );
   t.deepEqual(
     result.applied,
@@ -49,7 +49,8 @@ test('runs the init migration and creates required tables', t => {
       '0024_record_summary_vec.sql',
       '0025_body_field_observations.sql',
       '0026_claim_tokens.sql',
-      '0027_enrichment_baselines.sql'
+      '0027_enrichment_baselines.sql',
+      '0028_edge_type_default_cites.sql'
     ],
     'all migrations applied in order'
   );
@@ -61,7 +62,8 @@ test('runs the init migration and creates required tables', t => {
         name !== '0024_record_summary_vec.sql' &&
         name !== '0025_body_field_observations.sql' &&
         name !== '0026_claim_tokens.sql' &&
-        name !== '0027_enrichment_baselines.sql'
+        name !== '0027_enrichment_baselines.sql' &&
+        name !== '0028_edge_type_default_cites.sql'
     ),
     'every migration forces a full import except the ones marked no-reindex'
   );
@@ -107,7 +109,11 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
               '2026-09-26T00:00:00Z', '2999-01-01T00:00:00Z');
   `);
   const result = runMigrations(db);
-  t.deepEqual(result.applied, ['0026_claim_tokens.sql', '0027_enrichment_baselines.sql']);
+  t.deepEqual(result.applied, [
+    '0026_claim_tokens.sql',
+    '0027_enrichment_baselines.sql',
+    '0028_edge_type_default_cites.sql'
+  ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
     {status: 'pending', claimed_by: null, claim_token: null},
@@ -116,12 +122,39 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
   db.close();
 });
 
+test('0028 settles pending edge_type rows as default-cites, leaving claimed ones', t => {
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  db.exec(`
+    UPDATE meta SET value = '27' WHERE key = 'schema_version';
+    INSERT INTO suggestions (id, kind, payload, status, created) VALUES
+      ('p', 'edge_type', '{}', 'pending', '2026-09-27T00:00:00Z'),
+      ('d', 'duplicate', '{}', 'pending', '2026-09-27T00:00:00Z');
+    INSERT INTO suggestions (id, kind, payload, status, created, claimed_by, claimed_at, claim_expires)
+      VALUES ('c', 'edge_type', '{}', 'claimed', '2026-09-27T00:00:00Z', 'sweep-A',
+              '2026-09-27T00:00:00Z', '2999-01-01T00:00:00Z');
+  `);
+  const result = runMigrations(db);
+  t.deepEqual(result.applied, ['0028_edge_type_default_cites.sql']);
+  t.deepEqual(result.reindex, [], 'no reindex');
+  const rows = db
+    .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
+    .all()
+    .map(row => ({...(row as object)}));
+  t.deepEqual(rows, [
+    {id: 'c', status: 'claimed', resolved_by: null},
+    {id: 'd', status: 'pending', resolved_by: null},
+    {id: 'p', status: 'rejected', resolved_by: 'default-cites'}
+  ]);
+  db.close();
+});
+
 test('migrations are idempotent — second run applies nothing', t => {
   const db = openDatabase({path: ':memory:'});
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 27, 'schema version stays at 27');
+  t.equal(second.current, 28, 'schema version stays at 28');
   db.close();
 });
 
@@ -181,9 +214,10 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0024_record_summary_vec.sql',
       '0025_body_field_observations.sql',
       '0026_claim_tokens.sql',
-      '0027_enrichment_baselines.sql'
+      '0027_enrichment_baselines.sql',
+      '0028_edge_type_default_cites.sql'
     ],
-    'migrations from schema 9 onward applied (0010–0027)'
+    'migrations from schema 9 onward applied (0010–0028)'
   );
 
   const meta = db.prepare('SELECT record_id, chunk_index, content_hash FROM chunks').all() as {

@@ -36,6 +36,14 @@ export const DEFAULT_SNOOZE_DAYS = 14;
 export const LINK_REMOVED = 'link-removed';
 
 /**
+ * `resolved_by` marker for an `edge_type` row filed already rejected: the
+ * classifier's default `cites` stands without review (D76). A verdict, so it
+ * blocks re-filing like any classification reject; the row keeps its context
+ * for a later typing pass.
+ */
+export const DEFAULT_CITES = 'default-cites';
+
+/**
  * ISO instant marking the start of the snooze window: a rejected row whose
  * `resolved_at >= snoozeCutoff(now, days)` still blocks re-filing. Falls back
  * to `now` (so no extra blocking) when `now` is unparseable.
@@ -386,6 +394,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
   readonly #spec: FilerSpec;
   readonly #findExisting: StatementSync;
   readonly #insert: StatementSync;
+  readonly #insertRejected: StatementSync;
   /** Payload keys binding `#findExisting`'s identity placeholders (non-symmetric specs). */
   readonly #identityKeys: readonly MatchKey[];
   /** Lazily prepared accept/pending statements, keyed by op + match keys. */
@@ -402,6 +411,10 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
        VALUES (?, '${kind}', ?, ?, 'pending', ?)`
     );
+    this.#insertRejected = db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created, resolved_at, resolved_by)
+       VALUES (?, '${kind}', ?, ?, 'rejected', ?, ?, ?)`
+    );
   }
 
   /**
@@ -413,11 +426,12 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
    * `snoozeDays` (default {@link DEFAULT_SNOOZE_DAYS}) only applies to
    * `pending-or-snoozed-reject` kinds. `subjectId` overrides the spec-derived
    * subject for kinds whose subject isn't in the payload (upgrade signals).
+   * `rejectAs` records the row already rejected, with that `resolved_by`.
    */
   file(
     payload: KindPayloads[K] & {evidence?: Evidence},
     now: string,
-    opts: {snoozeDays?: number; subjectId?: string | null} = {}
+    opts: {snoozeDays?: number; subjectId?: string | null; rejectAs?: string} = {}
   ): boolean {
     const spec = this.#spec;
     const fields = payload as unknown as Record<string, string | undefined>;
@@ -441,7 +455,10 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     }
     if (this.#findExisting.get(...params)) return false;
     const stored = {...payload, evidence: payload.evidence ?? spec.evidence};
-    this.#insert.run(uuidv7(), subject, JSON.stringify(stored), now);
+    if (opts.rejectAs === undefined)
+      this.#insert.run(uuidv7(), subject, JSON.stringify(stored), now);
+    else
+      this.#insertRejected.run(uuidv7(), subject, JSON.stringify(stored), now, now, opts.rejectAs);
     return true;
   }
 

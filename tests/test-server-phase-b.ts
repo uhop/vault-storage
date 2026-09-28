@@ -154,6 +154,14 @@ const wireEdges = async (
 
 // ─── neighborhood ───────────────────────────────────────────────────────────
 
+// A default-cites row reopened for review, as a person does before typing the edge (D76).
+const reopenDefaultCites = (db: DatabaseSync): void => {
+  db.prepare(
+    `UPDATE suggestions SET status = 'pending', resolved_at = NULL, resolved_by = NULL
+      WHERE kind = 'edge_type' AND resolved_by = 'default-cites'`
+  ).run();
+};
+
 test('GET /sections/{id}/neighborhood returns root + 1-hop layer', async t => {
   const {root, cleanup} = setup();
   try {
@@ -1036,6 +1044,7 @@ test('GET /suggestions?expand=context inlines record briefs and tag info', async
       )
     );
     const ctx = await startTestServer(root);
+    reopenDefaultCites(ctx.db);
     try {
       const alphaId = await findId(ctx.url, 'topics/alpha.md');
       const betaId = await findId(ctx.url, 'topics/beta.md');
@@ -1279,6 +1288,7 @@ test('PUT /sections/{id} FM edges override settles pending edge_type suggestion'
       )
     );
     const ctx = await startTestServer(root);
+    reopenDefaultCites(ctx.db);
     try {
       const alphaId = await findId(ctx.url, 'topics/alpha.md');
       const pending = await fetchAuthed(`${ctx.url}/suggestions?kind=edge_type`);
@@ -1333,6 +1343,7 @@ test('POST /vault/edit that drops the wikilink settles the pending edge_type sug
       )
     );
     const ctx = await startTestServer(root);
+    reopenDefaultCites(ctx.db);
     try {
       const pending = await fetchAuthed(`${ctx.url}/suggestions?kind=edge_type`);
       const items = (pending.body as {items: Array<{id: string}>}).items;

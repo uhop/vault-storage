@@ -9,7 +9,7 @@ import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
 import {DECLARED_EDGE_TYPES, EDGE_TYPE_ALIASES} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
-import {LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
+import {DEFAULT_CITES, LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
 
 const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(DECLARED_EDGE_TYPES);
@@ -312,9 +312,10 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
     }
   );
 
-  // File one suggestion per (fromRecord, toRecord) for unreviewed default-cites.
-  // The filer is idempotent: a suggestion of any status for the same pair
-  // is left in place.
+  // File one suggestion per (fromRecord, toRecord) for default-cites, already
+  // rejected as default-cites: the agents typed 1.3% of these (D76), so the row
+  // is a record of the link and its context, not a review request. The filer is
+  // idempotent: a suggestion of any status for the same pair is left in place.
   //
   // Source-type skip: log / query / meta sources default-cite
   // topic/project notes by convention (meta = compaction summaries &
@@ -341,7 +342,8 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
         classifier_type: 'cites',
         context
       },
-      now
+      now,
+      {rejectAs: DEFAULT_CITES}
     );
     if (filed) summary.suggestionsFiled++;
   }

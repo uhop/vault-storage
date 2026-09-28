@@ -140,6 +140,14 @@ const recordId = (db: DatabaseSync, filePath: string): string =>
     }
   ).record_id;
 
+// A default-cites row reopened for review, as a person does before typing the edge (D76).
+const reopenDefaultCites = (db: DatabaseSync): void => {
+  db.prepare(
+    `UPDATE suggestions SET status = 'pending', resolved_at = NULL, resolved_by = NULL
+      WHERE kind = 'edge_type' AND resolved_by = 'default-cites'`
+  ).run();
+};
+
 test('claim: batch reservation, holder-scoped resolution, release', async t => {
   const ctx = await startCtx();
   try {
@@ -442,6 +450,7 @@ test('resolve-batch: edge_type accept pins the FM override', async t => {
   const ctx = await startCtx();
   try {
     const {url, db, root} = ctx;
+    reopenDefaultCites(db);
     const alpha = recordId(db, 'topics/alpha.md');
     const beta = recordId(db, 'topics/beta.md');
     const edgeRow = db
@@ -489,6 +498,7 @@ test('resolve-batch: edge_type accept with basis-for stores a flipped derived-fr
   const ctx = await startCtx();
   try {
     const {url, db, root} = ctx;
+    reopenDefaultCites(db);
     const alpha = recordId(db, 'topics/alpha.md');
     const beta = recordId(db, 'topics/beta.md');
     const edgeRow = db
