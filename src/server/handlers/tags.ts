@@ -1,5 +1,10 @@
+import {existsSync, readFileSync} from 'node:fs';
 import type {DatabaseSync} from 'node:sqlite';
 import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
+import {importFile} from '../../importer/import-file.ts';
+import {fullImportOptions} from '../../importer/import-options.ts';
+import {dropTaxonomyTag} from '../../maintenance/gc-tags.ts';
+import {parseFrontmatter} from '../../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {NO_QUERY_PARAMS, parsePagination, rejectUnknownParams} from '../query.ts';
@@ -7,10 +12,12 @@ import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
+import {ensureSafePath, writeSplitRecordToDisk, WriterError} from '../writer.ts';
 
 interface TagsDeps {
   db: DatabaseSync;
   records: RecordsRepository;
+  vaultDataPath: string;
 }
 
 // Tag taxonomy CHECK constraint (see schema 0001_init.sql):
@@ -415,6 +422,94 @@ export const updateTaxonomyHandler =
       return;
     }
     sendJson(ctx.res, 200, {tag, description});
+  };
+
+/**
+ * DELETE /tags/taxonomy/{tag}
+ * Delete a canonical tag outright (D77): strip it, and every alias of it, from
+ * the `tags:` of each record that carries it, writing and re-importing each
+ * one, then drop its aliases and its row and reject the pending suggestions
+ * proposing it. Mechanical, with no agent; the tags page asks first, showing
+ * the record count. An alias is not a row: 404.
+ *
+ * Returns {tag, records_stripped, aliases_dropped, suggestions_rejected}.
+ */
+export const deleteTaxonomyHandler =
+  (deps: TagsDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    const tag = ctx.params['tag'];
+    if (!tag) {
+      sendError(ctx.res, 400, 'bad_request', 'missing tag');
+      return;
+    }
+    const {db, records} = deps;
+    if (!db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag)) {
+      sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
+      return;
+    }
+    const forms = new Set([
+      tag,
+      ...(
+        db.prepare('SELECT alias FROM tag_aliases WHERE canonical = ?').all(tag) as {
+          alias: string;
+        }[]
+      ).map(r => r.alias)
+    ]);
+    const ids = (
+      db.prepare('SELECT record_id FROM tags WHERE tag = ?').all(tag) as {record_id: string}[]
+    ).map(r => r.record_id);
+
+    let stripped = 0;
+    for (const id of ids) {
+      const record = records.getById(id);
+      if (!record) continue;
+      try {
+        const abs = ensureSafePath(deps.vaultDataPath, record.filePath);
+        if (!existsSync(abs)) continue;
+        const {data, body} = parseFrontmatter(readFileSync(abs, 'utf8'));
+        const current = Array.isArray(data['tags']) ? (data['tags'] as unknown[]) : [];
+        const kept = current.filter(t => typeof t !== 'string' || !forms.has(t));
+        if (kept.length !== current.length) {
+          writeSplitRecordToDisk({
+            filePath: record.filePath,
+            existing: record,
+            frontmatter: {tags: kept},
+            body,
+            vaultDataPath: deps.vaultDataPath
+          });
+          ++stripped;
+        }
+        importFile(records, record.filePath, abs, undefined, fullImportOptions(db));
+      } catch (err) {
+        if (err instanceof WriterError) {
+          sendError(ctx.res, err.status, err.code, err.message, {
+            ...err.details,
+            file_path: record.filePath,
+            records_stripped: stripped
+          });
+          return;
+        }
+        throw err;
+      }
+    }
+
+    db.exec('BEGIN');
+    let dropped: {aliases: number; suggestions: number};
+    try {
+      db.prepare('DELETE FROM tags WHERE tag = ?').run(tag);
+      dropped = dropTaxonomyTag(db, tag, new Date().toISOString());
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    sendJson(ctx.res, 200, {
+      tag,
+      records_stripped: stripped,
+      aliases_dropped: dropped.aliases,
+      suggestions_rejected: dropped.suggestions
+    });
   };
 
 /**

@@ -170,6 +170,40 @@
       .tag-info small {
         color: var(--muted);
       }
+      .tag-info .row {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+      }
+      .tag-info .row small {
+        flex: 1;
+      }
+      .new-tag {
+        margin-bottom: 0.6rem;
+        font-size: 0.85rem;
+      }
+      .new-tag summary {
+        cursor: pointer;
+        color: var(--muted);
+      }
+      .new-tag form {
+        display: grid;
+        gap: 0.4rem;
+        margin-top: 0.5rem;
+      }
+      .new-tag input,
+      .new-tag textarea {
+        width: 100%;
+        padding: 0.4rem 0.5rem;
+        font: inherit;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      .new-tag input {
+        font-family: var(--mono);
+      }
     </style>
   </head>
   <body class="fmw">
@@ -198,6 +232,28 @@
             autocomplete="off"
             spellcheck="false"
           />
+          <details class="new-tag">
+            <summary>New tag</summary>
+            <form id="new-tag-form">
+              <input
+                id="new-tag-name"
+                placeholder="tag-name"
+                pattern="[a-z0-9][a-z0-9\-]*"
+                title="Lowercase letters, digits, and hyphens; starts with a letter or digit"
+                required
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <textarea
+                id="new-tag-desc"
+                rows="2"
+                placeholder="What a note carrying this tag is about"
+                required
+              ></textarea>
+              <button type="submit">Create</button>
+              <div id="new-tag-msg"></div>
+            </form>
+          </details>
           <div class="tag-sort">
             <select id="tag-sort-field" aria-label="Sort tags by">
               <option value="count">By popularity</option>
@@ -219,8 +275,17 @@
       </div>
     </main>
 
+    <dialog id="del-tag-dlg">
+      <h2>Delete tag <code id="del-tag-name"></code>?</h2>
+      <p id="del-tag-body"></p>
+      <div class="row">
+        <button id="del-tag-cancel">Cancel</button>
+        <button id="del-tag-confirm" class="danger primary">Delete</button>
+      </div>
+    </dialog>
+
     <script type="module">
-      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
 
@@ -238,6 +303,7 @@
         records: {items: [], offset: 0, total: 0, seq: 0}
       };
       let activeTag = null;
+      let activeInfo = null;
 
       const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
       const fmtNum = n => n.toLocaleString('en-US');
@@ -391,15 +457,18 @@
       const loadTagInfo = async tag => {
         const box = $('#tag-info');
         box.hidden = true;
+        activeInfo = null;
         try {
           const info = await apiJson(`/tags/${encodeURIComponent(tag)}`);
           if (tag !== activeTag) return;
+          activeInfo = info;
           const aliases = info.aliases?.length
             ? ` · aliases: ${info.aliases.map(esc).join(', ')}`
             : '';
           box.innerHTML =
             (info.description ? `<p>${esc(info.description)}</p>` : '') +
-            `<small>added ${esc(fmtDate(info.added))}${aliases}</small>`;
+            `<div class="row"><small>${esc(info.origin ?? '')} · added ${esc(fmtDate(info.added))}${aliases}</small>` +
+            `<button type="button" id="del-tag" class="danger">Delete tag</button></div>`;
           box.hidden = false;
         } catch {
           // The info line is an extra; the records list stands without it.
@@ -461,6 +530,70 @@
         if (!btn) return;
         const tag = btn.dataset.tag;
         history.replaceState(null, '', `#${encodeURIComponent(tag)}`);
+        fetchRecordsForTag(tag);
+      });
+
+      const plural = (n, word) => `${fmtNum(n)} ${word}${n === 1 ? '' : 's'}`;
+
+      $('#tag-info').addEventListener('click', e => {
+        if (!e.target.closest('#del-tag') || !activeInfo) return;
+        const {tag, record_count: count, aliases} = activeInfo;
+        $('#del-tag-name').textContent = tag;
+        $('#del-tag-body').textContent =
+          (count
+            ? `It is removed from the frontmatter of ${plural(count, 'note')}, then from the taxonomy`
+            : 'No note carries it; it is removed from the taxonomy') +
+          (aliases?.length ? ` with ${plural(aliases.length, 'alias')}` : '') +
+          '. The UI cannot undo this.';
+        $('#del-tag-dlg').showModal();
+      });
+      $('#del-tag-cancel').addEventListener('click', () => $('#del-tag-dlg').close());
+      $('#del-tag-confirm').addEventListener('click', async () => {
+        $('#del-tag-dlg').close();
+        const tag = activeInfo?.tag;
+        if (!tag) return;
+        try {
+          await api(`/tags/taxonomy/${encodeURIComponent(tag)}`, {method: 'DELETE'});
+        } catch (e) {
+          if (isAuthError(e)) showAuthDialog();
+          else
+            $('#tag-info').insertAdjacentHTML(
+              'beforeend',
+              `<div class="err">${esc(e.message)}</div>`
+            );
+          return;
+        }
+        activeTag = null;
+        activeInfo = null;
+        history.replaceState(null, '', location.pathname);
+        $('#records-heading').textContent = `Deleted ${tag}`;
+        $('#tag-info').hidden = true;
+        $('#records').innerHTML = '';
+        renderPager('records', '');
+        loadTags(lists.tags.offset);
+      });
+
+      $('#new-tag-form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const tag = $('#new-tag-name').value.trim();
+        const description = $('#new-tag-desc').value.trim();
+        const msg = $('#new-tag-msg');
+        msg.textContent = '';
+        try {
+          await api('/tags/taxonomy', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({tag, description, origin: 'manual'})
+          });
+        } catch (err) {
+          if (isAuthError(err)) showAuthDialog();
+          else msg.innerHTML = `<div class="err">${esc(err.message)}</div>`;
+          return;
+        }
+        e.target.reset();
+        $('#tag-filter').value = tag;
+        history.replaceState(null, '', `#${encodeURIComponent(tag)}`);
+        await loadTags(0);
         fetchRecordsForTag(tag);
       });
 

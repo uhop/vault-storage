@@ -40,6 +40,33 @@ export interface GcTagsSummary {
 
 const MS_PER_DAY = 86_400_000;
 
+/**
+ * Drop one taxonomy row with its aliases, rejecting the pending suggestions
+ * that propose it. The caller has already emptied it of records.
+ */
+export const dropTaxonomyTag = (
+  db: DatabaseSync,
+  tag: string,
+  now: string
+): {aliases: number; suggestions: number} => {
+  const aliases = Number(
+    db.prepare('DELETE FROM tag_aliases WHERE canonical = ?').run(tag).changes
+  );
+  const suggestions = Number(
+    db
+      .prepare(
+        `UPDATE suggestions
+            SET status = 'rejected', resolved_at = ?, resolved_by = '${TAG_DELETED}',
+                claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
+          WHERE kind = 'tag_suggestion' AND status IN ('pending', 'claimed')
+            AND json_extract(payload, '$.tag') = ?`
+      )
+      .run(now, tag).changes
+  );
+  db.prepare('DELETE FROM tags_taxonomy WHERE tag = ?').run(tag);
+  return {aliases, suggestions};
+};
+
 export const gcTags = (
   db: DatabaseSync,
   opts: {dryRun?: boolean; graceDays?: number; now?: string} = {}
@@ -81,22 +108,9 @@ export const gcTags = (
 
   let suggestionsRejected = 0;
   if (!dryRun && tags.length) {
-    const dropAliases = db.prepare('DELETE FROM tag_aliases WHERE canonical = ?');
-    const rejectSuggestions = db.prepare(
-      `UPDATE suggestions
-          SET status = 'rejected', resolved_at = ?, resolved_by = '${TAG_DELETED}',
-              claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
-        WHERE kind = 'tag_suggestion' AND status IN ('pending', 'claimed')
-          AND json_extract(payload, '$.tag') = ?`
-    );
-    const dropTag = db.prepare('DELETE FROM tags_taxonomy WHERE tag = ?');
     db.exec('BEGIN');
     try {
-      for (const {tag} of tags) {
-        dropAliases.run(tag);
-        suggestionsRejected += Number(rejectSuggestions.run(now, tag).changes);
-        dropTag.run(tag);
-      }
+      for (const {tag} of tags) suggestionsRejected += dropTaxonomyTag(db, tag, now).suggestions;
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');

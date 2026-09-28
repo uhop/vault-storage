@@ -1,5 +1,5 @@
 import test from 'tape-six';
-import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
@@ -8,6 +8,7 @@ import {runMigrations} from '../src/db/migrate.ts';
 import {embedPending} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {importVault} from '../src/importer/import.ts';
+import {parseFrontmatter} from '../src/markdown/frontmatter.ts';
 import {EdgesRepository} from '../src/records/edges.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer, type ServerHandle} from '../src/server/server.ts';
@@ -1940,6 +1941,65 @@ test('POST /tags/taxonomy records origin, minted by default, and the reads retur
         'minted',
         'GET /tags carries origin'
       );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('DELETE /tags/taxonomy/{tag} strips it and its aliases from every note, then drops the row (D77)', async t => {
+  const {root, cleanup} = setup();
+  try {
+    const note = (path: string, tags: string) =>
+      writeMd(
+        root,
+        path,
+        [
+          '---',
+          `title: ${path}`,
+          'created: 2026-04-01',
+          'updated: 2026-04-01',
+          `tags: [${tags}]`,
+          '---',
+          'Body.',
+          ''
+        ].join('\n')
+      );
+    note('topics/a.md', 'keep, old-name');
+    note('topics/b.md', 'gone-tag');
+    const ctx = await startTestServer(root);
+    try {
+      ctx.db.exec(`
+        INSERT INTO tags_taxonomy (tag, added) VALUES ('gone-tag', '2026-04-30'), ('keep', '2026-04-30');
+        INSERT INTO tag_aliases (alias, canonical) VALUES ('old-name', 'gone-tag');
+        INSERT INTO suggestions (id, kind, payload, status, created)
+          VALUES ('s1', 'tag_suggestion', '{"tag": "gone-tag"}', 'pending', '2026-09-28');
+      `);
+      importVault(ctx.db, root);
+      const before = await fetchAuthed(`${ctx.url}/tags/gone-tag`);
+      t.equal((before.body as {record_count: number}).record_count, 2, 'two notes carry it');
+
+      const alias = await fetchAuthed(`${ctx.url}/tags/taxonomy/old-name`, {method: 'DELETE'});
+      t.equal(alias.status, 404, 'an alias is not a row');
+
+      const res = await fetchAuthed(`${ctx.url}/tags/taxonomy/gone-tag`, {method: 'DELETE'});
+      t.equal(res.status, 200);
+      t.deepEqual(res.body, {
+        tag: 'gone-tag',
+        records_stripped: 2,
+        aliases_dropped: 1,
+        suggestions_rejected: 1
+      });
+      const tagsOf = (path: string) =>
+        (parseFrontmatter(readFileSync(join(root, path), 'utf8')).data['tags'] as string[]) ?? [];
+      t.deepEqual(tagsOf('topics/a.md'), ['keep'], 'the alias form is stripped, the rest kept');
+      t.deepEqual(tagsOf('topics/b.md'), [], 'the canonical form is stripped');
+      const gone = await fetchAuthed(`${ctx.url}/tags/gone-tag`);
+      t.equal(gone.status, 404, 'the row is gone');
+      const again = await fetchAuthed(`${ctx.url}/tags/taxonomy/gone-tag`, {method: 'DELETE'});
+      t.equal(again.status, 404, 'a second delete is a 404');
     } finally {
       await teardown(ctx);
     }
