@@ -39,7 +39,8 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'create_section',
     'occurrence',
     'expected_hash',
-    'yaml'
+    'yaml',
+    'agent'
   ],
   'POST /vault/render': ['markdown'],
   'POST /vault/move': ['from', 'to'],
@@ -51,7 +52,9 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'to_section',
     'position',
     'trail',
-    'create_section'
+    'create_section',
+    'from_agent',
+    'to_agent'
   ],
   'POST /vault/supersede': ['old_path', 'new_path', 'frontmatter', 'body'],
   // agent_summary and prefilter_max_distance are refused by name, so they are read.

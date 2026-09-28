@@ -62,7 +62,11 @@ The tools map to the REST surface, grouped by purpose:
   `vault_tag_remove` (one `tags:` member). All of them are atomic
   server-side ops whose blast radius is the thing being changed, so they
   cannot lose the rest of the document. Prefer them over whole-document
-  writes.
+  writes. The body edits and the item ops take an optional `agent` patch
+  (`vault_move_item`: `from_agent` / `to_agent`), merged over the stored
+  `agent:` block and stamped current for the new body, so the writer keeps
+  the enrichment fresh in the same request; `agent: {}` says the summary
+  still holds.
 - **Whole-document write** — `vault_write_file`, `vault_update_piece`,
   `vault_delete_file`. Both writers accept `agent.derived_from_hash:
 "auto"` (the server stamps the body hash + `derived_at`) and an optional

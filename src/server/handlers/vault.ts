@@ -632,7 +632,47 @@ interface EditBody {
   occurrence?: unknown;
   expected_hash?: unknown;
   yaml?: unknown;
+  agent?: unknown;
 }
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/** A request's `agent` patch is an object when given; false after a 400. */
+const agentPatchShapeOk = (res: ServerResponse, name: string, patch: unknown): boolean => {
+  if (patch === undefined || isPlainObject(patch)) return true;
+  sendError(res, 400, 'bad_request', `\`${name}\` must be an object of agent: fields`);
+  return false;
+};
+
+/**
+ * The stored `agent:` block with the writer's patch merged over it and both
+ * stamps forced to "auto", so the block is current for the body being written
+ * (D74). `{}` restamps a block whose summary still holds. A document with no
+ * block takes a patch only when it carries a summary; null after a 409.
+ */
+const agentBlockOrError = (
+  res: ServerResponse,
+  path: string,
+  stored: unknown,
+  patch: Record<string, unknown>
+): Record<string, unknown> | null => {
+  if (!isPlainObject(stored) && typeof patch['summary'] !== 'string') {
+    sendError(
+      res,
+      409,
+      'no_enrichment',
+      `${path} has no agent: block to update — an agent patch on it needs a summary`
+    );
+    return null;
+  }
+  return {
+    ...(isPlainObject(stored) ? stored : {}),
+    ...patch,
+    derived_from_hash: 'auto',
+    derived_at: 'auto'
+  };
+};
 
 const EDIT_OPS: ReadonlySet<string> = new Set([
   'append',
@@ -760,6 +800,10 @@ const frontmatterOrError = (res: ServerResponse, text: string): Record<string, u
  * 200 `{path, etag, replaced?}`, `{path, etag, heading, level, occurrence,
  * hash}` for a section, or `{path, etag, hash}` for the frontmatter; the
  * hash is the new text's, for the next guarded save.
+ *
+ * Every op but replace-frontmatter takes an optional `agent`, merged over the
+ * stored `agent:` block and stamped current for the new body, so the writer
+ * who knows what changed keeps the enrichment fresh in the same request (D74).
  */
 export const editVaultHandler =
   (deps: VaultDeps): Handler =>
@@ -852,6 +896,16 @@ export const editVaultHandler =
     }
     if (req.expected_hash !== undefined && typeof req.expected_hash !== 'string') {
       sendError(ctx.res, 400, 'bad_request', '`expected_hash` must be a string');
+      return;
+    }
+    if (!agentPatchShapeOk(ctx.res, 'agent', req.agent)) return;
+    if (req.op === 'replace-frontmatter' && req.agent !== undefined) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'replace-frontmatter leaves the body as it is, so there is nothing for `agent` to stamp — put the block in `yaml`'
+      );
       return;
     }
     const occurrence = occurrenceOrError(ctx.res, req.occurrence);
@@ -1019,6 +1073,16 @@ export const editVaultHandler =
       if (value !== null) requestFm[key] = value;
     }
     if (replacedFm) requestFm = replacedFm;
+    if (req.agent !== undefined) {
+      const block = agentBlockOrError(
+        ctx.res,
+        path,
+        onDiskFm['agent'],
+        req.agent as Record<string, unknown>
+      );
+      if (block === null) return;
+      requestFm['agent'] = block;
+    }
 
     const {records} = deps;
     const existing = records.getByPath(path);
@@ -1064,6 +1128,8 @@ interface MoveItemBody {
   position?: unknown;
   trail?: unknown;
   create_section?: unknown;
+  from_agent?: unknown;
+  to_agent?: unknown;
 }
 
 /** One document's FM-stripped body plus what the write path needs to put it back; null after sending the error. */
@@ -1134,7 +1200,9 @@ const commitBody = (
  * inserted right after that title (the archive's **Shipped** line), and the
  * destination is written before the source, so a failure between the two
  * leaves a duplicate to clean up, never a lost item; a schema section the
- * move empties gets the bare `(empty)` (`removeItem`). Returns
+ * move empties gets the bare `(empty)` (`removeItem`). `from_agent` and
+ * `to_agent` patch each document's `agent:` block as the edit route's `agent`
+ * does (D74). Returns
  * `{title, from: {path, etag}, to: {path, etag}}`.
  */
 export const moveItemHandler =
@@ -1207,6 +1275,8 @@ export const moveItemHandler =
     }
     const position = positionOrError(ctx.res, req.position);
     if (position === null) return;
+    if (!agentPatchShapeOk(ctx.res, 'from_agent', req.from_agent)) return;
+    if (!agentPatchShapeOk(ctx.res, 'to_agent', req.to_agent)) return;
 
     const source = loadEditable(deps, ctx, fromPath);
     if (source === null) return;
@@ -1236,6 +1306,21 @@ export const moveItemHandler =
     if (!inserted.ok) {
       sectionInsertError(ctx.res, toPath, req.to_section, inserted.occurrences);
       return;
+    }
+
+    // Both blocks before either write, so a refused patch leaves both documents as they were.
+    const fromPatch = req.from_agent as Record<string, unknown> | undefined;
+    const toPatch = req.to_agent as Record<string, unknown> | undefined;
+    const targetPatch = same && (fromPatch || toPatch) ? {...fromPatch, ...toPatch} : toPatch;
+    if (targetPatch) {
+      const block = agentBlockOrError(ctx.res, toPath, target.fm['agent'], targetPatch);
+      if (block === null) return;
+      target.fm['agent'] = block;
+    }
+    if (!same && fromPatch) {
+      const block = agentBlockOrError(ctx.res, fromPath, source.fm['agent'], fromPatch);
+      if (block === null) return;
+      source.fm['agent'] = block;
     }
 
     if (same) {

@@ -22,7 +22,9 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   RAG pack: hybrid top-K chunks + a deduped 1-hop graph whose inbound
   entries are the backlinks), read,
   narrow writes (`vault_append` / `vault_replace` / `vault_replace_section`
-  / `vault_patch_fm` — asserted, atomic, small blast radius; `vault_read_section`
+  / `vault_patch_fm` — asserted, atomic, small blast radius; the body edits
+  take an `agent` patch that keeps the enrichment current in the same write;
+  `vault_read_section`
   reads one heading's section the same way), whole-document writes (optional
   `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
   `vault_move` / `vault_propose`), maintenance, tags, graph insight, the

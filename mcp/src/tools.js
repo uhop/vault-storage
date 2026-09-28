@@ -311,6 +311,15 @@ export const registerTools = (mcp, client) => {
     })
   );
 
+  const agentPatch = z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Fields of the agent: block to change in the same write, stamped current for the new body; {} keeps the summary and marks it current'
+    );
+  const AGENT_NOTE =
+    ' Pass agent to keep the enrichment current in the same request: its fields are merged over the stored agent: block and the block is stamped current for the new body, so no stale-enrichment suggestion is filed; agent: {} says the summary still holds. A document with no agent: block takes a patch only with a summary (409 `no_enrichment`).';
+
   // The narrow-blast-radius write path. `vault_write_file` replaces a whole
   // document, so a bug in the caller costs the whole document; these three
   // change only what they name, server-side and atomically, and cannot lose
@@ -319,29 +328,35 @@ export const registerTools = (mcp, client) => {
     'vault_append',
     {
       description:
-        'Append text to the end of a document body, server-side and atomically — no read-modify-write, so a concurrent writer cannot be clobbered. Frontmatter rides through untouched (`updated` is re-stamped). The document must already exist (404 otherwise); an atomized folder composed at `<stem>.md` is a 409 pointing at its pieces. Prefer this over vault_write_file whenever you are adding to a document rather than replacing it. Returns {path, etag}.',
+        'Append text to the end of a document body, server-side and atomically — no read-modify-write, so a concurrent writer cannot be clobbered. Frontmatter rides through untouched (`updated` is re-stamped). The document must already exist (404 otherwise); an atomized folder composed at `<stem>.md` is a 409 pointing at its pieces. Prefer this over vault_write_file whenever you are adding to a document rather than replacing it. Returns {path, etag}.' +
+        AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
-        text: z.string().min(1).describe('Fragment to append; joined after a single newline')
+        text: z.string().min(1).describe('Fragment to append; joined after a single newline'),
+        agent: agentPatch
       }
     },
-    wrap(async ({path, text}) => client.postJson('/vault/edit', {path, op: 'append', text}))
+    wrap(async ({path, text, agent}) =>
+      client.postJson('/vault/edit', {path, op: 'append', text, agent})
+    )
   );
 
   mcp.registerTool(
     'vault_replace',
     {
       description:
-        'Replace a string in a document body, server-side and atomically. ASSERTED: an absent `from` is a 409 and an ambiguous one is a 409 carrying the occurrence count — never a silent no-op, which is what makes this safe to fire blind (the curly-vs-straight-apostrophe bug class). Pass all=true to replace every occurrence deliberately. Frontmatter rides through untouched. Prefer this over vault_write_file for targeted body edits. Returns {path, etag, replaced} — `replaced` is the occurrence count actually rewritten.',
+        'Replace a string in a document body, server-side and atomically. ASSERTED: an absent `from` is a 409 and an ambiguous one is a 409 carrying the occurrence count — never a silent no-op, which is what makes this safe to fire blind (the curly-vs-straight-apostrophe bug class). Pass all=true to replace every occurrence deliberately. Frontmatter rides through untouched. Prefer this over vault_write_file for targeted body edits. Returns {path, etag, replaced} — `replaced` is the occurrence count actually rewritten.' +
+        AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         from: z.string().min(1).describe('Exact text to find; must occur exactly once unless all'),
         to: z.string().describe('Replacement text; empty string deletes the match'),
-        all: z.boolean().optional().describe('Replace every occurrence instead of asserting one')
+        all: z.boolean().optional().describe('Replace every occurrence instead of asserting one'),
+        agent: agentPatch
       }
     },
-    wrap(async ({path, from, to, all}) =>
-      client.postJson('/vault/edit', {path, op: 'replace', from, to, ...(all ? {all} : {})})
+    wrap(async ({path, from, to, all, agent}) =>
+      client.postJson('/vault/edit', {path, op: 'replace', from, to, ...(all ? {all} : {}), agent})
     )
   );
 
@@ -373,7 +388,8 @@ export const registerTools = (mcp, client) => {
     'vault_replace_section',
     {
       description:
-        "Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss; occurrence picks one of several identical heading lines. Pass expected_hash, the hash vault_read_section returned, and a section that changed since is a 409 `section_changed` carrying details.current_hash instead of an overwrite. Frontmatter rides through untouched; composed folder views are refused. Returns {path, etag, heading, level, occurrence, hash}, hash being the new content's, for the next guarded replace.",
+        "Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss; occurrence picks one of several identical heading lines. Pass expected_hash, the hash vault_read_section returned, and a section that changed since is a 409 `section_changed` carrying details.current_hash instead of an overwrite. Frontmatter rides through untouched; composed folder views are refused. Returns {path, etag, heading, level, occurrence, hash}, hash being the new content's, for the next guarded replace." +
+        AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         heading: z
@@ -390,17 +406,21 @@ export const registerTools = (mcp, client) => {
         expected_hash: z
           .string()
           .optional()
-          .describe('The section hash vault_read_section returned; the replace fails if it changed')
+          .describe(
+            'The section hash vault_read_section returned; the replace fails if it changed'
+          ),
+        agent: agentPatch
       }
     },
-    wrap(async ({path, heading, body, occurrence, expected_hash}) =>
+    wrap(async ({path, heading, body, occurrence, expected_hash, agent}) =>
       client.postJson('/vault/edit', {
         path,
         op: 'replace-section',
         heading,
         body,
         occurrence,
-        expected_hash
+        expected_hash,
+        agent
       })
     )
   );
@@ -409,7 +429,8 @@ export const registerTools = (mcp, client) => {
     'vault_remove_item',
     {
       description:
-        'Remove one queue item from a document by its bold title — the `- **Title.**` bullet and every continuation line under it — leaving every other byte alone, server-side and atomically, except that an Active, Backlog, or Watching section left with nothing in it gets the bare `(empty)` placeholder. The title is matched the way the queue derivative normalizes it (case, whitespace, and hyphen variants collapsed), exactly once; pass section (a heading line such as "## Backlog") to search one section only. ASSERTED: absent or ambiguous is a 409 `item_assert_failed` with details.occurrences. Returns {path, etag, removed} — `removed` is the item\'s text, so it can be re-inserted elsewhere with vault_insert_item without retyping; for a relocation prefer vault_move_item, which does both in one request.',
+        'Remove one queue item from a document by its bold title — the `- **Title.**` bullet and every continuation line under it — leaving every other byte alone, server-side and atomically, except that an Active, Backlog, or Watching section left with nothing in it gets the bare `(empty)` placeholder. The title is matched the way the queue derivative normalizes it (case, whitespace, and hyphen variants collapsed), exactly once; pass section (a heading line such as "## Backlog") to search one section only. ASSERTED: absent or ambiguous is a 409 `item_assert_failed` with details.occurrences. Returns {path, etag, removed} — `removed` is the item\'s text, so it can be re-inserted elsewhere with vault_insert_item without retyping; for a relocation prefer vault_move_item, which does both in one request.' +
+        AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         title: z.string().min(1).describe('The bold title, e.g. "Drop the security overrides."'),
@@ -417,11 +438,12 @@ export const registerTools = (mcp, client) => {
           .string()
           .min(1)
           .optional()
-          .describe('Heading line to search within, e.g. "## Backlog"')
+          .describe('Heading line to search within, e.g. "## Backlog"'),
+        agent: agentPatch
       }
     },
-    wrap(async ({path, title, section}) =>
-      client.postJson('/vault/edit', {path, op: 'remove-item', title, section})
+    wrap(async ({path, title, section, agent}) =>
+      client.postJson('/vault/edit', {path, op: 'remove-item', title, section, agent})
     )
   );
 
@@ -429,7 +451,8 @@ export const registerTools = (mcp, client) => {
     'vault_insert_item',
     {
       description:
-        "Insert one queue item (a `- **Title.**` bullet with any continuation lines) into a section of a document, at its start or end (default end), framed by blank lines, every other byte untouched. The section is a heading line matched exactly once with code fences masked; a section that reads `(empty)` is replaced by the item. create_section: true adds a missing heading before the first heading of the same level (a newest-first archive's new date block); otherwise an absent heading is a 409 `section_assert_failed`. Returns {path, etag, section, position, created}.",
+        "Insert one queue item (a `- **Title.**` bullet with any continuation lines) into a section of a document, at its start or end (default end), framed by blank lines, every other byte untouched. The section is a heading line matched exactly once with code fences masked; a section that reads `(empty)` is replaced by the item. create_section: true adds a missing heading before the first heading of the same level (a newest-first archive's new date block); otherwise an absent heading is a 409 `section_assert_failed`. Returns {path, etag, section, position, created}." +
+        AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         section: z
@@ -438,17 +461,19 @@ export const registerTools = (mcp, client) => {
           .describe('Heading line to insert under, e.g. "## Active" or "## 2026-09-06"'),
         item: z.string().min(1).describe('The item text, starting with "- **"'),
         position: z.enum(['start', 'end']).optional().describe('Where in the section; default end'),
-        create_section: z.boolean().optional().describe('Add the heading when it is missing')
+        create_section: z.boolean().optional().describe('Add the heading when it is missing'),
+        agent: agentPatch
       }
     },
-    wrap(async ({path, section, item, position, create_section}) =>
+    wrap(async ({path, section, item, position, create_section, agent}) =>
       client.postJson('/vault/edit', {
         path,
         op: 'insert-item',
         section,
         item,
         position,
-        create_section
+        create_section,
+        agent
       })
     )
   );
@@ -457,7 +482,7 @@ export const registerTools = (mcp, client) => {
     'vault_move_item',
     {
       description:
-        "Move one queue item between documents, or between sections of one document, without reproducing its text — the queue-to-archive move as one request. The item is found by its bold title (normalized, exactly once; from_section narrows the search), `trail` is inserted right after the bold title (the archive's **Shipped …** line, a leading space added), and it lands at the start or end (default end) of to_section in to_path, with create_section: true adding a missing heading before the first of the same level (a new archive date block). The destination is written before the source, so a failure between the two leaves a duplicate to clean up, never a lost item; an Active, Backlog, or Watching section the move empties gets the bare `(empty)` placeholder. Asserted: 409 `item_assert_failed` or `section_assert_failed` with details.occurrences. Returns {title, from: {path, etag}, to: {path, etag}}.",
+        "Move one queue item between documents, or between sections of one document, without reproducing its text — the queue-to-archive move as one request. The item is found by its bold title (normalized, exactly once; from_section narrows the search), `trail` is inserted right after the bold title (the archive's **Shipped …** line, a leading space added), and it lands at the start or end (default end) of to_section in to_path, with create_section: true adding a missing heading before the first of the same level (a new archive date block). The destination is written before the source, so a failure between the two leaves a duplicate to clean up, never a lost item; an Active, Backlog, or Watching section the move empties gets the bare `(empty)` placeholder. Asserted: 409 `item_assert_failed` or `section_assert_failed` with details.occurrences. from_agent and to_agent patch each document's agent: block the way vault_append's agent does, both checked before either write; on a queue-to-archive move, {} for each says both summaries still hold. Returns {title, from: {path, etag}, to: {path, etag}}.",
       inputSchema: {
         from_path: z.string().min(1).describe('Where the item is now'),
         to_path: z.string().min(1).describe('Where it goes; may equal from_path'),
@@ -475,7 +500,9 @@ export const registerTools = (mcp, client) => {
           .describe(
             'Text inserted right after the bold title, e.g. "**Shipped 2026-09-06**, … Original filing follows."'
           ),
-        create_section: z.boolean().optional().describe('Add to_section when it is missing')
+        create_section: z.boolean().optional().describe('Add to_section when it is missing'),
+        from_agent: agentPatch,
+        to_agent: agentPatch
       }
     },
     wrap(
@@ -487,7 +514,9 @@ export const registerTools = (mcp, client) => {
         to_section,
         position,
         trail,
-        create_section
+        create_section,
+        from_agent,
+        to_agent
       }) =>
         client.postJson('/vault/move-item', {
           from_path,
@@ -497,7 +526,9 @@ export const registerTools = (mcp, client) => {
           to_section,
           position,
           trail,
-          create_section
+          create_section,
+          from_agent,
+          to_agent
         })
     )
   );

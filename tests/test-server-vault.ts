@@ -711,6 +711,198 @@ test('POST /vault/edit refuses a replace that would empty the body', async t => 
   }
 });
 
+const seedEnriched = (root: string, path: string, body: string): void =>
+  writeMd(
+    root,
+    path,
+    [
+      '---',
+      'title: Rolling',
+      'created: 2026-04-01',
+      'updated: 2026-04-01',
+      'agent:',
+      '  summary: Decision log for the demo project.',
+      '  key_concepts: [decisions]',
+      '  complexity: prose',
+      '  derived_from_hash: stale0000',
+      '  derived_at: 2026-04-01T00:00:00Z',
+      '---',
+      body,
+      ''
+    ].join('\n')
+  );
+
+const postJson = (url: string, payload: unknown) =>
+  fetchAuthed(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+
+const pendingStale = (db: DatabaseSync, path: string): number =>
+  (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM suggestions s JOIN records r ON r.record_id = s.subject_id
+          WHERE r.file_path = ? AND s.kind = 'agent_enrichment_stale' AND s.status = 'pending'`
+      )
+      .get(path) as {n: number}
+  ).n;
+
+test('POST /vault/edit with agent stamps the block current for the new body (D74)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEnriched(root, 'projects/demo/decisions.md', '## D1\n\nFirst.');
+    const ctx = await startTestServer(root);
+    try {
+      t.equal(pendingStale(ctx.db, 'projects/demo/decisions.md'), 1, 'seeded block is stale');
+
+      const res = await postJson(`${ctx.url}/vault/edit`, {
+        path: 'projects/demo/decisions.md',
+        op: 'append',
+        text: '## D2\n\nSecond.',
+        agent: {}
+      });
+      t.equal(res.status, 200, 'append with agent: {} succeeds');
+
+      const {data, body} = parseFrontmatter(
+        readFileSync(join(root, 'projects/demo/decisions.md'), 'utf8')
+      );
+      const agent = data['agent'] as Record<string, unknown>;
+      t.equal(agent['derived_from_hash'], contentHash(body), 'hash is the written body');
+      t.notEqual(agent['derived_at'], 'auto', 'derived_at stamped');
+      t.equal(agent['summary'], 'Decision log for the demo project.', 'summary kept');
+      t.deepEqual(agent['key_concepts'], ['decisions'], 'other fields kept');
+      t.equal(pendingStale(ctx.db, 'projects/demo/decisions.md'), 0, 'stale suggestion resolved');
+      const baseline = ctx.db
+        .prepare(
+          `SELECT b.body_hash FROM enrichment_baselines b JOIN records r ON r.record_id = b.record_id
+            WHERE r.file_path = ?`
+        )
+        .get('projects/demo/decisions.md') as {body_hash: string} | undefined;
+      t.equal(baseline?.body_hash, contentHash(body), 'enrichment baseline recorded');
+
+      const revised = await postJson(`${ctx.url}/vault/edit`, {
+        path: 'projects/demo/decisions.md',
+        op: 'replace',
+        from: 'Second.',
+        to: 'Second, revised.',
+        agent: {summary: 'Decision log for the demo project, D1 and D2.', derived_from_hash: 'x'}
+      });
+      t.equal(revised.status, 200, 'replace with a summary patch succeeds');
+      const after = parseFrontmatter(
+        readFileSync(join(root, 'projects/demo/decisions.md'), 'utf8')
+      );
+      const block = after.data['agent'] as Record<string, unknown>;
+      t.equal(
+        block['summary'],
+        'Decision log for the demo project, D1 and D2.',
+        'summary replaced'
+      );
+      t.equal(block['derived_from_hash'], contentHash(after.body), 'caller hash overridden');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/edit refuses a malformed or unusable agent patch', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seed(root);
+    const ctx = await startTestServer(root);
+    try {
+      const before = readFileSync(join(root, 'topics/alpha.md'), 'utf8');
+      const edit = (extra: Record<string, unknown>) =>
+        postJson(`${ctx.url}/vault/edit`, {
+          path: 'topics/alpha.md',
+          op: 'append',
+          text: 'More.',
+          ...extra
+        });
+
+      const arr = await edit({agent: ['summary']});
+      t.equal(arr.status, 400, 'an array is refused');
+      const str = await edit({agent: 'current'});
+      t.equal(str.status, 400, 'a string is refused');
+      const none = await edit({agent: {}});
+      t.equal(none.status, 409, 'no stored block and no summary is refused');
+      t.equal((none.body as {code: string}).code, 'no_enrichment', 'code=no_enrichment');
+      const fm = await postJson(`${ctx.url}/vault/edit`, {
+        path: 'topics/alpha.md',
+        op: 'replace-frontmatter',
+        yaml: 'title: Alpha',
+        agent: {}
+      });
+      t.equal(fm.status, 400, 'replace-frontmatter takes no agent patch');
+      t.equal(readFileSync(join(root, 'topics/alpha.md'), 'utf8'), before, 'document untouched');
+
+      const created = await edit({agent: {summary: 'Alpha topic.', complexity: 'prose'}});
+      t.equal(created.status, 200, 'a patch with a summary creates the block');
+      const {data, body} = parseFrontmatter(readFileSync(join(root, 'topics/alpha.md'), 'utf8'));
+      t.equal((data['agent'] as Record<string, unknown>)['derived_from_hash'], contentHash(body));
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /vault/move-item stamps both documents from from_agent and to_agent (D74)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEnriched(
+      root,
+      'projects/demo/queue.md',
+      '## Backlog\n\n- **Ship it.** Body.\n- **Keep it.** Body.'
+    );
+    seedEnriched(root, 'projects/demo/queue-archive.md', '## 2026-04-01\n\n- **Old.** Body.');
+    const ctx = await startTestServer(root);
+    try {
+      const refused = await postJson(`${ctx.url}/vault/move-item`, {
+        from_path: 'projects/demo/queue.md',
+        to_path: 'projects/demo/queue-archive.md',
+        title: 'Ship it.',
+        to_section: '## 2026-04-02',
+        create_section: true,
+        to_agent: 'current'
+      });
+      t.equal(refused.status, 400, 'a malformed to_agent is refused before any write');
+      t.ok(
+        readFileSync(join(root, 'projects/demo/queue.md'), 'utf8').includes('Ship it.'),
+        'source untouched'
+      );
+
+      const res = await postJson(`${ctx.url}/vault/move-item`, {
+        from_path: 'projects/demo/queue.md',
+        to_path: 'projects/demo/queue-archive.md',
+        title: 'Ship it.',
+        to_section: '## 2026-04-02',
+        create_section: true,
+        from_agent: {},
+        to_agent: {}
+      });
+      t.equal(res.status, 200, 'move with both patches succeeds');
+      for (const path of ['projects/demo/queue.md', 'projects/demo/queue-archive.md']) {
+        const {data, body} = parseFrontmatter(readFileSync(join(root, path), 'utf8'));
+        t.equal(
+          (data['agent'] as Record<string, unknown>)['derived_from_hash'],
+          contentHash(body),
+          `${path} stamped current`
+        );
+        t.equal(pendingStale(ctx.db, path), 0, `${path} has no pending stale suggestion`);
+      }
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} syncs tags from frontmatter', async t => {
   const {root, cleanup} = setupVault();
   try {

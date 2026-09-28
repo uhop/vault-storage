@@ -122,6 +122,13 @@ Narrow writes (atomic server-side ops; prefer these over whole-document writes):
   destination written before the source; a schema section it empties gets
   the bare `(empty)`. Returns {title, from, to} with etags.
 
+vault_append, vault_replace, vault_replace_section, vault_remove_item, and
+vault_insert_item take an optional agent patch (vault_move_item: from_agent
+and to_agent): its fields are merged over the stored agent: block and the
+block is stamped current for the new body, so no stale-enrichment suggestion
+is filed. agent: {} says the summary still holds; a document with no agent:
+block takes a patch only with a summary (409 no_enrichment).
+
 Whole-document writes:
 
 - vault_write_file / vault_update_piece — create or replace; optional
