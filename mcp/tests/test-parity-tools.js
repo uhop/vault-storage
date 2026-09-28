@@ -152,6 +152,41 @@ test('maintenance tools hit their endpoints with POST and no body', async t => {
   }
 });
 
+test('vault_gc_tags previews unless dry_run is false, and the tag tools hit their routes', async t => {
+  const {call, getCaptured} = setup();
+  await call('vault_gc_tags', {});
+  t.equal(
+    getCaptured().url,
+    'http://test/maintenance/gc-tags?dry_run=1',
+    'no arguments is a dry run'
+  );
+  await call('vault_gc_tags', {dry_run: false, grace_days: 3});
+  t.equal(
+    getCaptured().url,
+    'http://test/maintenance/gc-tags?dry_run=0&grace_days=3',
+    'deletes only on false'
+  );
+
+  await call('vault_tag_delete', {tag: 'old-tag'});
+  t.equal(getCaptured().init.method, 'DELETE');
+  t.equal(getCaptured().url, 'http://test/tags/taxonomy/old-tag');
+  await call('vault_tag_update', {tag: 'keep', origin: 'manual'});
+  t.equal(getCaptured().init.method, 'PATCH');
+  t.deepEqual(JSON.parse(getCaptured().init.body), {origin: 'manual'}, 'only the fields given');
+  await call('vault_tag_create', {
+    tag: 'new-tag',
+    description: 'About new things.',
+    origin: 'manual'
+  });
+  t.deepEqual(JSON.parse(getCaptured().init.body), {
+    tag: 'new-tag',
+    description: 'About new things.',
+    origin: 'manual'
+  });
+  await call('vault_tag_alias', {alias: 'newtag', canonical: 'new-tag'});
+  t.equal(getCaptured().url, 'http://test/tags/aliases');
+});
+
 test('vault_raw_inbox is a GET and passes the ready/drafts split through', async t => {
   const {call, getCaptured} = setup(
     () =>

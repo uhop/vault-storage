@@ -154,6 +154,8 @@ Maintenance:
   vectors, reusing the vector of any unchanged text; loops until drained.
 - vault_incremental_reindex — catch up after a git pull from another machine.
 - vault_run_scans — all four suggestion-filing scans in one pass.
+- vault_gc_tags — delete taxonomy tags no record carries, except manual ones
+  and those inside the grace window; dry_run defaults to true here.
 
 Tags:
 
@@ -162,7 +164,11 @@ Tags:
 - vault_tag_info — one taxonomy row (requested appears on alias lookups).
 - vault_records_by_tag — records carrying a tag (alias-aware; alias_for +
   requested on alias hits); paginated envelope.
-- vault_tag_update — rewrite a canonical tag's description; null clears it.
+- vault_tag_create — add a canonical tag; origin manual keeps it at zero records.
+- vault_tag_update — rewrite a canonical tag's description (null clears it) or
+  re-label its origin (manual or minted).
+- vault_tag_alias — add an alias of an existing canonical tag.
+- vault_tag_delete — strip a tag and its aliases from every note, then drop it.
 
 Graph insight:
 

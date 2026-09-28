@@ -787,7 +787,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_tags',
     {
       description:
-        'List the managed tag taxonomy. Filter by `prefix` or by `contains` (a substring of the tag name); `sort` is `count` (default, most used first), `count_asc`, `tag_asc` (A to Z), or `tag` (Z to A). Returns the paginated envelope {items: [{tag, description, record_count}], offset, limit, total}, `description` null when the tag has none; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
+        'List the managed tag taxonomy. Filter by `prefix` or by `contains` (a substring of the tag name); `sort` is `count` (default, most used first), `count_asc`, `tag_asc` (A to Z), or `tag` (Z to A). Returns the paginated envelope {items: [{tag, description, origin, record_count}], offset, limit, total}, `description` null when the tag has none and `origin` one of manual (created on purpose), seeded, or minted; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at} — the content generation the answer was computed at (it moves on every record write), so an empty answer reads as "empty at generation N" and two reads can be compared.',
       inputSchema: {
         prefix: z.string().optional(),
         contains: z.string().optional(),
@@ -803,7 +803,7 @@ export const registerTools = (mcp, client) => {
     'vault_tag_info',
     {
       description:
-        'Read one taxonomy tag. Returns {tag, description, added, aliases, record_count} where `tag` is always the canonical name. Passing an alias resolves to the canonical row and adds `requested: "<the alias you passed>"` — that extra key is how you detect you were redirected; it is absent when you asked for the canonical name. 404 tag_not_found when the tag is not in the taxonomy.',
+        'Read one taxonomy tag. Returns {tag, description, added, origin, aliases, record_count} where `tag` is always the canonical name and `origin` is manual (created on purpose, kept at zero records), seeded, or minted. Passing an alias resolves to the canonical row and adds `requested: "<the alias you passed>"` — that extra key is how you detect you were redirected; it is absent when you asked for the canonical name. 404 tag_not_found when the tag is not in the taxonomy.',
       inputSchema: {
         tag: z.string().min(1)
       }
@@ -812,18 +812,67 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_tag_create',
+    {
+      description:
+        'Add a canonical tag to the taxonomy: {tag, description, origin?}. `origin: "manual"` marks a tag created on purpose, which the empty-tag collection (vault_gc_tags) keeps even with no records; the default `minted` is collected once no record carries it. Pending new_tag suggestions for the tag are accepted and their records linked. Returns {tag, description, origin, linked, accepted}. 409 conflict when the tag exists; 400 on a name outside [a-z0-9][a-z0-9-]*. Prefer an existing tag (vault_list_tags with `contains`) over minting a near-duplicate.',
+      inputSchema: {
+        tag: z.string().min(1).describe('Lowercase letters, digits, and hyphens'),
+        description: z.string().min(1).describe('What a note carrying this tag is about'),
+        origin: z
+          .enum(['manual', 'minted'])
+          .optional()
+          .describe('manual keeps the tag at zero records; default minted')
+      }
+    },
+    wrap(async ({tag, description, origin}) =>
+      client.postJson('/tags/taxonomy', {tag, description, origin})
+    )
+  );
+
+  mcp.registerTool(
     'vault_tag_update',
     {
       description:
-        'Rewrite the description of a canonical tag — the one way to revise it after minting, e.g. when an alias broadens what the tag covers: {tag, description}, null to clear. PATCH /tags/taxonomy/{tag}; nothing else on the row changes. Returns {tag, description}. 404 tag_not_found when the tag is not a canonical taxonomy entry (an alias has no description of its own — update its canonical).',
+        'Rewrite a canonical tag\'s description or its origin: {tag, description?, origin?}, at least one. The description is the one way to revise a tag after minting, e.g. when an alias broadens what it covers; null clears it. `origin: "manual"` keeps an empty tag through vault_gc_tags, `minted` releases it. PATCH /tags/taxonomy/{tag}; nothing else on the row changes. Returns {tag} with the fields given. 404 tag_not_found when the tag is not a canonical taxonomy entry (an alias has no row of its own — update its canonical).',
       inputSchema: {
         tag: z.string().min(1).describe('The canonical tag'),
-        description: z.string().nullable().describe('The new description; null clears it')
+        description: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('The new description; null clears it'),
+        origin: z.enum(['manual', 'minted']).optional().describe('manual keeps an empty tag')
       }
     },
-    wrap(async ({tag, description}) =>
-      client.patchJson(`/tags/taxonomy/${encodeURIComponent(tag)}`, {description})
+    wrap(async ({tag, description, origin}) =>
+      client.patchJson(`/tags/taxonomy/${encodeURIComponent(tag)}`, {description, origin})
     )
+  );
+
+  mcp.registerTool(
+    'vault_tag_alias',
+    {
+      description:
+        'Add an alias of an existing canonical tag: {alias, canonical}. Frontmatter carrying the alias then resolves to the canonical tag, and pending new_tag suggestions for the alias are accepted and their records linked. Returns {alias, canonical, linked, accepted}. 404 when the canonical is not in the taxonomy; 409 when the alias exists. The way to fold a near-duplicate into an existing tag instead of minting it.',
+      inputSchema: {
+        alias: z.string().min(1).describe('The form to resolve, lowercase'),
+        canonical: z.string().min(1).describe('The existing canonical tag')
+      }
+    },
+    wrap(async ({alias, canonical}) => client.postJson('/tags/aliases', {alias, canonical}))
+  );
+
+  mcp.registerTool(
+    'vault_tag_delete',
+    {
+      description:
+        'Delete a canonical tag outright: strip it, and every alias of it, from the `tags:` of each note that carries it (each note is written and re-imported), then drop its aliases and its taxonomy row and reject the pending tag_suggestion rows proposing it. Irreversible from the API: the description is lost. Read vault_tag_info first and confirm the record_count with the user. Returns {tag, records_stripped, aliases_dropped, suggestions_rejected}. 404 tag_not_found for an unknown tag or an alias.',
+      inputSchema: {
+        tag: z.string().min(1).describe('The canonical tag')
+      }
+    },
+    wrap(async ({tag}) => client.deleteJson(`/tags/taxonomy/${encodeURIComponent(tag)}`))
   );
 
   mcp.registerTool(
@@ -1483,6 +1532,24 @@ export const registerTools = (mcp, client) => {
       inputSchema: {}
     },
     wrap(async () => client.postJson('/maintenance/incremental-reindex'))
+  );
+
+  mcp.registerTool(
+    'vault_gc_tags',
+    {
+      description:
+        'Collect empty taxonomy tags: every tag no record carries, except `manual` ones and those added within the grace window (default 1 day), is deleted with its aliases, and the pending tag_suggestion rows proposing it are rejected. `dry_run` defaults to TRUE here, unlike the REST route: the tool lists what would go and touches nothing until you pass dry_run: false. Returns {dryRun, graceDays, tags: [{tag, origin, added, description, aliases}], young, manual, deleted, suggestionsRejected, durationMs}; `tags` is the audit trail — report each deleted tag by name. /vault sweep runs this as a one-shot.',
+      inputSchema: {
+        dry_run: z.boolean().optional().default(true).describe('List only; default true'),
+        grace_days: z.number().int().min(1).optional().describe('Keep tags younger than this')
+      }
+    },
+    wrap(async ({dry_run, grace_days}) =>
+      client.postJson('/maintenance/gc-tags', undefined, {
+        dry_run: dry_run === false ? 0 : 1,
+        grace_days
+      })
+    )
   );
 
   mcp.registerTool(

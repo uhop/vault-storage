@@ -6,9 +6,39 @@ import {openDatabase} from '../../src/db/connection.ts';
 import {runMigrations} from '../../src/db/migrate.ts';
 import {FakeEmbedder} from '../../src/embeddings/fake.ts';
 import {importVault} from '../../src/importer/import.ts';
-import {startServer} from '../../src/server/server.ts';
+import {buildRouter, startServer} from '../../src/server/server.ts';
 import {VaultClient} from '../src/client.js';
 import {registerTools} from '../src/tools.js';
+
+// Server routes no tool reaches, each with the reason (checked against the router below).
+const UNEXPOSED = new Map([
+  ['GET /drafts', 'UI-only: the editor drafts'],
+  ['PUT /drafts', 'UI-only: the editor drafts'],
+  ['DELETE /drafts/{id}', 'UI-only: the editor drafts'],
+  ['POST /vault/render', 'UI-only: server-side markdown render'],
+  ['GET /resolve', 'UI-only: wikilink resolution for the note page'],
+  ['POST /resolve', 'UI-only: wikilink resolution for the note page'],
+  ['GET /system/resume-brief', 'the SessionStart hook'],
+  ['GET /system/body-fields', 'diagnostic, read by this test'],
+  ['GET /queue/lint', 'the vault-lint script'],
+  ['POST /commit', 'deliberately not on MCP: a git commit of vault-data'],
+  ['POST /maintenance/snapshot', 'deliberately not on MCP: database snapshots'],
+  ['GET /maintenance/snapshot-list', 'deliberately not on MCP: database snapshots'],
+  ['GET /maintenance/snapshot-download', 'deliberately not on MCP: database snapshots'],
+  ['DELETE /maintenance/snapshot', 'deliberately not on MCP: database snapshots'],
+  ['POST /maintenance/cleanup-tag-aliases', 'deliberately not on MCP'],
+  ['POST /maintenance/release-embedder', 'deliberately not on MCP'],
+  ['GET /maintenance/folder-listing', 'deliberately not on MCP: the UI folder browser'],
+  ['POST /maintenance/find-duplicates', 'deliberately not on MCP: vault_run_scans runs all four'],
+  ['POST /maintenance/find-compaction-candidates', 'deliberately not on MCP: vault_run_scans'],
+  ['POST /maintenance/find-retention-candidates', 'deliberately not on MCP: vault_run_scans'],
+  ['POST /maintenance/find-upgrade-signals', 'deliberately not on MCP: vault_run_scans'],
+  ['POST /maintenance/expire-logs', 'a /vault sweep one-shot through vault-curl'],
+  ['POST /search/simple', 'vault_search uses the GET form'],
+  ['GET /sections/{id}/fm', 'vault_read_file and vault_read_meta cover it'],
+  ['GET /sections/{id}/tags', 'vault_read_file covers it'],
+  ['GET /handoffs/{id}/artifact', 'vault_handoff_get_artifact reaches it only for a real handoff']
+]);
 
 // Parameters that shape the tool's answer, or a follow-up request, rather than the first request.
 const CLIENT_SIDE = new Set([
@@ -23,6 +53,18 @@ const unwrap = schema => {
     if (type === 'optional' || type === 'default' || type === 'prefault') optional = true;
     else if (type !== 'nullable') return {inner: s, optional};
   }
+};
+
+const defaultOf = schema => {
+  for (let s = schema; s?._zod; s = s._zod.def.innerType)
+    if (s._zod.def.type === 'default') return s._zod.def.defaultValue;
+  return undefined;
+};
+
+// A boolean whose sample equals its default would send the baseline's request.
+const probe = (key, schema) => {
+  const value = sample(key, schema);
+  return typeof value === 'boolean' && defaultOf(schema) === value ? !value : value;
 };
 
 // Real values for the identifiers a handler checks before it reads the body.
@@ -110,7 +152,7 @@ const startVault = async () => {
   };
 };
 
-test('every tool parameter reaches the server, and the server accepts it by name', async t => {
+test('every tool parameter reaches the server, the server accepts it by name, and every route has a tool', async t => {
   const vault = await startVault();
   try {
     const pieces = await fetch(`${vault.url}/sections?file_prefix=topics/beta.md`, {
@@ -119,7 +161,9 @@ test('every tool parameter reaches the server, and the server accepts it by name
     real.set('path', 'topics/beta.md');
     real.set('record_id', (await pieces.json()).items[0].record_id);
     let wire = [];
+    const reached = [];
     const fetchImpl = (url, init = {}) => {
+      reached.push([init.method ?? 'GET', new URL(url).pathname]);
       wire.push(
         [
           init.method ?? 'GET',
@@ -152,7 +196,7 @@ test('every tool parameter reaches the server, and the server accepts it by name
       );
       const baseline = await call(tool, required);
       for (const key of keys) {
-        const {wire, error} = await call(tool, {...required, [key]: sample(key, shape[key])});
+        const {wire, error} = await call(tool, {...required, [key]: probe(key, shape[key])});
         const refused =
           error?.status === 400 && /unknown query parameter|\bwas removed\b/.test(error.error);
         t.notOk(refused, `${tool.name} ${key}: the server refuses it by name`);
@@ -161,6 +205,38 @@ test('every tool parameter reaches the server, and the server accepts it by name
         }
       }
     }
+
+    const routerDb = openDatabase({path: ':memory:'});
+    runMigrations(routerDb);
+    const routes = buildRouter({
+      db: routerDb,
+      env: {vaultDataPath: tmpdir(), uiStaticPath: '', embedder: 'fake'},
+      schemaVersion: 0,
+      embedder: new FakeEmbedder()
+    }).routes();
+    const compiled = routes.map(route => {
+      const [method, pattern] = route.split(' ');
+      const source = pattern.replace(/\{([^/{}]+)\}/g, (_, name) =>
+        name === 'path' ? '(.+)' : '([^/]+)'
+      );
+      return {route, method, regex: new RegExp(`^${source}$`)};
+    });
+    const hit = new Set();
+    for (const [method, pathname] of reached) {
+      const match = compiled.find(c => c.method === method && c.regex.test(pathname));
+      if (match) hit.add(match.route);
+    }
+    routerDb.close();
+    t.deepEqual(
+      routes.filter(route => !hit.has(route) && !UNEXPOSED.has(route)),
+      [],
+      'every server route is reached by a tool or named in UNEXPOSED'
+    );
+    for (const route of UNEXPOSED.keys())
+      t.ok(
+        routes.includes(route) && !hit.has(route),
+        `UNEXPOSED ${route} is a route no tool reaches`
+      );
 
     const res = await fetch(`${vault.url}/system/body-fields`, {
       headers: {Authorization: 'Bearer tok'}

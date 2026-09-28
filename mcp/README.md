@@ -83,10 +83,13 @@ The tools map to the REST surface, grouped by purpose:
   starts `/vault ingest`), `vault_cleanup_lint`, `vault_embed_pending`,
   `vault_incremental_reindex` (catch up after a `git pull` from another
   machine), `vault_run_scans` (all four suggestion-filing scans in one
-  pass)
+  pass), `vault_gc_tags` (delete taxonomy tags no record carries, except
+  `manual` ones; a dry run unless `dry_run: false`)
 - **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_records_by_tag`,
-  `vault_tag_update` (rewrite a description after minting), `vault_tag_add` /
-  `vault_tag_remove` (one tag on one record)
+  `vault_tag_create` (`origin: manual` for a tag made on purpose),
+  `vault_tag_update` (rewrite a description, or re-label `origin`),
+  `vault_tag_alias`, `vault_tag_delete` (strip a tag from every note, then
+  drop it), `vault_tag_add` / `vault_tag_remove` (one tag on one record)
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`,
   `vault_enrichment_delta` (the chunks added to a body since its `agent:` block
   was current, for a refresh that reads the change instead of the whole note)
