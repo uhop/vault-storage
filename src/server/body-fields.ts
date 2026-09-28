@@ -13,7 +13,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'PATCH /sections/{id}/fm': ['ops'],
   'POST /sections/{id}/tags': ['tag'],
   'PUT /sections/{id}': ['frontmatter', 'body'],
-  'POST /tags/taxonomy': ['tag', 'description'],
+  'POST /tags/taxonomy': ['tag', 'description', 'origin'],
   'PATCH /tags/taxonomy/{tag}': ['description'],
   'POST /tags/aliases': ['alias', 'canonical'],
   'POST /suggestions': ['kind', 'subject_id', 'payload', 'evidence'],

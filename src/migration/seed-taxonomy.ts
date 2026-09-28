@@ -7,7 +7,7 @@ import type {TagMap} from './tags.ts';
  */
 export const seedTagsTaxonomy = (db: DatabaseSync, tagMap: TagMap, isoDate: string): void => {
   const insertCanonical = db.prepare(
-    `INSERT OR IGNORE INTO tags_taxonomy (tag, description, added) VALUES (?, NULL, ?)`
+    `INSERT OR IGNORE INTO tags_taxonomy (tag, description, added, origin) VALUES (?, NULL, ?, 'seeded')`
   );
   const insertAlias = db.prepare(
     `INSERT OR IGNORE INTO tag_aliases (alias, canonical) VALUES (?, ?)`

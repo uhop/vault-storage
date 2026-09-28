@@ -69,6 +69,7 @@ export const listTagsHandler =
     const sql = `
       SELECT t.tag AS tag,
              t.description AS description,
+             t.origin AS origin,
              COALESCE(COUNT(tags.record_id), 0) AS record_count
         FROM tags_taxonomy t
         LEFT JOIN tags ON tags.tag = t.tag
@@ -81,6 +82,7 @@ export const listTagsHandler =
     const rows = deps.db.prepare(sql).all(...bindings, limit, offset) as unknown[] as {
       tag: string;
       description: string | null;
+      origin: string;
       record_count: number;
     }[];
     const total = (deps.db.prepare(countSql).get(...bindings) as {n: number}).n;
@@ -89,6 +91,7 @@ export const listTagsHandler =
       items: rows.map(r => ({
         tag: r.tag,
         description: r.description,
+        origin: r.origin,
         record_count: r.record_count
       })),
       offset,
@@ -120,9 +123,9 @@ export const tagInfoHandler =
     const canonical = aliasRow?.canonical ?? tag;
 
     const row = deps.db
-      .prepare('SELECT tag, description, added FROM tags_taxonomy WHERE tag = ?')
+      .prepare('SELECT tag, description, added, origin FROM tags_taxonomy WHERE tag = ?')
       .get(canonical) as
-      {tag: string; description: string | null; added: string | null} | undefined;
+      {tag: string; description: string | null; added: string | null; origin: string} | undefined;
     if (!row) {
       sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
       return;
@@ -142,6 +145,7 @@ export const tagInfoHandler =
       ...(canonical !== tag ? {requested: tag} : {}),
       description: row.description,
       added: row.added,
+      origin: row.origin,
       aliases,
       record_count: recordCount
     });
@@ -213,7 +217,10 @@ export const recordsByTagHandler =
 interface AddTaxonomyBody {
   tag?: string;
   description?: string;
+  origin?: unknown;
 }
+
+const ADDABLE_ORIGINS: ReadonlySet<unknown> = new Set(['manual', 'minted']);
 
 interface UpdateTaxonomyBody {
   description?: unknown;
@@ -275,8 +282,10 @@ const linkBackfillAndAutoAccept = (
 };
 
 /**
- * POST /tags/taxonomy {tag, description?}
- * Add a canonical tag to `tags_taxonomy`. Auto-links the new tag to records
+ * POST /tags/taxonomy {tag, description?, origin?}
+ * Add a canonical tag to `tags_taxonomy`. `origin` is `manual` for a tag
+ * created on purpose, which the empty-tag collection keeps, or `minted`, the
+ * default (D77). Auto-links the new tag to records
  * that had it rejected (via pending `new_tag` suggestions) and resolves
  * those suggestions as `accepted` with `resolved_by='taxonomy-add'`.
  *
@@ -314,6 +323,12 @@ export const addTaxonomyHandler =
       return;
     }
 
+    const origin = body.origin ?? 'minted';
+    if (!ADDABLE_ORIGINS.has(origin)) {
+      sendError(ctx.res, 400, 'bad_request', 'origin must be "manual" or "minted"');
+      return;
+    }
+
     const existing = deps.db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag) as
       {x: number} | undefined;
     if (existing) {
@@ -327,8 +342,8 @@ export const addTaxonomyHandler =
     deps.db.exec('BEGIN');
     try {
       deps.db
-        .prepare('INSERT INTO tags_taxonomy (tag, description, added) VALUES (?, ?, ?)')
-        .run(tag, body.description ?? null, now);
+        .prepare('INSERT INTO tags_taxonomy (tag, description, added, origin) VALUES (?, ?, ?, ?)')
+        .run(tag, body.description ?? null, now, origin as string);
       const {linked, accepted} = linkBackfillAndAutoAccept(
         deps.db,
         filer,
@@ -338,7 +353,13 @@ export const addTaxonomyHandler =
         now
       );
       deps.db.exec('COMMIT');
-      sendJson(ctx.res, 200, {tag, description: body.description ?? null, linked, accepted});
+      sendJson(ctx.res, 200, {
+        tag,
+        description: body.description ?? null,
+        origin,
+        linked,
+        accepted
+      });
     } catch (err) {
       deps.db.exec('ROLLBACK');
       sendError(

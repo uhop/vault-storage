@@ -1909,6 +1909,45 @@ test('POST /tags/taxonomy returns 400 on invalid tag shape', async t => {
   }
 });
 
+test('POST /tags/taxonomy records origin, minted by default, and the reads return it (D77)', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      const post = (body: Record<string, unknown>) =>
+        fetchAuthed(`${ctx.url}/tags/taxonomy`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+      const manual = await post({
+        tag: 'on-purpose',
+        description: 'Made by hand.',
+        origin: 'manual'
+      });
+      t.equal((manual.body as {origin: string}).origin, 'manual', 'manual accepted');
+      const minted = await post({tag: 'by-default'});
+      t.equal((minted.body as {origin: string}).origin, 'minted', 'minted by default');
+      const seeded = await post({tag: 'claims-seed', origin: 'seeded'});
+      t.equal(seeded.status, 400, 'seeded is the migration’s, not a caller’s');
+
+      const info = await fetchAuthed(`${ctx.url}/tags/on-purpose`);
+      t.equal((info.body as {origin: string}).origin, 'manual', 'GET /tags/{tag} carries origin');
+      const list = await fetchAuthed(`${ctx.url}/tags?contains=by-default`);
+      t.equal(
+        (list.body as {items: {origin: string}[]}).items[0]?.origin,
+        'minted',
+        'GET /tags carries origin'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── POST /tags/aliases ──────────────────────────────────────────────────────
 
 test('POST /tags/aliases adds alias, links pending suggestions to canonical', async t => {
