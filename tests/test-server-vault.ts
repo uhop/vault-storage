@@ -903,6 +903,42 @@ test('POST /vault/move-item stamps both documents from from_agent and to_agent (
   }
 });
 
+test('POST /vault/move-item within one document merges from_agent and to_agent (D74)', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEnriched(
+      root,
+      'projects/demo/queue.md',
+      '## Active\n\n- **Start it.** Body.\n\n## Backlog\n\n- **Later.** Body.'
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const res = await postJson(`${ctx.url}/vault/move-item`, {
+        from_path: 'projects/demo/queue.md',
+        to_path: 'projects/demo/queue.md',
+        title: 'Start it.',
+        to_section: '## Backlog',
+        from_agent: {summary: 'From summary.', key_concepts: ['from']},
+        to_agent: {summary: 'Demo queue: Backlog only.'}
+      });
+      t.equal(res.status, 200, 'same-document move with both patches succeeds');
+      const {data, body} = parseFrontmatter(
+        readFileSync(join(root, 'projects/demo/queue.md'), 'utf8')
+      );
+      const agent = data['agent'] as Record<string, unknown>;
+      t.equal(agent['summary'], 'Demo queue: Backlog only.', 'to_agent wins on a shared field');
+      t.deepEqual(agent['key_concepts'], ['from'], 'from_agent fields not in to_agent are kept');
+      t.equal(agent['derived_from_hash'], contentHash(body), 'stamped for the one written body');
+      t.ok(body.indexOf('Start it.') > body.indexOf('## Backlog'), 'item moved');
+      t.equal(pendingStale(ctx.db, 'projects/demo/queue.md'), 0, 'no pending stale suggestion');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('PUT /vault/{path} syncs tags from frontmatter', async t => {
   const {root, cleanup} = setupVault();
   try {
