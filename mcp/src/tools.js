@@ -349,7 +349,7 @@ export const registerTools = (mcp, client) => {
     'vault_append',
     {
       description:
-        'Append text to the end of a document body, server-side and atomically — no read-modify-write, so a concurrent writer cannot be clobbered. Frontmatter rides through untouched (`updated` is re-stamped). The document must already exist (404 otherwise); an atomized folder composed at `<stem>.md` is a 409 pointing at its pieces. Prefer this over vault_write_file whenever you are adding to a document rather than replacing it. Returns {path, etag}.' +
+        'Append text to the end of a document body, server-side and atomically — no read-modify-write, so a concurrent writer cannot be clobbered. Frontmatter rides through untouched (`updated` is re-stamped) except for the agent patch below. The document must already exist (404 otherwise); an atomized folder composed at `<stem>.md` is a 409 pointing at its pieces. Prefer this over vault_write_file whenever you are adding to a document rather than replacing it. Returns {path, etag}.' +
         AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
@@ -366,7 +366,7 @@ export const registerTools = (mcp, client) => {
     'vault_replace',
     {
       description:
-        'Replace a string in a document body, server-side and atomically. ASSERTED: an absent `from` is a 409 and an ambiguous one is a 409 carrying the occurrence count — never a silent no-op, which is what makes this safe to fire blind (the curly-vs-straight-apostrophe bug class). Pass all=true to replace every occurrence deliberately. Frontmatter rides through untouched. Prefer this over vault_write_file for targeted body edits. Returns {path, etag, replaced} — `replaced` is the occurrence count actually rewritten.' +
+        'Replace a string in a document body, server-side and atomically. ASSERTED: an absent `from` is a 409 and an ambiguous one is a 409 carrying the occurrence count — never a silent no-op, which is what makes this safe to fire blind (the curly-vs-straight-apostrophe bug class). Pass all=true to replace every occurrence deliberately. Frontmatter rides through untouched except for the agent patch below. Prefer this over vault_write_file for targeted body edits. Returns {path, etag, replaced} — `replaced` is the occurrence count actually rewritten.' +
         AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
@@ -409,7 +409,7 @@ export const registerTools = (mcp, client) => {
     'vault_replace_section',
     {
       description:
-        "Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss; occurrence picks one of several identical heading lines. Pass expected_hash, the hash vault_read_section returned, and a section that changed since is a 409 `section_changed` carrying details.current_hash instead of an overwrite. Frontmatter rides through untouched; composed folder views are refused. Returns {path, etag, heading, level, occurrence, hash}, hash being the new content's, for the next guarded replace." +
+        "Replace the content under one ATX heading, server-side and atomically, leaving every byte outside the section untouched. The heading is matched as a whole line, exactly once, with code fences masked (a `## ` inside a code sample is not a heading); the section runs to the next heading of the same or higher level, so a `### ` subsection under a `## ` heading is part of what gets replaced. ASSERTED like vault_replace: an absent or ambiguous heading is a 409 `section_assert_failed` with details.occurrences, never a silent no-op. The body is trimmed and written between blank lines, so the next heading never glues to it; an empty body empties the section and keeps the heading. Heading identity is by text, so a renamed heading is a loud miss; occurrence picks one of several identical heading lines. Pass expected_hash, the hash vault_read_section returned, and a section that changed since is a 409 `section_changed` carrying details.current_hash instead of an overwrite. Frontmatter rides through untouched except for the agent patch below; composed folder views are refused. Returns {path, etag, heading, level, occurrence, hash}, hash being the new content's, for the next guarded replace." +
         AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),

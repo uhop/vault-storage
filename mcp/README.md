@@ -155,7 +155,10 @@ Read-only resources the agent can fetch by URI:
 Server errors surface as MCP tool errors (`isError: true`) with a JSON
 payload `{error, code, status, details}`; the server's own body also carries
 the RFC 9457 Problem Details members (`type`, `title`, `status`, `detail`)
-beside them. Common codes:
+beside them. An argument a tool does not declare is refused before any
+request, as an invalid-arguments error naming the key and the accepted ones,
+so an adapter older than the server never drops a field silently. Common
+codes:
 
 - `auth_failed` — `VAULT_API_TOKEN` missing or wrong
 - `not_found` — record/file/tag/suggestion absent
@@ -197,6 +200,17 @@ beside them. Common codes:
 
 ## Release notes
 
+- 0.11.0 — enrichment kept current by the writer, and strict tool
+  arguments: `vault_append`, `vault_replace`, `vault_replace_section`,
+  `vault_remove_item`, and `vault_insert_item` take an optional `agent`
+  patch, and `vault_move_item` takes `from_agent` and `to_agent`, merged over
+  the stored `agent:` block and stamped current for the new body, so the
+  edit files no stale-enrichment suggestion (`agent: {}` says the summary
+  still holds). `vault_enrichment_delta` returns the chunks added to a body
+  since its `agent:` block was derived. A tool now refuses an argument it
+  does not declare, naming it, where it used to drop it silently. The new
+  parameters need vault-storage from 2026-09-27 (D74); an older server
+  answers them with a 400 for an unknown body field.
 - 0.10.0 — sorted and filtered tag listing: `vault_list_tags` takes `sort`
   (`count`, the default, most used first; `count_asc`; `tag_asc`, A to Z;
   `tag`, Z to A) and `contains`, a substring of the tag name, and each item

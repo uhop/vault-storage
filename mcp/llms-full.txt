@@ -281,7 +281,8 @@ System:
 ## Errors
 
 Server errors surface as MCP tool errors (isError: true) with a JSON payload
-{error, code, status, details}. Common codes: auth_failed, not_found,
+{error, code, status, details}. An argument a tool does not declare is refused before
+any request, naming the key and the accepted ones. Common codes: auth_failed, not_found,
 conflict, replace_assert_failed (details.occurrences), precondition_failed
 (details.current_etag), empty_body / null_body, network, bad_request,
 validation_failed, internal.

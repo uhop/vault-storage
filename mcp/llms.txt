@@ -27,7 +27,9 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   `vault_read_section`
   reads one heading's section the same way), whole-document writes (optional
   `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
-  `vault_move` / `vault_propose`), maintenance, tags, graph insight, the
+  `vault_move` / `vault_propose`), maintenance (incl. `vault_enrichment_delta`
+  — the chunks added since a note's `agent:` block was derived), tags,
+  graph insight, the
   suggestions review queue (claim / resolve batches), queue-item slices
   (`fields: "a,b"` / `"-a,-b"` to subset a row, `exclude: "body"` the older
   alias for `fields: "-body"`),
