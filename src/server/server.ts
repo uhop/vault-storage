@@ -64,7 +64,12 @@ import {commitHandler} from './handlers/commit.ts';
 import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
-import {healthHandler, releaseEmbedderHandler, systemStatusHandler} from './handlers/system.ts';
+import {
+  healthHandler,
+  releaseEmbedderHandler,
+  systemStatusHandler,
+  warmEmbedderHandler
+} from './handlers/system.ts';
 import {bodyFieldsHandler} from './handlers/body-fields.ts';
 import {
   BODY_FIELDS,
@@ -306,6 +311,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     embedPendingHandler({db: opts.db, embedder: opts.embedder})
   );
   router.post('/maintenance/release-embedder', releaseEmbedderHandler({embedder: opts.embedder}));
+  router.post('/maintenance/warm-embedder', warmEmbedderHandler({embedder: opts.embedder}));
   router.post('/maintenance/run-all', runAllScansHandler({db: opts.db}));
   router.get(
     '/maintenance/raw-inbox',

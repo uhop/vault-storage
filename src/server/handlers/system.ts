@@ -90,6 +90,44 @@ export const releaseEmbedderHandler =
     });
   };
 
+const warming = new WeakMap<Embedder, Promise<void>>();
+
+/**
+ * POST /maintenance/warm-embedder
+ *
+ * Start loading the embedding model in the background, so the first semantic
+ * search after an idle release does not wait for it (about 35 s on croc).
+ * Callers are the SessionStart hook and the UI's search box, before any
+ * query. Retention is unchanged: the model is released again after the idle
+ * window. Returns 200 `{retained: true, started: false}` when it is loaded,
+ * else 202 `{retained: false, started}`, `started` false when a load one of
+ * these calls began is still running.
+ */
+export const warmEmbedderHandler =
+  (deps: ReleaseEmbedderDeps): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
+    const {embedder} = deps;
+    if (embedder.retained) {
+      sendJson(ctx.res, 200, {retained: true, started: false});
+      return;
+    }
+    const started = !warming.has(embedder);
+    if (started) {
+      warming.set(
+        embedder,
+        embedder
+          .embedQuery('warm')
+          .then(
+            () => undefined,
+            () => undefined
+          )
+          .finally(() => warming.delete(embedder))
+      );
+    }
+    sendJson(ctx.res, 202, {retained: false, started});
+  };
+
 /**
  * GET /system/health — what the process knows about itself from memory
  * alone: uptime, the watchdog's lag, the last git-sync and reindex outcomes,

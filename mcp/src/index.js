@@ -30,6 +30,8 @@ const main = async () => {
 
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
+  // The first semantic search otherwise waits for the model to load (about 35 s after an idle release).
+  client.postJson('/maintenance/warm-embedder').catch(() => {});
 
   // The transport keeps the process alive while connected. Surface a clean
   // exit on transport close so npm/npx wrappers don't see a hanging process.

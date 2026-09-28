@@ -28,6 +28,7 @@ const UNEXPOSED = new Map([
   ['DELETE /maintenance/snapshot', 'deliberately not on MCP: database snapshots'],
   ['POST /maintenance/cleanup-tag-aliases', 'deliberately not on MCP'],
   ['POST /maintenance/release-embedder', 'deliberately not on MCP'],
+  ['POST /maintenance/warm-embedder', 'called by the adapter at startup, not by a tool'],
   ['GET /maintenance/folder-listing', 'deliberately not on MCP: the UI folder browser'],
   ['POST /maintenance/find-duplicates', 'deliberately not on MCP: vault_run_scans runs all four'],
   ['POST /maintenance/find-compaction-candidates', 'deliberately not on MCP: vault_run_scans'],

@@ -79,6 +79,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /maintenance/cleanup-tag-aliases': ['aliases'],
   'POST /maintenance/expire-logs': [],
   'POST /maintenance/gc-tags': [],
+  'POST /maintenance/warm-embedder': [],
   'POST /maintenance/embed-pending': [],
   'POST /maintenance/release-embedder': [],
   'POST /maintenance/run-all': [],

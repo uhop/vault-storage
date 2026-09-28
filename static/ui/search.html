@@ -241,6 +241,14 @@
         if (e.key === 'Enter') search();
       });
 
+      // The model loads on first use (about 35 s after an idle release): start it while the query is typed.
+      let warmed = false;
+      document.addEventListener('change', e => {
+        if (warmed || e.target.name !== 'mode' || e.target.value !== 'semantic') return;
+        warmed = true;
+        api('/maintenance/warm-embedder', {method: 'POST'}).catch(() => {});
+      });
+
       document.addEventListener('click', e => {
         const chip = e.target.closest('button.fmw-pill');
         if (chip) {
