@@ -1,5 +1,6 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
+import {bumpChunkVersion, chunkMatrix, DIM} from './chunk-matrix.ts';
 import {RecordSummaryVecRepository} from './summary-vec-repo.ts';
 
 export interface NearestHit {
@@ -51,6 +52,7 @@ const dot = (a: Float32Array, b: Float32Array): number => {
  * `records_after_delete` trigger backstops every other delete path.
  */
 export class RecordVecRepository {
+  readonly #db: DatabaseSync;
   readonly #insertMeta: StatementSync;
   readonly #insertVec: StatementSync;
   readonly #deleteVecsByRecord: StatementSync;
@@ -66,6 +68,7 @@ export class RecordVecRepository {
   readonly #summaries: RecordSummaryVecRepository;
 
   constructor(db: DatabaseSync) {
+    this.#db = db;
     this.#summaries = new RecordSummaryVecRepository(db);
     this.#insertMeta = db.prepare(
       `INSERT INTO chunks (chunk_id, record_id, chunk_index, content_hash, text_hash)
@@ -138,6 +141,7 @@ export class RecordVecRepository {
       this.#insertMeta.run(chunkId, recordId, i, contentHash, textHashes[i] ?? null);
       this.#insertVec.run(chunkId, toBlob(v));
     }
+    bumpChunkVersion(this.#db);
   }
 
   /** A record's stored vectors keyed by the hash of the chunk text they embed; chunks without a hash are left out. */
@@ -165,6 +169,7 @@ export class RecordVecRepository {
 
   deleteRecord(recordId: string): boolean {
     this.#deleteVecsByRecord.run(recordId);
+    bumpChunkVersion(this.#db);
     return this.#deleteMetaByRecord.run(recordId).changes > 0;
   }
 
@@ -335,19 +340,17 @@ export class RecordVecRepository {
    * Returns empty when the record has no chunks (not yet embedded).
    *
    * Query chunks are capped at `maxScans` (default 16), sampled evenly across
-   * the record with the first and last always kept. Each query chunk costs a
-   * full synchronous vec0 KNN scan, and everything here blocks the server's
-   * event loop — uncapped, a 200 KB running file (hundreds of chunks) took
-   * 17–40 s per call, serialized every other request behind it, and pushed
-   * queued sockets past Node's headersTimeout into ECONNRESET (the 2026-07-23
-   * enrich-sweep failure). Sampling trades a little recall on huge records'
-   * middle sections for a hard cost bound. The scans yield to the event loop
-   * between them, so a call blocks it for one scan, not sixteen (D75).
+   * the record with the first and last always kept: a 1,671-chunk running
+   * file scored with every chunk took 26 s. The query chunks are scored in one
+   * exact pass over every stored chunk vector (the cached matrix, D78),
+   * yielding to the event loop every `blockRows` rows. Sixteen sqlite-vec KNN
+   * scans did this before, one per query chunk, each with a top-`k` window a
+   * few large records could fill, so a small record lost real neighbours.
    */
   async nearestToRecord(
     recordId: string,
     k: number,
-    opts: {chunkK?: number; maxScans?: number} = {}
+    opts: {maxScans?: number; blockRows?: number} = {}
   ): Promise<NearestHit[]> {
     const allChunks = this.getChunks(recordId);
     if (allChunks.length === 0) return [];
@@ -365,30 +368,41 @@ export class RecordVecRepository {
         chunks.push(allChunks[index]!);
       }
     }
+    const m = chunks.length;
+    const queries = new Float32Array(m * DIM);
+    chunks.forEach((v, i) => queries.set(v, i * DIM));
 
-    const best = new Map<string, {distance: number; chunkIndex: number}>();
-    // Over-fetch by the record's own chunk count: the KNN's top rows can be
-    // entirely the record's own chunks (a repetitive running file), and the
-    // self-skip below would then starve real neighbours out of the window.
-    const chunkK = (opts.chunkK ?? Math.max(k * 5, 20)) + allChunks.length;
-    for (let i = 0; i < chunks.length; ++i) {
-      if (i > 0) await nextTurn();
-      const rows = this.#nearestChunks.all(toBlob(chunks[i]!), chunkK) as unknown[] as {
-        record_id: string;
-        chunk_index: number;
-        distance: number;
-      }[];
-      for (const r of rows) {
-        if (r.record_id === recordId) continue;
-        const cur = best.get(r.record_id);
-        if (cur === undefined || r.distance < cur.distance) {
-          best.set(r.record_id, {distance: r.distance, chunkIndex: r.chunk_index});
+    const matrix = await chunkMatrix(this.#db);
+    const {n, data, owner, chunkIndex, ids} = matrix;
+    const self = matrix.idOf.get(recordId) ?? -1;
+    const best = new Float64Array(ids.length).fill(Infinity);
+    const bestRow = new Int32Array(ids.length).fill(-1);
+    const blockRows = opts.blockRows ?? 2048;
+    for (let row = 0; row < n; ++row) {
+      if (row > 0 && row % blockRows === 0) await nextTurn();
+      const o = owner[row]!;
+      if (o === self) continue;
+      const base = row * DIM;
+      for (let q = 0; q < m; ++q) {
+        const qb = q * DIM;
+        let sum = 0;
+        for (let d = 0; d < DIM; ++d) {
+          const diff = queries[qb + d]! - data[base + d]!;
+          sum += diff * diff;
+        }
+        if (sum < best[o]!) {
+          best[o] = sum;
+          bestRow[o] = row;
         }
       }
     }
-    return [...best.entries()]
-      .map(([rid, b]) => ({recordId: rid, distance: b.distance, chunkIndex: b.chunkIndex}))
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, k);
+
+    const hits: NearestHit[] = [];
+    for (let o = 0; o < ids.length; ++o) {
+      const row = bestRow[o]!;
+      if (row >= 0)
+        hits.push({recordId: ids[o]!, distance: Math.sqrt(best[o]!), chunkIndex: chunkIndex[row]!});
+    }
+    return hits.sort((a, b) => a.distance - b.distance).slice(0, k);
   }
 }

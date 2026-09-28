@@ -338,16 +338,61 @@ test('nearestToRecord caps query-chunk scans, keeping first and last chunks', as
       t.deepEqual(capped, uncapped, 'identical results under the cap');
     });
 
-    await t.test('the loop gets a turn between scans (D75)', async t => {
+    await t.test('the loop gets a turn between row blocks (D75, D78)', async t => {
+      await fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8});
       let turns = 0;
       const tick = (): void => {
         ++turns;
         if (turns < 100) setImmediate(tick);
       };
       setImmediate(tick);
-      await fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8});
-      t.ok(turns >= 7, `other callbacks ran during the call (${turns} turns)`);
+      await fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8, blockRows: 8});
+      t.ok(turns >= 7, `other callbacks ran during the call (${turns} turns over 57 rows)`);
     });
+  } finally {
+    fx.db.close();
+  }
+});
+
+test('nearestToRecord is exact over every chunk, and sees vector writes (D78)', async t => {
+  const fx = setup();
+  try {
+    const target = await fx.embedder.embed('target');
+    const other = await fx.embedder.embed('something else entirely');
+    const add = (path: string, chunks: Float32Array[]): string => {
+      const id = uuidv7();
+      fx.records.insert(makeRecord(id, path));
+      fx.vecs.setChunks(id, `hash-${path}`, chunks);
+      return id;
+    };
+    const small = add('topics/small.md', [target]);
+    const big = add(
+      'topics/big.md',
+      Array.from({length: 100}, () => target)
+    );
+    const near = add('topics/near.md', [other]);
+
+    const first = await fx.vecs.nearestToRecord(small, 4);
+    t.deepEqual(
+      first.map(h => h.recordId),
+      [big, near],
+      'a neighbour behind a large record’s hundred identical chunks is still found'
+    );
+    t.equal(first[0]?.chunkIndex, 0, 'the best chunk’s index is reported');
+
+    const late = add('topics/late.md', [target]);
+    const second = await fx.vecs.nearestToRecord(small, 4);
+    t.ok(
+      second.some(h => h.recordId === late),
+      'a record embedded after the matrix was built is found'
+    );
+
+    fx.records.delete(big);
+    const third = await fx.vecs.nearestToRecord(small, 4);
+    t.notOk(
+      third.some(h => h.recordId === big),
+      'a record deleted by the schema trigger is gone'
+    );
   } finally {
     fx.db.close();
   }

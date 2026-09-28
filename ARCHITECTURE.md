@@ -11,7 +11,7 @@ markdown tree (source of truth)
   → embedPending        → record_vec / record_doc_vec / record_summary_vec
 ```
 
-Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and FTS5. Writes-in (`PUT /vault/{path}`, `PUT /sections/{id}`) land on disk first, then re-import inline. Background loops keep everything converged: the watcher (disk → DB), git-sync (tree → commits), the scan scheduler (periodic maintenance → suggestions), and incremental reindex (post-`git pull`). The MCP adapter and the static UI are pure REST clients.
+Reads go through REST handlers over the repositories plus `sqlite-vec` KNN, an in-memory chunk matrix for record-to-record similarity, and FTS5. Writes-in (`PUT /vault/{path}`, `PUT /sections/{id}`) land on disk first, then re-import inline. Background loops keep everything converged: the watcher (disk → DB), git-sync (tree → commits), the scan scheduler (periodic maintenance → suggestions), and incremental reindex (post-`git pull`). The MCP adapter and the static UI are pure REST clients.
 
 ## Entry points
 
@@ -44,7 +44,7 @@ Reads go through REST handlers over the repositories plus `sqlite-vec` KNN and F
 - **`embed-pass.ts`** — `embedPending`: embeds the records whose chunks or summary vector carry a stale content hash, most recently modified first; reuses the stored vector of every chunk whose text hash (schema 0023) is unchanged and embeds the `agent.summary` on its own (D45), so an edit sends only its changed chunks to the model and a summary refresh sends one text; batch-embeds outside the transaction, writes per batch. `maxEmbeds` makes a call one round (`EMBED_ROUND` for the server's callers); `embedAllPending` loops rounds, each queued anew, so another pass runs between them. A record with a non-finite vector keeps its finite ones under an empty content hash, so lint reports it as drift, and is retried after a per-process backoff that doubles from a minute to an hour (D48). In-process, as in the CLI, each model call blocks the loop: onnxruntime-node wraps a synchronous `session.run` in `setImmediate`.
 - **`anomaly-log.ts`** — append-only JSONL log of non-finite-vector events.
 
-Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors; `nearest` ranks records by `recordSimilarity`, the better of the best chunk and the summary vector, exact through widening candidate lists; `nearestToRecord` by best chunk alone), **`src/db/summary-vec-repo.ts`** (one `agent.summary` vector per record, schema 0024), and **`src/db/doc-vec-repo.ts`** (one mean-pooled chunk vector per record; drives duplicate detection).
+Vector storage: **`src/db/vec-repo.ts`** (per-chunk vectors; `nearest` ranks records by `recordSimilarity`, the better of the best chunk and the summary vector, exact through widening candidate lists; `nearestToRecord` by best chunk alone, one exact pass over **`src/db/chunk-matrix.ts`**, every chunk vector in one `Float32Array`, cached per database and rebuilt after a vector write, D78), **`src/db/summary-vec-repo.ts`** (one `agent.summary` vector per record, schema 0024), and **`src/db/doc-vec-repo.ts`** (one mean-pooled chunk vector per record; drives duplicate detection).
 
 ## DB layer (`src/db/`)
 
