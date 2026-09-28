@@ -10,7 +10,7 @@ import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {clientFromEnv} from './client.js';
 import {registerResources} from './resources.js';
-import {registerTools} from './tools.js';
+import {registerTools, strictInputs} from './tools.js';
 
 // Read name/version from package.json — a hardcoded copy drifted once
 // (handshake said 0.0.2 while the published package was 0.0.4).
@@ -25,7 +25,7 @@ const main = async () => {
     {capabilities: {tools: {}, resources: {}}}
   );
 
-  registerTools(mcp, client);
+  registerTools(strictInputs(mcp), client);
   registerResources(mcp, client);
 
   const transport = new StdioServerTransport();

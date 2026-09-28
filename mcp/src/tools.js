@@ -103,6 +103,27 @@ const wrap = handler => async args => {
 
 const csv = arr => (arr && arr.length > 0 ? arr.join(',') : undefined);
 
+// An undeclared argument is refused by name, never dropped: dropping is how an
+// adapter older than its server loses a field without a word.
+export const strictInputs = mcp => ({
+  registerTool: (name, config, handler) =>
+    mcp.registerTool(
+      name,
+      config.inputSchema
+        ? {
+            ...config,
+            inputSchema: z.strictObject(config.inputSchema, {
+              error: issue =>
+                issue.code === 'unrecognized_keys'
+                  ? `unknown argument(s): ${issue.keys.join(', ')}; accepted: ${Object.keys(config.inputSchema).join(', ') || 'none'}`
+                  : undefined
+            })
+          }
+        : config,
+      handler
+    )
+});
+
 export const registerTools = (mcp, client) => {
   // ── search ────────────────────────────────────────────────────────────────
   mcp.registerTool(
