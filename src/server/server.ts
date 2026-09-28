@@ -22,6 +22,7 @@ import {
   cleanupTagAliasesHandler,
   embedPendingHandler,
   expireLogsHandler,
+  gcTagsHandler,
   findCompactionCandidatesHandler,
   findDuplicatesHandler,
   findRetentionCandidatesHandler,
@@ -289,6 +290,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/maintenance/find-upgrade-signals', findUpgradeSignalsHandler({db: opts.db}));
   router.post('/maintenance/cleanup-lint', cleanupLintHandler({db: opts.db}));
   router.post('/maintenance/cleanup-tag-aliases', cleanupTagAliasesHandler({db: opts.db}));
+  router.post('/maintenance/gc-tags', gcTagsHandler({db: opts.db}));
   router.post(
     '/maintenance/expire-logs',
     expireLogsHandler({

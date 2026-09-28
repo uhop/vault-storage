@@ -4,6 +4,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {cleanupLint} from '../../maintenance/cleanup-lint.ts';
 import {cleanupTagAliases} from '../../maintenance/cleanup-tag-aliases.ts';
 import {DEFAULT_LOG_RETENTION_DAYS, expireLogs} from '../../maintenance/expire-logs.ts';
+import {DEFAULT_TAG_GRACE_DAYS, gcTags} from '../../maintenance/gc-tags.ts';
 import {findCompactionCandidates} from '../../maintenance/find-compaction-candidates.ts';
 import {findDuplicates} from '../../maintenance/find-duplicates.ts';
 import {findRetentionCandidates} from '../../maintenance/find-retention-candidates.ts';
@@ -319,6 +320,34 @@ export const expireLogsHandler =
     const summary = expireLogs(deps.db, deps.vaultDataPath, {days, dryRun, limit});
     if (summary.deleted > 0) deps.resolverCache.invalidate();
     sendJson(ctx.res, 200, summary);
+  };
+
+/**
+ * POST /maintenance/gc-tags?dry_run=&grace_days=
+ *
+ * Delete the taxonomy tags no record carries, except `manual` ones and those
+ * added within the grace window (default 1 day), with their aliases and the
+ * pending `tag_suggestion` rows proposing them (D77). `dry_run=1` returns the
+ * same summary and touches nothing. Returns `{dryRun, graceDays, tags, young,
+ * manual, deleted, suggestionsRejected, durationMs}`; `tags` names every tag
+ * the pass deleted or would delete, so the response is the audit trail.
+ */
+export const gcTagsHandler =
+  (deps: {db: DatabaseSync}): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['dry_run', 'grace_days']))) return;
+    const graceDays = parsePositiveInt(ctx.query['grace_days'], DEFAULT_TAG_GRACE_DAYS);
+    if (graceDays === null) {
+      sendError(ctx.res, 400, 'bad_request', 'grace_days must be a positive integer');
+      return;
+    }
+    const dryRawValue = ctx.query['dry_run'];
+    if (dryRawValue !== undefined && !['0', '1', 'true', 'false'].includes(dryRawValue)) {
+      sendError(ctx.res, 400, 'bad_request', 'dry_run must be one of 0, 1, true, false');
+      return;
+    }
+    const dryRun = dryRawValue === '1' || dryRawValue === 'true';
+    sendJson(ctx.res, 200, gcTags(deps.db, {dryRun, graceDays}));
   };
 
 interface CleanupTagAliasesBody {
