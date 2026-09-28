@@ -128,10 +128,14 @@ export const readServerEnv = (): ServerEnv => {
   }
   const embedder = embedderRaw;
 
-  const retentionRaw = process.env['VAULT_EMBEDDER_RETENTION_MS'] ?? '1800000';
+  // 0 keeps the model loaded once used (D81); a positive value releases it after that much idle time.
+  const retentionRaw = process.env['VAULT_EMBEDDER_RETENTION_MS'] ?? '0';
   const embedderRetentionMs = Number.parseInt(retentionRaw, 10);
-  if (!Number.isFinite(embedderRetentionMs) || embedderRetentionMs < 1000) {
-    throw new Error(`VAULT_EMBEDDER_RETENTION_MS must be ≥ 1000 (got ${retentionRaw})`);
+  if (
+    !Number.isFinite(embedderRetentionMs) ||
+    (embedderRetentionMs !== 0 && embedderRetentionMs < 1000)
+  ) {
+    throw new Error(`VAULT_EMBEDDER_RETENTION_MS must be 0 or ≥ 1000 (got ${retentionRaw})`);
   }
 
   const maxBatchRaw = process.env['VAULT_EMBEDDER_MAX_BATCH'] ?? '8';

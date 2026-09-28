@@ -60,6 +60,8 @@ const DEFAULT_MAX_BATCH = 8;
  * it on exit. After the last release the pipeline stays loaded for
  * `retentionMs`; if no new call arrives in that window the ONNX sessions
  * are disposed. A new call after release transparently reloads the model.
+ * `retentionMs: 0` keeps the model once loaded: the first call pins it, and
+ * only `releaseRetained()` lets it go (D81, the server's default).
  * Measured 2026-09-28 (D80): 335 MB with the model loaded, 487 MB after 64
  * 512-token chunks at `maxBatch` 8 (909 MB at 32), and 317 MB after the
  * release, since freed pages mostly stay with the process.
@@ -81,6 +83,7 @@ export class BgeEmbedder implements Embedder {
   readonly anomalyLogger: AnomalyLogger | null;
   readonly retentionMs: number;
   #retainer: Retainer<FeatureExtractionPipeline>;
+  #pinned = false;
 
   constructor(
     opts: {
@@ -123,6 +126,16 @@ export class BgeEmbedder implements Embedder {
     return this.#retainer.value !== null;
   }
 
+  // An extra reference that is never released keeps the retention timer from starting.
+  async #acquire(): Promise<FeatureExtractionPipeline> {
+    const pipe = await this.#retainer.get();
+    if (this.retentionMs === 0 && !this.#pinned) {
+      this.#pinned = true;
+      await this.#retainer.get();
+    }
+    return pipe;
+  }
+
   #cap(text: string): string {
     return text.length > this.maxChars ? text.slice(0, this.maxChars) : text;
   }
@@ -132,7 +145,7 @@ export class BgeEmbedder implements Embedder {
   }
 
   async embed(text: string): Promise<Float32Array> {
-    const pipe = await this.#retainer.get();
+    const pipe = await this.#acquire();
     try {
       const out = await pipe(this.#cap(text), {pooling: this.pooling, normalize: true});
       return (out.data as Float32Array).slice();
@@ -143,7 +156,7 @@ export class BgeEmbedder implements Embedder {
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
-    const pipe = await this.#retainer.get();
+    const pipe = await this.#acquire();
     const result: Float32Array[] = [];
     try {
       // Sub-batch large inputs so a single 100+-chunk re-embed doesn't
@@ -184,6 +197,11 @@ export class BgeEmbedder implements Embedder {
     // Nothing loaded → nothing to release. Skip the get()+release(true) cycle
     // so we don't allocate-and-destroy.
     if (this.#retainer.value === null) return;
+    if (this.#pinned) {
+      this.#pinned = false;
+      await this.#retainer.release(true);
+      return;
+    }
     // get() cancels any pending retention timer and bumps counter to 1;
     // release(true) drops it back to 0 and destroys synchronously. If
     // another caller is mid-inference, counter stays > 0 after release and

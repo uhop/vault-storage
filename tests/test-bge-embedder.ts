@@ -106,4 +106,24 @@ test('BgeEmbedder (real model)', async t => {
     t.ok(embedder.retained, 'retained=true again after reload');
     await embedder.releaseRetained();
   });
+
+  await t.test('retentionMs 0 keeps the model loaded until releaseRetained (D81)', async t => {
+    const idle = () => new Promise(resolve => setTimeout(resolve, 50));
+    const resident = new BgeEmbedder({retentionMs: 0});
+    await resident.embed('pin me');
+    await resident.embedBatch(['and', 'keep']);
+    await idle();
+    t.ok(resident.retained, 'still loaded after the calls finish and time passes');
+    await resident.releaseRetained();
+    t.notOk(resident.retained, 'a forced release still lets it go');
+    await resident.embed('again');
+    await idle();
+    t.ok(resident.retained, 'the next call loads and pins it again');
+    await resident.releaseRetained();
+
+    const released = new BgeEmbedder({retentionMs: 1});
+    await released.embed('let me go');
+    await idle();
+    t.notOk(released.retained, 'a positive window still releases');
+  });
 });

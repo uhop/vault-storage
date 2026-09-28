@@ -24,7 +24,7 @@ const makeEmbedder = async (): Promise<Embedder> => {
     return new BgeEmbedder({
       ...(config.modelName ? {modelName: config.modelName} : {}),
       ...(config.maxBatch ? {maxBatch: config.maxBatch} : {}),
-      ...(config.retentionMs ? {retentionMs: config.retentionMs} : {}),
+      ...(config.retentionMs !== undefined ? {retentionMs: config.retentionMs} : {}),
       anomalyLogger: config.anomalyLogPath ? new JsonlAnomalyLogger(config.anomalyLogPath) : null,
       onRetainedChange: value => post({op: 'retained', value})
     });
