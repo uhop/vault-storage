@@ -18,7 +18,7 @@ interface SimilarDeps {
  */
 export const similarHandler =
   (deps: SimilarDeps): Handler =>
-  ctx => {
+  async ctx => {
     if (!rejectUnknownParams(ctx, new Set(['k']))) return;
     const id = ctx.params['id'];
     if (!id) {
@@ -45,7 +45,7 @@ export const similarHandler =
     if (k > 100) k = 100;
 
     const vec = new RecordVecRepository(deps.db);
-    const hits = vec.nearestToRecord(id, k);
+    const hits = await vec.nearestToRecord(id, k);
 
     const items = hits
       .map(h => {

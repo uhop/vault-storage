@@ -1,4 +1,5 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
+import {setImmediate as nextTurn} from 'node:timers/promises';
 import {RecordSummaryVecRepository} from './summary-vec-repo.ts';
 
 export interface NearestHit {
@@ -340,13 +341,14 @@ export class RecordVecRepository {
    * 17–40 s per call, serialized every other request behind it, and pushed
    * queued sockets past Node's headersTimeout into ECONNRESET (the 2026-07-23
    * enrich-sweep failure). Sampling trades a little recall on huge records'
-   * middle sections for a hard cost bound.
+   * middle sections for a hard cost bound. The scans yield to the event loop
+   * between them, so a call blocks it for one scan, not sixteen (D75).
    */
-  nearestToRecord(
+  async nearestToRecord(
     recordId: string,
     k: number,
     opts: {chunkK?: number; maxScans?: number} = {}
-  ): NearestHit[] {
+  ): Promise<NearestHit[]> {
     const allChunks = this.getChunks(recordId);
     if (allChunks.length === 0) return [];
 
@@ -369,8 +371,9 @@ export class RecordVecRepository {
     // entirely the record's own chunks (a repetitive running file), and the
     // self-skip below would then starve real neighbours out of the window.
     const chunkK = (opts.chunkK ?? Math.max(k * 5, 20)) + allChunks.length;
-    for (const vec of chunks) {
-      const rows = this.#nearestChunks.all(toBlob(vec), chunkK) as unknown[] as {
+    for (let i = 0; i < chunks.length; ++i) {
+      if (i > 0) await nextTurn();
+      const rows = this.#nearestChunks.all(toBlob(chunks[i]!), chunkK) as unknown[] as {
         record_id: string;
         chunk_index: number;
         distance: number;

@@ -310,8 +310,8 @@ test('nearestToRecord caps query-chunk scans, keeping first and last chunks', as
     chunks.push(await fx.embedder.embed('tail'));
     fx.vecs.setChunks(bigId, 'hash-big', chunks);
 
-    await t.test('capped run still surfaces first- and last-chunk matches', t => {
-      const hits = fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8});
+    await t.test('capped run still surfaces first- and last-chunk matches', async t => {
+      const hits = await fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8});
       const byId = new Map(hits.map(h => [h.recordId, h.distance]));
       t.ok((byId.get(neighbourIds.get('head')!) ?? 1) < 1e-3, 'head neighbour found');
       t.ok((byId.get(neighbourIds.get('tail')!) ?? 1) < 1e-3, 'tail neighbour found');
@@ -319,8 +319,8 @@ test('nearestToRecord caps query-chunk scans, keeping first and last chunks', as
       t.notOk(byId.has(bigId), 'source record excluded');
     });
 
-    await t.test('maxScans=1 degrades to the first chunk only', t => {
-      const hits = fx.vecs.nearestToRecord(bigId, 4, {maxScans: 1});
+    await t.test('maxScans=1 degrades to the first chunk only', async t => {
+      const hits = await fx.vecs.nearestToRecord(bigId, 4, {maxScans: 1});
       const byId = new Map(hits.map(h => [h.recordId, h.distance]));
       t.ok((byId.get(neighbourIds.get('head')!) ?? 1) < 1e-3, 'head neighbour found');
       t.ok(
@@ -329,13 +329,24 @@ test('nearestToRecord caps query-chunk scans, keeping first and last chunks', as
       );
     });
 
-    await t.test('records at or under the cap are unaffected', t => {
+    await t.test('records at or under the cap are unaffected', async t => {
       const smallId = uuidv7();
       fx.records.insert(makeRecord(smallId, 'topics/small.md', 'small'));
       fx.vecs.setChunks(smallId, 'hash-small', chunks.slice(0, 3));
-      const capped = fx.vecs.nearestToRecord(smallId, 4, {maxScans: 16});
-      const uncapped = fx.vecs.nearestToRecord(smallId, 4, {maxScans: 1000});
+      const capped = await fx.vecs.nearestToRecord(smallId, 4, {maxScans: 16});
+      const uncapped = await fx.vecs.nearestToRecord(smallId, 4, {maxScans: 1000});
       t.deepEqual(capped, uncapped, 'identical results under the cap');
+    });
+
+    await t.test('the loop gets a turn between scans (D75)', async t => {
+      let turns = 0;
+      const tick = (): void => {
+        ++turns;
+        if (turns < 100) setImmediate(tick);
+      };
+      setImmediate(tick);
+      await fx.vecs.nearestToRecord(bigId, 4, {maxScans: 8});
+      t.ok(turns >= 7, `other callbacks ran during the call (${turns} turns)`);
     });
   } finally {
     fx.db.close();

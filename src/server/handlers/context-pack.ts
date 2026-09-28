@@ -144,8 +144,7 @@ export const contextPackHandler =
       records.bumpLastReferenced(recordId);
       anchor = summaryEntry(root);
       graphRoot = root;
-      ranked = vecRepo
-        .nearestToRecord(recordId, k)
+      ranked = (await vecRepo.nearestToRecord(recordId, k))
         .map((h): Candidate | null => {
           const record = records.getById(h.recordId);
           if (!record) return null;
