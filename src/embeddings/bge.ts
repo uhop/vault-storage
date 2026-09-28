@@ -59,8 +59,10 @@ const DEFAULT_MAX_BATCH = 8;
  * embed calls — `embed()`/`embedBatch()` bump a refcount on entry and drop
  * it on exit. After the last release the pipeline stays loaded for
  * `retentionMs`; if no new call arrives in that window the ONNX sessions
- * are disposed and the ~6 GB inference arena is returned to the OS. A new
- * call after release transparently reloads the model.
+ * are disposed. A new call after release transparently reloads the model.
+ * Measured 2026-09-28 (D80): 335 MB with the model loaded, 487 MB after 64
+ * 512-token chunks at `maxBatch` 8 (909 MB at 32), and 317 MB after the
+ * release, since freed pages mostly stay with the process.
  *
  * **NaN-on-output**: transformers.js+BGE emits a non-finite chunk vector on
  * rare inputs (~0.035% empirically — caught 2026-05-03; same workaround
