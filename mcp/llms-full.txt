@@ -181,6 +181,10 @@ Tags:
 
 Graph insight:
 
+- vault_project_trackers — where a project's work is tracked and which tracker is
+  primary, from the trackers: list in its queue.md frontmatter ({kind, ref, role,
+  create, write, url}); the vault when none is declared. Read it before filing
+  new work.
 - vault_neighborhood — BFS layers + typed edges around a record (depth ≤ 5); the root record rides along as `root`; `fields` and `edge_fields` keep only the named record and edge fields, the ids always.
 - vault_similar — embedding nearest neighbours; distance and score run in
   opposite directions (score = 1 - distance/2).

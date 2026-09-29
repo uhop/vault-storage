@@ -99,6 +99,9 @@ The tools map to the REST surface, grouped by purpose:
   `vault_tag_update` (rewrite a description, or re-label `origin`),
   `vault_tag_alias`, `vault_tag_delete` (strip a tag from every note, then
   drop it), `vault_tag_add` / `vault_tag_remove` (one tag on one record)
+- **Trackers** — `vault_project_trackers` (where a project's work is tracked and
+  which tracker is primary, from its queue's `trackers:` frontmatter; the vault
+  when none is declared)
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`,
   `vault_enrichment_delta` (the chunks added to a body since its `agent:` block
   was current, for a refresh that reads the change instead of the whole note)

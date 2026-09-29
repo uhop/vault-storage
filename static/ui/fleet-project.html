@@ -19,7 +19,8 @@
         if (!token || !project) return;
         const urls = [
           '/vault/projects/agent-workflow/fleet-status.md',
-          `/vault/projects/${encodeURIComponent(project)}/state.md`
+          `/vault/projects/${encodeURIComponent(project)}/state.md`,
+          `/projects/${encodeURIComponent(project)}/trackers`
         ];
         const early = (window.__early ??= new Map());
         for (const url of urls) {
@@ -66,6 +67,13 @@
       section ul {
         margin: 0.15rem 0 0.4rem;
         padding-left: 1.2rem;
+      }
+      .trackers {
+        margin: 0;
+        padding: 0 0 0 1.2rem;
+      }
+      .trackers li {
+        margin: 0.2rem 0;
       }
       .links {
         margin-top: 0.5rem;
@@ -134,7 +142,7 @@
     <div class="footer" id="footer"></div>
 
     <script type="module">
-      import {api, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {
         DIGEST_PATH,
         stateDocPath,
@@ -181,6 +189,7 @@
       const project = new URLSearchParams(location.search).get('project') ?? '';
 
       let runs = [],
+        trackers = null,
         baseline = null,
         packages = null;
 
@@ -328,6 +337,35 @@
         return `<section class="fmw-card">${head}${links.length ? `<div class="links">${links.join(' · ')}</div>` : ''}${n ? renderNpm(p) : ''}${renderFleet(p)}</section>`;
       };
 
+      // The project's tracker declaration (D95): where its work is tracked and which
+      // tracker is primary, from queue.md's `trackers:`; absent, the vault.
+      const renderTrackers = () => {
+        if (!trackers) return '';
+        const name = t => (t.kind === 'vault' ? 'the vault queue' : `${t.kind} ${t.ref}`);
+        const link = t =>
+          t.url
+            ? ext(t.url, name(t))
+            : t.kind === 'vault'
+              ? `<a href="${queueHref(project)}">${esc(name(t))}</a>`
+              : esc(name(t));
+        const rows = trackers.trackers
+          .map(
+            t =>
+              `<li>${link(t)} <span class="fmw-pill">${esc(t.role)}</span>` +
+              (t.create === 'here' ? ' · new work filed here' : '') +
+              (t.write.length ? ` · writes back ${esc(t.write.join(', '))}` : '') +
+              '</li>'
+          )
+          .join('');
+        const problems = trackers.problems.length
+          ? `<div class="fmw-notice">${trackers.problems.map(esc).join('<br>')}</div>`
+          : '';
+        const note = trackers.declared
+          ? ''
+          : '<div class="empty">No <code>trackers:</code> in the queue\'s frontmatter, so the vault queue is primary.</div>';
+        return `<section id="trackers" class="fmw-card"><h3>Trackers</h3><ul class="trackers">${rows}</ul>${note}${problems}</section>`;
+      };
+
       const render = () => {
         renderedWidth = chartWidth();
         const repo = baseline?.repo ?? packages?.packages?.find(p => p.repo)?.repo ?? null;
@@ -356,11 +394,12 @@
         const list = [...(packages?.packages ?? [])].sort(
           (a, b) => Number(Boolean(b.npm)) - Number(Boolean(a.npm)) || a.name.localeCompare(b.name)
         );
-        $('#content').innerHTML = `${renderGithub()}${list.map(renderPackage).join('')}${
-          packages
-            ? ''
-            : '<section class="fmw-card"><h3>Packages</h3><div class="empty">No stored packages for this project.</div></section>'
-        }`;
+        $('#content').innerHTML =
+          `${renderTrackers()}${renderGithub()}${list.map(renderPackage).join('')}${
+            packages
+              ? ''
+              : '<section class="fmw-card"><h3>Packages</h3><div class="empty">No stored packages for this project.</div></section>'
+          }`;
       };
 
       const scrollToHash = () => {
@@ -394,10 +433,12 @@
               throw e;
             });
         try {
-          const [digest, state] = await Promise.all([
+          const [digest, state, trackersView] = await Promise.all([
             text(DIGEST_PATH),
-            text(stateDocPath(encodeURIComponent(project)))
+            text(stateDocPath(encodeURIComponent(project))),
+            apiJson(`/projects/${encodeURIComponent(project)}/trackers`).catch(() => null)
           ]);
+          trackers = trackersView;
           runs = parseRuns(digest);
           baseline = parseBaseline(state);
           packages = parsePackages(state);

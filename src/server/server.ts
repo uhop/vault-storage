@@ -63,6 +63,7 @@ import {
 import {commitHandler} from './handlers/commit.ts';
 import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
+import {projectTrackersHandler} from './handlers/trackers.ts';
 import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
 import {
   healthHandler,
@@ -211,6 +212,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/sections/{id}/enrichment-delta', enrichmentDeltaHandler({db: opts.db, records}));
   router.get('/sections/{id}/backlinks', backlinksHandler({db: opts.db, records, edges}));
   router.get('/sections/{id}/meta', getRecordMetaHandler({records}));
+  router.get(
+    '/projects/{name}/trackers',
+    projectTrackersHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
   const recordFmDeps = {db: opts.db, vaultDataPath: opts.env.vaultDataPath, records};
   router.get('/sections/{id}/fm', getRecordFmHandler(recordFmDeps));
   router.patch('/sections/{id}/fm', patchRecordFmHandler(recordFmDeps));

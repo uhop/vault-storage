@@ -11,6 +11,7 @@ import {computeLintReport, queueHygieneFindings, type LintReport} from './lint.t
 import {rejectUnknownParams} from '../query.ts';
 import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
+import {projectTrackers, trackerLine} from '../trackers.ts';
 import type {Handler} from '../router.ts';
 
 interface ResumeBundleDeps {
@@ -160,8 +161,15 @@ export const resumeBriefHandler =
                    OR (status = 'claimed' AND claim_expires < ?))`
         )
         .get(project, new Date().toISOString()) as {n: number};
+      const trackers = projectTrackers(deps.vaultDataPath, project);
       projectBlock = {
         name: project,
+        trackers: {
+          primary: trackers.primary,
+          line: trackerLine(trackers),
+          declared: trackers.declared,
+          problems: trackers.problems
+        },
         queue: {
           active: mine.filter(row => row.section === 'active').map(row => row.title),
           backlog: mine.filter(row => row.section === 'backlog').length,
@@ -374,6 +382,7 @@ export const resumeBundleHandler =
         found,
         files,
         notices,
+        trackers: projectTrackers(deps.vaultDataPath, project),
         handoffs: {
           open: inbox.filter(h => h.status === 'open').map(inboxItem),
           returned: inbox.filter(h => h.status === 'returned').map(inboxItem),

@@ -755,6 +755,16 @@ export const registerTools = (mcp, client) => {
     })
   );
 
+  mcp.registerTool(
+    'vault_project_trackers',
+    {
+      description:
+        "Where a project's work is tracked and which tracker is primary, from the `trackers:` list in its queue.md frontmatter (vault-storage D95). Returns {project, declared, trackers: [{kind, ref, role, create, write, url}], primary, problems, as_of}: kind is vault | github | linear | jira, role primary | mirror, create here | none (whether new work may be created there), write the fields the vault may write back. No declaration means the vault is primary (declared: false). Read it before filing new work: when the primary is not the vault, file there (through that tracker's own MCP server, or hand the user a paste-ready ticket) and keep the vault for context and copies with a source reference.",
+      inputSchema: {project: z.string().min(1).describe('The project slug, e.g. "deep6"')}
+    },
+    wrap(async ({project}) => client.getJson(`/projects/${encodeURIComponent(project)}/trackers`))
+  );
+
   // ── insight: neighborhood, similar, backlinks ─────────────────────────────
   mcp.registerTool(
     'vault_neighborhood',
