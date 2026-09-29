@@ -334,10 +334,12 @@
           notes === 0
             ? `No edges${state.via.length ? ' of the picked types' : ''} within ${state.depth} hop${state.depth === 1 ? '' : 's'}.`
             : `${notes} note${notes === 1 ? '' : 's'} within ${reached} hop${reached === 1 ? '' : 's'}${state.direction === 'both' ? '' : `, ${state.direction} only`}.`;
-        $('#root').innerHTML =
+        const el = $('#root');
+        el.innerHTML =
           `<a href="/ui/note.html?path=${encodeURIComponent(root.file_path)}"><b>${esc(titleOf(root))}</b><small>${esc(root.file_path)}</small></a>` +
-          `<span class="sum">${sum}</span>`;
-        $('#root').hidden = false;
+          '<span class="sum"></span>';
+        el.querySelector('.sum').textContent = sum;
+        el.hidden = false;
       };
 
       const hoodUrl = id =>
