@@ -660,7 +660,11 @@ test('PUT /vault/{path} rejects an empty body, exempting an already-empty docume
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({frontmatter: {title: 'Stub', tags: ['alpha']}, body: ''})
       });
-      t.equal(stub.status, 204, 'already-empty document accepts an empty body');
+      t.equal(
+        stub.status,
+        200,
+        'already-empty document accepts an empty body (200, not 204: alpha is not in this taxonomy, so the answer names candidates)'
+      );
       t.ok(
         readFileSync(join(root, 'topics/stub.md'), 'utf8').includes('title: Stub'),
         'stub frontmatter written'
@@ -1207,7 +1211,11 @@ test('PUT /vault/{path} JSON: writes colon-space scalars without YAML quoting he
           body: 'Body content here.\n'
         })
       });
-      t.equal(r.status, 204, '204 no content');
+      t.equal(
+        r.status,
+        200,
+        'written; 200 rather than 204 because @user-leading-special is no taxonomy tag'
+      );
 
       const onDisk = readFileSync(join(root, 'raw/json-write.md'), 'utf8');
       t.ok(onDisk.startsWith('---\n'), 'opens with FM block');

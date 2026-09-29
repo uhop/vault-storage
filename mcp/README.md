@@ -73,7 +73,11 @@ The tools map to the REST surface, grouped by purpose:
   `expected_etag`, sent as `If-Match`: the write lands only if nobody
   else wrote in between, otherwise `412` with the current tag to retry
   against. Empty and literal-`"null"` bodies are refused server-side —
-  removal is `vault_delete_file`.
+  removal is `vault_delete_file`. A `tags:` entry the taxonomy does not
+  know still writes and files a `new_tag` suggestion, and the answer then
+  carries `unknown_tags` with the nearest existing tags; `strict_tags: true`
+  refuses the write with `409 unknown_tags` instead. Check names with
+  `vault_tag_nearest` first.
 - **Lifecycle** — `vault_supersede` (replace a note, archiving the
   predecessor with its `record_id` — and therefore its edges, embeddings,
   and suggestions — intact), `vault_move` (rename, same id preservation),

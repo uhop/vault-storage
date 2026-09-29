@@ -134,7 +134,9 @@ Whole-document writes:
 - vault_write_file / vault_update_piece — create or replace; optional
   expected_etag sent as If-Match (412 with details.current_etag on conflict);
   agent.derived_from_hash: "auto" is finalized server-side. Empty and
-  literal-"null" bodies are refused by the server.
+  literal-"null" bodies are refused by the server. An unknown tag writes and
+  answers with unknown_tags (the nearest existing tags); strict_tags: true
+  refuses with 409 unknown_tags instead. vault_supersede takes the same field.
 - vault_delete_file — removal (a note replaced by other content should be
   superseded instead).
 

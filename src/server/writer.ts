@@ -306,7 +306,7 @@ export interface WriteSplitOptions {
 
 export type ParsedWriteRequest =
   | {kind: 'markdown'; markdown: string}
-  | {kind: 'json'; frontmatter: Record<string, unknown>; body: string};
+  | {kind: 'json'; frontmatter: Record<string, unknown>; body: string; strictTags?: boolean};
 
 /**
  * Decode a PUT request body based on `Content-Type`:
@@ -346,8 +346,20 @@ export const parseWriteRequest = (
         400
       );
     }
-    const obj = parsed as {frontmatter: Record<string, unknown>; body: string};
-    return {kind: 'json', frontmatter: obj.frontmatter, body: obj.body};
+    const obj = parsed as {
+      frontmatter: Record<string, unknown>;
+      body: string;
+      strict_tags?: unknown;
+    };
+    if (obj.strict_tags !== undefined && typeof obj.strict_tags !== 'boolean') {
+      throw new WriterError('strict_tags must be a boolean when given', 'invalid_json_shape', 400);
+    }
+    return {
+      kind: 'json',
+      frontmatter: obj.frontmatter,
+      body: obj.body,
+      strictTags: obj.strict_tags === true
+    };
   }
   return {kind: 'markdown', markdown: rawBody};
 };

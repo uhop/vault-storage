@@ -96,7 +96,12 @@ export class VaultClient {
       ...(ifMatch ? {headers: {'If-Match': ifMatch}} : {})
     });
     if (!res.ok && res.status !== 204) await this.#throwFromResponse(res);
-    return {etag: res.headers.get('etag')};
+    // A write with unknown tags answers 200 with a body beside the ETag.
+    const answered =
+      res.status === 200 && (res.headers.get('content-type') ?? '').includes('application/json')
+        ? await res.json()
+        : {};
+    return {...answered, etag: res.headers.get('etag')};
   }
 
   async patchJson(path, body) {

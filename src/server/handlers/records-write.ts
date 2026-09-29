@@ -6,8 +6,9 @@ import {fullImportOptions} from '../../importer/import-options.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
-import {sendError, sendNoContent} from '../responses.ts';
+import {sendError} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
   parseWriteRequest,
   WriterError,
@@ -21,6 +22,7 @@ interface WriteDeps {
   db: DatabaseSync;
   vaultDataPath: string;
   records: RecordsRepository;
+  tagChecker: TagChecker;
 }
 
 export const putRecordHandler =
@@ -48,10 +50,25 @@ export const putRecordHandler =
       return;
     }
 
+    let parsed: ReturnType<typeof parseWriteRequest>;
+    try {
+      parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
+    } catch (err) {
+      if (err instanceof WriterError) {
+        sendError(ctx.res, err.status, err.code, err.message, err.details);
+        return;
+      }
+      throw err;
+    }
+    const unknownTags = deps.tagChecker.unknownIn(requestTags(parsed));
+    if (parsed.kind === 'json' && parsed.strictTags === true && unknownTags.length > 0) {
+      await refuseUnknownTags(ctx.res, deps.tagChecker, unknownTags);
+      return;
+    }
+
     const ifMatch = ctx.req.headers['if-match'];
     let etag: string;
     try {
-      const parsed = parseWriteRequest(rawBody, ctx.req.headers['content-type']);
       const result =
         parsed.kind === 'json'
           ? writeSplitRecordToDisk({
@@ -92,5 +109,5 @@ export const putRecordHandler =
     // suggestion on the write itself, not at the next watcher/reindex pass.
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
 
-    sendNoContent(ctx.res, {ETag: `"${etag}"`});
+    await respondWritten(ctx.res, deps.tagChecker, etag, unknownTags);
   };

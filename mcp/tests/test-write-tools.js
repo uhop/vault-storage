@@ -371,3 +371,52 @@ test('vault_read_section and vault_replace_section pass occurrence and expected_
     expected_hash: 'abc'
   });
 });
+
+test('vault_write_file forwards strict_tags and surfaces unknown_tags from a 200 answer', async t => {
+  const answer = {etag: 'body-etag', unknown_tags: [{tag: 'x', resolved: 'x', nearest: []}]};
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify(answer), {
+        status: 200,
+        headers: {'content-type': 'application/json; charset=utf-8', etag: '"e1"'}
+      })
+  );
+  const result = await call('vault_write_file', {
+    path: 'topics/x.md',
+    frontmatter: {tags: ['x']},
+    body: 'b',
+    strict_tags: false
+  });
+  const captured = getCaptured();
+  t.equal(captured.init.method, 'PUT');
+  t.deepEqual(bodyOf(captured), {frontmatter: {tags: ['x']}, body: 'b', strict_tags: false});
+  const parsed = JSON.parse(firstText(result));
+  t.equal(parsed.etag, '"e1"', 'the ETag header is the etag');
+  t.equal(parsed.unknown_tags.length, 1, 'the candidates reach the agent');
+});
+
+test('vault_update_piece on a 204 returns the etag and no unknown_tags', async t => {
+  const {call, getCaptured} = setup(
+    () => new Response(null, {status: 204, headers: {etag: '"e2"'}})
+  );
+  const result = await call('vault_update_piece', {record_id: 'r1', frontmatter: {}, body: 'b'});
+  t.deepEqual(bodyOf(getCaptured()), {frontmatter: {}, body: 'b'}, 'no strict_tags unless given');
+  t.deepEqual(JSON.parse(firstText(result)), {ok: true, record_id: 'r1', etag: '"e2"'});
+});
+
+test('vault_supersede forwards strict_tags', async t => {
+  const {call, getCaptured} = setup(
+    () =>
+      new Response('{"old":{},"new":{}}', {
+        status: 200,
+        headers: {'content-type': 'application/json'}
+      })
+  );
+  await call('vault_supersede', {
+    old_path: 'topics/o.md',
+    frontmatter: {},
+    body: 'b',
+    strict_tags: true
+  });
+  t.equal(bodyOf(getCaptured()).strict_tags, true);
+});

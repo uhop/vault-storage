@@ -1,7 +1,5 @@
 import {existsSync, readFileSync} from 'node:fs';
 import type {DatabaseSync} from 'node:sqlite';
-import {TagVecRepository} from '../../db/tag-vec-repo.ts';
-import {embedTagsPending} from '../../embeddings/embed-tags.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
@@ -15,6 +13,13 @@ import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonRecord} from '../serialize.ts';
+import {
+  NEAREST_K_DEFAULT,
+  NEAREST_K_MAX,
+  NEAREST_QUERIES_MAX,
+  TagNearest,
+  type NearestQuery
+} from '../tag-nearest.ts';
 import {ensureSafePath, writeSplitRecordToDisk, WriterError} from '../writer.ts';
 
 interface TagsDeps {
@@ -299,82 +304,16 @@ interface NearestBody {
   k?: unknown;
 }
 
-type Matched = 'exact' | 'alias' | 'name' | 'embedding';
-
-interface NearestCandidate {
-  score: number | null;
-  matched: Set<Matched>;
-}
-
-const NEAREST_K_DEFAULT = 12;
-const NEAREST_K_MAX = 50;
-const NEAREST_QUERIES_MAX = 50;
-const NAME_WORD_MIN = 3;
-
-/** A proposed name in taxonomy form: lowercase, words joined by hyphens. */
-const tagForm = (name: string): string =>
-  name
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, '-');
-
-/** The same scale as /similar: 1 for an identical vector, from the L2 distance of unit vectors. */
-const scoreOfDistance = (distance: number): number => Number((1 - distance / 2).toFixed(4));
-
-const distanceBetween = (a: Float32Array, b: Float32Array): number => {
-  let sum = 0;
-  for (let i = 0; i < a.length; ++i) {
-    const d = a[i]! - (b[i] ?? 0);
-    sum += d * d;
-  }
-  return Math.sqrt(sum);
-};
-
 /**
  * POST /tags/nearest {text?, tags?, k?}
  * The nearest existing tags for a draft's text or for proposed tag names, so
- * a writer picks from the taxonomy and mints only when nothing fits. Every
- * query is scored against the embedding of each tag's name and description;
- * a name is also matched exactly (canonical or alias, ranked first) and by
- * its words against tag names and aliases, and those hits are scored from
- * their stored vector. The tag vectors are refreshed on the way in, so a tag
- * added or re-described since the last call is embedded here.
- *
- * Returns {queries: [{query, kind, exact, items}], tag_vecs, as_of}.
+ * a writer picks from the taxonomy and mints only when nothing fits; the
+ * scoring and matching are `TagNearest`'s. Returns {queries: [{query, kind,
+ * exact, items}], tag_vecs, as_of}.
  * 400 — neither text nor tags, an empty or non-string entry, or k outside 1..50.
  */
 export const nearestTagsHandler = (deps: TagsDeps): Handler => {
-  const {db} = deps;
-  const canonicalOf = db.prepare('SELECT tag FROM tags_taxonomy WHERE tag = ?');
-  const aliasOf = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?');
-  const tagsLike = db.prepare(
-    `SELECT tag FROM tags_taxonomy WHERE tag LIKE ? ESCAPE '\\' ORDER BY tag LIMIT ${NEAREST_K_MAX}`
-  );
-  const aliasesLike = db.prepare(
-    `SELECT canonical FROM tag_aliases WHERE alias LIKE ? ESCAPE '\\' ORDER BY alias LIMIT ${NEAREST_K_MAX}`
-  );
-  const detail = db.prepare(
-    `SELECT t.tag, t.description, t.origin,
-            (SELECT COUNT(*) FROM tags WHERE tags.tag = t.tag) AS record_count
-       FROM tags_taxonomy t WHERE t.tag = ?`
-  );
-  const vecs = new TagVecRepository(db);
-
-  const nameHits = (needle: string): {tag: string; how: Matched}[] => {
-    const words = new Set([needle, ...needle.split('-').filter(w => w.length >= NAME_WORD_MIN)]);
-    const hits: {tag: string; how: Matched}[] = [];
-    for (const word of words) {
-      const pattern = `%${likeEscape(word)}%`;
-      for (const r of tagsLike.all(pattern) as unknown[] as {tag: string}[]) {
-        hits.push({tag: r.tag, how: 'name'});
-      }
-      for (const r of aliasesLike.all(pattern) as unknown[] as {canonical: string}[]) {
-        hits.push({tag: r.canonical, how: 'alias'});
-      }
-    }
-    return hits;
-  };
-
+  const nearest = new TagNearest(deps.db, deps.embedder);
   return async ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
@@ -389,7 +328,7 @@ export const nearestTagsHandler = (deps: TagsDeps): Handler => {
       sendError(ctx.res, 400, 'bad_request', body);
       return;
     }
-    const queries: {query: string; kind: 'text' | 'tag'}[] = [];
+    const queries: NearestQuery[] = [];
     if ('text' in body) {
       if (typeof body.text !== 'string' || body.text.trim().length === 0) {
         sendError(ctx.res, 400, 'bad_request', 'text must be a non-empty string');
@@ -436,84 +375,8 @@ export const nearestTagsHandler = (deps: TagsDeps): Handler => {
       }
       k = given;
     }
-
-    const tagVecs = await embedTagsPending(db, deps.embedder);
-
-    const results = [];
-    for (const {query, kind} of queries) {
-      const found = new Map<string, NearestCandidate>();
-      const add = (tag: string, how: Matched, score: number | null): void => {
-        let entry = found.get(tag);
-        if (!entry) {
-          entry = {score: null, matched: new Set()};
-          found.set(tag, entry);
-        }
-        entry.matched.add(how);
-        if (score !== null) entry.score = score;
-      };
-
-      let exact: {tag: string; requested?: string} | null = null;
-      let embedInput = query;
-      if (kind === 'tag') {
-        const needle = tagForm(query);
-        embedInput = needle.replace(/-+/g, ' ');
-        const canonical = canonicalOf.get(needle) as {tag: string} | undefined;
-        const alias = aliasOf.get(needle) as {canonical: string} | undefined;
-        if (canonical) {
-          exact = {tag: canonical.tag};
-          add(canonical.tag, 'exact', null);
-        } else if (alias) {
-          exact = {tag: alias.canonical, requested: needle};
-          add(alias.canonical, 'exact', null);
-        }
-        for (const hit of nameHits(needle)) add(hit.tag, hit.how, null);
-      }
-
-      const qvec = await deps.embedder.embedQuery(embedInput);
-      for (const hit of vecs.nearest(qvec, k)) {
-        add(hit.tag, 'embedding', scoreOfDistance(hit.distance));
-      }
-      for (const [tag, entry] of found) {
-        if (entry.score !== null) continue;
-        const stored = vecs.get(tag);
-        if (stored) entry.score = scoreOfDistance(distanceBetween(qvec, stored));
-      }
-
-      // An exact hit is the answer whatever its vector says; then best score first.
-      const ranked = [...found.entries()]
-        .sort(([tagA, a], [tagB, b]) => {
-          const exactA = a.matched.has('exact');
-          if (exactA !== b.matched.has('exact')) return exactA ? -1 : 1;
-          if (a.score === b.score) return tagA < tagB ? -1 : tagA > tagB ? 1 : 0;
-          if (a.score === null) return 1;
-          if (b.score === null) return -1;
-          return b.score - a.score;
-        })
-        .slice(0, k);
-
-      const items = [];
-      for (const [tag, entry] of ranked) {
-        const row = detail.get(tag) as
-          | {tag: string; description: string | null; origin: string; record_count: number}
-          | undefined;
-        if (!row) continue;
-        items.push({
-          tag: row.tag,
-          description: row.description,
-          origin: row.origin,
-          record_count: row.record_count,
-          score: entry.score,
-          matched: [...entry.matched]
-        });
-      }
-      results.push({query, kind, exact, items});
-    }
-
-    sendJson(ctx.res, 200, {
-      queries: results,
-      tag_vecs: {embedded: tagVecs.embedded, up_to_date: tagVecs.upToDate, total: tagVecs.total},
-      as_of: asOf(db)
-    });
+    const answer = await nearest.query(queries, k);
+    sendJson(ctx.res, 200, {...answer, as_of: asOf(deps.db)});
   };
 };
 

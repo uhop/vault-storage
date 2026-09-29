@@ -44,6 +44,7 @@ import {rejectUnknownParams} from '../query.ts';
 import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
   documentEtag,
   ensureSafePath,
@@ -63,6 +64,7 @@ interface VaultDeps {
   /** Invalidated on writes that can change the path set (PUT-create, DELETE, move). */
   resolverCache: ResolverCache;
   renderer: MarkdownRenderer;
+  tagChecker: TagChecker;
 }
 
 /**
@@ -507,6 +509,12 @@ export const putVaultHandler =
       throw err;
     }
 
+    const unknownTags = deps.tagChecker.unknownIn(requestTags(parsed));
+    if (parsed.kind === 'json' && parsed.strictTags === true && unknownTags.length > 0) {
+      await refuseUnknownTags(ctx.res, deps.tagChecker, unknownTags);
+      return;
+    }
+
     // Dedup gate. `?check=true` arms it; `X-Vault-Dedup: skip` disarms.
     const checkParam = ctx.query['check'];
     const dedupHeader = (ctx.req.headers['x-vault-dedup'] ?? '').toString().toLowerCase();
@@ -612,7 +620,7 @@ export const putVaultHandler =
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
     // A create adds a path the cached wikilink resolver doesn't know.
     if (!existing) deps.resolverCache.invalidate();
-    sendNoContent(ctx.res, {ETag: `"${etag}"`});
+    await respondWritten(ctx.res, deps.tagChecker, etag, unknownTags);
   };
 
 interface EditBody {
@@ -1492,6 +1500,7 @@ interface SupersedeBody {
   new_path?: unknown;
   frontmatter?: unknown;
   body?: unknown;
+  strict_tags?: unknown;
 }
 
 /**
@@ -1574,6 +1583,10 @@ export const supersedeVaultHandler =
     }
     const newFm = parsed.frontmatter as Record<string, unknown>;
     const newBody = parsed.body;
+    if (parsed.strict_tags !== undefined && typeof parsed.strict_tags !== 'boolean') {
+      sendError(ctx.res, 400, 'invalid_json_shape', 'strict_tags must be a boolean when given');
+      return;
+    }
 
     // ── Validation phase: nothing below this comment mutates until every
     // check has passed. The writer pre-flight covers enum/auto-managed/
@@ -1586,6 +1599,11 @@ export const supersedeVaultHandler =
         return;
       }
       throw err;
+    }
+    const unknownTags = deps.tagChecker.unknownIn(newFm['tags']);
+    if (parsed.strict_tags === true && unknownTags.length > 0) {
+      await refuseUnknownTags(ctx.res, deps.tagChecker, unknownTags);
+      return;
     }
 
     const oldAbs = safePathOrError(deps.vaultDataPath, oldPath, ctx.res);
@@ -1673,7 +1691,10 @@ export const supersedeVaultHandler =
     const newRecord = records.getByPath(newPath);
     sendJson(ctx.res, 200, {
       old: {path: archivePath, record_id: oldRecord.recordId},
-      new: {path: newPath, record_id: newRecord?.recordId ?? null, etag: result.etag}
+      new: {path: newPath, record_id: newRecord?.recordId ?? null, etag: result.etag},
+      ...(unknownTags.length > 0
+        ? {unknown_tags: await deps.tagChecker.withNearest(unknownTags)}
+        : {})
     });
   };
 
