@@ -5,7 +5,7 @@ import {checkBearer} from './auth.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {contextPackHandler} from './handlers/context-pack.ts';
-import {backlinksHandler, neighborhoodHandler} from './handlers/edges.ts';
+import {backlinksHandler, listEdgesHandler, neighborhoodHandler} from './handlers/edges.ts';
 import {
   deleteRecordTagHandler,
   getRecordFmHandler,
@@ -203,6 +203,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     contextPackHandler({db: opts.db, records, edges, embedder: opts.embedder})
   );
   router.get('/sections', listRecordsHandler({db: opts.db}));
+  router.get('/edges', listEdgesHandler({db: opts.db}));
   router.get('/sections/{id}/neighborhood', neighborhoodHandler({db: opts.db, records, edges}));
   router.get('/sections/{id}/similar', similarHandler({db: opts.db, records}));
   router.get('/sections/{id}/enrichment-delta', enrichmentDeltaHandler({db: opts.db, records}));

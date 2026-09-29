@@ -89,6 +89,7 @@ The tools map to the REST surface, grouped by purpose:
   machine), `vault_run_scans` (all four suggestion-filing scans in one
   pass), `vault_gc_tags` (delete taxonomy tags no record carries, except
   `manual` ones; a dry run unless `dry_run: false`)
+- **Edges** — `vault_list_edges` (every stored edge by type, paged, with per-type counts).
 - **Tags** — `vault_list_tags`, `vault_tag_info`, `vault_tag_nearest`, `vault_records_by_tag`,
   `vault_tag_create` (`origin: manual` for a tag made on purpose),
   `vault_tag_update` (rewrite a description, or re-label `origin`),

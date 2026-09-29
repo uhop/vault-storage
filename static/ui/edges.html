@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first request.
+      (() => {
+        performance.mark('head script');
+        const token = localStorage.getItem('vault.token');
+        if (!token) return;
+        const type = decodeURIComponent(location.hash.replace(/^#/, ''));
+        const url = `/edges?limit=100${type ? `&type=${encodeURIComponent(type)}` : ''}`;
+        const early = (window.__early ??= new Map());
+        const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+        res.catch(() => {});
+        early.set(url, res);
+      })();
+    </script>
+    <title>vault-storage — edges</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      main {
+        max-width: 64rem;
+      }
+      .layout {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 14rem 1fr;
+      }
+      @media (max-width: 768px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      .type-pane,
+      .edges-pane {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.8rem;
+        min-height: 0;
+      }
+      .type-pane h2,
+      .edges-pane h2 {
+        margin: 0 0 0.6rem;
+        font-size: 1rem;
+      }
+      .type-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .type-list button {
+        display: flex;
+        width: 100%;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.3rem 0.4rem;
+        border: 0;
+        border-radius: 4px;
+        background: none;
+        color: var(--fg);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .type-list button:hover {
+        background: var(--bg);
+      }
+      .type-list button[aria-current='true'] {
+        background: var(--accent);
+        color: var(--accent-fg, #fff);
+      }
+      .type-list .name {
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .type-list .count {
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .type-list button[aria-current='true'] .count {
+        color: inherit;
+      }
+      .edge {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 0.4rem 0.6rem;
+        align-items: center;
+        padding: 0.5rem 0;
+        border-top: 1px solid var(--line);
+      }
+      .edge:first-child {
+        border-top: 0;
+      }
+      .edge a {
+        min-width: 0;
+        color: var(--fg);
+        text-decoration: none;
+      }
+      .edge a:hover b {
+        color: var(--accent);
+      }
+      .edge a b,
+      .edge a small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .edge a small {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .edge .via {
+        text-align: center;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .edge .via .type {
+        display: block;
+        font-family: var(--mono);
+      }
+      .edge .meta {
+        grid-column: 1 / -1;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      @media (max-width: 480px) {
+        .edge {
+          grid-template-columns: 1fr;
+        }
+        .edge .via {
+          text-align: left;
+        }
+      }
+      .pager {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        margin: 0.4rem 0;
+        font-size: var(--text-s);
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body class="fmw">
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <div class="layout">
+        <section class="type-pane">
+          <h2>Types</h2>
+          <ul id="type-list" class="type-list"></ul>
+        </section>
+        <section class="edges-pane">
+          <h2 id="edges-heading">Edges</h2>
+          <div class="pager" data-list="edges" hidden></div>
+          <div id="edges"></div>
+          <div class="pager" data-list="edges" hidden></div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module">
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      const $ = sel => document.querySelector(sel);
+      const $$ = sel => document.querySelectorAll(sel);
+
+      const PAGE = 100;
+      const TYPE_ORDER = [
+        'supersedes',
+        'revises',
+        'contradicts',
+        'rejected-because',
+        'fixed-by',
+        'caused-by',
+        'derived-from',
+        'applies-to',
+        'cites',
+        'related-to'
+      ];
+      const SYMMETRIC = new Set(['related-to']);
+
+      const list = {items: [], offset: 0, total: 0, seq: 0};
+      let byType = {};
+      let activeType = decodeURIComponent(location.hash.replace(/^#/, '')) || null;
+
+      const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
+      const fmtNum = n => n.toLocaleString('en-US');
+      const fmtDate = iso => (iso ? iso.slice(0, 10) : '');
+
+      const renderPager = () => {
+        const paged = list.total > PAGE;
+        const range =
+          list.total === 0
+            ? 'None'
+            : `${fmtNum(list.offset + 1)}–${fmtNum(list.offset + list.items.length)} of ${fmtNum(list.total)} edges, newest first`;
+        $$('.pager[data-list="edges"]').forEach(p => {
+          p.hidden = list.total === 0;
+          p.innerHTML =
+            `<button type="button" data-step="-1" ${list.offset === 0 ? 'disabled' : ''}>‹ Prev</button>` +
+            `<span>${range}</span>` +
+            `<button type="button" data-step="1" ${list.offset + list.items.length >= list.total ? 'disabled' : ''}>Next ›</button>`;
+          p.querySelectorAll('button').forEach(b => (b.hidden = !paged));
+        });
+      };
+
+      // Must match the head script's early request for the first page.
+      const edgesUrl = offset =>
+        `/edges?limit=${PAGE}` +
+        (activeType ? `&type=${encodeURIComponent(activeType)}` : '') +
+        (offset ? `&offset=${offset}` : '');
+
+      const renderTypes = () => {
+        const all = Object.values(byType).reduce((sum, n) => sum + n, 0);
+        const row = (type, count, label) => `
+      <li>
+        <button data-type="${esc(type ?? '')}" aria-current="${(type ?? null) === activeType}">
+          <span class="name">${esc(label ?? type)}</span>
+          <span class="count">${fmtNum(count)}</span>
+        </button>
+      </li>`;
+        $('#type-list').innerHTML =
+          row(null, all, 'all') + TYPE_ORDER.map(t => row(t, byType[t] ?? 0)).join('');
+      };
+
+      const noteLink = r => `
+        <a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">
+          <b>${esc(r.title || r.file_path.split('/').pop().replace(/\.md$/, ''))}</b>
+          <small>${esc(r.file_path)}</small>
+        </a>`;
+
+      const renderEdges = () => {
+        $('#edges-heading').textContent = activeType ? `Edges of type ${activeType}` : 'All edges';
+        renderPager();
+        if (list.items.length === 0) {
+          $('#edges').innerHTML = '<div class="empty">No edges.</div>';
+          return;
+        }
+        $('#edges').innerHTML = list.items
+          .map(
+            e => `
+      <div class="edge">
+        ${noteLink(e.from)}
+        <span class="via"><span class="type">${esc(e.type)}</span>${SYMMETRIC.has(e.type) ? '↔' : '→'}</span>
+        ${noteLink(e.to)}
+        <small class="meta">${esc(fmtDate(e.created))}${e.note ? ` · ${esc(e.note)}` : ''}</small>
+      </div>`
+          )
+          .join('');
+      };
+
+      const load = async offset => {
+        const seq = ++list.seq;
+        $('#edges').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
+        try {
+          const data = await apiJson(edgesUrl(offset));
+          if (seq !== list.seq) return;
+          list.items = data.items ?? [];
+          list.offset = data.offset ?? offset;
+          list.total = data.total ?? list.items.length;
+          byType = data.by_type ?? {};
+          renderTypes();
+          renderEdges();
+        } catch (e) {
+          if (seq !== list.seq) return;
+          if (isAuthError(e)) {
+            showAuthDialog();
+            return;
+          }
+          $('#edges').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+        }
+      };
+
+      const selectType = type => {
+        activeType = type;
+        history.replaceState(null, '', type ? `#${encodeURIComponent(type)}` : location.pathname);
+        load(0);
+      };
+
+      const init = () => {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        load(0);
+      };
+
+      document.addEventListener('token-change', init);
+
+      $('#type-list').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-type]');
+        if (!btn) return;
+        selectType(btn.dataset.type || null);
+      });
+
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('.pager button[data-step]');
+        if (!btn || btn.disabled) return;
+        const step = Number(btn.dataset.step);
+        const next = Math.max(0, list.offset + step * PAGE);
+        load(next).then(() => {
+          if (step > 0) $('.edges-pane').scrollIntoView({block: 'start'});
+        });
+      });
+
+      window.addEventListener('hashchange', () => {
+        const hashType = decodeURIComponent(location.hash.replace(/^#/, '')) || null;
+        if (hashType !== activeType) {
+          activeType = hashType;
+          load(0);
+        }
+      });
+
+      init();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>

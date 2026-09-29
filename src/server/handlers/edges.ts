@@ -25,6 +25,82 @@ const parseEdgeTypes = (raw: string | undefined): EdgeType[] | string => {
   return types as EdgeType[];
 };
 
+/** Which stored rows the listing counts: a mirrored `related-to` pair once. */
+const LISTED = "(e.type != 'related-to' OR e.from_id < e.to_id)";
+
+interface ListedEdgeRow {
+  type: EdgeType;
+  weight: number;
+  note: string | null;
+  created: string;
+  from_id: string;
+  from_path: string;
+  from_title: string | null;
+  to_id: string;
+  to_path: string;
+  to_title: string | null;
+}
+
+/**
+ * GET /edges?type=&offset=&limit=
+ * Every stored edge, newest first, each with both records; `type` is a CSV
+ * of edge types (unknown ones are a 400), `by_type` counts the whole table
+ * under the same rule, a mirrored `related-to` pair listed once. Behind the
+ * edges page; agents get a note's own edges from the neighborhood route.
+ */
+export const listEdgesHandler =
+  (deps: {db: DatabaseSync}): Handler =>
+  ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['type', 'offset', 'limit']))) return;
+    const types = parseEdgeTypes(ctx.query['type']);
+    if (typeof types === 'string') {
+      sendError(ctx.res, 400, 'bad_request', types);
+      return;
+    }
+    const {offset, limit} = parsePagination(ctx.query);
+    const typeClause =
+      types.length > 0 ? ` AND e.type IN (${types.map(() => '?').join(', ')})` : '';
+    const rows = deps.db
+      .prepare(
+        `SELECT e.type, e.weight, e.note, e.created,
+                e.from_id, f.file_path AS from_path, f.title AS from_title,
+                e.to_id, t.file_path AS to_path, t.title AS to_title
+           FROM edges e
+           JOIN records f ON f.record_id = e.from_id
+           JOIN records t ON t.record_id = e.to_id
+          WHERE ${LISTED}${typeClause}
+          ORDER BY e.created DESC, e.from_id, e.to_id, e.type
+          LIMIT ? OFFSET ?`
+      )
+      .all(...types, limit, offset) as unknown[] as ListedEdgeRow[];
+    const total = (
+      deps.db
+        .prepare(`SELECT COUNT(*) AS n FROM edges e WHERE ${LISTED}${typeClause}`)
+        .get(...types) as {n: number}
+    ).n;
+    const byType: Record<string, number> = Object.fromEntries(EDGE_TYPES.map(t => [t, 0]));
+    for (const row of deps.db
+      .prepare(`SELECT e.type, COUNT(*) AS n FROM edges e WHERE ${LISTED} GROUP BY e.type`)
+      .all() as unknown[] as {type: string; n: number}[]) {
+      byType[row.type] = row.n;
+    }
+    sendJson(ctx.res, 200, {
+      items: rows.map(r => ({
+        type: r.type,
+        weight: r.weight,
+        note: r.note,
+        created: r.created,
+        from: {record_id: r.from_id, file_path: r.from_path, title: r.from_title},
+        to: {record_id: r.to_id, file_path: r.to_path, title: r.to_title}
+      })),
+      offset,
+      limit,
+      total,
+      by_type: byType,
+      as_of: asOf(deps.db)
+    });
+  };
+
 const parseDirection = (raw: string | undefined): 'outbound' | 'inbound' | 'both' | string => {
   if (raw === undefined || raw === '') return 'both';
   if (raw === 'outbound' || raw === 'inbound' || raw === 'both') return raw;

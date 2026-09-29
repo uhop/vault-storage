@@ -13,6 +13,7 @@ const ITEMS = [
   {href: '/ui/fleet.html', label: 'fleet'},
   {href: '/ui/fleet.html?view=packages', label: 'packages'},
   {href: '/ui/tags.html', label: 'tags'},
+  {href: '/ui/edges.html', label: 'edges'},
   {href: '/ui/raw.html', label: 'raw'},
   {href: '/ui/folder.html', label: 'browse'},
   {href: '/ui/edit.html', label: 'note'},

@@ -29,6 +29,7 @@ const REQUIRED_MENTIONS = {
   vault_read_suggestion: ['evidence', 'asserted'],
   vault_search: ['as_of'],
   vault_tag_nearest: ['exact', 'matched', 'score', 'tag_vecs', 'as_of'],
+  vault_list_edges: ['by_type', 'from', 'to', 'as_of'],
   vault_tag_create: ['overlaps', 'reach', 'dry_run', 'likely'],
   vault_queue_project_archive: ['as_of'],
   vault_queue_blocked: ['as_of'],

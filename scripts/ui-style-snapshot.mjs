@@ -15,6 +15,7 @@ import pw from 'playwright';
 const PAGES = [
   'agents',
   'archive-review',
+  'edges',
   'edit',
   'fleet',
   'fleet-project',
