@@ -114,6 +114,42 @@
       #doc .fm > summary > .fmw-pill {
         margin-left: 0.5rem;
       }
+      #doc .links > summary {
+        margin-bottom: 0.6rem;
+        font-family: var(--mono);
+        font-size: var(--text-s);
+        color: var(--muted);
+        cursor: pointer;
+      }
+      #doc .links .type {
+        margin: 0.3rem 0 0.6rem;
+        font-size: var(--text-s);
+      }
+      #doc .links .dir {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+      }
+      #doc .links .arrow {
+        flex: none;
+        color: var(--muted);
+      }
+      #doc .links ul {
+        margin: 0;
+        padding-left: 0;
+        list-style: none;
+      }
+      #doc .links li small {
+        margin-left: 0.5rem;
+        color: var(--muted);
+      }
+      #doc .links .more > summary {
+        color: var(--muted);
+        cursor: pointer;
+      }
+      #doc .links-warning {
+        margin-bottom: 0.8rem;
+      }
       .find-bar {
         position: absolute;
         top: calc(100% + 0.4rem);
@@ -247,6 +283,7 @@
     <script type="module">
       import {mark, perfOn, time, timeAsync} from '/ui/perf.js';
       import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {groupLinks, renderLinks, renderWarnings, warnings} from '/ui/note-links.js';
 
       const $ = sel => document.querySelector(sel);
       const path = new URLSearchParams(location.search).get('path');
@@ -395,6 +432,7 @@
           for (const id of ['#outline', '#find-btn']) $(id).hidden = false;
           findIndex = null;
           fetchBacklinks();
+          fetchLinks(note);
           if (!note.composed) noteDrafts(note.sections);
           mark('view: done');
           if (perfOn) setTimeout(reportHeights);
@@ -447,13 +485,42 @@
         );
       }
 
+      // The record behind the path, resolved once for the extras below.
+      let resolvedRecord = null;
+      const resolveRecord = async () =>
+        (resolvedRecord ??= await apiJson(`/resolve?wikilink=${encodeURIComponent(path)}`));
+
+      // links ------------------------------------------------------------
+      // The note's typed edges, grouped by type and direction after the
+      // frontmatter, and a notice on top when something supersedes or
+      // contradicts it (D86). Over the neighborhood route at depth 1.
+      async function fetchLinks(note) {
+        if (note.composed) return;
+        try {
+          const resolved = await resolveRecord();
+          const hood = await apiJson(`/sections/${resolved.record_id}/neighborhood?depth=1`);
+          const groups = groupLinks(resolved.record_id, hood);
+          const doc = $('#doc');
+          const warn = renderWarnings(warnings(groups), esc);
+          if (warn) doc.insertAdjacentHTML('afterbegin', warn);
+          const block = renderLinks(groups, esc);
+          if (block) {
+            const fm = doc.querySelector('details.fm');
+            if (fm) fm.insertAdjacentHTML('afterend', block);
+            else doc.insertAdjacentHTML('afterbegin', block);
+          }
+        } catch {
+          // Links are an extra; the note reads fine without them.
+        }
+      }
+
       // backlinks --------------------------------------------------------
       let backlinks = [];
       let backlinksTotal = 0;
 
       async function fetchBacklinks() {
         try {
-          const resolved = await apiJson(`/resolve?wikilink=${encodeURIComponent(path)}`);
+          const resolved = await resolveRecord();
           const data = await apiJson(`/sections/${resolved.record_id}/backlinks?limit=50`);
           backlinks = data.items ?? [];
           backlinksTotal = data.total ?? backlinks.length;
