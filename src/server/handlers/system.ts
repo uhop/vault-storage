@@ -1,4 +1,4 @@
-import {chunkMatrixStatus} from '../../db/chunk-matrix.ts';
+import {chunkMatrixStatus, warmChunkMatrix} from '../../db/chunk-matrix.ts';
 import type {HealthMonitor} from '../health.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import type {Embedder} from '../../embeddings/types.ts';
@@ -63,6 +63,10 @@ export interface ReleaseEmbedderDeps {
   embedder: Embedder;
 }
 
+export interface WarmDeps extends ReleaseEmbedderDeps {
+  db: DatabaseSync;
+}
+
 /**
  * POST /maintenance/release-embedder
  *
@@ -98,18 +102,23 @@ const warming = new WeakMap<Embedder, Promise<void>>();
  * POST /maintenance/warm-embedder
  *
  * Start loading the embedding model in the background, so the first semantic
- * search after an idle release does not wait for it (about 35 s on croc).
- * Callers are the SessionStart hook and the UI's search box, before any
- * query. Retention is unchanged: the model is released again after the idle
- * window. Returns 200 `{retained: true, started: false}` when it is loaded,
- * else 202 `{retained: false, started}`, `started` false when a load one of
- * these calls began is still running.
+ * search after an idle release does not wait for it (about 35 s on croc), and
+ * build the chunk matrix the same way (D87), so a search after a restart pays
+ * neither. Callers are the SessionStart hook and the UI's search box, before
+ * any query. Retention is unchanged: the model is released again after the
+ * idle window. Returns 200 `{retained: true, started: false}` when the model
+ * is loaded, else 202 `{retained: false, started}`, `started` false when a
+ * load one of these calls began is still running; the matrix build is silent
+ * and `/system/status` reports it.
  */
 export const warmEmbedderHandler =
-  (deps: ReleaseEmbedderDeps): Handler =>
+  (deps: WarmDeps): Handler =>
   ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const {embedder} = deps;
+    warmChunkMatrix(deps.db, err =>
+      process.stderr.write(`warm-embedder: chunk matrix: ${String(err)}\n`)
+    );
     if (embedder.retained) {
       sendJson(ctx.res, 200, {retained: true, started: false});
       return;

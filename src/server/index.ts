@@ -178,11 +178,10 @@ export const main = async (): Promise<void> => {
             `${embed.chunksReused} chunks reused, ${countEmbedPending(db)} still pending ` +
             `(${embed.durationMs} ms)\n`
         );
-        if (embed.chunksWritten > 0) {
-          warmChunkMatrix(db, err =>
-            process.stderr.write(`vault-storage: chunk matrix: ${String(err)}\n`)
-          );
-        }
+        // Unconditional: after a restart nothing is pending and the matrix is cold.
+        warmChunkMatrix(db, err =>
+          process.stderr.write(`vault-storage: chunk matrix: ${String(err)}\n`)
+        );
         return embedTagsPending(db, embedder);
       })
       .then(

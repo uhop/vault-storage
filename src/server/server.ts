@@ -321,7 +321,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
     embedPendingHandler({db: opts.db, embedder: opts.embedder})
   );
   router.post('/maintenance/release-embedder', releaseEmbedderHandler({embedder: opts.embedder}));
-  router.post('/maintenance/warm-embedder', warmEmbedderHandler({embedder: opts.embedder}));
+  router.post(
+    '/maintenance/warm-embedder',
+    warmEmbedderHandler({embedder: opts.embedder, db: opts.db})
+  );
   router.post('/maintenance/run-all', runAllScansHandler({db: opts.db}));
   router.get(
     '/maintenance/raw-inbox',
