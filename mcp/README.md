@@ -210,7 +210,13 @@ codes:
 - `artifact_not_found` — the handoff carries no artifact
 - `artifact_too_large` — over the 10 MB spool cap; reference a branch
   instead of shipping a blob
-- `network` — server unreachable
+- `network` — the server did not answer; `details.cause` carries the
+  socket's error code and `details.attempts` the number of tries. A refused
+  connection (`ECONNREFUSED`) sent nothing, so the request is repeated every
+  half second for eight seconds, which outlasts a server restart. A read is
+  repeated the same way after any network failure. A write whose connection
+  dropped after the request went out is not repeated, since it may have
+  applied: read the document before sending it again
 - `bad_request`, `validation_failed`, `internal`
 
 ## Release notes

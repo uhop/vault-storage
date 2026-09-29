@@ -142,9 +142,15 @@ import {TagChecker} from './tag-check.ts';
 export interface ServerHandle {
   server: Server;
   url: string;
-  /** Stop accepting new connections, close existing keep-alive sockets, then resolve. */
-  close: () => Promise<void>;
+  /**
+   * Stop accepting connections, let the requests in flight answer, close each
+   * connection as it idles, and cut what is still open after `graceMs`.
+   */
+  close: (graceMs?: number) => Promise<void>;
 }
+
+// Half of Docker's 10 s stop timeout: the watcher drain and the commit follow.
+const CLOSE_GRACE_MS = 5_000;
 
 interface BuildOptions {
   db: DatabaseSync;
@@ -576,10 +582,16 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
     server.listen(opts.env.port, opts.env.host, () => {
       server.off('error', reject);
       const url = `http://${opts.env.host}:${opts.env.port}`;
-      const close = async (): Promise<void> => {
+      const close = async (graceMs = CLOSE_GRACE_MS): Promise<void> => {
         await new Promise<void>(resolveClosed => {
-          server.closeAllConnections();
-          server.close(() => resolveClosed());
+          // close() alone leaves a connection open after its request answers, until keepAliveTimeout.
+          const sweep = setInterval(() => server.closeIdleConnections(), 50);
+          const cut = setTimeout(() => server.closeAllConnections(), graceMs);
+          server.close(() => {
+            clearInterval(sweep);
+            clearTimeout(cut);
+            resolveClosed();
+          });
         });
         await renderer.terminate();
       };

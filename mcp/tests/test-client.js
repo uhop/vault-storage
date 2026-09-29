@@ -20,8 +20,13 @@ const err = (body, status) =>
     headers: {'Content-Type': 'application/json'}
   });
 
-const makeClient = responder =>
-  new VaultClient({apiUrl: 'http://test', apiToken: 'tok', fetchImpl: fakeFetch(responder)});
+const makeClient = (responder, config = {}) =>
+  new VaultClient({
+    apiUrl: 'http://test',
+    apiToken: 'tok',
+    fetchImpl: fakeFetch(responder),
+    ...config
+  });
 
 test('VaultClient: getJson sends Bearer token and parses JSON', async t => {
   let seenAuth = null;
@@ -68,13 +73,82 @@ test('VaultClient: 401 maps to auth_failed when server omits code', async t => {
 });
 
 test('VaultClient: network error wraps to code=network', async t => {
-  const c = makeClient(() => Promise.reject(new Error('ECONNREFUSED')));
+  const c = makeClient(() => Promise.reject(new Error('ECONNREFUSED')), {retryDelaysMs: []});
   try {
     await c.getJson('/anything');
     t.fail('expected throw');
   } catch (e) {
     t.equal(e.code, 'network', 'network code');
     t.ok(e.message.includes('ECONNREFUSED'), 'message preserved');
+  }
+});
+
+// What fetch throws: a TypeError whose cause carries the socket's code.
+const fetchFailed = code =>
+  new TypeError('fetch failed', {cause: Object.assign(new Error(code), {code})});
+
+const failing = (failures, code) => {
+  const seen = {calls: 0};
+  const responder = () =>
+    ++seen.calls <= failures ? Promise.reject(fetchFailed(code)) : ok({ok: true});
+  return {seen, responder};
+};
+
+test('VaultClient: a refused write goes again until the server listens', async t => {
+  const {seen, responder} = failing(2, 'ECONNREFUSED');
+  const c = makeClient(responder, {retryDelaysMs: [1, 1, 1]});
+  const r = await c.postJson('/vault/edit', {path: 'a.md', op: 'append', text: 'x'});
+  t.equal(r.ok, true, 'the third attempt answered');
+  t.equal(seen.calls, 3, 'two refusals, one answer');
+});
+
+test('VaultClient: a refused request gives up after the last delay and says nothing was sent', async t => {
+  const {seen, responder} = failing(Infinity, 'ECONNREFUSED');
+  const c = makeClient(responder, {retryDelaysMs: [1, 1, 1]});
+  try {
+    await c.postJson('/vault/edit', {path: 'a.md', op: 'append', text: 'x'});
+    t.fail('expected throw');
+  } catch (e) {
+    t.equal(seen.calls, 4, 'one attempt and three repeats');
+    t.equal(e.code, 'network');
+    t.match(e.details, {method: 'POST', cause: 'ECONNREFUSED', attempts: 4});
+    t.matchString(e.message, /^network error: fetch failed \(ECONNREFUSED\); nothing listens/);
+    t.equal(e.cause?.cause?.code, 'ECONNREFUSED', 'the underlying error rides on cause');
+  }
+});
+
+test('VaultClient: a write whose connection dropped is not repeated', async t => {
+  for (const code of ['UND_ERR_SOCKET', 'ECONNRESET']) {
+    const {seen, responder} = failing(Infinity, code);
+    const c = makeClient(responder, {retryDelaysMs: [1, 1, 1]});
+    try {
+      await c.postJson('/vault/edit', {path: 'a.md', op: 'append', text: 'x'});
+      t.fail('expected throw');
+    } catch (e) {
+      t.equal(seen.calls, 1, `${code}: one attempt`);
+      t.match(e.details, {cause: code, attempts: 1});
+      t.matchString(e.message, /the write may have applied/);
+    }
+  }
+});
+
+test('VaultClient: a read goes again after any network failure', async t => {
+  const {seen, responder} = failing(1, 'UND_ERR_SOCKET');
+  const c = makeClient(responder, {retryDelaysMs: [1, 1, 1]});
+  const r = await c.getJson('/system/status');
+  t.equal(r.ok, true);
+  t.equal(seen.calls, 2);
+});
+
+test('VaultClient: a failed read carries its cause and no advice about a write', async t => {
+  const {responder} = failing(Infinity, 'UND_ERR_SOCKET');
+  const c = makeClient(responder, {retryDelaysMs: [1]});
+  try {
+    await c.getJson('/system/status');
+    t.fail('expected throw');
+  } catch (e) {
+    t.equal(e.message, 'network error: fetch failed (UND_ERR_SOCKET)');
+    t.match(e.details, {method: 'GET', cause: 'UND_ERR_SOCKET', attempts: 2});
   }
 });
 

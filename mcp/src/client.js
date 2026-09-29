@@ -4,8 +4,8 @@
 // directly to the agent.
 
 export class VaultClientError extends Error {
-  constructor(message, code, status, details = null) {
-    super(message);
+  constructor(message, code, status, details = null, options = undefined) {
+    super(message, options);
     this.name = 'VaultClientError';
     this.code = code;
     this.status = status;
@@ -14,6 +14,30 @@ export class VaultClientError extends Error {
 }
 
 const stripTrailingSlash = s => (s.endsWith('/') ? s.slice(0, -1) : s);
+
+// A restart takes about two seconds (measured on a deploy); an even step finds the server soon after.
+const RETRY_DELAYS_MS = new Array(16).fill(500);
+// The connection opened and then dropped or went quiet: the request went out.
+const DROPPED = new Set([
+  'UND_ERR_SOCKET',
+  'ECONNRESET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT'
+]);
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+const networkError = (err, cause, method, url, attempts) => {
+  let message = `network error: ${err.message}`;
+  if (cause) message += ` (${cause})`;
+  if (cause === 'ECONNREFUSED') {
+    message += '; nothing listens there, so the request was not sent';
+  } else if (method !== 'GET' && DROPPED.has(cause)) {
+    message +=
+      '; the connection dropped after the request went out, so the write may have applied: read the document before repeating it';
+  }
+  return new VaultClientError(message, 'network', 0, {url, method, cause, attempts}, {cause: err});
+};
 
 /** Fallback codes for responses whose body carried no `code` of its own. */
 const STATUS_CODES = {
@@ -28,6 +52,7 @@ export class VaultClient {
   #apiUrl;
   #apiToken;
   #fetch;
+  #retryDelays;
 
   constructor(config) {
     if (!config.apiUrl) throw new Error('VaultClient: apiUrl is required');
@@ -35,6 +60,7 @@ export class VaultClient {
     this.#apiUrl = stripTrailingSlash(config.apiUrl);
     this.#apiToken = config.apiToken;
     this.#fetch = config.fetchImpl ?? fetch;
+    this.#retryDelays = config.retryDelaysMs ?? RETRY_DELAYS_MS;
   }
 
   /** Build a full URL from a path + optional query parameters. */
@@ -151,14 +177,21 @@ export class VaultClient {
       ...init.headers
     };
     if (init.contentType) headers['Content-Type'] = init.contentType;
-    try {
-      return await this.#fetch(url, {
-        method,
-        headers,
-        body: init.body
-      });
-    } catch (err) {
-      throw new VaultClientError(`network error: ${err.message}`, 'network', 0, {url, method});
+    for (let attempt = 0; ; ++attempt) {
+      try {
+        return await this.#fetch(url, {
+          method,
+          headers,
+          body: init.body
+        });
+      } catch (err) {
+        const cause = err.cause?.code ?? null;
+        // A refused connection carried no request and a read changes nothing; any other write may have applied.
+        const repeatable = method === 'GET' || cause === 'ECONNREFUSED';
+        if (!repeatable || attempt >= this.#retryDelays.length)
+          throw networkError(err, cause, method, url, attempt + 1);
+        await sleep(this.#retryDelays[attempt]);
+      }
     }
   }
 

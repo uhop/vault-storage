@@ -216,6 +216,8 @@ export const main = async (): Promise<void> => {
 
   const shutdown = async (signal: string): Promise<void> => {
     process.stdout.write(`\nvault-storage: ${signal} received, shutting down\n`);
+    // First, so what the requests in flight write reaches the drain and the commit below.
+    await handle.close();
     if (watcher) {
       // Drain any pending changes before exit so we don't lose updates that
       // arrived during the debounce window.
@@ -229,7 +231,6 @@ export const main = async (): Promise<void> => {
       gitSync.close();
     }
     if (memoryReporter) memoryReporter.close();
-    await handle.close();
     await embedder.releaseRetained();
     db.close();
     process.exit(0);

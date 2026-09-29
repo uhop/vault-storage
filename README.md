@@ -48,6 +48,8 @@ Pulls the latest code, warns about new keys in `.env.example` that you haven't a
 docker tag vault-storage:<prev-sha> vault-storage:latest && docker compose up -d
 ```
 
+The server is down for about two seconds while the container is recreated. On the stop signal it closes the listener first: a request in flight gets its answer (five seconds at most), and what it wrote is imported and committed before the process exits. A client that connects during the gap is refused, and the MCP adapter repeats a refused request until the new container listens.
+
 Schema migrations apply automatically on container start.
 
 ## Setup (without Docker)
