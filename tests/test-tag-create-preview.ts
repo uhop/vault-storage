@@ -148,7 +148,7 @@ test('a dry run previews overlaps and reach and creates nothing', async t => {
     const survey = r.body.overlaps.find((o: {tag: string}) => o.tag === 'survey');
     t.ok(survey, 'survey is among the overlaps');
     t.ok(survey.matched.includes('name'), 'matched by the shared word');
-    t.equal(r.body.reach.threshold, 0.7);
+    t.equal(r.body.reach.threshold, 0.6);
     t.equal(r.body.reach.count, 1, 'one note reads as about it');
     t.match(r.body.reach.items[0], {title: 'A', file_path: 'topics/a.md', score: 1, tagged: false});
     const info = await api(`${ctx.url}/tags/field-survey`, 'GET');

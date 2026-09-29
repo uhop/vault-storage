@@ -246,11 +246,15 @@ interface AddTaxonomyBody {
  * the score reaches OVERLAP_SCORE or the name resolves to a tag already;
  * `reach`, the notes whose `agent.summary` vector sits within REACH_SCORE of
  * the tag's text, `tagged` for those carrying it. Calibrated 2026-09-28 on
- * croc: a paraphrased description scored its tag 0.71 to 0.73 and an
- * unrelated text 0.62 at best.
+ * croc, 1,622 tags and 2,598 notes: against the tag vectors a paraphrased
+ * description scored its tag 0.71 to 0.73 and an unrelated text 0.62 at
+ * best; against the summary vectors a tag's own notes scored 0.60 to 0.68
+ * (15 to 18 of the top twenty for a well-populated tag) and an unrelated
+ * text 0.60 at best, so the reach floor sits at the edge of that noise and a
+ * false reach costs one suggestion the sweep rejects.
  */
 export const OVERLAP_SCORE = 0.7;
-export const REACH_SCORE = 0.7;
+export const REACH_SCORE = 0.6;
 const OVERLAP_K = 5;
 const REACH_K = 20;
 
