@@ -50,14 +50,16 @@ const PRE_PATTERNS: Pattern[] = [
   {type: 'supersedes', inverse: true, re: /\b(?:superseded by|replaced by|obsoleted by)\s+$/i},
   {type: 'supersedes', re: /\b(?:in favor of|in favour of)\s+$/i},
 
-  {type: 'revises', re: /\b(?:revises?|refines?|amends?)\s+$/i},
+  // "extends [[X]]" adds to X without replacing it (D94, 2026-09-28); "builds on" stays derived-from.
+  {
+    type: 'revises',
+    re: /\b(?:revises?|refines?|amends?|clarif(?:y|ies|ied)|extends?|extending)\s+$/i
+  },
 
-  // Active forms: source is derived from / extends / builds on target.
+  // Active forms: source is derived from / builds on target.
   {type: 'derived-from', re: /\bderived from\s+$/i},
   {type: 'derived-from', re: /\bbased on\s+$/i},
   {type: 'derived-from', re: /\bbuilds (?:on|upon)\s+$/i},
-  {type: 'derived-from', re: /\bextends?\s+$/i},
-  {type: 'derived-from', re: /\bextending\s+$/i},
   {type: 'derived-from', re: /\bfollows? from\s+$/i},
   {type: 'derived-from', re: /\binformed by\s+$/i},
   // Forward forms: the target is derived from the source → flip, exactly as
@@ -80,16 +82,6 @@ const PRE_PATTERNS: Pattern[] = [
   {type: 'derived-from', inverse: true, re: /\blift(?:ed|s)?\s+into\s+$/i},
   {type: 'derived-from', inverse: true, re: /\bspun\s+(?:out|off)\s+(?:as|into|to)\s+$/i},
 
-  {type: 'caused-by', re: /\bcaused by\s+$/i},
-  {type: 'caused-by', re: /\b(?:triggered|provoked) by\s+$/i},
-  {type: 'caused-by', re: /\bdue to\s+$/i},
-
-  {type: 'fixed-by', re: /\bfixed by\s+$/i},
-  {type: 'fixed-by', re: /\bresolved by\s+$/i},
-
-  {type: 'rejected-because', re: /\brejected because of\s+$/i},
-  {type: 'rejected-because', re: /\brejected because\s+$/i},
-
   {type: 'applies-to', re: /\bapplies to\s+$/i},
   {type: 'applies-to', re: /\brelevant to\s+$/i},
 
@@ -103,8 +95,7 @@ const POST_PATTERNS: Pattern[] = [
   {type: 'applies-to', re: /^\s+applies to\b/i},
   {type: 'applies-to', re: /^\s+is relevant to\b/i},
   {type: 'supersedes', re: /^\s+(?:supersedes|replaces|obsoletes)\b/i},
-  {type: 'revises', re: /^\s+(?:revises|refines|amends)\b/i},
-  {type: 'fixed-by', re: /^\s+fixes\b/i}
+  {type: 'revises', re: /^\s+(?:revises|refines|amends|clarifies|extends)\b/i}
 ];
 
 const WINDOW_BEFORE = 80;
@@ -191,13 +182,10 @@ const RANK: Record<EdgeType, number> = {
   supersedes: 0,
   revises: 1,
   'derived-from': 2,
-  'caused-by': 3,
-  'fixed-by': 4,
-  'rejected-because': 5,
-  contradicts: 6,
-  'applies-to': 7,
-  'related-to': 8,
-  cites: 9
+  contradicts: 3,
+  'applies-to': 4,
+  'related-to': 5,
+  cites: 6
 };
 
 const edgeRank = (t: EdgeType): number => RANK[t];

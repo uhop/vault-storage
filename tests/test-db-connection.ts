@@ -15,7 +15,11 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 30, 'schema version is 30 after all migrations through the tag vectors');
+  t.equal(
+    result.current,
+    31,
+    'schema version is 31 after all migrations through the edge vocabulary'
+  );
   t.deepEqual(
     result.applied,
     [
@@ -48,7 +52,8 @@ test('runs the init migration and creates required tables', t => {
       '0027_enrichment_baselines.sql',
       '0028_edge_type_default_cites.sql',
       '0029_tag_origin.sql',
-      '0030_tag_vecs.sql'
+      '0030_tag_vecs.sql',
+      '0031_edge_vocabulary.sql'
     ],
     'all migrations applied in order'
   );
@@ -63,7 +68,8 @@ test('runs the init migration and creates required tables', t => {
         name !== '0027_enrichment_baselines.sql' &&
         name !== '0028_edge_type_default_cites.sql' &&
         name !== '0029_tag_origin.sql' &&
-        name !== '0030_tag_vecs.sql'
+        name !== '0030_tag_vecs.sql' &&
+        name !== '0031_edge_vocabulary.sql'
     ),
     'every migration forces a full import except the ones marked no-reindex'
   );
@@ -115,7 +121,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0027_enrichment_baselines.sql',
     '0028_edge_type_default_cites.sql',
     '0029_tag_origin.sql',
-    '0030_tag_vecs.sql'
+    '0030_tag_vecs.sql',
+    '0031_edge_vocabulary.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -142,7 +149,8 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
   t.deepEqual(result.applied, [
     '0028_edge_type_default_cites.sql',
     '0029_tag_origin.sql',
-    '0030_tag_vecs.sql'
+    '0030_tag_vecs.sql',
+    '0031_edge_vocabulary.sql'
   ]);
   t.deepEqual(result.reindex, [], 'no reindex');
   const rows = db
@@ -166,7 +174,11 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     INSERT INTO tags_taxonomy (tag, added) VALUES
       ('seed', '2026-04-29'), ('later', '2026-06-14T10:00:00.000Z');
   `);
-  t.deepEqual(runMigrations(db).applied, ['0029_tag_origin.sql', '0030_tag_vecs.sql']);
+  t.deepEqual(runMigrations(db).applied, [
+    '0029_tag_origin.sql',
+    '0030_tag_vecs.sql',
+    '0031_edge_vocabulary.sql'
+  ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
     .all()
@@ -188,7 +200,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 30, 'schema version stays at 30');
+  t.equal(second.current, 31, 'schema version stays at 31');
   db.close();
 });
 
@@ -251,7 +263,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0027_enrichment_baselines.sql',
       '0028_edge_type_default_cites.sql',
       '0029_tag_origin.sql',
-      '0030_tag_vecs.sql'
+      '0030_tag_vecs.sql',
+      '0031_edge_vocabulary.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );

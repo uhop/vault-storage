@@ -5,9 +5,6 @@ export const TYPE_ORDER = [
   'supersedes',
   'revises',
   'contradicts',
-  'rejected-because',
-  'fixed-by',
-  'caused-by',
   'derived-from',
   'applies-to',
   'cites',
@@ -15,7 +12,6 @@ export const TYPE_ORDER = [
 ];
 
 /** Types whose lists run long on a hub note; shown folded past SHOW_FIRST. */
-export const BULK_TYPES = new Set(['cites', 'related-to']);
 
 /** Stored mirrored, so each neighbour is listed once, under `out`. */
 export const SYMMETRIC_TYPES = new Set(['related-to']);
@@ -98,13 +94,12 @@ const renderList = (records, esc) => {
 
 /**
  * The Links block: a summary line counting each type, then per type the
- * notes this one points at (→) and the notes pointing at it (←). Open when
- * the note has an edge outside the bulk types.
+ * notes this one points at (→) and the notes pointing at it (←). Closed by
+ * default, like the frontmatter block.
  */
 export const renderLinks = (groups, esc) => {
   if (groups.length === 0) return '';
   const counts = groups.map(g => `${esc(g.type)} ${g.out.length + g.in.length}`).join(' · ');
-  const open = groups.some(g => !BULK_TYPES.has(g.type)) ? ' open' : '';
   const body = groups
     .map(g => {
       const out = renderList(g.out, esc);
@@ -117,5 +112,5 @@ export const renderLinks = (groups, esc) => {
       }${inbound ? `<div class="dir"><span class="arrow">←</span>${inbound}</div>` : ''}</div>`;
     })
     .join('');
-  return `<details class="links"${open}><summary>Links · ${counts}</summary>${body}</details>`;
+  return `<details class="links"><summary>links · ${counts}</summary>${body}</details>`;
 };

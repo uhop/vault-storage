@@ -185,7 +185,7 @@ test('listInbound and listByType filter as expected', t => {
 
   t.equal(edges.listInbound(c.recordId).length, 2, 'two inbound to c');
   t.equal(edges.listByType('cites').length, 1, 'one cites edge');
-  t.equal(edges.listByType('rejected-because').length, 0, 'unused type returns empty');
+  t.equal(edges.listByType('contradicts').length, 0, 'unused type returns empty');
   db.close();
 });
 

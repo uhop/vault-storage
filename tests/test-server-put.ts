@@ -818,7 +818,7 @@ test('PUT rejects an edge type outside the vocabulary in edges: and agent.edge_c
         error(edges).includes("edges value 'extends' for topics/beta"),
         'names field, value, target'
       );
-      t.ok(error(edges).includes('applies-to, basis-for, caused-by'), 'lists the vocabulary');
+      t.ok(error(edges).includes('applies-to, basis-for, cites'), 'lists the vocabulary');
 
       const prior = await put({
         agent: {summary: 'a', edge_classifications: {'[[topics/beta]]': 'example-of'}}

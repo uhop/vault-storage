@@ -120,7 +120,7 @@ test('GET /edges lists every edge newest first with both records, a mirrored pai
       to: {file_path: 'topics/c.md', title: 'C'}
     });
     t.match(r.body.by_type, {cites: 1, 'derived-from': 1, 'related-to': 1, supersedes: 0});
-    t.equal(Object.keys(r.body.by_type).length, 10, 'every type has a count');
+    t.equal(Object.keys(r.body.by_type).length, 7, 'every type has a count');
     t.ok(typeof r.body.as_of?.generation === 'number');
   } finally {
     await stopCtx(ctx);

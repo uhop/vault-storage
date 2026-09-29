@@ -6,7 +6,7 @@
 // every data file outside the repository.
 //
 //   node eval/related-to-classify.mjs sample --out <dir> [--per-type 40] [--negatives 100] [--related 100] [--seed 7]
-//   node eval/related-to-classify.mjs ask --out <dir> --arm choice|nouls [--set eval|related] [--limit N]
+//   node eval/related-to-classify.mjs ask --out <dir> --arm choice|nouls [--set eval|related] [--variant table|equiv] [--limit N]
 //   node eval/related-to-classify.mjs rules --out <dir>
 //   node eval/related-to-classify.mjs reference --out <dir> [--batch 20]     # writes the batches a judge answers
 //   node eval/related-to-classify.mjs score --out <dir>
@@ -63,6 +63,24 @@ export const OPTIONS = {
     "The source's content applies to or is relevant to the target's domain: a rule, a finding, or a technique that the target is a case of",
   contradicts: 'The source disagrees with the target: the two make claims that cannot both hold',
   none: 'A loose conceptual link and nothing more specific: the two touch the same subject, one merely refers to the other, or no relation above fits'
+};
+
+// The seven-type vocabulary of the 2026-09-28 revision, each option defined by its
+// established equivalent (CiTO, DCMI Terms, PROV-O, schema.org), asked with --variant equiv.
+export const OPTIONS_EQUIV = {
+  supersedes:
+    'The source replaces the target, which is no longer current: DCMI Terms `replaces`, the IANA `predecessor-version` link relation',
+  revises:
+    'The source amends, corrects, clarifies, or adds to the target without replacing it, so both still apply: PROV-O `wasRevisionOf`, CiTO `updates` and `corrects`',
+  'derived-from':
+    'The source was derived from the target, taking its material or idea from it: PROV-O `wasDerivedFrom`, DCMI Terms `source`, schema.org `isBasedOn`',
+  'basis-for':
+    'The target was derived from the source: the inverse of `derived-from`, the source recording where its material went',
+  'applies-to':
+    "The source is about the target, its content applying to the target's subject or domain: schema.org `about`",
+  contradicts:
+    'The source disagrees with the target, the two making claims that cannot both hold: CiTO `disagreesWith` and `disputes`',
+  none: 'Nothing more specific than a loose link: the source merely refers to the target (CiTO `cites`, DCMI Terms `references`) or shares its subject (DCMI Terms `relation`)'
 };
 
 const DOCUMENT =
@@ -209,23 +227,26 @@ const sample = async () => {
 // ─── Jev ────────────────────────────────────────────────────────────────────
 const stateOf = p => ({document: DOCUMENT, source_note: p.source_note, target_note: p.target_note});
 
-const questionsFor = arm => {
+const optionsFor = variant => (variant === 'equiv' ? OPTIONS_EQUIV : OPTIONS);
+
+const questionsFor = (arm, variant) => {
+  const options = optionsFor(variant);
   if (arm === 'choice') {
     return {
       relation: {
         type: 'choice',
         instructions: 'How does the source note relate to the target note?',
-        criteria: OPTIONS
+        criteria: options
       }
     };
   }
   const q = {};
-  for (const [type, text] of Object.entries(OPTIONS)) {
+  for (const [type, text] of Object.entries(options)) {
     if (type === 'none') continue;
     q[type] = {
       type: 'noul',
       instructions: `Does the source note relate to the target note this way: ${text}?`,
-      criteria: {true: text, false: OPTIONS.none}
+      criteria: {true: text, false: options.none}
     };
   }
   return q;
@@ -267,10 +288,11 @@ const ask = async () => {
     process.exit(2);
   }
   const set = opt('--set', 'eval');
+  const variant = opt('--variant', 'table');
   const limit = Number(opt('--limit', 0));
   const pairs = readJson('sample.json')[set];
   const todo = limit ? pairs.slice(0, limit) : pairs;
-  const questions = questionsFor(arm);
+  const questions = questionsFor(arm, variant);
   const out = [];
   const t0 = performance.now();
   let next = 0;
@@ -303,10 +325,11 @@ const ask = async () => {
   const tokens = out.reduce((s, r) => s + (r.tokens ?? 0), 0);
   const lat = out.map(r => r.ms).sort((a, b) => a - b);
   const pct = q => lat[Math.min(lat.length - 1, Math.floor((q / 100) * lat.length))];
-  writeJson(`answers-${arm}-${set}.json`, {
+  writeJson(`answers-${arm}-${set}${variant === 'table' ? '' : `-${variant}`}.json`, {
     model: MODEL,
     arm,
     set,
+    variant,
     asked_at: new Date().toISOString(),
     wall_ms: Math.round(wall),
     concurrency: CONCURRENCY,
@@ -315,7 +338,7 @@ const ask = async () => {
     results: out
   });
   process.stderr.write(
-    `${arm}/${set}: ${out.length} asked, ${out.filter(r => r.error).length} errors, ${tokens} tokens ($${(tokens * PRICE_PER_INPUT_TOKEN).toFixed(4)}), wall ${(wall / 1000).toFixed(1)}s, p50 ${pct(50)}ms p95 ${pct(95)}ms\n`
+    `${arm}/${set}/${variant}: ${out.length} asked, ${out.filter(r => r.error).length} errors, ${tokens} tokens ($${(tokens * PRICE_PER_INPUT_TOKEN).toFixed(4)}), wall ${(wall / 1000).toFixed(1)}s, p50 ${pct(50)}ms p95 ${pct(95)}ms\n`
   );
 };
 
@@ -443,6 +466,21 @@ const score = () => {
       arms[`choice≥${th}`] = perType(s.eval, pick);
     }
   }
+  const choiceEquiv = load('answers-choice-eval-equiv.json');
+  if (choiceEquiv) {
+    const ans = new Map(choiceEquiv.results.map(r => [r.id, r]));
+    arms['choice/equiv'] = {
+      ...perType(s.eval, p => ans.get(p.id)?.choice ?? null),
+      confusion: confusion(s.eval, p => ans.get(p.id)?.choice ?? null),
+      cost_usd: choiceEquiv.cost_usd,
+      wall_ms: choiceEquiv.wall_ms
+    };
+    arms['choice/equiv≥0.7'] = perType(s.eval, p => {
+      const a = ans.get(p.id);
+      if (!a?.choice) return null;
+      return (a.probabilities?.[a.choice] ?? 0) >= 0.7 ? a.choice : 'none';
+    });
+  }
   const nouls = load('answers-nouls-eval.json');
   if (nouls) {
     const ans = new Map(nouls.results.map(r => [r.id, r]));
@@ -508,6 +546,30 @@ const score = () => {
       related.choice_vs_reference = {
         n: both.length,
         agree: both.filter(p => canon(ans.get(p.id).choice) === canon(ref[p.id])).length
+      };
+    }
+  }
+  const choiceRE = load('answers-choice-related-equiv.json');
+  if (choiceRE) {
+    const ans = new Map(choiceRE.results.map(r => [r.id, r]));
+    related['choice/equiv'] = dist(p => ans.get(p.id)?.choice ?? null);
+    related['choice/equiv≥0.7'] = dist(p => {
+      const a = ans.get(p.id);
+      return a?.choice && (a.probabilities?.[a.choice] ?? 0) >= 0.7 ? a.choice : 'none';
+    });
+    if (ref) {
+      const both = s.related.filter(p => p.id in ref && ans.get(p.id)?.choice);
+      related['choice/equiv_vs_reference'] = {
+        n: both.length,
+        agree: both.filter(p => canon(ans.get(p.id).choice) === canon(ref[p.id])).length
+      };
+      related['choice/equiv≥0.7_vs_reference'] = {
+        n: both.length,
+        agree: both.filter(p => {
+          const a = ans.get(p.id);
+          const pick = (a.probabilities?.[a.choice] ?? 0) >= 0.7 ? a.choice : 'none';
+          return canon(pick) === canon(ref[p.id]);
+        }).length
       };
     }
   }

@@ -78,11 +78,14 @@ test('warnings names what supersedes or contradicts the note, and nothing else',
   t.ok(html.includes('note.html?path=topics%2Fsuccessor.md'), 'and links to the successor');
 });
 
-test('renderLinks counts each type in the summary, opens on a typed edge, and folds a long list', t => {
+test('renderLinks counts each type in the summary, stays closed, and folds a long list', t => {
   const groups = groupLinks('root', neighborhood);
   const html = renderLinks(groups, esc);
-  t.ok(html.startsWith('<details class="links" open>'), 'open: the note has typed edges');
-  t.ok(html.includes('Links · supersedes 1 · derived-from 1 · cites 2 · related-to 1'));
+  t.ok(
+    html.startsWith('<details class="links"><summary>'),
+    'closed by default, like the frontmatter'
+  );
+  t.ok(html.includes('links · supersedes 1 · derived-from 1 · cites 2 · related-to 1'));
   t.ok(html.includes('title="per the review"'), 'the edge note is the link title');
   t.ok(html.includes('<span class="arrow">←</span>'), 'inbound marked');
   t.ok(html.includes('<span class="arrow">↔</span>'), 'a mirrored type marked as such');

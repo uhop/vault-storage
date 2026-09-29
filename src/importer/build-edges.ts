@@ -7,12 +7,17 @@ import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
-import {DECLARED_EDGE_TYPES, EDGE_TYPE_ALIASES} from '../records/types.ts';
+import {
+  ACCEPTED_EDGE_DECLARATIONS,
+  DECLARED_EDGE_TYPES,
+  EDGE_TYPE_ALIASES
+} from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
 import {DEFAULT_CITES, LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
 
 const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(DECLARED_EDGE_TYPES);
+const ACCEPTED_EDGE_DECLARATION_SET: ReadonlySet<string> = new Set(ACCEPTED_EDGE_DECLARATIONS);
 
 /**
  * Record types where a default-`cites` body wikilink is overwhelmingly
@@ -106,12 +111,14 @@ interface ClassifiedTarget {
   type: Edge['type'];
   /** When true, the edge runs target→source instead of source→target. */
   inverse?: boolean;
+  /** Written on the edge: the declared name of a legacy alias. */
+  note?: string;
 }
 
 const SYMMETRIC_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
 
 /** Receives every resolved directed edge (mirrors included) a record's content backs. */
-type EdgeSink = (fromId: string, toId: string, type: EdgeType) => void;
+type EdgeSink = (fromId: string, toId: string, type: EdgeType, note?: string) => void;
 
 const touchKey = (fromId: string, toId: string, type: EdgeType): string =>
   `${fromId}|${toId}|${type}`;
@@ -130,7 +137,7 @@ const resolveEdges = (
   sink: EdgeSink
 ): void => {
   const seen = new Set<string>();
-  for (const {target, type, inverse} of targets) {
+  for (const {target, type, inverse, note} of targets) {
     const resolved = resolver.resolve(target);
     if (!resolved) {
       if (origin === 'frontmatter') summary.unresolvedFrontmatter++;
@@ -146,14 +153,14 @@ const resolveEdges = (
     const dedupKey = touchKey(fromId, toId, type);
     if (seen.has(dedupKey)) continue;
     seen.add(dedupKey);
-    sink(fromId, toId, type);
+    sink(fromId, toId, type, note);
 
     // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
     if (SYMMETRIC_TYPES.has(type)) {
       const mirrorKey = touchKey(toId, fromId, type);
       if (!seen.has(mirrorKey)) {
         seen.add(mirrorKey);
-        sink(toId, fromId, type);
+        sink(toId, fromId, type, note);
       }
     }
   }
@@ -190,13 +197,19 @@ const forEachDeclaredEdge = (
   // strings to record_ids so build-edges can match by toId regardless of
   // which slug form ([[foo]] vs [[topics/foo]]) the body uses. Aliases
   // (`basis-for`) normalize here to canonical type + flipped direction.
-  const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, DECLARED_EDGE_TYPE_SET);
-  const fmOverrides = new Map<string, {type: EdgeType; inverse: boolean; target: string}>(); // toId → normalized
+  const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, ACCEPTED_EDGE_DECLARATION_SET);
+  const fmOverrides = new Map<
+    string,
+    {type: EdgeType; inverse: boolean; target: string; note?: string}
+  >(); // toId → normalized
   for (const [target, declared] of fmEdgesRaw) {
     const resolved = resolver.resolve(target);
     if (resolved && resolved !== record.recordId) {
+      const alias = EDGE_TYPE_ALIASES[declared];
       fmOverrides.set(resolved, {
-        ...(EDGE_TYPE_ALIASES[declared] ?? {type: declared as EdgeType, inverse: false}),
+        type: alias?.type ?? (declared as EdgeType),
+        inverse: alias?.inverse ?? false,
+        ...(alias?.note ? {note: alias.note} : {}),
         target
       });
     }
@@ -233,18 +246,21 @@ const forEachDeclaredEdge = (
     declaredOnly.delete(resolved);
     let finalType: EdgeType = c.type;
     let finalInverse = c.inverse === true;
+    let finalNote: string | undefined;
     const override = fmOverrides.get(resolved);
     if (c.type === 'cites' && override !== undefined) {
       finalType = override.type;
       finalInverse = override.inverse;
+      finalNote = override.note;
       summary.fmOverridesApplied++;
       hooks.onOverride?.(resolved);
     }
-    adjusted.push(
-      finalInverse
-        ? {target: c.target, type: finalType, inverse: true}
-        : {target: c.target, type: finalType}
-    );
+    adjusted.push({
+      target: c.target,
+      type: finalType,
+      ...(finalInverse ? {inverse: true} : {}),
+      ...(finalNote ? {note: finalNote} : {})
+    });
     if (c.type === 'cites' && override === undefined && c.context !== undefined) {
       hooks.onCiteNeedingReview?.(resolved, c.context);
     }
@@ -256,9 +272,12 @@ const forEachDeclaredEdge = (
   for (const toId of declaredOnly) {
     const o = fmOverrides.get(toId);
     if (!o) continue;
-    declared.push(
-      o.inverse ? {target: o.target, type: o.type, inverse: true} : {target: o.target, type: o.type}
-    );
+    declared.push({
+      target: o.target,
+      type: o.type,
+      ...(o.inverse ? {inverse: true} : {}),
+      ...(o.note ? {note: o.note} : {})
+    });
   }
   if (declared.length > 0) {
     summary.fmDeclaredApplied += declared.length;
@@ -317,9 +336,9 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
     ctx.source,
     ctx.resolver,
     summary,
-    (fromId, toId, type) => {
+    (fromId, toId, type, note) => {
       ctx.touched.add(touchKey(fromId, toId, type));
-      ctx.edges.upsert({fromId, toId, type, weight: 1, note: null, created: now});
+      ctx.edges.upsert({fromId, toId, type, weight: 1, note: note ?? null, created: now});
       summary.edgesCreated++;
     },
     {

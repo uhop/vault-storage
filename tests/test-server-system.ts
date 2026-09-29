@@ -91,8 +91,8 @@ test('GET /system/status with valid token returns indexer status', async t => {
     t.equal(payload['ok'], true, 'ok=true');
     t.equal(
       payload['schema_version'],
-      30,
-      'schema_version=30 (all migrations through the tag vectors)'
+      31,
+      'schema_version=31 (all migrations through the edge vocabulary)'
     );
     t.equal(payload['records'], 0, 'records=0 on empty DB');
     t.equal(payload['edges'], 0, 'edges=0 on empty DB');

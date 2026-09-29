@@ -23,19 +23,20 @@ test('"derived from" → derived-from edge', t => {
   t.equal(out[0]?.type, 'derived-from', 'derived-from match');
 });
 
-test('"caused by" → caused-by edge', t => {
-  const out = classifyBodyLinks('The bug was caused by [[bug-root-cause]] in the parser.');
-  t.equal(out[0]?.type, 'caused-by', 'caused-by match');
+test('"caused by", "fixed by", "rejected because" are plain citations since D94', t => {
+  for (const text of [
+    'The outage was caused by [[config-drift]].',
+    'The bug was fixed by [[patch-42]].',
+    'Rejected because [[perf-concern]] outweighed it.'
+  ]) {
+    const out = classifyBodyLinks(text);
+    t.equal(out[0]?.type, 'cites', `${text.split(' ')[2]}: no cue, default cites`);
+  }
 });
 
-test('"fixed by" → fixed-by edge', t => {
-  const out = classifyBodyLinks('This was fixed by [[topics/the-fix]] last week.');
-  t.equal(out[0]?.type, 'fixed-by', 'fixed-by match');
-});
-
-test('"rejected because" → rejected-because edge', t => {
-  const out = classifyBodyLinks('We chose A over B; rejected because [[constraint-x]] applies.');
-  t.equal(out[0]?.type, 'rejected-because', 'rejected-because match');
+test('"clarifies" → revises edge', t => {
+  const out = classifyBodyLinks('This note clarifies [[old-rule]] for the edge case.');
+  t.equal(out[0]?.type, 'revises', 'clarifies amends without replacing');
 });
 
 test('"applies to" pre-pattern → applies-to edge', t => {
@@ -104,11 +105,11 @@ test('"replaced by" → supersedes edge with inverse direction', t => {
   t.equal(out[0]?.inverse, true);
 });
 
-test('"extends" → derived-from edge', t => {
+test('"extends" → revises edge (adds to without replacing, D94)', t => {
   const out = classifyBodyLinks(
     '## Relationship\nExtends [[base-design]]: first try the simple case.'
   );
-  t.equal(out[0]?.type, 'derived-from');
+  t.equal(out[0]?.type, 'revises');
   t.notOk(out[0]?.inverse, 'active form, no inverse');
 });
 
@@ -171,9 +172,9 @@ test('forward and active derived-from cues stay distinguishable', t => {
   t.equal(forward[0]?.inverse, true, 'forward form points target→source');
 });
 
-test('"extending" → derived-from edge', t => {
+test('"extending" → revises edge', t => {
   const out = classifyBodyLinks('Extending [[parent-pattern]] with one extra step.');
-  t.equal(out[0]?.type, 'derived-from');
+  t.equal(out[0]?.type, 'revises');
 });
 
 test('"builds on" → derived-from edge', t => {

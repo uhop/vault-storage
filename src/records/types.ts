@@ -98,9 +98,6 @@ export const EDGE_TYPES = [
   'supersedes',
   'revises',
   'derived-from',
-  'caused-by',
-  'fixed-by',
-  'rejected-because',
   'cites',
   'applies-to',
   'contradicts',
@@ -117,12 +114,40 @@ export type EdgeType = (typeof EDGE_TYPES)[number];
  * (the "generalized / promoted to [[topic]]" idiom, where the origin note
  * records where its material went).
  */
-export const EDGE_TYPE_ALIASES: Readonly<Record<string, {type: EdgeType; inverse: true}>> = {
-  'basis-for': {type: 'derived-from', inverse: true}
+export interface EdgeTypeAlias {
+  type: EdgeType;
+  inverse: boolean;
+  /** Written into the edge's note when the alias is applied. */
+  note?: string;
+  /** A name the vocabulary dropped (D94): accepted so old maps still resolve, never advertised. */
+  legacy?: boolean;
+}
+
+export const EDGE_TYPE_ALIASES: Readonly<Record<string, EdgeTypeAlias>> = {
+  'basis-for': {type: 'derived-from', inverse: true},
+  // The 2026-09-28 revision (D94) dropped the three decision-rationale types:
+  // five months produced 32 edges and no consumer. Declared, they land as cites
+  // with the declared name in the note.
+  'caused-by': {type: 'cites', inverse: false, note: 'declared as caused-by', legacy: true},
+  'fixed-by': {type: 'cites', inverse: false, note: 'declared as fixed-by', legacy: true},
+  'rejected-because': {
+    type: 'cites',
+    inverse: false,
+    note: 'declared as rejected-because',
+    legacy: true
+  }
 };
 
-/** What an FM `edges:` map or `agent.edge_classifications` may declare. */
+/** What an FM `edges:` map or `agent.edge_classifications` may declare, as advertised. */
 export const DECLARED_EDGE_TYPES: readonly string[] = [
+  ...EDGE_TYPES,
+  ...Object.entries(EDGE_TYPE_ALIASES)
+    .filter(([, a]) => !a.legacy)
+    .map(([name]) => name)
+];
+
+/** Every declaration the importer and the writer accept: the advertised set plus the legacy names. */
+export const ACCEPTED_EDGE_DECLARATIONS: readonly string[] = [
   ...EDGE_TYPES,
   ...Object.keys(EDGE_TYPE_ALIASES)
 ];
