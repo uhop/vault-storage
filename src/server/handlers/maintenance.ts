@@ -13,6 +13,7 @@ import {clearLastIndexedCommit, incrementalReindex} from '../../maintenance/incr
 import {runAllScans} from '../../maintenance/run-all.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {listFolder} from '../../maintenance/folder-listing.ts';
+import {warmChunkMatrix} from '../../db/chunk-matrix.ts';
 import {embedAllPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
 import {embedTagsPending, type TagEmbedSummary} from '../../embeddings/embed-tags.ts';
 import type {Embedder} from '../../embeddings/types.ts';
@@ -436,10 +437,10 @@ export const embedPendingHandler =
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     if (!embedInFlight) {
       embedInFlight = embedAllPending(deps.db, deps.embedder)
-        .then(async summary => ({
-          ...summary,
-          tag_vecs: await embedTagsPending(deps.db, deps.embedder)
-        }))
+        .then(async summary => {
+          if (summary.chunksWritten > 0) warmChunkMatrix(deps.db);
+          return {...summary, tag_vecs: await embedTagsPending(deps.db, deps.embedder)};
+        })
         .finally(() => {
           embedInFlight = null;
         });

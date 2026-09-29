@@ -106,6 +106,34 @@ const grow = <T extends Float32Array | Int32Array>(array: T, length: number): T 
   return next;
 };
 
+/** Whether the matrix a reader would get is built already: `rows` is the built snapshot's size, null when none. */
+export const chunkMatrixStatus = (
+  db: DatabaseSync
+): {warm: boolean; rows: number | null; building: boolean} => {
+  const cache = cacheOf(db);
+  const count = (db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as {n: number}).n;
+  const {snapshot} = cache;
+  const warm =
+    snapshot !== undefined && snapshot.version === cache.version && snapshot.count === count;
+  return {
+    warm,
+    rows: snapshot ? snapshot.matrix.n : null,
+    building: cache.building?.version === cache.version
+  };
+};
+
+/**
+ * Build the matrix now, off any request, so the next reader finds it built
+ * instead of paying the rebuild (D87). A reader arriving meanwhile shares the
+ * build. Failures go to `report`, never to a caller.
+ */
+export const warmChunkMatrix = (
+  db: DatabaseSync,
+  report: (err: unknown) => void = () => {}
+): void => {
+  chunkMatrix(db).then(() => {}, report);
+};
+
 /** The current matrix, built on first use and after any vector write. */
 export const chunkMatrix = async (db: DatabaseSync): Promise<ChunkMatrix> => {
   const cache = cacheOf(db);

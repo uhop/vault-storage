@@ -11,6 +11,7 @@ import {watch, statSync, type FSWatcher} from 'node:fs';
 import {join, sep} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {EMBED_ROUND, embedPending} from '../embeddings/embed-pass.ts';
+import {warmChunkMatrix} from '../db/chunk-matrix.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
 import {importFile} from '../importer/import-file.ts';
@@ -93,6 +94,15 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
     const embed = await embedPending(db, embedder, {maxEmbeds: EMBED_ROUND});
     embedBacklog = embed.remaining > 0;
     if (embedBacklog) schedule();
+    // The last round of a drain leaves the matrix built for the next reader;
+    // mid-backlog it stays stale, since every round would rebuild it.
+    if (embed.chunksWritten > 0 && !embedBacklog) {
+      warmChunkMatrix(db, err =>
+        process.stderr.write(
+          `watcher: chunk matrix: ${err instanceof Error ? err.message : String(err)}\n`
+        )
+      );
+    }
     return {embedded: embed.embedded, remaining: embed.remaining};
   };
 

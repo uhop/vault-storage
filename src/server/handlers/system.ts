@@ -1,3 +1,4 @@
+import {chunkMatrixStatus} from '../../db/chunk-matrix.ts';
 import type {HealthMonitor} from '../health.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import type {Embedder} from '../../embeddings/types.ts';
@@ -47,6 +48,7 @@ export const systemStatusHandler =
         model: embedder.modelName,
         retained: embedder.retained
       },
+      chunk_matrix: chunkMatrixStatus(db),
       memory: {
         rss: m.rss,
         heap_used: m.heapUsed,
