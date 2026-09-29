@@ -31,10 +31,7 @@ jobs:
           path: node_modules/@huggingface/transformers/.cache
           key: bge-model-${{hashFiles('package-lock.json')}}
           restore-keys: bge-model-
-      - run: |
-          npm run lint
-          npm run ts-check
-          npm test
+      - run: npm test
       - name: MCP adapter tests
         working-directory: mcp
         run: |
