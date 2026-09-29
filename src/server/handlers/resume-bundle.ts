@@ -4,6 +4,7 @@ import {maskCodeRegions} from '../../markdown/wikilinks.ts';
 import {blockedView, readyView} from '../../queue/ready.ts';
 import {QueueItemsRepository} from '../../queue/repo.ts';
 import {revertExpiredClaims} from '../../records/claims.ts';
+import type {EdgesRepository} from '../../records/edges.ts';
 import {HandoffsRepository, type Handoff} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {computeLintReport, queueHygieneFindings, type LintReport} from './lint.ts';
@@ -15,6 +16,7 @@ import type {Handler} from '../router.ts';
 interface ResumeBundleDeps {
   db: DatabaseSync;
   records: RecordsRepository;
+  edges: EdgesRepository;
   vaultDataPath: string;
 }
 
@@ -31,6 +33,9 @@ const CLARIFY_QUEUE_PATH = 'projects/agent-workflow/clarify-queue.md';
 // the body regardless. The rest ship summaries + sizes; the agent fetches
 // bodies only when it needs them.
 const PROJECT_FILES = ['feedback', 'queue', 'decisions', 'learnings', 'stack'] as const;
+
+// The inbound edges that change what a reader should trust in a project file (D86).
+const NOTICE_TYPES = new Set<string>(['supersedes', 'contradicts']);
 
 // Observed MCP-result rejections bracket the harness ceiling just under
 // ~50 KB of dense markdown (a 50.7 KB bundle and a 52 KB read both
@@ -307,6 +312,7 @@ export const resumeBundleHandler =
     let feedbackBody: string | null = null;
     if (project !== undefined) {
       const files: Record<string, unknown> = {};
+      const notices: Record<string, unknown>[] = [];
       let found = false;
       for (const name of PROJECT_FILES) {
         const record = records.getByPath(`projects/${project}/${name}.md`);
@@ -315,6 +321,19 @@ export const resumeBundleHandler =
           continue;
         }
         found = true;
+        for (const e of deps.edges.listInbound(record.recordId)) {
+          if (!NOTICE_TYPES.has(e.type)) continue;
+          const by = records.getById(e.fromId);
+          notices.push({
+            file: name,
+            type: e.type,
+            by: by
+              ? {record_id: by.recordId, file_path: by.filePath, title: by.title}
+              : {record_id: e.fromId, file_path: null, title: null},
+            note: e.note,
+            created: e.created
+          });
+        }
         const entry: Record<string, unknown> = {
           file_path: record.filePath,
           updated: record.updated,
@@ -354,6 +373,7 @@ export const resumeBundleHandler =
         name: project,
         found,
         files,
+        notices,
         handoffs: {
           open: inbox.filter(h => h.status === 'open').map(inboxItem),
           returned: inbox.filter(h => h.status === 'returned').map(inboxItem),

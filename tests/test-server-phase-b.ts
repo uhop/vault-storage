@@ -2157,3 +2157,87 @@ test('unknown query parameters are a loud 400 on the graph, tag, and suggestion 
     cleanup();
   }
 });
+
+test('POST /system/resume-bundle names what supersedes or contradicts a project file', async t => {
+  const {root, cleanup} = setup();
+  try {
+    // Declared in frontmatter, the way the importer reads typed edges, since the
+    // bundle's embedded reindex rebuilds the edges from the documents.
+    const note = (path: string, title: string, body: string, edges: string[] = []): void =>
+      writeMd(
+        root,
+        path,
+        [
+          '---',
+          `title: ${title}`,
+          'created: 2026-07-01',
+          'updated: 2026-07-01',
+          ...(edges.length ? ['edges:', ...edges.map(e => `  ${e}`)] : []),
+          '---',
+          body,
+          ''
+        ].join('\n')
+      );
+    note('projects/myproj/queue.md', 'myproj queue', 'Now [[topics/newer]].', [
+      'topics/newer: supersedes'
+    ]);
+    note('projects/myproj/decisions.md', 'myproj decisions', 'Decisions.');
+    note('projects/other/queue.md', 'other queue', 'Quiet.');
+    note('topics/newer.md', 'The newer plan', 'Replaces [[projects/myproj/queue]].', [
+      'projects/myproj/queue: supersedes'
+    ]);
+    note(
+      'topics/dispute.md',
+      'A dispute',
+      'Disputes [[projects/myproj/decisions]]; see [[projects/myproj/queue]].',
+      ['projects/myproj/decisions: contradicts']
+    );
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=myproj&logs=0`, {
+        method: 'POST'
+      });
+      t.equal(r.status, 200, '200 ok');
+      const notices = (
+        r.body as {
+          project: {
+            notices: Array<{
+              file: string;
+              type: string;
+              by: {record_id: string; file_path: string; title: string};
+              note: string | null;
+              created: string;
+            }>;
+          };
+        }
+      ).project.notices;
+      t.deepEqual(
+        notices.map(n => [n.file, n.type, n.by.file_path, n.by.title]),
+        [
+          ['queue', 'supersedes', 'topics/newer.md', 'The newer plan'],
+          ['decisions', 'contradicts', 'topics/dispute.md', 'A dispute']
+        ],
+        'inbound supersedes and contradicts only, in project-file order; a cites link and an outbound supersedes stay out'
+      );
+      t.equal(typeof notices[0]?.created, 'string', 'the edge date rides along');
+      t.equal(
+        notices[0]?.by.record_id,
+        await findId(ctx.url, 'topics/newer.md'),
+        'by the record id'
+      );
+
+      const other = await fetchAuthed(`${ctx.url}/system/resume-bundle?project=other&logs=0`, {
+        method: 'POST'
+      });
+      t.deepEqual(
+        (other.body as {project: {notices: unknown[]}}).project.notices,
+        [],
+        'a project nothing points at has no notices'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

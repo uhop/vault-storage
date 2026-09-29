@@ -281,7 +281,9 @@ System:
   ships by default only while the whole bundle fits the server's 32 KiB
   budget; above it feedback arrives as summary + body_bytes + a headings
   index with body_omitted: {reason: "bundle_budget", budget_bytes}; naming
-  files in project_bodies bypasses the budget.
+  files in project_bodies bypasses the budget. The project block also carries
+  notices, the supersedes and contradicts edges pointing into the project's
+  files, each with the note that makes the claim.
 
 ## Resources
 

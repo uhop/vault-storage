@@ -192,11 +192,11 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/system/body-fields', bodyFieldsHandler({db: opts.db}));
   router.post(
     '/system/resume-bundle',
-    resumeBundleHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
+    resumeBundleHandler({db: opts.db, records, edges, vaultDataPath: opts.env.vaultDataPath})
   );
   router.get(
     '/system/resume-brief',
-    resumeBriefHandler({db: opts.db, records, vaultDataPath: opts.env.vaultDataPath})
+    resumeBriefHandler({db: opts.db, records, edges, vaultDataPath: opts.env.vaultDataPath})
   );
   router.post(
     '/context-pack',

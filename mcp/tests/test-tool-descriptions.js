@@ -89,6 +89,7 @@ const REQUIRED_MENTIONS = {
   vault_queue_reindex: ['filesProcessed', 'staleSlicesDropped', 'errors', 'durationMs'],
   vault_resume_bundle: [
     'as_of',
+    'notices',
     'coverage_enrichment',
     'project_bodies',
     'body_bytes',
