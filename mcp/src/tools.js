@@ -859,18 +859,27 @@ export const registerTools = (mcp, client) => {
     'vault_tag_create',
     {
       description:
-        'Add a canonical tag to the taxonomy: {tag, description, origin?}. `origin: "manual"` marks a tag created on purpose, which the empty-tag collection (vault_gc_tags) keeps even with no records; the default `minted` is collected once no record carries it. Pending new_tag suggestions for the tag are accepted and their records linked. Returns {tag, description, origin, linked, accepted}. 409 conflict when the tag exists; 400 on a name outside [a-z0-9][a-z0-9-]*. Prefer an existing tag (vault_list_tags with `contains`) over minting a near-duplicate.',
+        'Add a canonical tag to the taxonomy: {tag, description, origin?, dry_run?}. `origin: "manual"` marks a tag created on purpose, which the empty-tag collection (vault_gc_tags) keeps even with no records; the default `minted` is collected once no record carries it. Pending new_tag suggestions for the tag are accepted and their records linked. Every answer carries `overlaps`, the nearest existing tags to the new one\'s name and description as [{tag, description, score, matched, likely}] (`likely` at a score of 0.7 or above, or a name that resolves to a tag already: use that tag instead), and `reach`, {threshold, count, items: [{record_id, file_path, title, score, tagged}]}, the notes whose summary sits within the threshold of the tag\'s text. `dry_run: true` answers {dry_run, tag, description, origin, exists, overlaps, reach} and creates nothing, an existing tag allowed. A real create returns {tag, description, origin, linked, accepted, overlaps, reach}, and a `manual` one files a tag_suggestion for each untagged note in reach (`reach.filed`) for the sweep to judge. 409 conflict when the tag exists; 400 on a name outside [a-z0-9][a-z0-9-]*. Check vault_tag_nearest first, or dry-run here: a likely overlap is the tag to use.',
       inputSchema: {
         tag: z.string().min(1).describe('Lowercase letters, digits, and hyphens'),
         description: z.string().min(1).describe('What a note carrying this tag is about'),
         origin: z
           .enum(['manual', 'minted'])
           .optional()
-          .describe('manual keeps the tag at zero records; default minted')
+          .describe('manual keeps the tag at zero records; default minted'),
+        dry_run: z
+          .boolean()
+          .optional()
+          .describe('Preview overlaps and reach without creating the tag')
       }
     },
-    wrap(async ({tag, description, origin}) =>
-      client.postJson('/tags/taxonomy', {tag, description, origin})
+    wrap(async ({tag, description, origin, dry_run}) =>
+      client.postJson('/tags/taxonomy', {
+        tag,
+        description,
+        origin,
+        ...(dry_run !== undefined ? {dry_run} : {})
+      })
     )
   );
 

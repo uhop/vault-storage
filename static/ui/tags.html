@@ -204,6 +204,17 @@
       .new-tag input {
         font-family: var(--mono);
       }
+      .new-tag .preview {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .new-tag .preview p {
+        margin: 0.25rem 0;
+      }
+      .new-tag .preview .likely {
+        color: var(--fg);
+        font-weight: 600;
+      }
     </style>
   </head>
   <body class="fmw">
@@ -573,24 +584,76 @@
         loadTags(lists.tags.offset);
       });
 
+      // A create previews first: the nearest existing tags (a likely overlap
+      // is the tag to use instead) and the notes the tag would reach. The
+      // second submit with the same values creates, and the sweep is asked
+      // about the untagged notes in reach.
+      let previewed = null;
+      const tagLink = t => `<a href="#${encodeURIComponent(t)}">${esc(t)}</a>`;
+      const scored = list => list.map(o => `${tagLink(o.tag)} (${o.score ?? '–'})`).join(', ');
+      const renderPreview = (preview, msg) => {
+        const likely = preview.overlaps.filter(o => o.likely);
+        const others = preview.overlaps.filter(o => !o.likely);
+        const reach = preview.reach.items;
+        const parts = [];
+        if (likely.length > 0) {
+          parts.push(`<p class="likely">Likely the same as ${scored(likely)}: use it instead?</p>`);
+        }
+        if (others.length > 0) parts.push(`<p>Nearest: ${scored(others)}</p>`);
+        parts.push(
+          reach.length > 0
+            ? `<p>${plural(reach.length, 'note')} read as about it; the sweep would be asked about the untagged ones: ${reach
+                .slice(0, 5)
+                .map(
+                  r =>
+                    `<a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}">${esc(r.title ?? r.file_path)}</a> (${r.score})`
+                )
+                .join(', ')}${reach.length > 5 ? ', …' : ''}</p>`
+            : '<p>No note reads as about it yet.</p>'
+        );
+        parts.push('<p>Press Create again to create it.</p>');
+        msg.innerHTML = `<div class="preview">${parts.join('')}</div>`;
+      };
+
       $('#new-tag-form').addEventListener('submit', async e => {
         e.preventDefault();
         const tag = $('#new-tag-name').value.trim();
         const description = $('#new-tag-desc').value.trim();
         const msg = $('#new-tag-msg');
         msg.textContent = '';
-        try {
-          await api('/tags/taxonomy', {
+        const key = `${tag}\n${description}`;
+        const post = body =>
+          apiJson('/tags/taxonomy', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({tag, description, origin: 'manual'})
+            body: JSON.stringify(body)
           });
+        let created;
+        try {
+          if (previewed !== key) {
+            const preview = await post({tag, description, origin: 'manual', dry_run: true});
+            if (preview.exists) {
+              msg.innerHTML = `<div class="err">${esc(tag)} exists already</div>`;
+              return;
+            }
+            if (preview.overlaps.some(o => o.likely) || preview.reach.count > 0) {
+              renderPreview(preview, msg);
+              previewed = key;
+              return;
+            }
+          }
+          created = await post({tag, description, origin: 'manual'});
         } catch (err) {
           if (isAuthError(err)) showAuthDialog();
           else msg.innerHTML = `<div class="err">${esc(err.message)}</div>`;
           return;
         }
+        previewed = null;
         e.target.reset();
+        msg.textContent =
+          created.reach.filed > 0
+            ? `Created; the sweep is asked about ${plural(created.reach.filed, 'note')}.`
+            : 'Created.';
         $('#tag-filter').value = tag;
         history.replaceState(null, '', `#${encodeURIComponent(tag)}`);
         await loadTags(0);

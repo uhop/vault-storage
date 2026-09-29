@@ -1,5 +1,7 @@
 import {existsSync, readFileSync} from 'node:fs';
 import type {DatabaseSync} from 'node:sqlite';
+import {RecordSummaryVecRepository} from '../../db/summary-vec-repo.ts';
+import {tagEmbedText} from '../../embeddings/embed-tags.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {SuggestionFiler, type NewTagSuggestionPayload} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
@@ -234,6 +236,37 @@ interface AddTaxonomyBody {
   tag?: string;
   description?: string;
   origin?: unknown;
+  dry_run?: unknown;
+}
+
+/**
+ * The preview a create answers with, and a dry run stops at: `overlaps`, the
+ * nearest existing tags to the new one's name and description, `likely` when
+ * the score reaches OVERLAP_SCORE or the name resolves to a tag already;
+ * `reach`, the notes whose `agent.summary` vector sits within REACH_SCORE of
+ * the tag's text, `tagged` for those carrying it. Calibrated 2026-09-28 on
+ * croc: a paraphrased description scored its tag 0.71 to 0.73 and an
+ * unrelated text 0.62 at best.
+ */
+export const OVERLAP_SCORE = 0.7;
+export const REACH_SCORE = 0.7;
+const OVERLAP_K = 5;
+const REACH_K = 20;
+
+interface OverlapItem {
+  tag: string;
+  description: string | null;
+  score: number | null;
+  matched: string[];
+  likely: boolean;
+}
+
+interface ReachItem {
+  record_id: string;
+  file_path: string;
+  title: string | null;
+  score: number;
+  tagged: boolean;
 }
 
 const ADDABLE_ORIGINS: ReadonlySet<unknown> = new Set(['manual', 'minted']);
@@ -391,9 +424,65 @@ export const nearestTagsHandler = (deps: TagsDeps): Handler => {
  * 400 — invalid tag shape (must match `[a-z0-9][a-z0-9-]*`).
  * 409 — tag already in taxonomy.
  */
-export const addTaxonomyHandler =
-  (deps: TagsDeps): Handler =>
-  async ctx => {
+export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
+  const nearest = new TagNearest(deps.db, deps.embedder);
+  const summaries = new RecordSummaryVecRepository(deps.db);
+  const carries = deps.db.prepare('SELECT 1 AS x FROM tags WHERE record_id = ? AND tag = ?');
+
+  const overlapsOf = async (tag: string, description: string | null): Promise<OverlapItem[]> => {
+    const {queries} = await nearest.query(
+      [
+        {query: tag, kind: 'tag'},
+        {query: tagEmbedText(tag, description), kind: 'text'}
+      ],
+      OVERLAP_K
+    );
+    const merged = new Map<string, OverlapItem>();
+    for (const q of queries) {
+      for (const item of q.items) {
+        if (item.tag === tag) continue;
+        const seen = merged.get(item.tag);
+        const matched = new Set([...(seen?.matched ?? []), ...item.matched]);
+        const score =
+          seen?.score === null || seen === undefined
+            ? item.score
+            : item.score === null
+              ? seen.score
+              : Math.max(seen.score, item.score);
+        merged.set(item.tag, {
+          tag: item.tag,
+          description: item.description,
+          score,
+          matched: [...matched],
+          likely: (score !== null && score >= OVERLAP_SCORE) || matched.has('exact')
+        });
+      }
+    }
+    return [...merged.values()]
+      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || (a.tag < b.tag ? -1 : 1))
+      .slice(0, OVERLAP_K);
+  };
+
+  const reachOf = async (tag: string, description: string | null): Promise<ReachItem[]> => {
+    const vec = await deps.embedder.embedQuery(tagEmbedText(tag, description));
+    const items: ReachItem[] = [];
+    for (const hit of summaries.nearest(vec, REACH_K)) {
+      const score = Number((1 - hit.distance / 2).toFixed(4));
+      if (score < REACH_SCORE) continue;
+      const record = deps.records.getById(hit.recordId);
+      if (!record) continue;
+      items.push({
+        record_id: record.recordId,
+        file_path: record.filePath,
+        title: record.title ?? null,
+        score,
+        tagged: carries.get(record.recordId, tag) !== undefined
+      });
+    }
+    return items;
+  };
+
+  return async ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     let raw: string;
     try {
@@ -427,13 +516,38 @@ export const addTaxonomyHandler =
       sendError(ctx.res, 400, 'bad_request', 'origin must be "manual" or "minted"');
       return;
     }
+    if (body.dry_run !== undefined && typeof body.dry_run !== 'boolean') {
+      sendError(ctx.res, 400, 'bad_request', 'dry_run must be a boolean when given');
+      return;
+    }
+    const description = typeof body.description === 'string' ? body.description : null;
 
     const existing = deps.db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag) as
       {x: number} | undefined;
+    if (body.dry_run === true) {
+      const [overlaps, reach] = await Promise.all([
+        overlapsOf(tag, description),
+        reachOf(tag, description)
+      ]);
+      sendJson(ctx.res, 200, {
+        dry_run: true,
+        tag,
+        description,
+        origin,
+        exists: existing !== undefined,
+        overlaps,
+        reach: {threshold: REACH_SCORE, count: reach.length, items: reach}
+      });
+      return;
+    }
     if (existing) {
       sendError(ctx.res, 409, 'conflict', `tag '${tag}' already in taxonomy`);
       return;
     }
+    const [overlaps, reach] = await Promise.all([
+      overlapsOf(tag, description),
+      reachOf(tag, description)
+    ]);
 
     const now = new Date().toISOString();
     const filer = new SuggestionFiler(deps.db, 'new_tag');
@@ -442,7 +556,7 @@ export const addTaxonomyHandler =
     try {
       deps.db
         .prepare('INSERT INTO tags_taxonomy (tag, description, added, origin) VALUES (?, ?, ?, ?)')
-        .run(tag, body.description ?? null, now, origin as string);
+        .run(tag, description, now, origin as string);
       const {linked, accepted} = linkBackfillAndAutoAccept(
         deps.db,
         filer,
@@ -451,13 +565,35 @@ export const addTaxonomyHandler =
         'taxonomy-add',
         now
       );
+      // A manual tag asks the sweep about the notes in its reach; a minted one
+      // already has the notes that proposed it, linked above.
+      let filed = 0;
+      if (origin === 'manual') {
+        const proposals = new SuggestionFiler(deps.db, 'tag_suggestion');
+        for (const item of reach) {
+          if (item.tagged) continue;
+          const wasFiled = proposals.file(
+            {
+              tag,
+              record_id: item.record_id,
+              file_path: item.file_path,
+              evidence: {source: 'vector', asserted: false}
+            },
+            now,
+            {subjectId: item.record_id}
+          );
+          if (wasFiled) ++filed;
+        }
+      }
       deps.db.exec('COMMIT');
       sendJson(ctx.res, 200, {
         tag,
-        description: body.description ?? null,
+        description,
         origin,
         linked,
-        accepted
+        accepted,
+        overlaps,
+        reach: {threshold: REACH_SCORE, count: reach.length, filed, items: reach}
       });
     } catch (err) {
       deps.db.exec('ROLLBACK');
@@ -469,6 +605,7 @@ export const addTaxonomyHandler =
       );
     }
   };
+};
 
 /**
  * PATCH /tags/taxonomy/{tag} {description?, origin?}
