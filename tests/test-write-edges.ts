@@ -240,3 +240,117 @@ test('PUT /sections/{id}: the same checks on the record write', async t => {
     await stopCtx(ctx);
   }
 });
+
+const stored = (ctx: Ctx, path: string, frontmatter: string[]): string => {
+  writeFileSync(join(ctx.root, path), ['---', ...frontmatter, '---', 'Body.', ''].join('\n'));
+  importVault(ctx.db, ctx.root);
+  return (
+    ctx.db.prepare(`SELECT record_id FROM records WHERE file_path = ?`).get(path) as {
+      record_id: string;
+    }
+  ).record_id;
+};
+
+test('a dropped edge type is still accepted, and lands as cites', async t => {
+  const ctx = await startCtx();
+  try {
+    const id = stored(ctx, 'topics/old.md', [
+      'title: Old',
+      'type: permanent',
+      'edges:',
+      '  topics/a: caused-by',
+      'agent:',
+      '  summary: An old note.',
+      '  edge_classifications:',
+      '    "[[topics/b]]": fixed-by'
+    ]);
+
+    const edit = await json(`${ctx.url}/vault/edit`, 'POST', {
+      path: 'topics/old.md',
+      op: 'append',
+      text: 'More.'
+    });
+    t.equal(edit.status, 200, 'a body edit carries the stored frontmatter through');
+
+    const patch = await json(`${ctx.url}/sections/${id}/fm`, 'PATCH', {
+      ops: [{op: 'add', path: '/related', value: '[[topics/b]]'}]
+    });
+    t.equal(patch.status, 200, 'and so does a frontmatter patch');
+
+    const put = await json(`${ctx.url}/vault/topics/c.md`, 'PUT', {
+      frontmatter: {title: 'C', type: 'permanent', edges: {'topics/a': 'rejected-because'}},
+      body: 'Body.'
+    });
+    t.equal(put.status, 204, 'a new declaration of a dropped name is accepted');
+    t.deepEqual(edgesOf(ctx.db, 'topics/c.md'), [['topics/c.md', 'cites', 'topics/a.md']]);
+
+    const typo = await json(`${ctx.url}/vault/topics/c.md`, 'PUT', {
+      frontmatter: {title: 'C', type: 'permanent', edges: {'topics/a': 'clarifies'}},
+      body: 'Body.'
+    });
+    t.equal(typo.status, 400, 'a name outside the vocabulary is still refused');
+    t.notOk(typo.body.error.includes('caused-by'), 'and the dropped names are not advertised');
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
+test('a stored value the writer would refuse does not block a later write', async t => {
+  const ctx = await startCtx();
+  try {
+    const id = stored(ctx, 'topics/drifted.md', [
+      'title: Drifted',
+      'type: permanent',
+      'edges:',
+      '  topics/a: clarifies',
+      'agent:',
+      '  summary: A drifted note.',
+      '  complexity: moderate',
+      '  edge_classifications:',
+      '    "[[topics/b]]": explains'
+    ]);
+
+    const edit = await json(`${ctx.url}/vault/edit`, 'POST', {
+      path: 'topics/drifted.md',
+      op: 'append',
+      text: 'More.'
+    });
+    t.equal(edit.status, 200, 'a body edit lands');
+
+    const stamped = await json(`${ctx.url}/vault/edit`, 'POST', {
+      path: 'topics/drifted.md',
+      op: 'append',
+      text: 'Still more.',
+      agent: {summary: 'A drifted note, extended.'}
+    });
+    t.equal(stamped.status, 200, 'an agent patch that leaves the stored fields alone lands');
+
+    const patch = await json(`${ctx.url}/sections/${id}/fm`, 'PATCH', {
+      ops: [{op: 'add', path: '/related', value: '[[topics/b]]'}]
+    });
+    t.equal(patch.status, 200, 'a frontmatter patch lands');
+
+    const added = await json(`${ctx.url}/vault/topics/drifted.md`, 'PUT', {
+      frontmatter: {edges: {'topics/a': 'clarifies', 'topics/b': 'revises'}},
+      body: 'Body.'
+    });
+    t.equal(added.status, 204, 'a new entry beside the stored one lands');
+
+    const changed = await json(`${ctx.url}/vault/topics/drifted.md`, 'PUT', {
+      frontmatter: {edges: {'topics/a': 'clarifies', 'topics/b': 'explains'}},
+      body: 'Body.'
+    });
+    t.equal(changed.status, 400, 'a new entry outside the vocabulary is refused');
+    t.ok(changed.body.error.includes("'explains' for topics/b"), 'naming the entry it changed');
+
+    const complexity = await json(`${ctx.url}/vault/edit`, 'POST', {
+      path: 'topics/drifted.md',
+      op: 'append',
+      text: 'Once more.',
+      agent: {complexity: 'simple'}
+    });
+    t.equal(complexity.status, 400, 'a new complexity outside the enum is refused');
+  } finally {
+    await stopCtx(ctx);
+  }
+});

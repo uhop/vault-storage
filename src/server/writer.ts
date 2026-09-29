@@ -6,6 +6,7 @@ import {contentHash} from '../util/hash.ts';
 import {normalizeTag} from '../migration/tags.ts';
 import {entityTags, entityValue} from './compress.ts';
 import {
+  ACCEPTED_EDGE_DECLARATIONS,
   AGENT_COMPLEXITY,
   DECLARED_EDGE_TYPES,
   PRIORITY_ALIASES,
@@ -100,6 +101,12 @@ const STATUS_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(STATUS_ALIASE
 const PRIORITY_ALIAS_KEYS: ReadonlySet<string> = new Set(Object.keys(PRIORITY_ALIASES));
 const AGENT_COMPLEXITY_SET: ReadonlySet<string> = new Set(AGENT_COMPLEXITY);
 const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(DECLARED_EDGE_TYPES);
+const ACCEPTED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(ACCEPTED_EDGE_DECLARATIONS);
+
+const asMap = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 
 /**
  * Validate a single closed-enum FM field. Pass-through if the value is
@@ -144,9 +151,7 @@ const validatePriority = (value: unknown): string | null => {
  * only the enrichment harness enforced the list and 150 records had drifted
  * into difficulty words and genre words.
  */
-const validateAgentComplexity = (agent: unknown): string | null => {
-  if (agent === null || typeof agent !== 'object' || Array.isArray(agent)) return null;
-  const value = (agent as Record<string, unknown>)['complexity'];
+const validateAgentComplexity = (value: unknown): string | null => {
   if (value === undefined || value === null) return null;
   if (typeof value !== 'string') return 'agent.complexity must be a string';
   if (AGENT_COMPLEXITY_SET.has(value)) return null;
@@ -159,26 +164,21 @@ const validateAgentComplexity = (agent: unknown): string | null => {
  * triage takes a classification as its prior, so both are refused here, and
  * so is a value that is not a map, which the importer would skip without a
  * word. Until 2026-09-18 only the enrichment harness checked them, and 38 had
- * drifted.
+ * drifted. The names D94 dropped are accepted as the importer accepts them,
+ * and never advertised; an entry the stored map already carries is exempt.
  */
-const validateEdgeTypeMap = (field: string, map: unknown): string | null => {
+const validateEdgeTypeMap = (field: string, map: unknown, stored: unknown): string | null => {
   if (map === undefined || map === null) return null;
   if (typeof map !== 'object' || Array.isArray(map)) {
     return `${field} must be a map of wikilink target to edge type`;
   }
+  const kept = asMap(stored);
   for (const [target, type] of Object.entries(map)) {
-    if (typeof type === 'string' && DECLARED_EDGE_TYPE_SET.has(type)) continue;
+    if (typeof type === 'string' && ACCEPTED_EDGE_TYPE_SET.has(type)) continue;
+    if (Object.hasOwn(kept, target) && kept[target] === type) continue;
     return `unknown ${field} value '${String(type)}' for ${target} — expected one of: ${[...DECLARED_EDGE_TYPE_SET].sort().join(', ')}`;
   }
   return null;
-};
-
-const validateEdgeClassifications = (agent: unknown): string | null => {
-  if (agent === null || typeof agent !== 'object' || Array.isArray(agent)) return null;
-  return validateEdgeTypeMap(
-    'agent.edge_classifications',
-    (agent as Record<string, unknown>)['edge_classifications']
-  );
 };
 
 /**
@@ -418,7 +418,9 @@ export const parseWriteRequest = (
  *   values and known aliases pass; anything else 400s so authoring typos surface
  *   at the boundary rather than silently coercing to a default. The unset
  *   sentinel is exempt — it deletes the key, reverting to the indexer
- *   default.
+ *   default. So is a value equal to the stored one: a body edit carries the
+ *   stored frontmatter through, and a vocabulary that shrank would otherwise
+ *   block every later write to the note (28 notes after D94).
  */
 export const validateWritePayload = (
   frontmatter: Record<string, unknown>,
@@ -495,8 +497,12 @@ export const validateWritePayload = (
     );
   }
 
-  const enumInput = (key: string): unknown =>
-    frontmatter[key] === FM_UNSET_SENTINEL ? undefined : frontmatter[key];
+  const changed = (value: unknown, kept: unknown): unknown =>
+    value === FM_UNSET_SENTINEL || isDeepStrictEqual(value, kept) ? undefined : value;
+  const enumInput = (key: string): unknown => changed(frontmatter[key], storedFrontmatter?.[key]);
+  const agent = asMap(frontmatter['agent']);
+  const storedAgent = asMap(storedFrontmatter?.['agent']);
+
   const statusErr = validateClosedEnum(
     'status',
     enumInput('status'),
@@ -508,11 +514,17 @@ export const validateWritePayload = (
   if (typeErr) throw new WriterError(typeErr, 'invalid_enum_value', 400);
   const priorityErr = validatePriority(enumInput('priority'));
   if (priorityErr) throw new WriterError(priorityErr, 'invalid_enum_value', 400);
-  const complexityErr = validateAgentComplexity(enumInput('agent'));
+  const complexityErr = validateAgentComplexity(
+    changed(agent['complexity'], storedAgent['complexity'])
+  );
   if (complexityErr) throw new WriterError(complexityErr, 'invalid_enum_value', 400);
   const edgeTypeErr =
-    validateEdgeTypeMap('edges', enumInput('edges')) ??
-    validateEdgeClassifications(enumInput('agent'));
+    validateEdgeTypeMap('edges', enumInput('edges'), storedFrontmatter?.['edges']) ??
+    validateEdgeTypeMap(
+      'agent.edge_classifications',
+      changed(agent['edge_classifications'], storedAgent['edge_classifications']),
+      storedAgent['edge_classifications']
+    );
   if (edgeTypeErr) throw new WriterError(edgeTypeErr, 'invalid_enum_value', 400);
 };
 
