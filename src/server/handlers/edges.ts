@@ -2,14 +2,54 @@ import type {DatabaseSync} from 'node:sqlite';
 import type {EdgesRepository} from '../../records/edges.ts';
 import {EDGE_TYPES, type Edge, type EdgeType} from '../../records/types.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
-import {parsePagination, rejectUnknownParams, splitCsv} from '../query.ts';
+import {
+  parseFields,
+  parsePagination,
+  projectFields,
+  rejectUnknownParams,
+  splitCsv
+} from '../query.ts';
 import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
-import {toJsonRecord} from '../serialize.ts';
+import {toJsonEdge, toJsonRecord} from '../serialize.ts';
 
 const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 const MAX_DEPTH = 5;
+
+// What `?fields=` and `?edge_fields=` on the neighborhood route are checked against:
+// the JSON record without its body, and the JSON edge. The identity fields stay whatever
+// was asked, so the client can still join layers to edges.
+const RECORD_FIELDS: ReadonlySet<string> = new Set([
+  'record_id',
+  'file_path',
+  'parent_path',
+  'sequence_key',
+  'type',
+  'status',
+  'priority',
+  'title',
+  'created',
+  'updated',
+  'modified_at',
+  'last_referenced',
+  'decay_score',
+  'content_hash',
+  'body_hash',
+  'archived_at',
+  'agent_summary',
+  'agent_derived_from_hash'
+]);
+const RECORD_ALWAYS: ReadonlySet<string> = new Set(['record_id']);
+const EDGE_FIELDS: ReadonlySet<string> = new Set([
+  'from_id',
+  'to_id',
+  'type',
+  'weight',
+  'note',
+  'created'
+]);
+const EDGE_ALWAYS: ReadonlySet<string> = new Set(['from_id', 'to_id', 'type']);
 
 interface EdgesDeps {
   db: DatabaseSync;
@@ -111,18 +151,21 @@ const filterByType = (edges: Edge[], types: EdgeType[]): Edge[] =>
   types.length === 0 ? edges : edges.filter(e => types.includes(e.type));
 
 /**
- * GET /sections/{id}/neighborhood?depth=N&via=type1,type2&direction=outbound|inbound|both
+ * GET /sections/{id}/neighborhood?depth=N&via=type1,type2&direction=outbound|inbound|both&fields=&edge_fields=
  *
  * BFS from `id`. Each level is the set of record_ids one edge-step away from
  * the previous level (via filtered edge types in the requested direction),
  * minus anything already visited. Returns the root record, the layered
- * structure, and every traversed edge so the client can rebuild the subgraph.
+ * structure, and every traversed edge so the client can rebuild the subgraph;
+ * `fields` and `edge_fields` keep only the named record and edge fields, the
+ * ids always, since a depth-2 answer on a real vault is megabytes otherwise.
  */
 export const neighborhoodHandler =
   (deps: EdgesDeps): Handler =>
   ctx => {
     // Precedes bumpLastReferenced: a rejected request must not leave a trace.
-    if (!rejectUnknownParams(ctx, new Set(['depth', 'via', 'direction']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['depth', 'via', 'direction', 'fields', 'edge_fields'])))
+      return;
     const id = ctx.params['id'];
     if (!id) {
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
@@ -145,6 +188,10 @@ export const neighborhoodHandler =
       sendError(ctx.res, 400, 'bad_request', types);
       return;
     }
+    const fields = parseFields(ctx, RECORD_FIELDS);
+    if (fields === null) return;
+    const edgeFields = parseFields(ctx, EDGE_FIELDS, 'edge_fields');
+    if (edgeFields === null) return;
 
     const direction = parseDirection(ctx.query['direction']);
     if (
@@ -193,15 +240,19 @@ export const neighborhoodHandler =
     }
 
     const allRecordIds = [id, ...layers.flatMap(l => l.record_ids)];
-    const recordsById = new Map<string, ReturnType<typeof toJsonRecord>>();
+    const recordsById = new Map<string, Record<string, unknown>>();
     for (const rid of allRecordIds) {
       const r = records.getById(rid);
-      if (r) recordsById.set(rid, toJsonRecord(r, {includeBody: false}));
+      if (r)
+        recordsById.set(
+          rid,
+          projectFields(toJsonRecord(r, {includeBody: false}), fields, RECORD_ALWAYS)
+        );
     }
 
     sendJson(ctx.res, 200, {
       root_id: id,
-      root: toJsonRecord(root, {includeBody: false}),
+      root: projectFields(toJsonRecord(root, {includeBody: false}), fields, RECORD_ALWAYS),
       depth,
       direction,
       via: types,
@@ -209,16 +260,11 @@ export const neighborhoodHandler =
         depth: l.depth,
         records: l.record_ids
           .map(rid => recordsById.get(rid))
-          .filter((r): r is ReturnType<typeof toJsonRecord> => r !== undefined)
+          .filter((r): r is Record<string, unknown> => r !== undefined)
       })),
-      edges: dedupeEdges(collectedEdges).map(e => ({
-        from_id: e.fromId,
-        to_id: e.toId,
-        type: e.type,
-        weight: e.weight,
-        note: e.note,
-        created: e.created
-      }))
+      edges: dedupeEdges(collectedEdges).map(e =>
+        projectFields(toJsonEdge(e), edgeFields, EDGE_ALWAYS)
+      )
     });
   };
 

@@ -2241,3 +2241,71 @@ test('POST /system/resume-bundle names what supersedes or contradicts a project 
     cleanup();
   }
 });
+
+test('GET /sections/{id}/neighborhood?fields=&edge_fields= keeps the named fields and the ids', async t => {
+  const {root, cleanup} = setup();
+  try {
+    seedGraph(root);
+    const ctx = await startTestServer(root);
+    try {
+      await wireEdges(ctx, [{from: 'topics/alpha.md', to: 'topics/beta.md', type: 'cites'}]);
+      const alphaId = await findId(ctx.url, 'topics/alpha.md');
+      const r = await fetchAuthed(
+        `${ctx.url}/sections/${alphaId}/neighborhood?depth=1&fields=file_path,title&edge_fields=type`
+      );
+      t.equal(r.status, 200, '200 ok');
+      const env = r.body as {
+        root: Record<string, unknown>;
+        layers: Array<{records: Array<Record<string, unknown>>}>;
+        edges: Array<Record<string, unknown>>;
+      };
+      t.deepEqual(
+        Object.keys(env.root).sort(),
+        ['file_path', 'record_id', 'title'],
+        'root: the two named plus record_id'
+      );
+      t.deepEqual(
+        Object.keys(env.layers[0]!.records[0]!).sort(),
+        ['file_path', 'record_id', 'title'],
+        'layer records: the same projection'
+      );
+      t.deepEqual(
+        Object.keys(env.edges[0]!).sort(),
+        ['from_id', 'to_id', 'type'],
+        'edges: the ends stay with the type'
+      );
+
+      const full = await fetchAuthed(`${ctx.url}/sections/${alphaId}/neighborhood?depth=1`);
+      const fullEnv = full.body as {
+        root: Record<string, unknown>;
+        edges: Array<Record<string, unknown>>;
+      };
+      t.ok(Object.keys(fullEnv.root).length > 10, 'without fields, the whole record');
+      t.deepEqual(
+        Object.keys(fullEnv.edges[0]!).sort(),
+        ['created', 'from_id', 'note', 'to_id', 'type', 'weight'],
+        'without edge_fields, the whole edge'
+      );
+
+      const minus = await fetchAuthed(
+        `${ctx.url}/sections/${alphaId}/neighborhood?depth=1&fields=-agent_summary,-body_hash`
+      );
+      const minusEnv = minus.body as {root: Record<string, unknown>};
+      t.notOk('body_hash' in minusEnv.root, 'an exclude list drops the named field');
+      t.ok('file_path' in minusEnv.root, 'and keeps the rest');
+
+      const bad = await fetchAuthed(`${ctx.url}/sections/${alphaId}/neighborhood?fields=nope`);
+      t.equal(bad.status, 400, 'an unknown record field is a 400');
+      t.ok((bad.body as {error: string}).error.includes('nope'), 'naming the offender');
+      const badEdge = await fetchAuthed(
+        `${ctx.url}/sections/${alphaId}/neighborhood?edge_fields=weight,nope`
+      );
+      t.equal(badEdge.status, 400, 'an unknown edge field is a 400');
+      t.ok((badEdge.body as {error: string}).error.includes('edge_fields'), 'naming the parameter');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

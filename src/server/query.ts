@@ -88,11 +88,16 @@ const ALL_FIELDS: FieldSpec = {include: null, exclude: new Set()};
  * `?fields=a,b` keeps those fields; `?fields=-a,-b` drops them — one mode per
  * request, names checked against `known` so a typo is a 400 and never a
  * silently missing column. `?exclude=body` stays as the alias it was; using
- * both is a 400. Returns null after sending the error.
+ * both is a 400. `param` reads another query parameter with the same grammar
+ * (`edge_fields`), without the alias. Returns null after sending the error.
  */
-export const parseFields = (ctx: RequestContext, known: ReadonlySet<string>): FieldSpec | null => {
-  const raw = ctx.query['fields'];
-  const legacy = ctx.query['exclude'];
+export const parseFields = (
+  ctx: RequestContext,
+  known: ReadonlySet<string>,
+  param = 'fields'
+): FieldSpec | null => {
+  const raw = ctx.query[param];
+  const legacy = param === 'fields' ? ctx.query['exclude'] : undefined;
   if (raw !== undefined && legacy !== undefined) {
     sendError(ctx.res, 400, 'bad_request', 'pass fields or exclude, not both');
     return null;
@@ -108,7 +113,7 @@ export const parseFields = (ctx: RequestContext, known: ReadonlySet<string>): Fi
     .map(n => n.trim())
     .filter(n => n.length > 0);
   if (names.length === 0) {
-    sendError(ctx.res, 400, 'bad_request', 'fields must name at least one field');
+    sendError(ctx.res, 400, 'bad_request', `${param} must name at least one field`);
     return null;
   }
   const negated = names.filter(n => n.startsWith('-')).length;
@@ -117,7 +122,7 @@ export const parseFields = (ctx: RequestContext, known: ReadonlySet<string>): Fi
       ctx.res,
       400,
       'bad_request',
-      'fields mixes an include list and an exclude list; use one mode per request'
+      `${param} mixes an include list and an exclude list; use one mode per request`
     );
     return null;
   }
@@ -128,12 +133,12 @@ export const parseFields = (ctx: RequestContext, known: ReadonlySet<string>): Fi
         ctx.res,
         400,
         'bad_request',
-        `fields: "${name}" — rows here are flat, no sub-object paths`
+        `${param}: "${name}" — rows here are flat, no sub-object paths`
       );
       return null;
     }
     if (!known.has(name)) {
-      sendError(ctx.res, 400, 'bad_request', `fields: unknown field "${name}"`);
+      sendError(ctx.res, 400, 'bad_request', `${param}: unknown field "${name}"`);
       return null;
     }
   }

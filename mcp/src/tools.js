@@ -734,19 +734,29 @@ export const registerTools = (mcp, client) => {
     'vault_neighborhood',
     {
       description:
-        'Typed-edge BFS from a record. Returns {root_id, root, depth, direction, via, layers: [{depth, records}], edges} — `root` is the record itself without its body — depth/direction/via echo the effective query, so an empty result is distinguishable from a filter that matched nothing. depth caps at 5. Not paginated: the whole neighborhood comes back in one call.',
+        'Typed-edge BFS from a record. Returns {root_id, root, depth, direction, via, layers: [{depth, records}], edges} — `root` is the record itself without its body. Pass fields (record field names) and edge_fields (from_id, to_id, type, weight, note, created) to keep only those, the ids always: a depth-2 answer on a real vault is megabytes of full records otherwise, and a graph needs record_id, file_path, title and the edges’ ends and type — depth/direction/via echo the effective query, so an empty result is distinguishable from a filter that matched nothing. depth caps at 5. Not paginated: the whole neighborhood comes back in one call.',
       inputSchema: {
         record_id: z.string().min(1),
         depth: z.number().int().min(1).max(5).optional().default(1),
         via: z.array(EDGE_TYPE).optional().describe('Filter to these edge types'),
-        direction: z.enum(['outbound', 'inbound', 'both']).optional().default('both')
+        direction: z.enum(['outbound', 'inbound', 'both']).optional().default('both'),
+        fields: z
+          .array(z.string().min(1))
+          .optional()
+          .describe('Record fields to keep (record_id always)'),
+        edge_fields: z
+          .array(z.string().min(1))
+          .optional()
+          .describe('Edge fields to keep (from_id, to_id, type always)')
       }
     },
-    wrap(async ({record_id, depth, via, direction}) =>
+    wrap(async ({record_id, depth, via, direction, fields, edge_fields}) =>
       client.getJson(`/sections/${encodeURIComponent(record_id)}/neighborhood`, {
         depth,
         via: csv(via),
-        direction
+        direction,
+        fields: csv(fields),
+        edge_fields: csv(edge_fields)
       })
     )
   );

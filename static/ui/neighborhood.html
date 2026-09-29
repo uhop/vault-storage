@@ -341,7 +341,7 @@
       };
 
       const hoodUrl = id =>
-        `/sections/${id}/neighborhood?depth=${state.depth}` +
+        `/sections/${id}/neighborhood?depth=${state.depth}&fields=record_id,file_path,title&edge_fields=from_id,to_id,type` +
         (state.via.length ? `&via=${encodeURIComponent(state.via.join(','))}` : '') +
         (state.direction !== 'both' ? `&direction=${state.direction}` : '');
 
