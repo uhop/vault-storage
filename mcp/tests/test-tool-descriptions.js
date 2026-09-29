@@ -28,6 +28,7 @@ const REQUIRED_MENTIONS = {
   vault_create_suggestion: ['evidence', 'invalid_enum_value'],
   vault_read_suggestion: ['evidence', 'asserted'],
   vault_search: ['as_of'],
+  vault_tag_nearest: ['exact', 'matched', 'score', 'tag_vecs', 'as_of'],
   vault_queue_project_archive: ['as_of'],
   vault_queue_blocked: ['as_of'],
   vault_queue_ready: ['as_of'],

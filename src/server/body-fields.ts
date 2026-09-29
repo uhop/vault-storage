@@ -111,7 +111,8 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /handoffs/resolve': ['id', 'holder', 'resolution', 'result', 'note', 'claim_token'],
   'POST /handoffs/resubmit': ['id', 'body', 'ref', 'from', 'touches'],
   'POST /handoffs/note': ['id', 'author', 'text'],
-  'POST /handoffs/verify': ['id', 'check', 'sha', 'exit', 'by']
+  'POST /handoffs/verify': ['id', 'check', 'sha', 'exit', 'by'],
+  'POST /tags/nearest': ['text', 'tags', 'k']
 };
 
 export const BODY_FIELDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(

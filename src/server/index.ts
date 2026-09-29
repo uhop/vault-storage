@@ -4,6 +4,7 @@ import {dirname} from 'node:path';
 import {openDatabase} from '../db/connection.ts';
 import {runMigrations} from '../db/migrate.ts';
 import {countEmbedPending, embedAllPending} from '../embeddings/embed-pass.ts';
+import {embedTagsPending} from '../embeddings/embed-tags.ts';
 import {FakeEmbedder} from '../embeddings/fake.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {ChildProcessEmbedder} from '../embeddings/child-embedder.ts';
@@ -169,18 +170,32 @@ export const main = async (): Promise<void> => {
     if (pendingAtStart > 0) {
       process.stdout.write(`vault-storage: startup embed: ${pendingAtStart} pending\n`);
     }
-    embedAllPending(db, embedder).then(
-      embed =>
+    embedAllPending(db, embedder)
+      .then(embed => {
         process.stdout.write(
           `vault-storage: startup embed done — ${embed.embedded} embedded, ` +
             `${embed.chunksReused} chunks reused, ${countEmbedPending(db)} still pending ` +
             `(${embed.durationMs} ms)\n`
-        ),
-      err => {
-        health.recordReindex({ok: false, error: err instanceof Error ? err.message : String(err)});
-        process.stderr.write(`vault-storage: startup embed failed: ${String(err)}\n`);
-      }
-    );
+        );
+        return embedTagsPending(db, embedder);
+      })
+      .then(
+        tags => {
+          if (tags.embedded > 0) {
+            process.stdout.write(
+              `vault-storage: startup tag vectors — ${tags.embedded} of ${tags.total} embedded ` +
+                `(${tags.durationMs} ms)\n`
+            );
+          }
+        },
+        err => {
+          health.recordReindex({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+          process.stderr.write(`vault-storage: startup embed failed: ${String(err)}\n`);
+        }
+      );
   }
 
   let scanScheduler: ScanSchedulerHandle | null = null;

@@ -14,6 +14,7 @@ import {runAllScans} from '../../maintenance/run-all.ts';
 import {scanRawInbox} from '../../maintenance/raw-inbox.ts';
 import {listFolder} from '../../maintenance/folder-listing.ts';
 import {embedAllPending, type EmbedSummary} from '../../embeddings/embed-pass.ts';
+import {embedTagsPending, type TagEmbedSummary} from '../../embeddings/embed-tags.ts';
 import type {Embedder} from '../../embeddings/types.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {snapshotDb} from '../snapshot.ts';
@@ -427,16 +428,21 @@ export const cleanupTagAliasesHandler =
  * UI button can be mashed safely. The pass runs in rounds queued with the
  * watcher's, so a drain embeds its edit between rounds of a long backlog.
  */
-let embedInFlight: Promise<EmbedSummary> | null = null;
+let embedInFlight: Promise<EmbedSummary & {tag_vecs: TagEmbedSummary}> | null = null;
 
 export const embedPendingHandler =
   (deps: EmbedDeps): Handler =>
   async ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     if (!embedInFlight) {
-      embedInFlight = embedAllPending(deps.db, deps.embedder).finally(() => {
-        embedInFlight = null;
-      });
+      embedInFlight = embedAllPending(deps.db, deps.embedder)
+        .then(async summary => ({
+          ...summary,
+          tag_vecs: await embedTagsPending(deps.db, deps.embedder)
+        }))
+        .finally(() => {
+          embedInFlight = null;
+        });
     }
     const summary = await embedInFlight;
     sendJson(ctx.res, 200, summary);

@@ -812,6 +812,31 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_tag_nearest',
+    {
+      description:
+        "The nearest existing tags for a draft's text or for proposed tag names, so a writer picks from the taxonomy and mints only when nothing fits. Give `text` (a draft, a summary, or a paragraph; the first 1,500 characters count), `tags` (proposed names, up to 50), or both. Every query is scored against the embedding of each tag's name and description; a name is also matched exactly and by its words against tag names and aliases. Returns {queries: [{query, kind: text | tag, exact, items}], tag_vecs, as_of}: `exact` is {tag} when the name is a canonical tag, {tag, requested} when it is an alias, null otherwise; `items` are [{tag, description, origin, record_count, score, matched}] best first, at most `k` (default 12, max 50), `score` on the /similar scale (1 is an identical vector) and `matched` naming how each tag got in (exact, alias, name, embedding); `tag_vecs` is {embedded, up_to_date, total} for the tag vectors refreshed on the way in, since a tag added or re-described since the last call is embedded here. Carries as_of: {generation, indexed_commit, at}. 400 when neither text nor tags is given, an entry is empty, or k is outside 1 to 50. Use it before vault_tag_create: a near match is the tag to use.",
+      inputSchema: {
+        text: z.string().min(1).optional().describe('A draft, a summary, or a paragraph to tag'),
+        tags: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(50)
+          .optional()
+          .describe('Proposed tag names to check against the taxonomy'),
+        k: z.number().int().min(1).max(50).optional().describe('Tags per query; default 12')
+      }
+    },
+    wrap(async ({text, tags, k}) =>
+      client.postJson('/tags/nearest', {
+        ...(text !== undefined ? {text} : {}),
+        ...(tags !== undefined ? {tags} : {}),
+        ...(k !== undefined ? {k} : {})
+      })
+    )
+  );
+
+  mcp.registerTool(
     'vault_tag_create',
     {
       description:

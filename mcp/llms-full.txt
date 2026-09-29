@@ -162,6 +162,7 @@ Tags:
 - vault_list_tags — taxonomy listing, filtered by `prefix` or `contains`, sorted by
   `count` (default), `count_asc`, `tag_asc`, or `tag`; paginated envelope.
 - vault_tag_info — one taxonomy row (requested appears on alias lookups).
+- vault_tag_nearest — the nearest existing tags for a draft's text or proposed names, by name, alias, and the embedding of each tag's description ({queries, tag_vecs, as_of}).
 - vault_records_by_tag — records carrying a tag (alias-aware; alias_for +
   requested on alias hits); paginated envelope.
 - vault_tag_create — add a canonical tag; origin manual keeps it at zero records.

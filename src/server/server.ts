@@ -83,6 +83,7 @@ import {
   addAliasHandler,
   addTaxonomyHandler,
   listTagsHandler,
+  nearestTagsHandler,
   recordsByTagHandler,
   tagInfoHandler,
   updateTaxonomyHandler,
@@ -217,8 +218,14 @@ export const buildRouter = (opts: BuildOptions): Router => {
     putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, records})
   );
 
-  const tagsDeps = {db: opts.db, records, vaultDataPath: opts.env.vaultDataPath};
+  const tagsDeps = {
+    db: opts.db,
+    records,
+    vaultDataPath: opts.env.vaultDataPath,
+    embedder: opts.embedder
+  };
   router.get('/tags', listTagsHandler(tagsDeps));
+  router.post('/tags/nearest', nearestTagsHandler(tagsDeps));
   router.get('/tags/{tag}/records', recordsByTagHandler(tagsDeps));
   router.get('/tags/{tag}', tagInfoHandler(tagsDeps));
   router.post('/tags/taxonomy', addTaxonomyHandler(tagsDeps));
