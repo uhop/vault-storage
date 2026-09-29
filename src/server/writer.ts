@@ -156,11 +156,16 @@ const validateAgentComplexity = (agent: unknown): string | null => {
 /**
  * `edges:` and `agent.edge_classifications` map link targets to edge types.
  * The importer drops an `edges:` value outside the vocabulary, and edge
- * triage takes a classification as its prior, so both are refused here. Until
- * 2026-09-18 only the enrichment harness checked them, and 38 had drifted.
+ * triage takes a classification as its prior, so both are refused here, and
+ * so is a value that is not a map, which the importer would skip without a
+ * word. Until 2026-09-18 only the enrichment harness checked them, and 38 had
+ * drifted.
  */
 const validateEdgeTypeMap = (field: string, map: unknown): string | null => {
-  if (map === null || typeof map !== 'object' || Array.isArray(map)) return null;
+  if (map === undefined || map === null) return null;
+  if (typeof map !== 'object' || Array.isArray(map)) {
+    return `${field} must be a map of wikilink target to edge type`;
+  }
   for (const [target, type] of Object.entries(map)) {
     if (typeof type === 'string' && DECLARED_EDGE_TYPE_SET.has(type)) continue;
     return `unknown ${field} value '${String(type)}' for ${target} — expected one of: ${[...DECLARED_EDGE_TYPE_SET].sort().join(', ')}`;
@@ -306,7 +311,13 @@ export interface WriteSplitOptions {
 
 export type ParsedWriteRequest =
   | {kind: 'markdown'; markdown: string}
-  | {kind: 'json'; frontmatter: Record<string, unknown>; body: string; strictTags?: boolean};
+  | {
+      kind: 'json';
+      frontmatter: Record<string, unknown>;
+      body: string;
+      strictTags?: boolean;
+      strictEdges?: boolean;
+    };
 
 /**
  * Decode a PUT request body based on `Content-Type`:
@@ -350,15 +361,20 @@ export const parseWriteRequest = (
       frontmatter: Record<string, unknown>;
       body: string;
       strict_tags?: unknown;
+      strict_edges?: unknown;
     };
     if (obj.strict_tags !== undefined && typeof obj.strict_tags !== 'boolean') {
       throw new WriterError('strict_tags must be a boolean when given', 'invalid_json_shape', 400);
+    }
+    if (obj.strict_edges !== undefined && typeof obj.strict_edges !== 'boolean') {
+      throw new WriterError('strict_edges must be a boolean when given', 'invalid_json_shape', 400);
     }
     return {
       kind: 'json',
       frontmatter: obj.frontmatter,
       body: obj.body,
-      strictTags: obj.strict_tags === true
+      strictTags: obj.strict_tags === true,
+      strictEdges: obj.strict_edges === true
     };
   }
   return {kind: 'markdown', markdown: rawBody};

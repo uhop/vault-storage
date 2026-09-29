@@ -44,6 +44,7 @@ import {rejectUnknownParams} from '../query.ts';
 import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {refuseUnresolvedEdges, requestEdges, type EdgeChecker} from '../edge-check.ts';
 import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
   documentEtag,
@@ -65,6 +66,7 @@ interface VaultDeps {
   resolverCache: ResolverCache;
   renderer: MarkdownRenderer;
   tagChecker: TagChecker;
+  edgeChecker: EdgeChecker;
 }
 
 /**
@@ -514,6 +516,12 @@ export const putVaultHandler =
       await refuseUnknownTags(ctx.res, deps.tagChecker, unknownTags);
       return;
     }
+    const edges = requestEdges(parsed);
+    const unresolvedEdges = deps.edgeChecker.unresolvedIn(edges);
+    if (parsed.kind === 'json' && parsed.strictEdges === true && unresolvedEdges.length > 0) {
+      refuseUnresolvedEdges(ctx.res, unresolvedEdges);
+      return;
+    }
 
     // Dedup gate. `?check=true` arms it; `X-Vault-Dedup: skip` disarms.
     const checkParam = ctx.query['check'];
@@ -620,7 +628,7 @@ export const putVaultHandler =
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
     // A create adds a path the cached wikilink resolver doesn't know.
     if (!existing) deps.resolverCache.invalidate();
-    await respondWritten(ctx.res, deps.tagChecker, etag, unknownTags);
+    await respondWritten(ctx.res, deps.tagChecker, etag, unknownTags, unresolvedEdges);
   };
 
 interface EditBody {
@@ -1501,6 +1509,7 @@ interface SupersedeBody {
   frontmatter?: unknown;
   body?: unknown;
   strict_tags?: unknown;
+  strict_edges?: unknown;
 }
 
 /**
@@ -1583,6 +1592,10 @@ export const supersedeVaultHandler =
     }
     const newFm = parsed.frontmatter as Record<string, unknown>;
     const newBody = parsed.body;
+    if (parsed.strict_edges !== undefined && typeof parsed.strict_edges !== 'boolean') {
+      sendError(ctx.res, 400, 'invalid_json_shape', 'strict_edges must be a boolean when given');
+      return;
+    }
     if (parsed.strict_tags !== undefined && typeof parsed.strict_tags !== 'boolean') {
       sendError(ctx.res, 400, 'invalid_json_shape', 'strict_tags must be a boolean when given');
       return;
@@ -1603,6 +1616,11 @@ export const supersedeVaultHandler =
     const unknownTags = deps.tagChecker.unknownIn(newFm['tags']);
     if (parsed.strict_tags === true && unknownTags.length > 0) {
       await refuseUnknownTags(ctx.res, deps.tagChecker, unknownTags);
+      return;
+    }
+    const unresolvedEdges = deps.edgeChecker.unresolvedIn(newFm['edges']);
+    if (parsed.strict_edges === true && unresolvedEdges.length > 0) {
+      refuseUnresolvedEdges(ctx.res, unresolvedEdges);
       return;
     }
 
@@ -1694,7 +1712,8 @@ export const supersedeVaultHandler =
       new: {path: newPath, record_id: newRecord?.recordId ?? null, etag: result.etag},
       ...(unknownTags.length > 0
         ? {unknown_tags: await deps.tagChecker.withNearest(unknownTags)}
-        : {})
+        : {}),
+      ...(unresolvedEdges.length > 0 ? {unresolved_edges: unresolvedEdges} : {})
     });
   };
 

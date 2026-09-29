@@ -831,7 +831,14 @@ test('PUT rejects an edge type outside the vocabulary in edges: and agent.edge_c
         edges: {'topics/beta': 'basis-for'},
         agent: {summary: 'a', edge_classifications: {'[[topics/beta]]': 'related-to'}}
       });
-      t.equal(ok.status, 204, 'a canonical type and the basis-for alias pass');
+      // topics/beta is not seeded here: since the edges checks of 2026-09-28
+      // the write lands and the answer names the target that resolves to no note.
+      t.equal(ok.status, 200, 'a canonical type and the basis-for alias pass');
+      t.deepEqual(
+        (ok.body as {unresolved_edges: unknown}).unresolved_edges,
+        [{target: 'topics/beta', type: 'basis-for'}],
+        'and the unseeded target is named'
+      );
       t.equal((await put({edges: '__unset__'})).status, 204, 'the unset sentinel passes');
 
       const md = await fetchAuthed(`${ctx.url}/sections/${id}`, {

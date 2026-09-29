@@ -11,6 +11,7 @@ import {TagsImporter} from '../importer/import-tags.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {sendError, sendJson, sendNoContent} from './responses.ts';
 import {TagNearest, type NearestItem} from './tag-nearest.ts';
+import type {UnresolvedEdge} from './edge-check.ts';
 import type {ParsedWriteRequest} from './writer.ts';
 
 export interface UnknownTagRef {
@@ -90,16 +91,30 @@ export const refuseUnknownTags = async (
   );
 };
 
-/** 204 with the ETag when every tag was known; 200 `{etag, unknown_tags}` otherwise. */
+/**
+ * 204 with the ETag when every tag was known and every edge target resolved;
+ * 200 `{etag, unknown_tags?, unresolved_edges?}` otherwise, each key present
+ * only when it has entries.
+ */
 export const respondWritten = async (
   res: ServerResponse,
   checker: TagChecker,
   etag: string,
-  unknown: UnknownTagRef[]
+  unknown: UnknownTagRef[],
+  unresolvedEdges: UnresolvedEdge[] = []
 ): Promise<void> => {
-  if (unknown.length === 0) {
+  if (unknown.length === 0 && unresolvedEdges.length === 0) {
     sendNoContent(res, {ETag: `"${etag}"`});
     return;
   }
-  sendJson(res, 200, {etag, unknown_tags: await checker.withNearest(unknown)}, {ETag: `"${etag}"`});
+  sendJson(
+    res,
+    200,
+    {
+      etag,
+      ...(unknown.length > 0 ? {unknown_tags: await checker.withNearest(unknown)} : {}),
+      ...(unresolvedEdges.length > 0 ? {unresolved_edges: unresolvedEdges} : {})
+    },
+    {ETag: `"${etag}"`}
+  );
 };

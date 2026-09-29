@@ -264,7 +264,7 @@ export const registerTools = (mcp, client) => {
     'vault_update_piece',
     {
       description:
-        'Replace a whole record via /sections/{id} PUT with `frontmatter` (JSON object) + `body` (markdown text). Same whole-document scope and the same alternatives as vault_write_file — vault_patch_fm for one frontmatter array, vault_append / vault_replace for body edits. The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected; an empty or literal-"null" body is rejected. An `agent:` block\'s `complexity` is one of prose | code-heavy | tabular | mixed | hub | log-entry (400 `invalid_enum_value` otherwise). expected_etag is sent as If-Match and makes the write conditional (412 `precondition_failed` on conflict, with details.current_etag); chain it from a previous write\'s returned etag. Returns the new etag. A `tags:` entry the taxonomy does not know (after normalization and aliases) still writes and files a `new_tag` suggestion, and the answer then carries `unknown_tags: [{tag, resolved, nearest}]`, `nearest` being the top five existing tags as vault_tag_nearest ranks them; `strict_tags: true` refuses such a write instead, 409 `unknown_tags` with the same candidates in details.unknown and nothing written or filed. Check names with vault_tag_nearest first and mint with vault_tag_create only when nothing fits.',
+        'Replace a whole record via /sections/{id} PUT with `frontmatter` (JSON object) + `body` (markdown text). Same whole-document scope and the same alternatives as vault_write_file — vault_patch_fm for one frontmatter array, vault_append / vault_replace for body edits. The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. User-authored keys are merged; `created`/`updated` are silently overridden by the indexer; DB-only keys like `record_id`/`content_hash` are rejected; an empty or literal-"null" body is rejected. An `agent:` block\'s `complexity` is one of prose | code-heavy | tabular | mixed | hub | log-entry (400 `invalid_enum_value` otherwise). expected_etag is sent as If-Match and makes the write conditional (412 `precondition_failed` on conflict, with details.current_etag); chain it from a previous write\'s returned etag. Returns the new etag. A `tags:` entry the taxonomy does not know (after normalization and aliases) still writes and files a `new_tag` suggestion, and the answer then carries `unknown_tags: [{tag, resolved, nearest}]`, `nearest` being the top five existing tags as vault_tag_nearest ranks them; `strict_tags: true` refuses such a write instead, 409 `unknown_tags` with the same candidates in details.unknown and nothing written or filed. Check names with vault_tag_nearest first and mint with vault_tag_create only when nothing fits. Relations are declared the same way: `edges: {<wikilink target>: <type>}` in the frontmatter, the type one of supersedes, revises, derived-from, basis-for, caused-by, fixed-by, rejected-because, cites, applies-to, contradicts, related-to (any other is a 400 invalid_enum_value naming the value, the target, and the vocabulary), stored as an edge whether or not the body links the target; a target that resolves to no note still writes and the answer carries `unresolved_edges: [{target, type}]`, and `strict_edges: true` refuses with 409 unresolved_edges instead.',
       inputSchema: {
         record_id: z.string().min(1),
         frontmatter: z
@@ -277,13 +277,24 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Refuse the write when a tag is not in the taxonomy (409 unknown_tags with candidates)'
+          ),
+        strict_edges: z
+          .boolean()
+          .optional()
+          .describe(
+            'Refuse the write when an edges: target resolves to no note (409 unresolved_edges)'
           )
       }
     },
-    wrap(async ({record_id, frontmatter, body, expected_etag, strict_tags}) => {
+    wrap(async ({record_id, frontmatter, body, expected_etag, strict_tags, strict_edges}) => {
       const {etag, unknown_tags} = await client.putJson(
         `/sections/${encodeURIComponent(record_id)}`,
-        {frontmatter, body, ...(strict_tags !== undefined ? {strict_tags} : {})},
+        {
+          frontmatter,
+          body,
+          ...(strict_tags !== undefined ? {strict_tags} : {}),
+          ...(strict_edges !== undefined ? {strict_edges} : {})
+        },
         expected_etag ? {ifMatch: expected_etag} : {}
       );
       return {ok: true, record_id, etag, ...(unknown_tags ? {unknown_tags} : {})};
@@ -315,7 +326,7 @@ export const registerTools = (mcp, client) => {
     'vault_write_file',
     {
       description:
-        'Create or REPLACE a whole file at a vault-relative path with `frontmatter` (JSON object) + `body` (markdown text). Whole-document scope: the body you send becomes the entire body and the frontmatter you send is merged over the stored one, so this is the wrong tool for a partial change — use vault_append / vault_replace for body edits and vault_patch_fm for one frontmatter key, all of which are atomic and cannot lose the rest of the document. Reach for this when authoring a new note or genuinely rewriting one. The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected; an empty or literal-"null" body is rejected (removal is vault_delete_file). An `agent:` block\'s `complexity` is one of prose | code-heavy | tabular | mixed | hub | log-entry (400 `invalid_enum_value` otherwise). Pass expected_etag from a vault_read_file{include_etag} to make the write conditional — it is sent as If-Match, so the write lands only if nobody else wrote in between, otherwise 412 `precondition_failed` with details.current_etag to re-read and retry against. Returns the new etag for chaining. A `tags:` entry the taxonomy does not know (after normalization and aliases) still writes and files a `new_tag` suggestion, and the answer then carries `unknown_tags: [{tag, resolved, nearest}]`, `nearest` being the top five existing tags as vault_tag_nearest ranks them; `strict_tags: true` refuses such a write instead, 409 `unknown_tags` with the same candidates in details.unknown and nothing written or filed. Check names with vault_tag_nearest first and mint with vault_tag_create only when nothing fits.',
+        'Create or REPLACE a whole file at a vault-relative path with `frontmatter` (JSON object) + `body` (markdown text). Whole-document scope: the body you send becomes the entire body and the frontmatter you send is merged over the stored one, so this is the wrong tool for a partial change — use vault_append / vault_replace for body edits and vault_patch_fm for one frontmatter key, all of which are atomic and cannot lose the rest of the document. Reach for this when authoring a new note or genuinely rewriting one. The server serializes frontmatter to YAML itself — no YAML authoring, no quoting traps. `created`/`updated` are silently overridden by the indexer; DB-only frontmatter keys (`record_id`, `content_hash`, `last_referenced`, `decay_score`) are rejected; an empty or literal-"null" body is rejected (removal is vault_delete_file). An `agent:` block\'s `complexity` is one of prose | code-heavy | tabular | mixed | hub | log-entry (400 `invalid_enum_value` otherwise). Pass expected_etag from a vault_read_file{include_etag} to make the write conditional — it is sent as If-Match, so the write lands only if nobody else wrote in between, otherwise 412 `precondition_failed` with details.current_etag to re-read and retry against. Returns the new etag for chaining. A `tags:` entry the taxonomy does not know (after normalization and aliases) still writes and files a `new_tag` suggestion, and the answer then carries `unknown_tags: [{tag, resolved, nearest}]`, `nearest` being the top five existing tags as vault_tag_nearest ranks them; `strict_tags: true` refuses such a write instead, 409 `unknown_tags` with the same candidates in details.unknown and nothing written or filed. Check names with vault_tag_nearest first and mint with vault_tag_create only when nothing fits. Relations are declared the same way: `edges: {<wikilink target>: <type>}` in the frontmatter, the type one of supersedes, revises, derived-from, basis-for, caused-by, fixed-by, rejected-because, cites, applies-to, contradicts, related-to (any other is a 400 invalid_enum_value naming the value, the target, and the vocabulary), stored as an edge whether or not the body links the target; a target that resolves to no note still writes and the answer carries `unresolved_edges: [{target, type}]`, and `strict_edges: true` refuses with 409 unresolved_edges instead.',
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
         frontmatter: z
@@ -331,13 +342,24 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Refuse the write when a tag is not in the taxonomy (409 unknown_tags with candidates)'
+          ),
+        strict_edges: z
+          .boolean()
+          .optional()
+          .describe(
+            'Refuse the write when an edges: target resolves to no note (409 unresolved_edges)'
           )
       }
     },
-    wrap(async ({path, frontmatter, body, expected_etag, strict_tags}) => {
+    wrap(async ({path, frontmatter, body, expected_etag, strict_tags, strict_edges}) => {
       const {etag, unknown_tags} = await client.putJson(
         `/vault/${path}`,
-        {frontmatter, body, ...(strict_tags !== undefined ? {strict_tags} : {})},
+        {
+          frontmatter,
+          body,
+          ...(strict_tags !== undefined ? {strict_tags} : {}),
+          ...(strict_edges !== undefined ? {strict_edges} : {})
+        },
         expected_etag ? {ifMatch: expected_etag} : {}
       );
       return {ok: true, path, etag, ...(unknown_tags ? {unknown_tags} : {})};
@@ -639,7 +661,7 @@ export const registerTools = (mcp, client) => {
     'vault_supersede',
     {
       description:
-        'Replace a note with a successor, archiving the predecessor instead of destroying it — the correct write whenever content *replaces* a note rather than evolving it. Never DELETE-then-write for this: the old note moves to <dir>/archive/<YYYY>/<name> with its record_id intact, so its edges, embeddings, and pending suggestions all survive, and it is stamped status: superseded. new_path defaults to old_path (supersede-in-place), which means inbound wikilinks resolve to the replacement. The successor gets a `> Supersedes [[<archived-path>]].` footer appended automatically to back the typed supersedes edge — do not write your own. Validation-first: a rejected request (bad frontmatter, occupied new_path or archive slot) mutates nothing. Routine edits to an existing note stay on vault_replace / vault_write_file. Returns {old: {path, record_id}, new: {path, record_id, etag}} where old.path is the archive location. A `tags:` entry the taxonomy does not know (after normalization and aliases) still supersedes and files a `new_tag` suggestion, and the answer then carries `unknown_tags: [{tag, resolved, nearest}]`, `nearest` being the top five existing tags as vault_tag_nearest ranks them; `strict_tags: true` refuses the whole supersession instead, 409 `unknown_tags` with the same candidates in details.unknown and nothing written or filed. Check names with vault_tag_nearest first and mint with vault_tag_create only when nothing fits.',
+        'Replace a note with a successor, archiving the predecessor instead of destroying it — the correct write whenever content *replaces* a note rather than evolving it. Never DELETE-then-write for this: the old note moves to <dir>/archive/<YYYY>/<name> with its record_id intact, so its edges, embeddings, and pending suggestions all survive, and it is stamped status: superseded. new_path defaults to old_path (supersede-in-place), which means inbound wikilinks resolve to the replacement. The successor gets a `> Supersedes [[<archived-path>]].` footer appended automatically to back the typed supersedes edge — do not write your own. Validation-first: a rejected request (bad frontmatter, occupied new_path or archive slot) mutates nothing. Routine edits to an existing note stay on vault_replace / vault_write_file. Returns {old: {path, record_id}, new: {path, record_id, etag}} where old.path is the archive location. A `tags:` entry the taxonomy does not know (after normalization and aliases) still supersedes and files a `new_tag` suggestion, and the answer then carries `unknown_tags: [{tag, resolved, nearest}]`, `nearest` being the top five existing tags as vault_tag_nearest ranks them; `strict_tags: true` refuses the whole supersession instead, 409 `unknown_tags` with the same candidates in details.unknown and nothing written or filed. Check names with vault_tag_nearest first and mint with vault_tag_create only when nothing fits. Relations are declared the same way: `edges: {<wikilink target>: <type>}` in the frontmatter, the type one of supersedes, revises, derived-from, basis-for, caused-by, fixed-by, rejected-because, cites, applies-to, contradicts, related-to (any other is a 400 invalid_enum_value naming the value, the target, and the vocabulary), stored as an edge whether or not the body links the target; a target that resolves to no note still writes and the answer carries `unresolved_edges: [{target, type}]`, and `strict_edges: true` refuses with 409 unresolved_edges instead.',
       inputSchema: {
         old_path: z.string().min(1).describe('Note being superseded; must end with .md'),
         new_path: z
@@ -655,16 +677,23 @@ export const registerTools = (mcp, client) => {
           .optional()
           .describe(
             'Refuse the write when a tag is not in the taxonomy (409 unknown_tags with candidates)'
+          ),
+        strict_edges: z
+          .boolean()
+          .optional()
+          .describe(
+            'Refuse the write when an edges: target resolves to no note (409 unresolved_edges)'
           )
       }
     },
-    wrap(async ({old_path, new_path, frontmatter, body, strict_tags}) =>
+    wrap(async ({old_path, new_path, frontmatter, body, strict_tags, strict_edges}) =>
       client.postJson('/vault/supersede', {
         old_path,
         ...(new_path ? {new_path} : {}),
         frontmatter,
         body,
-        ...(strict_tags !== undefined ? {strict_tags} : {})
+        ...(strict_tags !== undefined ? {strict_tags} : {}),
+        ...(strict_edges !== undefined ? {strict_edges} : {})
       })
     )
   );

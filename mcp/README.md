@@ -77,7 +77,11 @@ The tools map to the REST surface, grouped by purpose:
   know still writes and files a `new_tag` suggestion, and the answer then
   carries `unknown_tags` with the nearest existing tags; `strict_tags: true`
   refuses the write with `409 unknown_tags` instead. Check names with
-  `vault_tag_nearest` first.
+  `vault_tag_nearest` first. Relations go in the frontmatter's `edges:` map
+  (`{<wikilink target>: <type>}`), stored as edges whether or not the body
+  links the target; a type outside the vocabulary is a `400 invalid_enum_value`,
+  an unresolved target answers with `unresolved_edges`, and `strict_edges: true`
+  refuses that with `409 unresolved_edges`.
 - **Lifecycle** — `vault_supersede` (replace a note, archiving the
   predecessor with its `record_id` — and therefore its edges, embeddings,
   and suggestions — intact), `vault_move` (rename, same id preservation),

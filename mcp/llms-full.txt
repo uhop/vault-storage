@@ -137,6 +137,10 @@ Whole-document writes:
   literal-"null" bodies are refused by the server. An unknown tag writes and
   answers with unknown_tags (the nearest existing tags); strict_tags: true
   refuses with 409 unknown_tags instead. vault_supersede takes the same field.
+  Relations go in the frontmatter's edges: map ({<wikilink target>: <type>}),
+  stored as edges whether or not the body links the target; a type outside
+  the vocabulary is a 400 invalid_enum_value, an unresolved target answers
+  with unresolved_edges, and strict_edges: true refuses with 409 instead.
 - vault_delete_file — removal (a note replaced by other content should be
   superseded instead).
 

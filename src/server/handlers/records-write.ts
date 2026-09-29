@@ -8,6 +8,7 @@ import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
 import {sendError} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {refuseUnresolvedEdges, requestEdges, type EdgeChecker} from '../edge-check.ts';
 import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
   parseWriteRequest,
@@ -23,6 +24,7 @@ interface WriteDeps {
   vaultDataPath: string;
   records: RecordsRepository;
   tagChecker: TagChecker;
+  edgeChecker: EdgeChecker;
 }
 
 export const putRecordHandler =
@@ -63,6 +65,12 @@ export const putRecordHandler =
     const unknownTags = deps.tagChecker.unknownIn(requestTags(parsed));
     if (parsed.kind === 'json' && parsed.strictTags === true && unknownTags.length > 0) {
       await refuseUnknownTags(ctx.res, deps.tagChecker, unknownTags);
+      return;
+    }
+    const edges = requestEdges(parsed);
+    const unresolvedEdges = deps.edgeChecker.unresolvedIn(edges);
+    if (parsed.kind === 'json' && parsed.strictEdges === true && unresolvedEdges.length > 0) {
+      refuseUnresolvedEdges(ctx.res, unresolvedEdges);
       return;
     }
 
@@ -109,5 +117,5 @@ export const putRecordHandler =
     // suggestion on the write itself, not at the next watcher/reindex pass.
     buildEdges(deps.db, {vaultRoot: deps.vaultDataPath, scope: new Set([recordId])});
 
-    await respondWritten(ctx.res, deps.tagChecker, etag, unknownTags);
+    await respondWritten(ctx.res, deps.tagChecker, etag, unknownTags, unresolvedEdges);
   };

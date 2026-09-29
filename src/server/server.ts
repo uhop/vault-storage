@@ -135,6 +135,7 @@ import {ensureSpool} from '../records/handoff-spool.ts';
 import {HandoffsRepository} from '../records/handoffs.ts';
 import {LeasesRepository} from '../records/leases.ts';
 import {RecordsRepository} from '../records/repository.ts';
+import {EdgeChecker} from './edge-check.ts';
 import {TagChecker} from './tag-check.ts';
 
 export interface ServerHandle {
@@ -178,6 +179,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
   const edges = new EdgesRepository(opts.db);
   const tagChecker = new TagChecker(opts.db, opts.embedder);
   const resolverCache = opts.resolverCache ?? new ResolverCache(opts.db);
+  const edgeChecker = new EdgeChecker(resolverCache);
   router.get(
     '/system/status',
     systemStatusHandler({
@@ -218,7 +220,13 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get('/sections/{id}', getRecordHandler({records}));
   router.put(
     '/sections/{id}',
-    putRecordHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath, records, tagChecker})
+    putRecordHandler({
+      db: opts.db,
+      vaultDataPath: opts.env.vaultDataPath,
+      records,
+      tagChecker,
+      edgeChecker
+    })
   );
 
   const tagsDeps = {
@@ -259,7 +267,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
     records,
     resolverCache,
     renderer: opts.renderer ?? new MarkdownRenderer(),
-    tagChecker
+    tagChecker,
+    edgeChecker
   };
   router.get('/vault/', getVaultRootHandler(vaultDeps));
   router.get('/vault/{path}', getVaultHandler(vaultDeps));

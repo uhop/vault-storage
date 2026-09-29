@@ -963,3 +963,46 @@ test('scoped buildEdges: dropping a symmetric declaration removes the mirror too
     teardown(fx);
   }
 });
+
+test('frontmatter `edges:` entry without a body link is stored as declared', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'a.md',
+      [
+        '---',
+        'title: A',
+        'edges:',
+        '  b: applies-to',
+        '  c: basis-for',
+        '---',
+        'No links.',
+        ''
+      ].join('\n')
+    );
+    writeMd(fx.root, 'b.md', '---\ntitle: B\n---\nbody\n');
+    writeMd(fx.root, 'c.md', '---\ntitle: C\n---\nbody\n');
+    const result = importVault(fx.db, fx.root);
+    t.equal(result.edges.fmDeclaredApplied, 2, 'two declared-only entries');
+    t.equal(result.edges.fmOverridesApplied, 0, 'no body link to override');
+    t.equal(result.edges.suggestionsFiled, 0, 'nothing to review');
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const a = records.getByPath('a.md')!;
+    const b = records.getByPath('b.md')!;
+    const c = records.getByPath('c.md')!;
+    t.deepEqual(
+      edges.listOutbound(a.recordId).map(e => [e.type, e.toId]),
+      [['applies-to', b.recordId]],
+      'a → applies-to → b'
+    );
+    t.deepEqual(
+      edges.listOutbound(c.recordId).map(e => [e.type, e.toId]),
+      [['derived-from', a.recordId]],
+      'basis-for lands flipped: c → derived-from → a'
+    );
+  } finally {
+    teardown(fx);
+  }
+});

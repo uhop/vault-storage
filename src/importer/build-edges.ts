@@ -49,6 +49,8 @@ export interface EdgeBuildSummary {
   selfReferences: number;
   /** Frontmatter `edges:` overrides applied (cites → user-pinned type). */
   fmOverridesApplied: number;
+  /** Frontmatter `edges:` entries whose target the body never links, stored as declared. */
+  fmDeclaredApplied: number;
   /** New `edge_type` suggestions filed for unreviewed default-cites edges. */
   suggestionsFiled: number;
   /** Default-cites edges from a high-cite source type (log, query, meta) that
@@ -189,16 +191,19 @@ const forEachDeclaredEdge = (
   // which slug form ([[foo]] vs [[topics/foo]]) the body uses. Aliases
   // (`basis-for`) normalize here to canonical type + flipped direction.
   const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, DECLARED_EDGE_TYPE_SET);
-  const fmOverrides = new Map<string, {type: EdgeType; inverse: boolean}>(); // toId → normalized
+  const fmOverrides = new Map<string, {type: EdgeType; inverse: boolean; target: string}>(); // toId → normalized
   for (const [target, declared] of fmEdgesRaw) {
     const resolved = resolver.resolve(target);
     if (resolved && resolved !== record.recordId) {
-      fmOverrides.set(
-        resolved,
-        EDGE_TYPE_ALIASES[declared] ?? {type: declared as EdgeType, inverse: false}
-      );
+      fmOverrides.set(resolved, {
+        ...(EDGE_TYPE_ALIASES[declared] ?? {type: declared as EdgeType, inverse: false}),
+        target
+      });
     }
   }
+  // An entry the body never links is a declaration in its own right (the
+  // document model of D92): stored as written, like `related:`.
+  const declaredOnly = new Set(fmOverrides.keys());
 
   resolveEdges(
     resolver,
@@ -225,6 +230,7 @@ const forEachDeclaredEdge = (
       continue;
     }
     hooks.onBodyLink?.(resolved);
+    declaredOnly.delete(resolved);
     let finalType: EdgeType = c.type;
     let finalInverse = c.inverse === true;
     const override = fmOverrides.get(resolved);
@@ -245,6 +251,19 @@ const forEachDeclaredEdge = (
   }
 
   resolveEdges(resolver, record, adjusted, summary, 'body', sink);
+
+  const declared: ClassifiedTarget[] = [];
+  for (const toId of declaredOnly) {
+    const o = fmOverrides.get(toId);
+    if (!o) continue;
+    declared.push(
+      o.inverse ? {target: o.target, type: o.type, inverse: true} : {target: o.target, type: o.type}
+    );
+  }
+  if (declared.length > 0) {
+    summary.fmDeclaredApplied += declared.length;
+    resolveEdges(resolver, record, declared, summary, 'frontmatter', sink);
+  }
 };
 
 /** Throwaway summary for read-only declaration walks (scoped-GC verification). */
@@ -255,6 +274,7 @@ const scratchSummary = (): EdgeBuildSummary => ({
   unresolvedBody: 0,
   selfReferences: 0,
   fmOverridesApplied: 0,
+  fmDeclaredApplied: 0,
   suggestionsFiled: 0,
   suggestionsSkippedByType: 0,
   suggestionsLinkRemoved: 0,

@@ -12,7 +12,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /context-pack': [],
   'PATCH /sections/{id}/fm': ['ops'],
   'POST /sections/{id}/tags': ['tag'],
-  'PUT /sections/{id}': ['frontmatter', 'body', 'strict_tags'],
+  'PUT /sections/{id}': ['frontmatter', 'body', 'strict_tags', 'strict_edges'],
   'POST /tags/taxonomy': ['tag', 'description', 'origin', 'dry_run', 'reach_threshold'],
   'PATCH /tags/taxonomy/{tag}': ['description', 'origin'],
   'POST /tags/aliases': ['alias', 'canonical'],
@@ -22,7 +22,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'POST /suggestions/{id}/accept': ['resolved_by', 'claim_token'],
   'POST /suggestions/{id}/reject': ['resolved_by', 'claim_token'],
   'POST /suggestions/{id}/reopen': ['claim_token'],
-  'PUT /vault/{path}': ['frontmatter', 'body', 'strict_tags'],
+  'PUT /vault/{path}': ['frontmatter', 'body', 'strict_tags', 'strict_edges'],
   'POST /vault/edit': [
     'path',
     'op',
@@ -56,7 +56,14 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'from_agent',
     'to_agent'
   ],
-  'POST /vault/supersede': ['old_path', 'new_path', 'frontmatter', 'body', 'strict_tags'],
+  'POST /vault/supersede': [
+    'old_path',
+    'new_path',
+    'frontmatter',
+    'body',
+    'strict_tags',
+    'strict_edges'
+  ],
   // agent_summary and prefilter_max_distance are refused by name, so they are read.
   'POST /vault/propose': [
     'body',
