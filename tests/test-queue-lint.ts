@@ -92,6 +92,21 @@ test('queue lint: completion markers — shouted or dated in the title, checked 
   );
 });
 
+// The 2026-09-29 false positive and the fleet titles the narrowed rule was measured on.
+test('queue lint: a plain marker before the word it modifies is an adjective, not a marker', t => {
+  const marker = (title: string): string | null =>
+    completionMarker({line: 1, checkbox: null, title, first: ''});
+  t.equal(marker('Report stored frontmatter values outside a closed enum (2026-09-29).'), null);
+  t.equal(marker('Unlinked mentions of published posts — ruled 2026-09-15.'), null);
+  t.equal(marker('A fixed-width column for the pager (2026-09-27).'), null);
+  t.equal(marker('Filed 2026-09-29: closed enums go unreported.'), null);
+  t.equal(marker('Staging trees ingested — fixed on 2026-07-28.'), 'fixed on 2026-07-28');
+  t.equal(marker('v0.1.0 published to npm 2026-04-20.'), 'published to npm 2026-04-20');
+  t.equal(marker('1.2.2 release shipped (2026-05-07).'), 'shipped (2026-05-07');
+  t.equal(marker('Audit follow-ups (2026-08-10) — shipped'), '2026-08-10) — shipped');
+  t.equal(marker('Both 2026-06-20 gaps shipped.'), '2026-06-20 gaps shipped');
+});
+
 test('queue lint: findings — the invented heading, the preamble, the markers, the unbolded bullets', t => {
   const out = queueFindings(parseQueue(QUEUE));
   const has = (re: RegExp): void => {

@@ -151,10 +151,14 @@ export const itemCount = (parsed: ParsedQueueLint): number => schemaItems(parsed
 // description is not read: house style narrates partial progress there
 // ("deprecation SHIPPED 2026-06-07; only the removal remains"), and the
 // 2026-09-06 fleet run found both description hits false and all six title
-// hits real.
+// hits real. A plain marker before the word it modifies is an adjective, so
+// "a closed enum (2026-09-29)" stays open; a connector may follow it
+// ("published to npm 2026-04-20"). Measured 2026-09-29 (D98).
 const SHOUTED_RE = /\b(?:SHIPPED|DONE|COMPLETED?|CLOSED|FIXED|PUBLISHED)\b/;
-const DATED_RE =
-  /\b(?:shipped|done|completed|fixed|closed|published)\b[^\n]{0,24}?\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}[^\n]{0,24}?\b(?:shipped|done|completed|fixed|closed|published)\b/i;
+const PLAIN =
+  '\\b(?:shipped|done|completed|fixed|closed|published)\\b(?![\\s-]+(?!(?:on|in|to)\\b)[a-z])';
+const DATE = '\\d{4}-\\d{2}-\\d{2}';
+const DATED_RE = new RegExp(`${PLAIN}[^\\n]{0,24}?${DATE}|${DATE}[^\\n]{0,24}?${PLAIN}`, 'i');
 
 export const completionMarker = (item: QueueLintItem): string | null => {
   if (item.checkbox !== null && item.checkbox.toLowerCase() === 'x') return '[x]';
