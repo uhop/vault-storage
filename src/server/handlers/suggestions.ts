@@ -874,7 +874,9 @@ const payloadString = (payload: Record<string, unknown>, key: string): string | 
  *
  * Side effects by kind:
  * - `tag_suggestion` accept → the tag is realized on the record's FM
- *   `tags:`; the re-import settles the row as `tag-realized`.
+ *   `tags:`; the re-import settles the row as `tag-realized`, and the row
+ *   is then stamped with the batch's `resolved_by`, so an agent's accept
+ *   stays separable in the history from a tag added by hand (D84).
  * - `tag_suggestion` reject → the candidate is stripped from
  *   `agent.tags_suggested` (best-effort), then the row flips.
  * - `edge_type` accept → requires `edge_type` (a typed value, not `cites` —
@@ -1030,6 +1032,14 @@ export const resolveBatchSuggestionsHandler =
             sideEffect = applyEdgeOverride(deps, fromRecord, toPath, edgeType);
           }
           flipped = flipStatus(deps.db, id, 'accepted', resolvedBy, now, row.claim_token);
+          if (!flipped && row.kind === 'tag_suggestion' && resolvedBy !== null) {
+            deps.db
+              .prepare(
+                `UPDATE suggestions SET resolved_by = ?
+                  WHERE id = ? AND status = 'accepted' AND resolved_by = 'tag-realized'`
+              )
+              .run(resolvedBy, id);
+          }
         } else {
           if (row.kind === 'tag_suggestion') {
             const tag = payloadString(payload, 'tag');

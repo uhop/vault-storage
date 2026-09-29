@@ -432,8 +432,15 @@ test('resolve-batch: tag_suggestion side effects settle on contact', async t => 
     const byId = new Map(res.body.results.map((r: any) => [r.id, r]));
     const acceptResult = byId.get(addId) as any;
     t.equal(acceptResult.side_effect.tag_added, true);
-    // The re-import realized the tag, so resolution settled on contact.
-    t.equal(acceptResult.resolved_by, 'tag-realized');
+    // The re-import realized the tag and settled the row on contact; the
+    // batch then stamps its resolved_by, so the agent's accept stays on record.
+    t.equal(acceptResult.resolved_by, 'batch-tags');
+    t.equal(
+      (db.prepare('SELECT resolved_by FROM suggestions WHERE id = ?').get(addId) as any)
+        .resolved_by,
+      'batch-tags',
+      'the row carries the agent, not tag-realized'
+    );
     const rejectResult = byId.get(rejectId) as any;
     t.equal(rejectResult.status, 'rejected');
     t.equal(rejectResult.side_effect.candidate_stripped, true);
