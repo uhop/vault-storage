@@ -237,6 +237,7 @@ interface AddTaxonomyBody {
   description?: string;
   origin?: unknown;
   dry_run?: unknown;
+  reach_threshold?: unknown;
 }
 
 /**
@@ -463,12 +464,16 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
       .slice(0, OVERLAP_K);
   };
 
-  const reachOf = async (tag: string, description: string | null): Promise<ReachItem[]> => {
+  const reachOf = async (
+    tag: string,
+    description: string | null,
+    threshold: number
+  ): Promise<ReachItem[]> => {
     const vec = await deps.embedder.embedQuery(tagEmbedText(tag, description));
     const items: ReachItem[] = [];
     for (const hit of summaries.nearest(vec, REACH_K)) {
       const score = Number((1 - hit.distance / 2).toFixed(4));
-      if (score < REACH_SCORE) continue;
+      if (score < threshold) continue;
       const record = deps.records.getById(hit.recordId);
       if (!record) continue;
       items.push({
@@ -520,6 +525,15 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
       sendError(ctx.res, 400, 'bad_request', 'dry_run must be a boolean when given');
       return;
     }
+    let threshold = REACH_SCORE;
+    if (body.reach_threshold !== undefined) {
+      const given = body.reach_threshold;
+      if (typeof given !== 'number' || !Number.isFinite(given) || given < 0 || given > 1) {
+        sendError(ctx.res, 400, 'bad_request', 'reach_threshold must be a number from 0 to 1');
+        return;
+      }
+      threshold = given;
+    }
     const description = typeof body.description === 'string' ? body.description : null;
 
     const existing = deps.db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag) as
@@ -527,7 +541,7 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
     if (body.dry_run === true) {
       const [overlaps, reach] = await Promise.all([
         overlapsOf(tag, description),
-        reachOf(tag, description)
+        reachOf(tag, description, threshold)
       ]);
       sendJson(ctx.res, 200, {
         dry_run: true,
@@ -536,7 +550,7 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
         origin,
         exists: existing !== undefined,
         overlaps,
-        reach: {threshold: REACH_SCORE, count: reach.length, items: reach}
+        reach: {threshold, count: reach.length, items: reach}
       });
       return;
     }
@@ -546,7 +560,7 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
     }
     const [overlaps, reach] = await Promise.all([
       overlapsOf(tag, description),
-      reachOf(tag, description)
+      reachOf(tag, description, threshold)
     ]);
 
     const now = new Date().toISOString();
@@ -593,7 +607,7 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
         linked,
         accepted,
         overlaps,
-        reach: {threshold: REACH_SCORE, count: reach.length, filed, items: reach}
+        reach: {threshold, count: reach.length, filed, items: reach}
       });
     } catch (err) {
       deps.db.exec('ROLLBACK');

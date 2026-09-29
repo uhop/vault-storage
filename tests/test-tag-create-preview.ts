@@ -161,6 +161,23 @@ test('a dry run previews overlaps and reach and creates nothing', async t => {
       dry_run: 'yes'
     });
     t.equal(bad.status, 400);
+    const badFloor = await api(`${ctx.url}/tags/taxonomy`, 'POST', {
+      tag: 'x',
+      description: 'y',
+      dry_run: true,
+      reach_threshold: 2
+    });
+    t.equal(badFloor.status, 400);
+
+    const all = await api(`${ctx.url}/tags/taxonomy`, 'POST', {
+      tag: 'field-survey',
+      description: FIELD_DESC,
+      dry_run: true,
+      reach_threshold: 0
+    });
+    t.equal(all.body.reach.threshold, 0);
+    t.equal(all.body.reach.count, 4, 'a floor of zero shows every summarized note with its score');
+    t.equal(all.body.reach.items[0].title, 'A', 'best first');
   } finally {
     await stopCtx(ctx);
   }
