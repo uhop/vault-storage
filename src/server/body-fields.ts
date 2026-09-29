@@ -42,7 +42,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'yaml',
     'agent'
   ],
-  'POST /vault/render': ['markdown'],
+  'POST /vault/render': ['markdown', 'path'],
   'POST /vault/move': ['from', 'to'],
   'POST /vault/move-item': [
     'from_path',

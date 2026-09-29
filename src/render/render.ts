@@ -1,6 +1,7 @@
 import {Marked, type Tokens} from 'marked';
 import {WikilinkResolver} from '../importer/resolver.ts';
 import {scanHeadings} from '../markdown/sections.ts';
+import {REF, REF_BLOCKED, REF_START, refMark} from './refs.ts';
 
 export interface PathEntry {
   recordId: string;
@@ -87,6 +88,25 @@ const makeMarked = (resolve: ResolveLink): Marked =>
           }
           return `<a class="wikilink" data-wikilink="${esc(target)}" href="${esc(noteUiUrl(filePath))}" title="${esc(filePath)}">${display}</a>`;
         }
+      },
+      {
+        name: 'ref',
+        level: 'inline',
+        start(src: string) {
+          const i = src.search(REF_START);
+          return i === -1 ? undefined : i;
+        },
+        tokenizer(src: string, tokens) {
+          if (this.lexer.state.inLink) return undefined;
+          // `start` sees the text from its second character on, so the run before decides.
+          const before = tokens.at(-1);
+          if (before?.type === 'text' && REF_BLOCKED.test(before.raw)) return undefined;
+          const m = REF.exec(src);
+          return m ? {type: 'ref', raw: m[0]} : undefined;
+        },
+        renderer(token) {
+          return refMark(token.raw);
+        }
       }
     ],
     renderer: {
@@ -102,6 +122,8 @@ const makeMarked = (resolve: ResolveLink): Marked =>
  * Render a note body to HTML, wikilinks resolved and every top-level heading
  * stamped with its document line, plus the body's sections as the section
  * editor addresses them. `firstLine` is the document line the body starts on.
+ * A short reference (`#233`, `owner/repo#233`, `ENG-123`) comes out as a mark
+ * for `resolveRefs`.
  */
 export const renderMarkdown = (body: string, firstLine: number, resolve: ResolveLink): Rendered => {
   const marked = makeMarked(resolve);

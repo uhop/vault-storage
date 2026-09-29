@@ -3328,6 +3328,72 @@ test('POST /vault/render — markdown in, html and sections out', async t => {
   }
 });
 
+test("short references resolve against the note's project on both render routes", async t => {
+  const {root, cleanup} = setupVault();
+  writeMd(
+    root,
+    'projects/alpha/state.md',
+    [
+      '---',
+      'title: State',
+      '---',
+      '## GitHub',
+      '',
+      '```json',
+      JSON.stringify({
+        repo: 'uhop/alpha',
+        items: {
+          '5': {title: 'Five', state: 'open', html_url: 'https://github.com/uhop/alpha/issues/5'}
+        }
+      }),
+      '```',
+      ''
+    ].join('\n')
+  );
+  writeMd(
+    root,
+    'projects/alpha/notes.md',
+    ['---', 'title: Notes', '---', 'Tracked as #5 and `#5`; ENG-1 is text.', ''].join('\n')
+  );
+  writeMd(
+    root,
+    'topics/beta.md',
+    ['---', 'title: Beta', '---', 'Here #5 means nothing.', ''].join('\n')
+  );
+  const ctx = await startTestServer(root);
+  try {
+    const link =
+      '<a class="ref" href="https://github.com/uhop/alpha/issues/5" data-state="open">#5 Five</a>';
+    const note = await fetchAuthed(`${ctx.url}/vault/projects/alpha/notes.md?render=html`);
+    t.equal(note.status, 200);
+    t.equal(
+      (note.body as {html: string}).html,
+      `<p>Tracked as ${link} and <code>#5</code>; ENG-1 is text.</p>\n`
+    );
+    const topic = await fetchAuthed(`${ctx.url}/vault/topics/beta.md?render=html`);
+    t.equal((topic.body as {html: string}).html, '<p>Here #5 means nothing.</p>\n');
+
+    const post = (body: unknown) =>
+      fetchAuthed(`${ctx.url}/vault/render`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      });
+    const preview = await post({markdown: 'Draft: #5', path: 'projects/alpha/notes.md'});
+    t.equal(
+      (preview.body as {html: string}).html,
+      `<p>Draft: ${link}</p>\n`,
+      'a preview with its path'
+    );
+    const bare = await post({markdown: 'Draft: #5'});
+    t.equal((bare.body as {html: string}).html, '<p>Draft: #5</p>\n', 'and one without');
+    t.equal((await post({markdown: 'x', path: 5})).status, 400, 'path must be a string');
+  } finally {
+    await teardown(ctx);
+    cleanup();
+  }
+});
+
 test('GET /vault/{path} — section occurrence and hash, frontmatter as YAML, and the combinations refused', async t => {
   const {root, cleanup} = setupVault();
   writeMd(

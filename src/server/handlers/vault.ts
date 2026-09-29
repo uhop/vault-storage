@@ -13,6 +13,7 @@ import {basename, dirname, join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {parseFrontmatter, splitFrontmatter} from '../../markdown/frontmatter.ts';
 import {contentHash} from '../../util/hash.ts';
+import {resolveRefs} from '../../render/refs.ts';
 import type {Rendered} from '../../render/render.ts';
 import {RenderTimeoutError, type MarkdownRenderer} from '../../render/renderer.ts';
 import {
@@ -45,6 +46,7 @@ import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {refuseUnresolvedEdges, requestEdges, type EdgeChecker} from '../edge-check.ts';
+import {refResolver} from '../refs.ts';
 import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
   documentEtag,
@@ -207,11 +209,14 @@ const renderOrError = async (
   deps: VaultDeps,
   res: ServerResponse,
   body: string,
-  firstLine: number
+  firstLine: number,
+  path: string | null
 ): Promise<Rendered | null> => {
   const {version, entries} = deps.resolverCache.get();
   try {
-    return await deps.renderer.render(body, firstLine, {version, entries});
+    const rendered = await deps.renderer.render(body, firstLine, {version, entries});
+    const html = resolveRefs(rendered.html, refResolver(deps.vaultDataPath, path));
+    return {html, sections: rendered.sections};
   } catch (err) {
     if (err instanceof RenderTimeoutError) sendError(res, 503, 'render_timeout', err.message);
     else sendError(res, 500, 'render_failed', (err as Error).message);
@@ -228,7 +233,7 @@ const sendRendered = async (
 ): Promise<void> => {
   const {yaml, body} = splitFrontmatter(document);
   const head = document.slice(0, document.length - body.length);
-  const rendered = await renderOrError(deps, res, body, head.split('\n').length);
+  const rendered = await renderOrError(deps, res, body, head.split('\n').length, path);
   if (rendered === null) return;
   sendJson(res, 200, {
     path,
@@ -383,10 +388,11 @@ export const getVaultRootHandler =
   };
 
 /**
- * POST /vault/render — body `{markdown}`, rendered the way `?render=html`
- * renders a note body, with lines counted from 1 in the text sent. Answers
- * `{html, sections}`. It serves the edit page's preview of one section, so
- * the browser never parses markdown itself.
+ * POST /vault/render — body `{markdown, path?}`, rendered the way
+ * `?render=html` renders a note body, with lines counted from 1 in the text
+ * sent. Answers `{html, sections}`. It serves the edit page's preview of one
+ * section, so the browser never parses markdown itself; `path` names the note
+ * the text belongs to, which is what its short references resolve against.
  */
 export const renderVaultHandler =
   (deps: VaultDeps): Handler =>
@@ -411,7 +417,12 @@ export const renderVaultHandler =
       sendError(ctx.res, 400, 'bad_request', 'markdown must be a string');
       return;
     }
-    const rendered = await renderOrError(deps, ctx.res, markdown, 1);
+    const path = (parsed as {path?: unknown}).path;
+    if (path !== undefined && typeof path !== 'string') {
+      sendError(ctx.res, 400, 'bad_request', 'path must be a string when given');
+      return;
+    }
+    const rendered = await renderOrError(deps, ctx.res, markdown, 1, path ?? null);
     if (rendered === null) return;
     sendJson(ctx.res, 200, rendered);
   };

@@ -1000,7 +1000,7 @@ ready: false
             api('/vault/render', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({markdown: body})
+              body: JSON.stringify({markdown: body, path: state.path ?? undefined})
             })
           );
           const {html} = await res.json();
