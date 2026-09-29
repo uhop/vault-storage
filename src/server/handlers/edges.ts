@@ -115,8 +115,8 @@ const filterByType = (edges: Edge[], types: EdgeType[]): Edge[] =>
  *
  * BFS from `id`. Each level is the set of record_ids one edge-step away from
  * the previous level (via filtered edge types in the requested direction),
- * minus anything already visited. Returns the layered structure plus every
- * traversed edge so the client can rebuild the subgraph.
+ * minus anything already visited. Returns the root record, the layered
+ * structure, and every traversed edge so the client can rebuild the subgraph.
  */
 export const neighborhoodHandler =
   (deps: EdgesDeps): Handler =>
@@ -201,6 +201,7 @@ export const neighborhoodHandler =
 
     sendJson(ctx.res, 200, {
       root_id: id,
+      root: toJsonRecord(root, {includeBody: false}),
       depth,
       direction,
       via: types,

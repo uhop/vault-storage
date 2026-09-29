@@ -240,6 +240,9 @@
       <button id="outline" hidden title="Outline (jump to heading)">Outline</button>
       <button id="find-btn" hidden title="Find (⌘F)">Find</button>
       <button id="backlinks" hidden title="Notes that link to this one">Backlinks</button>
+      <a class="button" id="neighborhood" hidden title="Notes within two hops of this one"
+        >Neighborhood</a
+      >
       <div id="find-bar" class="find-bar" hidden role="search" aria-label="Find in note">
         <input
           id="find-input"
@@ -508,6 +511,10 @@
             const fm = doc.querySelector('details.fm');
             if (fm) fm.insertAdjacentHTML('afterend', block);
             else doc.insertAdjacentHTML('afterbegin', block);
+          }
+          if (groups.length > 0) {
+            $('#neighborhood').href = `/ui/neighborhood.html?path=${encodeURIComponent(path)}`;
+            $('#neighborhood').hidden = false;
           }
         } catch {
           // Links are an extra; the note reads fine without them.

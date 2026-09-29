@@ -10,6 +10,7 @@ const CANON = [
   ['/ui/fleet.html', 'fleet'],
   ['/ui/fleet.html?view=packages', 'packages'],
   ['/ui/tags.html', 'tags'],
+  ['/ui/edges.html', 'edges'],
   ['/ui/raw.html', 'raw'],
   ['/ui/folder.html', 'browse'],
   ['/ui/edit.html', 'note'],

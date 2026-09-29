@@ -177,7 +177,7 @@ Tags:
 
 Graph insight:
 
-- vault_neighborhood — BFS layers + typed edges around a record (depth ≤ 5).
+- vault_neighborhood — BFS layers + typed edges around a record (depth ≤ 5); the root record rides along as `root`.
 - vault_similar — embedding nearest neighbours; distance and score run in
   opposite directions (score = 1 - distance/2).
 - vault_backlinks — inbound typed edges; paginated envelope.

@@ -179,11 +179,15 @@ test('GET /sections/{id}/neighborhood returns root + 1-hop layer', async t => {
       t.equal(r.status, 200, '200 ok');
       const env = r.body as {
         root_id: string;
+        root: {record_id: string; file_path: string; body?: unknown};
         depth: number;
         layers: Array<{depth: number; records: Array<{file_path: string}>}>;
         edges: Array<{type: string}>;
       };
       t.equal(env.root_id, alphaId, 'root is alpha');
+      t.equal(env.root.record_id, alphaId, 'the root record rides along');
+      t.equal(env.root.file_path, 'topics/alpha.md', 'with its path');
+      t.equal(env.root.body, undefined, 'without its body');
       t.equal(env.layers.length, 1, 'single layer at depth=1');
       const paths = env.layers[0]!.records.map(r => r.file_path).sort();
       t.deepEqual(paths, ['topics/beta.md', 'topics/gamma.md'], 'beta + gamma reached');

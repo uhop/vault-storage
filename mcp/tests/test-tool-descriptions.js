@@ -58,7 +58,7 @@ const REQUIRED_MENTIONS = {
   ],
   vault_status: ['embedder', 'memory', 'sqlite_vec_version', 'last_indexed_commit'],
   vault_suggestions_summary: ['statuses', 'total', 'by_kind'],
-  vault_neighborhood: ['root_id', 'layers', 'edges', 'direction'],
+  vault_neighborhood: ['root_id', 'root', 'layers', 'edges', 'direction'],
   vault_similar: ['root_id', 'distance', 'score'],
   vault_enrichment_delta: [
     'agent_current',

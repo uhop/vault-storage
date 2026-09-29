@@ -22,6 +22,7 @@ const PAGES = [
   'folder',
   'index',
   'lint-review',
+  'neighborhood',
   'note',
   'projects',
   'raw',
@@ -29,7 +30,11 @@ const PAGES = [
   'tags'
 ];
 // Pages that show nothing worth measuring without a note to show.
-const QUERY = {edit: '?path=topics%2Falpha.md', note: '?path=topics%2Falpha.md'};
+const QUERY = {
+  edit: '?path=topics%2Falpha.md',
+  neighborhood: '?path=topics%2Falpha.md',
+  note: '?path=topics%2Falpha.md'
+};
 const VIEWPORTS = [1280, 400];
 const TOKEN = 'snapshot-token';
 const root = new URL('..', import.meta.url);

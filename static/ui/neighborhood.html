@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first request.
+      (() => {
+        performance.mark('head script');
+        const token = localStorage.getItem('vault.token');
+        const path = new URLSearchParams(location.search).get('path');
+        if (!token || !path) return;
+        const url = `/resolve?wikilink=${encodeURIComponent(path)}`;
+        const early = (window.__early ??= new Map());
+        const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+        res.catch(() => {});
+        early.set(url, res);
+      })();
+    </script>
+    <title>vault-storage — neighborhood</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      main {
+        max-width: 64rem;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        gap: 0.6rem 1rem;
+        margin: 0 0 1rem;
+      }
+      .controls label {
+        display: grid;
+        gap: 0.2rem;
+        font-size: var(--text-s);
+        color: var(--muted);
+      }
+      .controls label.path {
+        flex: 1 1 18rem;
+      }
+      .controls input,
+      .controls select {
+        font: inherit;
+        color: var(--fg);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.3rem 0.4rem;
+      }
+      .controls input {
+        font-family: var(--mono);
+        font-size: var(--text-s);
+        width: 100%;
+      }
+      .layout {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 14rem 1fr;
+      }
+      @media (max-width: 768px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+      .type-pane,
+      .hood-pane {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.8rem;
+        min-height: 0;
+      }
+      .type-pane h2,
+      .hood-pane h2 {
+        margin: 0 0 0.6rem;
+        font-size: 1rem;
+      }
+      .type-pane p {
+        margin: 0.6rem 0 0;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .type-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .type-list button {
+        display: flex;
+        width: 100%;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.3rem 0.4rem;
+        border: 0;
+        border-radius: 4px;
+        background: none;
+        color: var(--fg);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .type-list button:hover {
+        background: var(--bg);
+      }
+      .type-list button[aria-pressed='true'] {
+        background: var(--accent);
+        color: var(--accent-fg, #fff);
+      }
+      .type-list .name {
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .type-list .count {
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .type-list button[aria-pressed='true'] .count {
+        color: inherit;
+      }
+      .root {
+        padding: 0 0 0.6rem;
+        border-bottom: 1px solid var(--line);
+      }
+      .root a {
+        color: var(--fg);
+        text-decoration: none;
+      }
+      .root a:hover b {
+        color: var(--accent);
+      }
+      .root b {
+        font-size: 1.1rem;
+      }
+      .root small,
+      .root .sum {
+        display: block;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .root small {
+        font-family: var(--mono);
+      }
+      .hop h2 {
+        margin: 1rem 0 0.4rem;
+        font-size: var(--text-s);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .hop ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .hop li {
+        display: grid;
+        grid-template-columns: minmax(12rem, 1fr) auto;
+        gap: 0.2rem 1rem;
+        align-items: baseline;
+        padding: 0.35rem 0;
+        border-top: 1px solid var(--line);
+      }
+      .hop li:first-child {
+        border-top: 0;
+      }
+      .hop li > a {
+        min-width: 0;
+        color: var(--fg);
+        text-decoration: none;
+      }
+      .hop li > a:hover b {
+        color: var(--accent);
+      }
+      .hop li > a b,
+      .hop li > a small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .hop li > a small {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .hop .vias {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: end;
+        gap: 0.2rem 0.8rem;
+        color: var(--muted);
+        font-size: var(--text-s);
+        text-align: right;
+      }
+      .hop .via .type {
+        font-family: var(--mono);
+      }
+      .hop .more > summary {
+        cursor: pointer;
+        padding: 0.35rem 0;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      @media (max-width: 480px) {
+        .hop li {
+          grid-template-columns: 1fr;
+        }
+        .hop .vias {
+          justify-content: start;
+          text-align: left;
+        }
+      }
+    </style>
+  </head>
+  <body class="fmw">
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <form id="controls" class="controls">
+        <label class="path"
+          >Note
+          <input
+            id="path"
+            name="path"
+            placeholder="topics/alpha.md"
+            autocomplete="off"
+            spellcheck="false"
+        /></label>
+        <label
+          >Depth
+          <select id="depth" name="depth">
+            <option value="1">1 hop</option>
+            <option value="2">2 hops</option>
+            <option value="3">3 hops</option>
+            <option value="4">4 hops</option>
+            <option value="5">5 hops</option>
+          </select></label
+        >
+        <label
+          >Direction
+          <select id="direction" name="direction">
+            <option value="both">both</option>
+            <option value="outbound">outbound</option>
+            <option value="inbound">inbound</option>
+          </select></label
+        >
+        <button type="submit">Show</button>
+      </form>
+      <div class="layout">
+        <section class="type-pane">
+          <h2>Types</h2>
+          <ul id="type-list" class="type-list"></ul>
+          <p>
+            Edges of the shown neighborhood. Pick types to walk only those; the others are not
+            counted then.
+          </p>
+        </section>
+        <section class="hood-pane">
+          <div id="root" class="root" hidden></div>
+          <div id="hops"></div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module">
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {TYPE_ORDER, titleOf} from '/ui/note-links.js';
+      import {arrangeHops, renderHops} from '/ui/neighborhood-view.js';
+      const $ = sel => document.querySelector(sel);
+
+      const DEPTH_DEFAULT = 2;
+      const DIRECTIONS = new Set(['both', 'outbound', 'inbound']);
+
+      // The query string is the state: path, depth, via (types, comma-separated), direction.
+      const readState = () => {
+        const q = new URLSearchParams(location.search);
+        const depth = Number.parseInt(q.get('depth') ?? '', 10);
+        const direction = q.get('direction') ?? 'both';
+        return {
+          path: q.get('path') ?? '',
+          depth: depth >= 1 && depth <= 5 ? depth : DEPTH_DEFAULT,
+          via: (q.get('via') ?? '').split(',').filter(t => TYPE_ORDER.includes(t)),
+          direction: DIRECTIONS.has(direction) ? direction : 'both'
+        };
+      };
+      const state = readState();
+      const writeState = () => {
+        const q = new URLSearchParams();
+        if (state.path) q.set('path', state.path);
+        if (state.depth !== DEPTH_DEFAULT) q.set('depth', String(state.depth));
+        if (state.via.length) q.set('via', state.via.join(','));
+        if (state.direction !== 'both') q.set('direction', state.direction);
+        const search = q.toString();
+        history.replaceState(null, '', search ? `?${search}` : location.pathname);
+      };
+
+      let seq = 0;
+      let byType = {};
+      const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
+
+      const renderTypes = () => {
+        const row = type => `
+      <li>
+        <button data-type="${esc(type)}" aria-pressed="${state.via.includes(type)}">
+          <span class="name">${esc(type)}</span>
+          <span class="count">${state.via.length && !state.via.includes(type) ? '' : (byType[type] ?? 0)}</span>
+        </button>
+      </li>`;
+        $('#type-list').innerHTML =
+          `<li><button data-type="" aria-pressed="${state.via.length === 0}"><span class="name">all</span></button></li>` +
+          TYPE_ORDER.map(row).join('');
+      };
+
+      const renderRoot = (root, hops) => {
+        const notes = hops.reduce((sum, h) => sum + h.notes.length, 0);
+        const reached = hops.filter(h => h.notes.length > 0).length;
+        const sum =
+          notes === 0
+            ? `No edges${state.via.length ? ' of the picked types' : ''} within ${state.depth} hop${state.depth === 1 ? '' : 's'}.`
+            : `${notes} note${notes === 1 ? '' : 's'} within ${reached} hop${reached === 1 ? '' : 's'}${state.direction === 'both' ? '' : `, ${state.direction} only`}.`;
+        $('#root').innerHTML =
+          `<a href="/ui/note.html?path=${encodeURIComponent(root.file_path)}"><b>${esc(titleOf(root))}</b><small>${esc(root.file_path)}</small></a>` +
+          `<span class="sum">${sum}</span>`;
+        $('#root').hidden = false;
+      };
+
+      const hoodUrl = id =>
+        `/sections/${id}/neighborhood?depth=${state.depth}` +
+        (state.via.length ? `&via=${encodeURIComponent(state.via.join(','))}` : '') +
+        (state.direction !== 'both' ? `&direction=${state.direction}` : '');
+
+      const load = async () => {
+        const my = ++seq;
+        if (!state.path) {
+          $('#root').hidden = true;
+          $('#hops').innerHTML = '<div class="empty">Name a note to show its neighborhood.</div>';
+          byType = {};
+          renderTypes();
+          return;
+        }
+        $('#hops').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
+        try {
+          const resolved = await apiJson(`/resolve?wikilink=${encodeURIComponent(state.path)}`);
+          if (my !== seq) return;
+          const hood = await apiJson(hoodUrl(resolved.record_id));
+          if (my !== seq) return;
+          byType = {};
+          for (const e of hood.edges ?? []) byType[e.type] = (byType[e.type] ?? 0) + 1;
+          renderTypes();
+          const hops = arrangeHops(resolved.record_id, hood);
+          const root = hood.root ?? {file_path: resolved.file_path, title: null};
+          renderRoot(root, hops);
+          $('#hops').innerHTML = renderHops(hops, esc, titleOf(root));
+        } catch (e) {
+          if (my !== seq) return;
+          if (isAuthError(e)) {
+            showAuthDialog();
+            return;
+          }
+          $('#root').hidden = true;
+          $('#hops').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+        }
+      };
+
+      const syncControls = () => {
+        $('#path').value = state.path;
+        $('#depth').value = String(state.depth);
+        $('#direction').value = state.direction;
+      };
+
+      const init = () => {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        load();
+      };
+
+      document.addEventListener('token-change', init);
+
+      $('#controls').addEventListener('submit', e => {
+        e.preventDefault();
+        state.path = $('#path').value.trim();
+        state.depth = Number($('#depth').value);
+        state.direction = $('#direction').value;
+        writeState();
+        load();
+      });
+      $('#depth').addEventListener('change', () => $('#controls').requestSubmit());
+      $('#direction').addEventListener('change', () => $('#controls').requestSubmit());
+
+      $('#type-list').addEventListener('click', e => {
+        const btn = e.target.closest('button[data-type]');
+        if (!btn) return;
+        const type = btn.dataset.type;
+        if (!type) state.via = [];
+        else if (state.via.includes(type)) state.via = state.via.filter(t => t !== type);
+        else state.via = TYPE_ORDER.filter(t => t === type || state.via.includes(t));
+        writeState();
+        load();
+      });
+
+      syncControls();
+      renderTypes();
+      init();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>

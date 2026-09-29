@@ -734,7 +734,7 @@ export const registerTools = (mcp, client) => {
     'vault_neighborhood',
     {
       description:
-        'Typed-edge BFS from a record. Returns {root_id, depth, direction, via, layers: [{depth, records}], edges} — depth/direction/via echo the effective query, so an empty result is distinguishable from a filter that matched nothing. depth caps at 5. Not paginated: the whole neighborhood comes back in one call.',
+        'Typed-edge BFS from a record. Returns {root_id, root, depth, direction, via, layers: [{depth, records}], edges} — `root` is the record itself without its body — depth/direction/via echo the effective query, so an empty result is distinguishable from a filter that matched nothing. depth caps at 5. Not paginated: the whole neighborhood comes back in one call.',
       inputSchema: {
         record_id: z.string().min(1),
         depth: z.number().int().min(1).max(5).optional().default(1),
