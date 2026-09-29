@@ -31,6 +31,10 @@ Claude Code MCP config (`~/.claude/.mcp.json` or per-project `.claude/.mcp.json`
 The bearer token is the `VAULT_API_TOKEN` the vault-storage server was started
 with.
 
+At startup the adapter asks the server to load its embedding model (POST
+/maintenance/warm-embedder) and does not wait for the answer, so the first
+semantic search of a session does not wait for the load.
+
 ## Response-shape contract
 
 Every tool description names the response shape it returns, including
@@ -307,3 +311,11 @@ any request, naming the key and the accepted ones. Common codes: auth_failed, no
 conflict, replace_assert_failed (details.occurrences), precondition_failed
 (details.current_etag), empty_body / null_body, network, bad_request,
 validation_failed, internal.
+
+A network error carries details.cause (the socket's error code) and
+details.attempts. A refused connection (ECONNREFUSED) sent nothing, so the
+request is repeated every half second for eight seconds, which outlasts a server
+restart; a read is repeated the same way after any network failure. A write
+whose connection dropped after the request went out (UND_ERR_SOCKET, ECONNRESET)
+is not repeated, since it may have applied: read the document before sending it
+again.

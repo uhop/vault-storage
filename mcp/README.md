@@ -31,7 +31,12 @@ In your Claude Code MCP config (`~/.claude/.mcp.json` or per-project
 ```
 
 The bearer token is the same `VAULT_API_TOKEN` your `vault-storage` server
-was started with (e.g., the one in your `.env`).
+was started with (for example, the one in your `.env`).
+
+At startup the adapter asks the server to load its embedding model
+(`POST /maintenance/warm-embedder`), so the first semantic search of a session
+does not wait for the load. It does not wait for the answer, and a server
+that is down or older changes nothing.
 
 ## Tools
 
@@ -221,6 +226,27 @@ codes:
 
 ## Release notes
 
+- 0.12.0 — tags picked from the taxonomy, relations declared on the write, and
+  calls that outlast a server restart: `vault_tag_nearest` returns the nearest
+  existing tags for proposed names or a draft's text, and `vault_write_file`,
+  `vault_update_piece`, and `vault_supersede` take `strict_tags` and
+  `strict_edges`, which refuse a write that carries an unknown tag (409
+  `unknown_tags`, with the nearest tags) or an `edges:` target that resolves
+  to no note (409 `unresolved_edges`); without them the write lands and the
+  answer names both. `vault_tag_create` (with a `dry_run` preview of overlaps
+  and reach), `vault_tag_alias`, `vault_tag_delete`, and `vault_gc_tags` cover
+  a tag's life, and `vault_tag_update` takes `origin`. `vault_list_edges`
+  pages the stored edges by type, `vault_neighborhood` takes `fields` and
+  `edge_fields`, and `vault_project_trackers` says where a project's work is
+  tracked. An edge-type filter takes the server's seven types; `caused-by`,
+  `fixed-by`, and `rejected-because` are gone from it. A refused connection
+  is repeated every half second for eight seconds, a read after any network
+  failure, and a `network` error names its cause in `details.cause`; a write
+  whose connection dropped is reported as possibly applied and is not
+  repeated. At startup the adapter asks the server to load its embedding
+  model, so the first semantic search does not wait for it. The new tools and
+  parameters need vault-storage from 2026-09-28: an older server answers a
+  new tool with a 404 and a new parameter with a 400 for an unknown field.
 - 0.11.0 — enrichment kept current by the writer, and strict tool
   arguments: `vault_append`, `vault_replace`, `vault_replace_section`,
   `vault_remove_item`, and `vault_insert_item` take an optional `agent`

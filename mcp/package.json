@@ -1,6 +1,6 @@
 {
   "name": "@uhop/vault-storage-mcp",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "MCP adapter for vault-storage. Exposes the REST API as MCP tools/resources for Claude Code.",
   "type": "module",
   "bin": {
@@ -21,7 +21,7 @@
     "start": "node src/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

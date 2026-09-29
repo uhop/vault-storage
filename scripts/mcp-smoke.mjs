@@ -3,7 +3,8 @@
 // staged `mcp/src/index.js` and speaks JSON-RPC over stdio to it the way a client
 // does, against the live server in VAULT_API_URL. Checks what a publish ships —
 // the tool list against what `registerTools` declares (never a count), the
-// handshake, `vault_health`, one read tool, and one `fields=` subset.
+// handshake, `vault_health`, one read tool, one `fields=` subset, and a read
+// through each tool family the release added.
 //   node scripts/mcp-smoke.mjs [--project NAME]
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
@@ -127,6 +128,25 @@ try {
   check(
     items.length > 0 && items.every(i => typeof i.title === 'string' && !('body' in i)),
     `vault_queue_top fields=title: ${items.length} items, keys ${[...new Set(items.flatMap(i => Object.keys(i)))].join(',')}`
+  );
+
+  const nearest = await call('vault_tag_nearest', {tags: ['vault'], k: 3});
+  const query = nearest.queries?.[0];
+  check(
+    query?.kind === 'tag' && Array.isArray(query.items),
+    `vault_tag_nearest: "${query?.query}" exact=${JSON.stringify(query?.exact ?? null)}, ${query?.items?.length ?? 0} nearest`
+  );
+
+  const trackers = await call('vault_project_trackers', {project});
+  check(
+    trackers.project === project && typeof trackers.primary?.kind === 'string',
+    `vault_project_trackers: ${trackers.project}, primary ${trackers.primary?.kind}`
+  );
+
+  const edges = await call('vault_list_edges', {limit: 1});
+  check(
+    Array.isArray(edges.items) && typeof edges.total === 'number',
+    `vault_list_edges: ${edges.items?.length ?? 0} of ${edges.total} edges`
   );
 } catch (err) {
   check(false, err instanceof Error ? err.message : String(err));

@@ -26,10 +26,13 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   take an `agent` patch that keeps the enrichment current in the same write;
   `vault_read_section`
   reads one heading's section the same way), whole-document writes (optional
-  `expected_etag` sent as `If-Match`), lifecycle (`vault_supersede` /
-  `vault_move` / `vault_propose`), maintenance (incl. `vault_enrichment_delta`
-  — the chunks added since a note's `agent:` block was derived), tags,
-  graph insight, the
+  `expected_etag` sent as `If-Match`; `strict_tags` / `strict_edges` refuse a
+  write with an unknown tag or an unresolved `edges:` target), lifecycle
+  (`vault_supersede` / `vault_move` / `vault_propose`), maintenance (incl.
+  `vault_enrichment_delta` — the chunks added since a note's `agent:` block
+  was derived), tags (`vault_tag_nearest` to pick from the taxonomy before
+  minting; create, alias, delete), stored edges (`vault_list_edges`), project
+  trackers (`vault_project_trackers`), graph insight, the
   suggestions review queue (claim / resolve batches), queue-item slices
   (`fields: "a,b"` / `"-a,-b"` to subset a row, `exclude: "body"` the older
   alias for `fields: "-body"`),
@@ -47,3 +50,6 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   total}` envelope (page by `items.length`; the server caps `limit` at 100),
   the flat `{count, items}` queue slices, or a genuinely unpaginated read.
 - Server errors surface as MCP tool errors with `{error, code, status, details}`.
+- A refused connection is repeated for eight seconds, which outlasts a server
+  restart; a `network` error names its cause in `details.cause`, and a write
+  whose connection dropped is reported as possibly applied, never repeated.
