@@ -363,7 +363,10 @@
         const note = trackers.declared
           ? ''
           : '<div class="empty">No <code>trackers:</code> in the queue\'s frontmatter, so the vault queue is primary.</div>';
-        return `<section id="trackers" class="fmw-card"><h3>Trackers</h3><ul class="trackers">${rows}</ul>${note}${problems}</section>`;
+        // A declaration needs decisions and credentials, so it is set from the agent (2026-09-29).
+        const how =
+          '<div class="empty">To declare or change a tracker, ask your agent to run <code>/vault trackers</code>.</div>';
+        return `<section id="trackers" class="fmw-card"><h3>Trackers</h3><ul class="trackers">${rows}</ul>${note}${how}${problems}</section>`;
       };
 
       const render = () => {
