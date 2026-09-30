@@ -112,6 +112,10 @@ const seed = (root: string): void => {
       'type: project',
       '---',
       '',
+      '## Inbox',
+      '',
+      '- **New report.** waits for triage',
+      '',
       '## Active',
       '',
       '- **Mid-flight thing.** in progress',
@@ -224,6 +228,7 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
         queue: {
           active: string[];
           in_flight: Array<{title: string; source: string | null}>;
+          inbox: number;
           backlog: number;
           ready: number;
           blocked: number;
@@ -241,6 +246,7 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
       ],
       'the Active items with the ticket each mirrors'
     );
+    t.equal(body.project.queue.inbox, 1, 'one item waits for triage');
     t.equal(body.project.queue.backlog, 2, 'two backlog items');
     t.equal(body.project.queue.ready, 1, 'only the unblocked one is ready');
     t.equal(body.project.queue.blocked, 1, 'the ref-carrying one is blocked');

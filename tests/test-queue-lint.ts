@@ -149,6 +149,25 @@ test('queue lint: a heading glued to the previous line is reported, not treated 
   );
 });
 
+test('queue lint: Inbox is a schema section, and a heading glued to it is reported (2026-09-30)', t => {
+  const clean = parseQueue(
+    '## Inbox\n\n- **GitHub: a/b#1 — Report.** read 2026-09-30\n  - source: github a/b#1\n\n## Active\n\n(empty)\n\n## Backlog\n\n- **One.** Open.\n\n## Watching\n\n(empty)\n'
+  );
+  t.deepEqual(
+    clean.sections.map(s => [s.heading, s.known, s.items.length]),
+    [
+      ['Inbox', true, 1],
+      ['Active', true, 0],
+      ['Backlog', true, 1],
+      ['Watching', true, 0]
+    ]
+  );
+  t.deepEqual(queueFindings(clean), []);
+  t.equal(itemCount(clean), 2);
+  const glued = parseQueue('## Active\n\n- **A.** prose## Inbox\n\n- **B.** new\n');
+  t.matchString(queueFindings(glued)[0] ?? '', /^line 3: heading glued to prose/);
+});
+
 test('queue lint: the shapes parse.ts accepts count the same here', t => {
   // `+` bullets, tab-separated markers, lowercase schema headings, and a bare
   // marker with nothing after it — all read by parse.ts, so counted (or not)

@@ -213,6 +213,8 @@ export const resumeBriefHandler =
           in_flight: mine
             .filter(row => row.section === 'active')
             .map(row => ({title: row.title, source: row.source})),
+          // Items a secondary tracker's intake put up for triage (2026-09-30).
+          inbox: mine.filter(row => row.section === 'inbox').length,
           backlog: mine.filter(row => row.section === 'backlog').length,
           ready: readyView(mine, universe).length,
           blocked: blockedView(mine, universe).length,

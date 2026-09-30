@@ -15,7 +15,9 @@ import {createHash} from 'node:crypto';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {maskCodeRegions} from '../markdown/wikilinks.ts';
 
-export type QueueSection = 'active' | 'backlog' | 'watching' | 'archive';
+// `inbox` (2026-09-30): items taken in from a secondary tracker for triage,
+// accepted into Backlog or Active, or archived as rejected; never open work.
+export type QueueSection = 'inbox' | 'active' | 'backlog' | 'watching' | 'archive';
 export type CloseReason = 'shipped' | 'rejected' | 'parked' | 'deferred';
 
 export interface ParsedQueueItem {
@@ -55,6 +57,7 @@ export interface ParsedQueueItem {
 }
 
 const SECTION_HEADINGS: Record<string, Exclude<QueueSection, 'archive'>> = {
+  inbox: 'inbox',
   active: 'active',
   backlog: 'backlog',
   watching: 'watching'

@@ -15,7 +15,7 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 34, 'schema version is 34 after all migrations through the queue source');
+  t.equal(result.current, 35, 'schema version is 35 after all migrations through the queue inbox');
   t.deepEqual(
     result.applied,
     [
@@ -52,7 +52,8 @@ test('runs the init migration and creates required tables', t => {
       '0031_edge_vocabulary.sql',
       '0032_fm_findings.sql',
       '0033_records_project.sql',
-      '0034_queue_source.sql'
+      '0034_queue_source.sql',
+      '0035_queue_inbox.sql'
     ],
     'all migrations applied in order'
   );
@@ -68,7 +69,8 @@ test('runs the init migration and creates required tables', t => {
         name !== '0028_edge_type_default_cites.sql' &&
         name !== '0029_tag_origin.sql' &&
         name !== '0030_tag_vecs.sql' &&
-        name !== '0031_edge_vocabulary.sql'
+        name !== '0031_edge_vocabulary.sql' &&
+        name !== '0035_queue_inbox.sql'
     ),
     'every migration forces a full import except the ones marked no-reindex'
   );
@@ -96,6 +98,85 @@ test('runs the init migration and creates required tables', t => {
     t.ok(names.includes(required), `table ${required} exists`);
   }
 
+  db.close();
+});
+
+test('0035 rebuilds queue_items with the inbox section and keeps every row', t => {
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  // Rewind to 34: the 0008 table shape plus the 0016 and 0034 columns.
+  db.exec(`
+    DROP TABLE queue_items;
+    CREATE TABLE queue_items (
+      id TEXT PRIMARY KEY, project TEXT NOT NULL,
+      section TEXT NOT NULL CHECK (section IN ('active', 'backlog', 'watching', 'archive')),
+      priority INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL, title TEXT NOT NULL,
+      title_norm TEXT NOT NULL, body TEXT NOT NULL, closed_at TEXT, close_reason TEXT,
+      source_file TEXT NOT NULL, source_line INTEGER NOT NULL, body_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      blocked_by TEXT NOT NULL DEFAULT '[]', source TEXT,
+      UNIQUE (project, section, title_norm));
+    INSERT INTO queue_items (id, project, section, priority, position, title, title_norm, body,
+      source_file, source_line, body_hash, created_at, updated_at, blocked_by, source)
+      VALUES ('q1', 'p', 'backlog', 1, 1, 'One.', 'one.', 'b', 'projects/p/queue.md', 3, 'h',
+              '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', '["Two."]', 'github a/b#1');
+    UPDATE meta SET value = '34' WHERE key = 'schema_version';
+  `);
+  t.throws(
+    () =>
+      db.exec(
+        `INSERT INTO queue_items (id, project, section, priority, position, title, title_norm, body, source_file, source_line, body_hash, created_at, updated_at) VALUES ('q2', 'p', 'inbox', 0, 1, 'T', 't', '', 'f', 1, 'h', 'x', 'x')`
+      ),
+    'inbox is refused before 0035'
+  );
+  const result = runMigrations(db);
+  t.deepEqual(result.applied, ['0035_queue_inbox.sql']);
+  t.deepEqual(result.reindex, [], 'the rows are the same rows: no reindex');
+  t.deepEqual(
+    db
+      .prepare('SELECT id, section, created_at, updated_at, blocked_by, source FROM queue_items')
+      .all(),
+    [
+      {
+        id: 'q1',
+        section: 'backlog',
+        created_at: '2026-09-01T00:00:00Z',
+        updated_at: '2026-09-02T00:00:00Z',
+        blocked_by: '["Two."]',
+        source: 'github a/b#1'
+      }
+    ],
+    'the row survives with its id, timestamps, refs, and source'
+  );
+  db.exec(
+    `INSERT INTO queue_items (id, project, section, priority, position, title, title_norm, body, source_file, source_line, body_hash, created_at, updated_at) VALUES ('q2', 'p', 'inbox', 0, 1, 'T', 't', '', 'f', 1, 'h', 'x', 'x')`
+  );
+  t.equal(
+    (
+      db.prepare(`SELECT COUNT(*) AS n FROM queue_items WHERE section = 'inbox'`).get() as {
+        n: number;
+      }
+    ).n,
+    1,
+    'inbox is accepted after'
+  );
+  t.deepEqual(
+    (
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'queue_items' AND name LIKE 'idx_%' ORDER BY name`
+        )
+        .all() as {name: string}[]
+    ).map(r => r.name),
+    [
+      'idx_queue_items_archive_by_date',
+      'idx_queue_items_by_priority',
+      'idx_queue_items_by_project',
+      'idx_queue_items_open_by_prio',
+      'idx_queue_items_source'
+    ],
+    'the five indexes are back'
+  );
   db.close();
 });
 
@@ -128,7 +209,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0031_edge_vocabulary.sql',
     '0032_fm_findings.sql',
     '0033_records_project.sql',
-    '0034_queue_source.sql'
+    '0034_queue_source.sql',
+    '0035_queue_inbox.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -163,7 +245,8 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     '0031_edge_vocabulary.sql',
     '0032_fm_findings.sql',
     '0033_records_project.sql',
-    '0034_queue_source.sql'
+    '0034_queue_source.sql',
+    '0035_queue_inbox.sql'
   ]);
   t.deepEqual(
     result.reindex,
@@ -201,7 +284,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     '0031_edge_vocabulary.sql',
     '0032_fm_findings.sql',
     '0033_records_project.sql',
-    '0034_queue_source.sql'
+    '0034_queue_source.sql',
+    '0035_queue_inbox.sql'
   ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
@@ -224,7 +308,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 34, 'schema version stays at 34');
+  t.equal(second.current, 35, 'schema version stays at 35');
   db.close();
 });
 
@@ -291,7 +375,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0031_edge_vocabulary.sql',
       '0032_fm_findings.sql',
       '0033_records_project.sql',
-      '0034_queue_source.sql'
+      '0034_queue_source.sql',
+      '0035_queue_inbox.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );

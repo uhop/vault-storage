@@ -139,6 +139,33 @@ test('parseQueueFile — queue.md basics', async t => {
     );
   });
 
+  await t.test('Inbox is a section: items taken in for triage, first in the file', t => {
+    const src =
+      FM +
+      [
+        '## Inbox',
+        '',
+        '- **GitHub: uhop/demo#9 — Bug report.** New issue, read 2026-09-30.',
+        '  - source: github uhop/demo#9',
+        '',
+        '## Active',
+        '',
+        '(empty)',
+        '',
+        '## Backlog',
+        '',
+        '- **Accepted item.** ready'
+      ].join('\n');
+    const items = parseQueueFile('demo', QUEUE_PATH, src);
+    t.deepEqual(
+      items.map(it => [it.section, it.position, it.title, it.source]),
+      [
+        ['inbox', 1, 'GitHub: uhop/demo#9 — Bug report.', 'github uhop/demo#9'],
+        ['backlog', 1, 'Accepted item.', null]
+      ]
+    );
+  });
+
   await t.test('multi-line item with sub-bullets and prose continuation', t => {
     const src =
       FM +

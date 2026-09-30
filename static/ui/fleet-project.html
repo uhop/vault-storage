@@ -353,6 +353,12 @@
             t =>
               `<li>${link(t)} <span class="fmw-pill">${esc(t.role)}</span>` +
               (t.create === 'here' ? ' · new work filed here' : '') +
+              // intake (2026-09-30): how a secondary tracker's items reach the queue
+              (t.intake === 'reflect'
+                ? ' · items reflected on the queue'
+                : t.intake === 'triage'
+                  ? ' · items taken into the Inbox for triage'
+                  : '') +
               (t.write.length ? ` · writes back ${esc(t.write.join(', '))}` : '') +
               '</li>'
           )

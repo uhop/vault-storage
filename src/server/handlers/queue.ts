@@ -103,7 +103,8 @@ const parseSignedInt = (raw: string | undefined): number | null => {
  * GET /queue/top?limit=N[&exclude=body]
  *
  * Top N open items across the fleet, ordered by `(priority DESC, project,
- * section, position)`. Excludes archive. Default limit 20, max 100.
+ * section, position)`. Excludes archive and inbox (untriaged, not yet work).
+ * Default limit 20, max 100.
  *
  * Use case: "what's next across all projects?" Backs the dashboard's fleet
  * priority view.
@@ -130,8 +131,8 @@ export const queueTopHandler =
 /**
  * GET /queue/by-section/{section}[?exclude=body]
  *
- * Fleet-wide for one open section. `{section}` must be `active`, `backlog`,
- * or `watching`. Items are ordered by `(priority DESC, project, position)`.
+ * Fleet-wide for one open section. `{section}` must be `inbox`, `active`,
+ * `backlog`, or `watching`. Items are ordered by `(priority DESC, project, position)`.
  */
 export const queueBySectionHandler =
   (deps: QueueDeps): Handler =>
@@ -140,8 +141,18 @@ export const queueBySectionHandler =
     const fields = parseFields(ctx, QUEUE_ITEM_FIELDS);
     if (fields === null) return;
     const section = ctx.params['section'];
-    if (section !== 'active' && section !== 'backlog' && section !== 'watching') {
-      sendError(ctx.res, 400, 'bad_request', 'section must be one of: active, backlog, watching');
+    if (
+      section !== 'inbox' &&
+      section !== 'active' &&
+      section !== 'backlog' &&
+      section !== 'watching'
+    ) {
+      sendError(
+        ctx.res,
+        400,
+        'bad_request',
+        'section must be one of: inbox, active, backlog, watching'
+      );
       return;
     }
     const repo = new QueueItemsRepository(deps.db);
@@ -178,9 +189,9 @@ export const queueByPriorityHandler =
 /**
  * GET /queue/projects/{name}[?exclude=body]
  *
- * All open items (Active + Backlog + Watching) for one project, grouped
- * by section, ordered by `(section_rank, priority DESC, position)` —
- * Active first, then Backlog by priority, then Watching.
+ * All open items (Inbox + Active + Backlog + Watching) for one project,
+ * grouped by section, ordered by `(section_rank, priority DESC, position)` —
+ * Inbox first, then Active, then Backlog by priority, then Watching.
  */
 export const queueByProjectHandler =
   (deps: QueueDeps): Handler =>

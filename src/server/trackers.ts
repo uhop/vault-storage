@@ -10,16 +10,23 @@ import {parseFrontmatter} from '../markdown/frontmatter.ts';
 
 export const TRACKER_KINDS = ['vault', 'github', 'linear', 'jira'] as const;
 export type TrackerKind = (typeof TRACKER_KINDS)[number];
-export const TRACKER_ROLES = ['primary', 'mirror'] as const;
+export const TRACKER_ROLES = ['primary', 'secondary'] as const;
 export const TRACKER_CREATE = ['here', 'none'] as const;
+// How a secondary tracker's items reach the vault's queue (2026-09-30):
+// reflected as items with a link, taken through `## Inbox` for triage, or not
+// at all. A primary outside tracker takes none: the vault records the item in
+// flight (D108), never a mirror.
+export const TRACKER_INTAKE = ['none', 'reflect', 'triage'] as const;
 
 export interface Tracker {
   kind: TrackerKind;
   /** The tracker's own name for the project: an owner/repo, a Linear team key, a Jira project key. */
   ref: string | null;
-  role: 'primary' | 'mirror';
+  role: 'primary' | 'secondary';
   /** Whether new work may be created there. */
   create: 'here' | 'none';
+  /** How its items reach the vault's queue; `none` on the vault itself and on a primary. */
+  intake: 'none' | 'reflect' | 'triage';
   /** The fields the vault may write back; empty means read-only. */
   write: string[];
   /** Where a person opens it; derived for GitHub when absent. */
@@ -41,6 +48,7 @@ const VAULT_PRIMARY: Tracker = {
   ref: null,
   role: 'primary',
   create: 'here',
+  intake: 'none',
   write: [],
   url: null
 };
@@ -48,6 +56,7 @@ const VAULT_PRIMARY: Tracker = {
 const KINDS = new Set<string>(TRACKER_KINDS);
 const ROLES = new Set<string>(TRACKER_ROLES);
 const CREATE = new Set<string>(TRACKER_CREATE);
+const INTAKE = new Set<string>(TRACKER_INTAKE);
 
 const urlFor = (kind: TrackerKind, ref: string | null, given: unknown): string | null => {
   if (typeof given === 'string' && /^https?:\/\//.test(given)) return given;
@@ -91,12 +100,18 @@ export const readTrackers = (project: string, raw: unknown): TrackersView => {
         problems.push(`trackers[${i}] (${kind}) needs a ref`);
         return;
       }
+      // `mirror` was the name until 2026-09-30; read, and named as stale.
+      if (e['role'] === 'mirror') {
+        problems.push(`trackers[${i}].role mirror is called secondary now`);
+      }
       const role =
-        typeof e['role'] === 'string' && ROLES.has(e['role'])
-          ? (e['role'] as Tracker['role'])
-          : null;
+        e['role'] === 'mirror'
+          ? 'secondary'
+          : typeof e['role'] === 'string' && ROLES.has(e['role'])
+            ? (e['role'] as Tracker['role'])
+            : null;
       if (e['role'] !== undefined && role === null) {
-        problems.push(`trackers[${i}].role must be primary or mirror`);
+        problems.push(`trackers[${i}].role must be primary or secondary`);
         return;
       }
       const create =
@@ -107,14 +122,26 @@ export const readTrackers = (project: string, raw: unknown): TrackersView => {
         problems.push(`trackers[${i}].create must be here or none`);
         return;
       }
+      const intake =
+        typeof e['intake'] === 'string' && INTAKE.has(e['intake'])
+          ? (e['intake'] as Tracker['intake'])
+          : null;
+      if (e['intake'] !== undefined && intake === null) {
+        problems.push(`trackers[${i}].intake must be none, reflect, or triage`);
+        return;
+      }
+      if (intake !== null && intake !== 'none' && kind === 'vault') {
+        problems.push(`trackers[${i}] (vault) takes no intake; it is the queue`);
+      }
       const write = Array.isArray(e['write'])
         ? e['write'].filter((w): w is string => typeof w === 'string' && w.length > 0)
         : [];
       trackers.push({
         kind: kind as TrackerKind,
         ref,
-        role: role ?? 'mirror',
+        role: role ?? 'secondary',
         create: create ?? (role === 'primary' ? 'here' : 'none'),
+        intake: kind === 'vault' ? 'none' : (intake ?? 'none'),
         write,
         url: urlFor(kind as TrackerKind, ref, e['url'])
       });
@@ -123,7 +150,16 @@ export const readTrackers = (project: string, raw: unknown): TrackersView => {
   const primaries = trackers.filter(t => t.role === 'primary');
   if (primaries.length > 1) {
     problems.push(`${primaries.length} trackers are primary; the first one counts`);
-    for (const t of primaries.slice(1)) t.role = 'mirror';
+    for (const t of primaries.slice(1)) t.role = 'secondary';
+  }
+  // A primary outside the vault takes no intake: its items are not copied in;
+  // the vault records the item in flight (D108).
+  const first = primaries[0];
+  if (first !== undefined && first.kind !== 'vault' && first.intake !== 'none') {
+    problems.push(
+      `the primary (${first.kind} ${first.ref}) takes no intake: the vault records the item in flight, not a mirror`
+    );
+    first.intake = 'none';
   }
   if (primaries.length === 0) {
     problems.push('no tracker is primary; the vault is');
@@ -154,8 +190,12 @@ export const projectTrackers = (vaultDataPath: string, project: string): Tracker
 export const trackerLine = (view: TrackersView): string => {
   const p = view.primary;
   const name = p.kind === 'vault' ? 'vault' : `${p.kind} ${p.ref}`;
-  const mirrors = view.trackers
-    .filter(t => t.role === 'mirror')
-    .map(t => (t.kind === 'vault' ? 'vault' : `${t.kind} ${t.ref}`));
-  return mirrors.length ? `${name} (primary); mirrors: ${mirrors.join(', ')}` : name;
+  const secondaries = view.trackers
+    .filter(t => t.role === 'secondary')
+    .map(t =>
+      t.kind === 'vault'
+        ? 'vault'
+        : `${t.kind} ${t.ref}${t.intake === 'none' ? '' : ` (${t.intake})`}`
+    );
+  return secondaries.length ? `${name} (primary); secondary: ${secondaries.join(', ')}` : name;
 };

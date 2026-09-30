@@ -70,6 +70,12 @@ test('vault_queue_by_section → GET /queue/by-section/{section}', async t => {
   const {url, init} = getCaptured();
   t.equal(init.method, 'GET');
   t.equal(url, 'http://test/queue/by-section/backlog');
+  await mcp.tools.get('vault_queue_by_section')({section: 'inbox'});
+  t.equal(
+    getCaptured().url,
+    'http://test/queue/by-section/inbox',
+    'inbox is a section (2026-09-30)'
+  );
 });
 
 test('vault_queue_by_priority → GET /queue/by-priority/{n} (negative ok)', async t => {

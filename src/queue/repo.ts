@@ -162,7 +162,7 @@ export class QueueItemsRepository {
       `SELECT * FROM queue_items
          WHERE project = ? AND section != 'archive'
          ORDER BY
-           CASE section WHEN 'active' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END,
+           CASE section WHEN 'inbox' THEN 0 WHEN 'active' THEN 1 WHEN 'backlog' THEN 2 ELSE 3 END,
            priority DESC,
            position`
     );
@@ -173,9 +173,10 @@ export class QueueItemsRepository {
          ORDER BY closed_at DESC NULLS LAST, position`
     );
 
+    // The inbox is not open work until triage accepts it, so `top` skips it.
     this.#listTopOpen = db.prepare(
       `SELECT * FROM queue_items
-         WHERE section != 'archive'
+         WHERE section NOT IN ('archive', 'inbox')
          ORDER BY priority DESC, project, section, position
          LIMIT ?`
     );

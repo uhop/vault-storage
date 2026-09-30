@@ -18,7 +18,7 @@
 
 import {maskCodeRegions} from '../markdown/wikilinks.ts';
 
-export const SCHEMA_H2 = ['Active', 'Backlog', 'Watching'];
+export const SCHEMA_H2 = ['Inbox', 'Active', 'Backlog', 'Watching'];
 // Sanctioned prose sections beside the schema: rationale and cross-references,
 // never work (ruled 2026-08-17). Bullets under them are not findings.
 const PROSE_H2 = [
@@ -37,7 +37,7 @@ const BULLET_RE = /^[-*+][ \t]+(?:\[([ xX~])\][ \t]+)?(.*)$/;
 const TITLE_RE = /^\*\*(.+?)\*\*/;
 const PLACEHOLDER_RE = /^\(empty\b/;
 const BARE_PLACEHOLDER = '(empty)';
-const GLUED_RE = /\S\s*#{2,3} +(Active|Backlog|Watching)\b/;
+const GLUED_RE = /\S\s*#{2,3} +(Inbox|Active|Backlog|Watching)\b/;
 
 export interface QueueLintItem {
   /** 1-based line within the body. */

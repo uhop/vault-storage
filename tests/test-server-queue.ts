@@ -138,6 +138,11 @@ const seedFleet = (db: ReturnType<typeof openDatabase>, root: string): void => {
     'queue.md',
     FM +
       [
+        '## Inbox',
+        '',
+        '- **B-inbox.** taken in for triage',
+        '  - source: github uhop/bravo#3',
+        '',
         '## Backlog',
         '',
         '### Priority +1',
@@ -175,7 +180,28 @@ test('GET /queue/top — fleet-wide priority ordering, default limit', async t =
         [0, 'alpha', 'A-normal.'],
         [0, 'alpha', 'A-watch.'],
         [-1, 'bravo', 'B-demoted.']
-      ]
+      ],
+      'the inbox item is not in the fleet top: untriaged is not yet work'
+    );
+  });
+});
+
+test("GET /queue/by-section/inbox — the fleet's untriaged items, with their sources", async t => {
+  await withServer(seedFleet, async url => {
+    const {status, body} = await fetchJson(`${url}/queue/by-section/inbox`, {headers: authHeader});
+    t.equal(status, 200);
+    const payload = body as {section: string; items: Array<{title: string; source: string | null}>};
+    t.deepEqual(
+      payload.items.map(it => [it.title, it.source]),
+      [['B-inbox.', 'github uhop/bravo#3']]
+    );
+    const bravo = await fetchJson(`${url}/queue/projects/bravo?fields=section,title`, {
+      headers: authHeader
+    });
+    t.deepEqual(
+      (bravo.body as {items: Array<{section: string}>}).items.map(it => it.section),
+      ['inbox', 'backlog', 'backlog'],
+      'the per-project slice lists Inbox first'
     );
   });
 });
