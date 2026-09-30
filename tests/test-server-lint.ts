@@ -7,6 +7,7 @@ import {parseQueueFile} from '../src/queue/parse.ts';
 import {QueueItemsRepository} from '../src/queue/repo.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {FmFindingsRepository} from '../src/records/fm-findings.ts';
+import {ImportFailuresRepository} from '../src/records/import-failures.ts';
 import {startServer} from '../src/server/server.ts';
 
 const TEST_TOKEN = 'test-token-lint';
@@ -1219,6 +1220,34 @@ test('GET /system/lint reports frontmatter_outside_enum with the field and the v
     t.equal(r.checks.frontmatter_outside_enum.count, 1);
     t.deepEqual(r.checks.frontmatter_outside_enum.samples, [
       {id: 'rec-fm', file_path: 'topics/fm.md', field: 'type', value: 'novel'}
+    ]);
+  });
+});
+
+test('GET /system/lint reports import_failures, stale or never indexed', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {record_id: 'rec-stale', file_path: 'topics/stale.md'});
+    insertVecChunk(db, {
+      chunk_id: 'chunk-stale-0',
+      record_id: 'rec-stale',
+      content_hash: 'hash-fresh'
+    });
+    const failures = new ImportFailuresRepository(db);
+    const error = new Error('Map keys must be unique at line 3, column 1:\n\ntype: log\n');
+    failures.record('topics/stale.md', error, '2026-09-30T00:00:00Z');
+    failures.record('topics/new.md', error, '2026-09-30T00:00:00Z');
+
+    const {body} = await fetchJson(`${url}/system/lint`);
+    const r = body as {
+      ok: boolean;
+      checks: {import_failures: {count: number; samples: Array<Record<string, unknown>>}};
+    };
+    t.equal(r.ok, false, 'not ok');
+    t.equal(r.checks.import_failures.count, 2);
+    const message = 'Map keys must be unique at line 3, column 1';
+    t.deepEqual(r.checks.import_failures.samples, [
+      {file_path: 'topics/new.md', id: null, message, seen_at: '2026-09-30T00:00:00Z'},
+      {file_path: 'topics/stale.md', id: 'rec-stale', message, seen_at: '2026-09-30T00:00:00Z'}
     ]);
   });
 });

@@ -6,6 +6,7 @@ import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
 import {FmFindingsRepository, type FmFinding} from '../records/fm-findings.ts';
+import {failureMessage, ImportFailuresRepository} from '../records/import-failures.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
 import {
@@ -78,13 +79,18 @@ export const EDGE_BATCH_RECORDS = 50;
 /** Edges per GC page in {@link buildEdgesAsync}: about 5 ms over 36,716 edges (2026-09-18). */
 export const EDGE_GC_PAGE = 2000;
 
+interface RecordContent {
+  body: string;
+  fmData: Record<string, unknown>;
+}
+
 interface RecordSource {
   /**
    * Body text + parsed frontmatter data for a record, from a single read.
    * In fs mode one disk read + one parse serves both (the file used to be
    * read and parsed twice — once for the body, once for the FM block).
    */
-  read(record: VaultRecord): {body: string; fmData: Record<string, unknown>};
+  read(record: VaultRecord): RecordContent;
 }
 
 const fsRecordSource = (vaultRoot: string): RecordSource => {
@@ -186,13 +192,12 @@ interface DeclarationHooks {
  */
 const forEachDeclaredEdge = (
   record: VaultRecord,
-  src: RecordSource,
+  {body, fmData}: RecordContent,
   resolver: WikilinkResolver,
   summary: EdgeBuildSummary,
   sink: EdgeSink,
   hooks: DeclarationHooks = {}
 ): void => {
-  const {body, fmData} = src.read(record);
   const related = extractRelatedFromFrontmatter(fmData);
 
   // FM `edges:` map: target string → declared edge type. The user's
@@ -317,12 +322,33 @@ interface PassContext {
   edges: EdgesRepository;
   filer: SuggestionFiler<'edge_type'>;
   findings: FmFindingsRepository;
+  failures: ImportFailuresRepository;
   /** Every edge the pass backs; the GC deletes what is not in it. */
   touched: Set<string>;
   summary: EdgeBuildSummary;
   now: string;
   skipFilingFromTypes: ReadonlySet<string>;
 }
+
+/** The record's content, or null when its file does not parse, which is recorded (D113). */
+const readRecord = (
+  record: VaultRecord,
+  ctx: Pick<PassContext, 'source' | 'failures' | 'now'>
+): RecordContent | null => {
+  try {
+    return ctx.source.read(record);
+  } catch (err) {
+    ctx.failures.record(record.filePath, err, ctx.now);
+    process.stderr.write(`edges: ${record.filePath}: ${failureMessage(err)}\n`);
+    return null;
+  }
+};
+
+/** A record whose file does not parse keeps every edge it had, as its row keeps its content. */
+const incidentKeys = (edges: EdgesRepository, recordId: string): string[] =>
+  [...edges.listOutbound(recordId), ...edges.listInbound(recordId)].map(e =>
+    touchKey(e.fromId, e.toId, e.type)
+  );
 
 /** Upsert the edges one record's content backs and settle its `edge_type` suggestions. */
 const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
@@ -337,13 +363,19 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
     return;
   }
 
+  const content = readRecord(record, ctx);
+  if (content === null) {
+    for (const key of incidentKeys(ctx.edges, record.recordId)) ctx.touched.add(key);
+    return;
+  }
+
   const citesNeedingReview: Array<{toId: string; context: string}> = [];
   const bodyLinkIds = new Set<string>();
   const dropped: FmFinding[] = [];
 
   forEachDeclaredEdge(
     record,
-    ctx.source,
+    content,
     ctx.resolver,
     summary,
     (fromId, toId, type, note) => {
@@ -513,6 +545,7 @@ export const buildEdges = (
     edges,
     filer: new SuggestionFiler(db, 'edge_type'),
     findings: new FmFindingsRepository(db),
+    failures: new ImportFailuresRepository(db),
     // Every edge that the current pass backs. The GC below deletes edges not
     // in this set — so a wikilink removal in a markdown file actually removes
     // the corresponding edge instead of leaving a dangling row.
@@ -537,11 +570,12 @@ export const buildEdges = (
       const keysFor = (rec: VaultRecord): ReadonlySet<string> => {
         const keys = new Set<string>();
         // Archived counterparties back nothing — extraction skips them above.
-        if (rec.status !== 'archived') {
-          forEachDeclaredEdge(rec, source, resolver, scratchSummary(), (f, t, ty) =>
-            keys.add(touchKey(f, t, ty))
-          );
-        }
+        if (rec.status === 'archived') return keys;
+        const content = readRecord(rec, ctx);
+        if (content === null) return new Set(incidentKeys(edges, rec.recordId));
+        forEachDeclaredEdge(rec, content, resolver, scratchSummary(), (f, t, ty) =>
+          keys.add(touchKey(f, t, ty))
+        );
         return keys;
       };
 
@@ -640,6 +674,7 @@ export const buildEdgesAsync = async (
     edges: new EdgesRepository(db),
     filer: new SuggestionFiler(db, 'edge_type'),
     findings: new FmFindingsRepository(db),
+    failures: new ImportFailuresRepository(db),
     touched: new Set<string>(),
     summary,
     now: options.now ?? new Date().toISOString(),

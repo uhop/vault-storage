@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {countMismatch, itemCount, parseQueue, queueFindings} from '../../queue/lint.ts';
 import {FmFindingsRepository} from '../../records/fm-findings.ts';
+import {ImportFailuresRepository} from '../../records/import-failures.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -362,6 +363,21 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
       samples: findings
         .list(SAMPLE_LIMIT)
         .map(f => ({id: f.recordId, file_path: f.filePath, field: f.field, value: f.value}))
+    };
+  }
+
+  // Files whose import threw (D113): absent from every index when `id` is
+  // null, stale in all of them otherwise.
+  {
+    const failures = new ImportFailuresRepository(db);
+    checks['import_failures'] = {
+      count: failures.count(),
+      samples: failures.list(SAMPLE_LIMIT).map(f => ({
+        file_path: f.filePath,
+        id: f.recordId,
+        message: f.message,
+        seen_at: f.seenAt
+      }))
     };
   }
 

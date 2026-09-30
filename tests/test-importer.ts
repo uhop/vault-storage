@@ -5,8 +5,11 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {importFile} from '../src/importer/import-file.ts';
+import {fullImportOptions} from '../src/importer/import-options.ts';
 import {IMPORT_BATCH_FILES, importVault, importVaultAsync} from '../src/importer/import.ts';
 import {FmFindingsRepository} from '../src/records/fm-findings.ts';
+import {ImportFailuresRepository} from '../src/records/import-failures.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import {contentHash} from '../src/util/hash.ts';
 
@@ -1143,6 +1146,41 @@ test("a record's project: the projects/ folder, a log's project: key, or the pro
     const again = importVault(db, root);
     t.equal(again.updated, 1, 'a project: edit alone re-imports the record');
     t.equal(projectOf('logs/2026-09-29-nowhere.md'), 'vault', 'and lands');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer records a file that fails to parse, and clears it once the file imports', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/bad.md', '---\ntitle: Bad\ntype: log\ntype: log\n---\nbody\n');
+    writeMd(root, 'topics/gone.md', '---\ntitle: Gone\ntitle: Gone\n---\nbody\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    t.equal(importVault(db, root).skipped, 2);
+    const failures = new ImportFailuresRepository(db);
+    t.deepEqual(
+      failures.list(10).map(f => [f.filePath, f.recordId]),
+      [
+        ['topics/bad.md', null],
+        ['topics/gone.md', null]
+      ]
+    );
+
+    writeMd(root, 'topics/bad.md', '---\ntitle: Bad\ntype: log\n---\nbody\n');
+    const abs = join(root, 'topics/bad.md');
+    importFile(new RecordsRepository(db), 'topics/bad.md', abs, undefined, fullImportOptions(db));
+    t.deepEqual(
+      failures.list(10).map(f => f.filePath),
+      ['topics/gone.md'],
+      'an import of the fixed file clears its row'
+    );
+
+    rmSync(join(root, 'topics/gone.md'));
+    importVault(db, root);
+    t.equal(failures.count(), 0, 'a full import rebuilds the table from the files');
     db.close();
   } finally {
     cleanup();

@@ -17,6 +17,7 @@ import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
 import {importFile} from '../importer/import-file.ts';
 import {fullImportOptions} from '../importer/import-options.ts';
 import {syncQueueFile} from '../queue/sync.ts';
+import {failureMessage} from '../records/import-failures.ts';
 import {RecordsRepository} from '../records/repository.ts';
 
 export interface WatcherHandle {
@@ -151,6 +152,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             exists = false;
           }
           if (!exists) {
+            options.importFailures.clear(relativePath);
             const existing = records.getByPath(relativePath);
             if (existing) {
               records.delete(existing.recordId);
@@ -180,8 +182,8 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
           }
         } catch (err) {
           errors++;
-          const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
-          process.stderr.write(`watcher: ${relativePath}: ${msg}\n`);
+          options.importFailures.record(relativePath, err, now);
+          process.stderr.write(`watcher: ${relativePath}: ${failureMessage(err)}\n`);
         }
       }
       db.exec('COMMIT');

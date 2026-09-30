@@ -12,6 +12,7 @@ import {
   type FmFinding,
   type FmFindingsRepository
 } from '../records/fm-findings.ts';
+import type {ImportFailuresRepository} from '../records/import-failures.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {
   AGENT_COMPLEXITY,
@@ -219,6 +220,11 @@ export interface ImportFileOptions {
    * and a queue's declared `github` tracker with its frontmatter (D112).
    */
   externalLinks?: ExternalLinksRepository;
+  /**
+   * When provided, clears the path's recorded import failure once the file
+   * parses; the callers that catch a throw record it (D113).
+   */
+  importFailures?: ImportFailuresRepository;
 }
 
 /**
@@ -243,6 +249,7 @@ export const importFile = (
 ): ImportFileResult => {
   const source = readFileSync(absolutePath, 'utf8');
   const {data, body} = parseFrontmatter(source);
+  options.importFailures?.clear(relativePath);
 
   const existing = records.getByPath(relativePath);
 

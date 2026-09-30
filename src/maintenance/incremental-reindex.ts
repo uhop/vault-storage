@@ -20,6 +20,7 @@ import {importFile} from '../importer/import-file.ts';
 import {fullImportOptions} from '../importer/import-options.ts';
 import {importVaultAsync} from '../importer/import.ts';
 import {syncQueueFile} from '../queue/sync.ts';
+import {failureMessage} from '../records/import-failures.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import {getCurrentHead, runGit} from '../util/git.ts';
 
@@ -232,70 +233,82 @@ const runIncrementalReindex = async (
   // the batch — those fall back to the full edge rebuild.
   let pathSetChanged = false;
   const changedRecordIds = new Set<string>();
+  // Recorded per file: a rethrow rolls back the range and pins the anchor, so
+  // every later reindex would fail on the same file (D113).
+  let errors = 0;
 
   db.exec('BEGIN');
   try {
     for (const c of changes) {
-      // Filter to .md files. For renames, both sides need consideration —
-      // a .md → .md rename is interesting; .md → other or other → .md
-      // means delete-then-import on the .md side.
-      if (c.kind === 'rename') {
-        const newIsMd = isMd(c.new);
-        const oldIsMd = isMd(c.old);
-        if (oldIsMd || newIsMd) pathSetChanged = true;
-        if (oldIsMd && newIsMd) {
-          // Preserve record_id by updating the path key, then re-import
-          // to refresh content_hash / agent block / etc.
-          db.prepare('UPDATE records SET file_path = ? WHERE file_path = ?').run(c.new, c.old);
-          const abs = join(vaultDataPath, c.new);
-          if (existsSync(abs)) {
-            importFile(records, c.new, abs, now, options);
+      const path = c.kind === 'rename' ? c.new : c.path;
+      try {
+        // Filter to .md files. For renames, both sides need consideration —
+        // a .md → .md rename is interesting; .md → other or other → .md
+        // means delete-then-import on the .md side.
+        if (c.kind === 'rename') {
+          const newIsMd = isMd(c.new);
+          const oldIsMd = isMd(c.old);
+          if (oldIsMd || newIsMd) pathSetChanged = true;
+          if (oldIsMd) options.importFailures.clear(c.old);
+          if (oldIsMd && newIsMd) {
+            // Preserve record_id by updating the path key, then re-import
+            // to refresh content_hash / agent block / etc.
+            db.prepare('UPDATE records SET file_path = ? WHERE file_path = ?').run(c.new, c.old);
+            const abs = join(vaultDataPath, c.new);
+            if (existsSync(abs)) {
+              importFile(records, c.new, abs, now, options);
+            }
+            syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
+            summary.renamed++;
+            summary.imported++;
+          } else if (oldIsMd) {
+            // .md disappeared (renamed to non-.md).
+            const r = records.getByPath(c.old);
+            if (r) {
+              records.delete(r.recordId);
+              summary.deleted++;
+            }
+            syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
+          } else if (newIsMd) {
+            // New .md appeared (renamed from non-.md).
+            const abs = join(vaultDataPath, c.new);
+            if (existsSync(abs)) {
+              importFile(records, c.new, abs, now, options);
+              summary.imported++;
+            }
           }
-          syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
-          summary.renamed++;
-          summary.imported++;
-        } else if (oldIsMd) {
-          // .md disappeared (renamed to non-.md).
-          const r = records.getByPath(c.old);
+        } else if (!isMd(c.path)) {
+          // Skip non-md adds/modifies/deletes.
+        } else if (c.kind === 'delete') {
+          pathSetChanged = true;
+          options.importFailures.clear(c.path);
+          const r = records.getByPath(c.path);
           if (r) {
             records.delete(r.recordId);
             summary.deleted++;
           }
-          syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
-        } else if (newIsMd) {
-          // New .md appeared (renamed from non-.md).
-          const abs = join(vaultDataPath, c.new);
+          syncQueueFile(options.queueItems, c.path, vaultDataPath, now);
+        } else {
+          // add / modify
+          if (c.kind === 'add') pathSetChanged = true;
+          const abs = join(vaultDataPath, c.path);
           if (existsSync(abs)) {
-            importFile(records, c.new, abs, now, options);
+            importFile(records, c.path, abs, now, options);
             summary.imported++;
+            if (c.kind === 'modify') {
+              const rec = records.getByPath(c.path);
+              if (rec) changedRecordIds.add(rec.recordId);
+            }
+          } else if (c.kind === 'modify') {
+            // Modified in git but absent on disk (e.g. removed since the
+            // commit) — path set is effectively changing; stay conservative.
+            pathSetChanged = true;
           }
         }
-      } else if (!isMd(c.path)) {
-        // Skip non-md adds/modifies/deletes.
-      } else if (c.kind === 'delete') {
-        pathSetChanged = true;
-        const r = records.getByPath(c.path);
-        if (r) {
-          records.delete(r.recordId);
-          summary.deleted++;
-        }
-        syncQueueFile(options.queueItems, c.path, vaultDataPath, now);
-      } else {
-        // add / modify
-        if (c.kind === 'add') pathSetChanged = true;
-        const abs = join(vaultDataPath, c.path);
-        if (existsSync(abs)) {
-          importFile(records, c.path, abs, now, options);
-          summary.imported++;
-          if (c.kind === 'modify') {
-            const rec = records.getByPath(c.path);
-            if (rec) changedRecordIds.add(rec.recordId);
-          }
-        } else if (c.kind === 'modify') {
-          // Modified in git but absent on disk (e.g. removed since the
-          // commit) — path set is effectively changing; stay conservative.
-          pathSetChanged = true;
-        }
+      } catch (err) {
+        ++errors;
+        options.importFailures.record(path, err, now);
+        process.stderr.write(`reindex: ${path}: ${failureMessage(err)}\n`);
       }
     }
     setLastIndexedCommit(db, head);
@@ -307,8 +320,9 @@ const runIncrementalReindex = async (
 
   // Refresh edges after the per-file dispatch. Pure-modify batches use the
   // scoped (incremental) rebuild; anything that changed the path set runs
-  // the full idempotent pass.
-  if (pathSetChanged) await buildEdgesAsync(db, {vaultRoot: vaultDataPath, now});
+  // the full idempotent pass, as does a batch with an errored file, whose
+  // state is stale in a way the scope cannot name (the watcher's rule).
+  if (pathSetChanged || errors > 0) await buildEdgesAsync(db, {vaultRoot: vaultDataPath, now});
   else buildEdges(db, {vaultRoot: vaultDataPath, now, scope: changedRecordIds});
 
   summary.durationMs = Math.round(performance.now() - start);

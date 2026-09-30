@@ -110,6 +110,7 @@
     <script type="module">
       import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {sortable} from '/ui/fmw-sortable.js';
+      import {otherChecks, renderOtherChecks} from '/ui/lint-view.js';
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
 
@@ -304,8 +305,11 @@
         const temporal = lint.checks?.temporal_anomalies?.samples ?? [];
         const temporalTotal = lint.checks?.temporal_anomalies?.count ?? 0;
         Object.assign(last, {temporal, total: temporalTotal});
+        const others = otherChecks(lint);
         const html =
-          renderDangling(dangling, danglingTotal) + renderTemporal(temporal, temporalTotal);
+          renderDangling(dangling, danglingTotal) +
+          renderTemporal(temporal, temporalTotal) +
+          renderOtherChecks(others, esc);
 
         if (!html) {
           renderEmpty();
@@ -316,7 +320,7 @@
         $('#content').innerHTML = html;
         wireAliasSection();
         $('#footer').textContent =
-          `${lint.total_issues} total lint issues; ${danglingTotal} dangling aliases, ${temporalTotal} temporal anomalies`;
+          `${lint.total_issues} total lint issues; ${danglingTotal} dangling aliases, ${temporalTotal} temporal anomalies, ${others.length} other checks`;
       };
 
       // Delegated: #content re-renders per refresh, one listener covers every checkbox.

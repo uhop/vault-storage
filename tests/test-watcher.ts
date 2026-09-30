@@ -8,6 +8,8 @@ import {RecordVecRepository} from '../src/db/vec-repo.ts';
 import {EMBED_ROUND} from '../src/embeddings/embed-pass.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {importVault} from '../src/importer/import.ts';
+import {EdgesRepository} from '../src/records/edges.ts';
+import {ImportFailuresRepository} from '../src/records/import-failures.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import {startWatcher} from '../src/server/watcher.ts';
 
@@ -265,6 +267,55 @@ test('watcher: a backlog-only drain logs its round, and the reindex line carries
     const before = lines.length;
     await watcher.flush();
     t.equal(lines.length, before, 'and an idle drain logs nothing');
+  } finally {
+    watcher.close();
+    teardown(fx);
+  }
+});
+
+test('watcher: a file that fails to parse is recorded, keeps its edges, and clears when fixed or deleted', async t => {
+  const fx = setup();
+  mkdirSync(join(fx.root, 'topics'), {recursive: true});
+  const watcher = startWatcher({
+    db: fx.db,
+    vaultDataPath: fx.root,
+    embedder: fx.embedder,
+    debounceMs: 60_000,
+    log: () => {}
+  });
+  const failures = new ImportFailuresRepository(fx.db);
+  const edges = new EdgesRepository(fx.db);
+
+  try {
+    writeMd(fx.root, 'topics/target.md', '---\ntitle: Target\n---\nbody\n');
+    writeMd(fx.root, 'topics/note.md', '---\ntitle: Note\n---\nsee [[target]]\n');
+    await sleep(150);
+    await watcher.flush();
+    const id = fx.records.getByPath('topics/note.md')?.recordId as string;
+    t.equal(edges.listOutbound(id).length, 1, 'the note cites the target');
+
+    writeMd(fx.root, 'topics/note.md', '---\ntitle: Note\ntitle: again\n---\nsee [[target]]\n');
+    await sleep(150);
+    await watcher.flush();
+    t.deepEqual(
+      failures.list(10).map(f => [f.filePath, f.recordId]),
+      [['topics/note.md', id]],
+      'recorded against the stale record'
+    );
+    t.equal(edges.listOutbound(id).length, 1, 'the full edge pass keeps its edges');
+
+    writeMd(fx.root, 'topics/note.md', '---\ntitle: Note\n---\nsee [[target]] again\n');
+    await sleep(150);
+    await watcher.flush();
+    t.equal(failures.count(), 0, 'cleared when the file imports');
+
+    writeMd(fx.root, 'topics/note.md', '---\ntitle: Note\ntitle: again\n---\nbody\n');
+    await sleep(150);
+    await watcher.flush();
+    unlinkSync(join(fx.root, 'topics/note.md'));
+    await sleep(150);
+    await watcher.flush();
+    t.equal(failures.count(), 0, 'cleared when the file is deleted');
   } finally {
     watcher.close();
     teardown(fx);

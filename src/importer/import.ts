@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
+import {failureMessage} from '../records/import-failures.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import {buildEdges, buildEdgesAsync, type EdgeBuildSummary} from './build-edges.ts';
 import {importFile} from './import-file.ts';
@@ -10,7 +11,7 @@ export interface ImportSummary {
   inserted: number;
   updated: number;
   unchanged: number;
-  /** Files where parse / validation threw — body and path printed to stderr. */
+  /** Files where parse / validation threw: recorded in `import_failures` and printed to stderr. */
   skipped: number;
   total: number;
   durationMs: number;
@@ -35,6 +36,7 @@ function* importBatches(
 ): Generator<void, void, void> {
   const records = new RecordsRepository(db);
   const options = fullImportOptions(db);
+  options.importFailures.clearAll();
 
   const flush = (batch: readonly MarkdownFile[]): void => {
     db.exec('BEGIN');
@@ -46,8 +48,8 @@ function* importBatches(
           ++counts[result.action];
         } catch (err) {
           ++counts.skipped;
-          const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
-          process.stderr.write(`skip ${file.relativePath}: ${msg}\n`);
+          options.importFailures.record(file.relativePath, err, now);
+          process.stderr.write(`skip ${file.relativePath}: ${failureMessage(err)}\n`);
         }
       }
       db.exec('COMMIT');

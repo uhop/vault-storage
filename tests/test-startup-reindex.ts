@@ -12,6 +12,7 @@ import {
   importerFingerprint,
   startupReindex
 } from '../src/maintenance/startup-reindex.ts';
+import {ImportFailuresRepository} from '../src/records/import-failures.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 
 const writeMd = (root: string, relativePath: string, content: string): void => {
@@ -131,5 +132,29 @@ test('importerFingerprint covers the importer modules and is stable', async t =>
     t.notEqual(before, after, 'a change in an imported module changes the fingerprint');
   } finally {
     rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('startupReindex: a file that fails to parse in the working tree does not stop the start', async t => {
+  const fx = setup();
+  try {
+    await startupReindex(fx.db, fx.root, {reindexMigrations: [], fingerprint: 'f1'});
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A\ntitle: twice\n---\nbody A\n');
+    writeMd(fx.root, 'topics/b.md', '---\ntitle: B\n---\nbody B\n');
+    const incremental = await startupReindex(fx.db, fx.root, {
+      reindexMigrations: [],
+      fingerprint: 'f1'
+    });
+    t.equal(incremental.reason, null, 'incremental');
+    t.ok(new RecordsRepository(fx.db).getByPath('topics/b.md'), 'the other new file is imported');
+    const full = await startupReindex(fx.db, fx.root, {reindexMigrations: [], fingerprint: 'f2'});
+    t.equal(full.reason, 'importer-changed', 'a full import and a full edge pass');
+    t.deepEqual(
+      new ImportFailuresRepository(fx.db).list(10).map(f => f.filePath),
+      ['topics/a.md'],
+      'the file is recorded'
+    );
+  } finally {
+    teardown(fx);
   }
 });

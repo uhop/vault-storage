@@ -11,6 +11,8 @@ import {
   setLastIndexedCommit
 } from '../src/maintenance/incremental-reindex.ts';
 import {QueueItemsRepository} from '../src/queue/repo.ts';
+import {EdgesRepository} from '../src/records/edges.ts';
+import {ImportFailuresRepository} from '../src/records/import-failures.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 
 const writeMd = (root: string, relativePath: string, content: string): void => {
@@ -310,6 +312,54 @@ test('incrementalReindex: workingTree keeps a staged rename record id and drops 
     t.equal(repo.getByPath('topics/a.md'), null, 'old path gone');
     t.equal(repo.getByPath('topics/b.md'), null, 'renamed away from .md: record removed');
     t.equal(summary.deleted, 1, 'one deletion');
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('incrementalReindex: a file that fails to parse is recorded, and the rest of the range lands', async t => {
+  const fx = setup();
+  try {
+    writeMd(fx.root, 'topics/a.md', '---\ntitle: A\n---\nbody A\n');
+    writeMd(fx.root, 'topics/stale.md', '---\ntitle: Stale\n---\nbody stale, see [[a]]\n');
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m initial');
+    await incrementalReindex(fx.db, fx.root); // bootstrap
+    const repo = new RecordsRepository(fx.db);
+    const staleId = repo.getByPath('topics/stale.md')?.recordId as string;
+    const edges = new EdgesRepository(fx.db);
+    t.equal(edges.listOutbound(staleId).length, 1, 'the stale note cites a');
+
+    writeMd(fx.root, 'topics/good.md', '---\ntitle: Good\n---\nbody good\n');
+    writeMd(fx.root, 'topics/bad.md', '---\ntitle: Bad\ntype: log\ntype: log\n---\nbody bad\n');
+    writeMd(fx.root, 'topics/stale.md', '---\ntitle: Stale\ntitle: Twice\n---\nbody stale\n');
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m two');
+    const head = git(fx.root, 'rev-parse HEAD');
+
+    await incrementalReindex(fx.db, fx.root);
+    t.ok(repo.getByPath('topics/good.md'), 'the good file in the same range is indexed');
+    t.equal(getLastIndexedCommit(fx.db), head, 'the anchor moves past the range');
+    t.equal(edges.listOutbound(staleId).length, 1, 'the full edge pass keeps what it cannot read');
+    const failures = new ImportFailuresRepository(fx.db);
+    const rows = failures.list(10);
+    t.deepEqual(
+      rows.map(({filePath, recordId}) => ({filePath, recordId})),
+      [
+        {filePath: 'topics/bad.md', recordId: null},
+        {filePath: 'topics/stale.md', recordId: staleId}
+      ],
+      'a new file is never indexed; an indexed one is stale'
+    );
+    for (const row of rows) t.matchString(row.message, /^Map keys must be unique/);
+
+    writeMd(fx.root, 'topics/bad.md', '---\ntitle: Bad\ntype: log\n---\nbody bad\n');
+    rmSync(join(fx.root, 'topics/stale.md'));
+    git(fx.root, 'add -A');
+    git(fx.root, 'commit -m three');
+    await incrementalReindex(fx.db, fx.root);
+    t.ok(repo.getByPath('topics/bad.md'), 'the fixed file is indexed');
+    t.equal(failures.count(), 0, 'the fix and the delete clear both rows');
   } finally {
     teardown(fx);
   }
