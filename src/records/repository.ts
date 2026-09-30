@@ -21,6 +21,7 @@ interface RecordRow {
   archived_at: string | null;
   agent_summary: string | null;
   agent_derived_from_hash: string | null;
+  project: string | null;
 }
 
 const rowToRecord = (row: RecordRow): VaultRecord => ({
@@ -42,7 +43,8 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
   priority: row.priority,
   archivedAt: row.archived_at,
   agentSummary: row.agent_summary,
-  agentDerivedFromHash: row.agent_derived_from_hash
+  agentDerivedFromHash: row.agent_derived_from_hash,
+  project: row.project
 });
 
 // Explicit column list for full-record reads — column-order-independent
@@ -51,7 +53,7 @@ const rowToRecord = (row: RecordRow): VaultRecord => ({
 // their own list queries over records (GET /sections).
 export const RECORD_COLUMNS = `record_id, file_path, parent_path, sequence_key, type, body, content_hash,
    body_hash, title, created, updated, modified_at, last_referenced, decay_score, status, priority,
-   archived_at, agent_summary, agent_derived_from_hash`;
+   archived_at, agent_summary, agent_derived_from_hash, project`;
 
 export class RecordsRepository {
   readonly #insert: StatementSync;
@@ -74,8 +76,8 @@ export class RecordsRepository {
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
          title, created, updated, last_referenced, decay_score, status, priority, archived_at,
-         agent_summary, agent_derived_from_hash, modified_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
+         agent_summary, agent_derived_from_hash, project, modified_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`
     );
 
     // Upsert keyed on file_path. ON CONFLICT preserves record_id and created.
@@ -83,8 +85,8 @@ export class RecordsRepository {
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
          title, created, updated, last_referenced, decay_score, status, priority, archived_at,
-         agent_summary, agent_derived_from_hash, modified_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         agent_summary, agent_derived_from_hash, project, modified_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        ON CONFLICT(file_path) DO UPDATE SET
          parent_path             = excluded.parent_path,
          sequence_key            = excluded.sequence_key,
@@ -101,6 +103,7 @@ export class RecordsRepository {
          archived_at             = excluded.archived_at,
          agent_summary           = excluded.agent_summary,
          agent_derived_from_hash = excluded.agent_derived_from_hash,
+         project                 = excluded.project,
          modified_at             = strftime('%Y-%m-%dT%H:%M:%fZ','now')`
     );
 
@@ -151,7 +154,8 @@ export class RecordsRepository {
       r.priority,
       r.archivedAt,
       r.agentSummary,
-      r.agentDerivedFromHash
+      r.agentDerivedFromHash,
+      r.project ?? null
     );
     this.#bumpGeneration.run();
   }
@@ -176,7 +180,8 @@ export class RecordsRepository {
       r.priority,
       r.archivedAt,
       r.agentSummary,
-      r.agentDerivedFromHash
+      r.agentDerivedFromHash,
+      r.project ?? null
     );
     this.#bumpGeneration.run();
   }

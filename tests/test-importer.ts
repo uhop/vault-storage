@@ -1091,3 +1091,60 @@ test('importer records frontmatter values outside a closed enum and clears them 
     cleanup();
   }
 });
+
+test("a record's project: the projects/ folder, a log's project: key, or the project its file name starts with", t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'projects/vault/queue.md', '---\ntitle: Q\n---\nbody\n');
+    writeMd(root, 'projects/vault-storage/decisions.md', '---\ntitle: D\n---\nbody\n');
+    writeMd(
+      root,
+      'logs/2026-09-29-vault-storage-two-arcs.md',
+      '---\ntitle: L1\ntype: log\n---\nbody\n'
+    );
+    writeMd(root, 'logs/2026-09-29-vault-sweep-run.md', '---\ntitle: L2\ntype: log\n---\nbody\n');
+    writeMd(
+      root,
+      'logs/2026-09-29-blog-post.md',
+      '---\ntitle: L3\ntype: log\nproject: vault-storage\n---\nbody\n'
+    );
+    writeMd(root, 'logs/2026-09-29-nowhere.md', '---\ntitle: L4\ntype: log\n---\nbody\n');
+    writeMd(root, 'topics/a.md', '---\ntitle: T\n---\nbody\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const repo = new RecordsRepository(db);
+    const projectOf = (p: string) => repo.getByPath(p)?.project ?? null;
+    t.equal(projectOf('projects/vault-storage/decisions.md'), 'vault-storage', 'by folder');
+    t.equal(projectOf('projects/vault/queue.md'), 'vault', 'by folder, the short name');
+    t.equal(
+      projectOf('logs/2026-09-29-vault-storage-two-arcs.md'),
+      'vault-storage',
+      'the longest project the name starts with'
+    );
+    t.equal(
+      projectOf('logs/2026-09-29-vault-sweep-run.md'),
+      'vault',
+      'the short project when only it matches'
+    );
+    t.equal(
+      projectOf('logs/2026-09-29-blog-post.md'),
+      'vault-storage',
+      'the project: key wins over the name'
+    );
+    t.equal(projectOf('logs/2026-09-29-nowhere.md'), null, 'no project folder matches');
+    t.equal(projectOf('topics/a.md'), null, 'a topic has none');
+
+    writeMd(
+      root,
+      'logs/2026-09-29-nowhere.md',
+      '---\ntitle: L4\ntype: log\nproject: vault\n---\nbody\n'
+    );
+    const again = importVault(db, root);
+    t.equal(again.updated, 1, 'a project: edit alone re-imports the record');
+    t.equal(projectOf('logs/2026-09-29-nowhere.md'), 'vault', 'and lands');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});

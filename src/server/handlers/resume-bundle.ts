@@ -49,6 +49,48 @@ const BUNDLE_BUDGET_BYTES = 32 * 1024;
 const PROJECT_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 const DEFAULT_LOGS = 3;
+
+interface LogRow {
+  file_path: string;
+  title: string | null;
+  updated: string;
+  agent_summary: string | null;
+  agent_derived_from_hash: string | null;
+  body_hash: string;
+}
+
+// Order by `created`, not by any touch timestamp: `created` is preserved on
+// upsert (schema 0014) while `modified_at`/`updated` are re-stamped by
+// maintenance, so a status flip or an enrichment write would otherwise lift
+// a months-old log to rank 1. `modified_at` stays as the intra-day
+// tie-break, since `created` is date-only. The status filter is the other
+// half: the path test catches logs MOVED under an archive/ folder, never
+// one marked archived in place, which is what actually happened
+// (2026-08-29). With `project`, that project's own logs (D104).
+const latestLogs = (db: DatabaseSync, limit: number, project?: string): LogRow[] =>
+  limit === 0
+    ? []
+    : (db
+        .prepare(
+          `SELECT file_path, title, updated, agent_summary, agent_derived_from_hash, body_hash
+             FROM records
+            WHERE type = 'log'
+              AND status NOT IN ('archived', 'superseded')
+              AND file_path NOT LIKE 'archive/%'
+              AND file_path NOT LIKE '%/archive/%'
+              AND (? IS NULL OR project = ?)
+            ORDER BY created DESC, COALESCE(modified_at, updated) DESC, file_path DESC
+            LIMIT ?`
+        )
+        .all(project ?? null, project ?? null, limit) as unknown[] as LogRow[]);
+
+const logEntry = (r: LogRow) => ({
+  file_path: r.file_path,
+  title: r.title,
+  updated: r.updated,
+  summary: r.agent_summary,
+  summary_stale: staleSummary(r.agent_summary, r.agent_derived_from_hash, r.body_hash)
+});
 const MAX_LOGS = 20;
 
 /** Raw ATX heading lines, fence-masked so code samples don't count. */
@@ -124,25 +166,8 @@ export const resumeBriefHandler =
       ? ((extractSection(clarifyQueue.body, 'Pending') ?? '').match(/^### Q-/gm)?.length ?? 0)
       : null;
 
-    // Order by `created`, not by any touch timestamp: `created` is preserved on
-    // upsert (schema 0014) while `modified_at`/`updated` are re-stamped by
-    // maintenance, so a status flip or an enrichment write would otherwise lift
-    // a months-old log to rank 1. `modified_at` stays as the intra-day
-    // tie-break, since `created` is date-only. The status filter is the other
-    // half: the path test catches logs MOVED under an archive/ folder, never
-    // one marked archived in place, which is what actually happened
-    // (2026-08-29). Same shape in the bundle query below.
-    const logRow = db
-      .prepare(
-        `SELECT file_path, title, updated FROM records
-          WHERE type = 'log'
-            AND status NOT IN ('archived', 'superseded')
-            AND file_path NOT LIKE 'archive/%'
-            AND file_path NOT LIKE '%/archive/%'
-          ORDER BY created DESC, COALESCE(modified_at, updated) DESC, file_path DESC
-          LIMIT 1`
-      )
-      .get() as {file_path: string; title: string | null; updated: string} | undefined;
+    const projectLog = project === undefined ? undefined : latestLogs(db, 1, project)[0];
+    const logRow = projectLog ?? latestLogs(db, 1)[0];
 
     let projectBlock: Record<string, unknown> | null = null;
     if (project !== undefined) {
@@ -204,7 +229,12 @@ export const resumeBriefHandler =
         clarify_pending: clarifyPending
       },
       latest_log: logRow
-        ? {file_path: logRow.file_path, title: logRow.title, updated: logRow.updated}
+        ? {
+            file_path: logRow.file_path,
+            title: logRow.title,
+            updated: logRow.updated,
+            scope: projectLog ? 'project' : 'fleet'
+          }
         : null,
       project: projectBlock
     });
@@ -292,28 +322,7 @@ export const resumeBundleHandler =
       ? ((extractSection(clarifyQueue.body, 'Pending') ?? '').match(/^### Q-/gm)?.length ?? 0)
       : null;
 
-    const logRows =
-      logsLimit === 0
-        ? []
-        : (db
-            .prepare(
-              `SELECT file_path, title, updated, agent_summary, agent_derived_from_hash, body_hash
-                 FROM records
-                WHERE type = 'log'
-                  AND status NOT IN ('archived', 'superseded')
-                  AND file_path NOT LIKE 'archive/%'
-                  AND file_path NOT LIKE '%/archive/%'
-                ORDER BY created DESC, COALESCE(modified_at, updated) DESC, file_path DESC
-                LIMIT ?`
-            )
-            .all(logsLimit) as unknown[] as {
-            file_path: string;
-            title: string | null;
-            updated: string;
-            agent_summary: string | null;
-            agent_derived_from_hash: string | null;
-            body_hash: string;
-          }[]);
+    const logRows = latestLogs(db, logsLimit);
 
     let projectBlock: Record<string, unknown> | null = null;
     let feedbackEntry: Record<string, unknown> | null = null;
@@ -383,6 +392,7 @@ export const resumeBundleHandler =
         files,
         notices,
         trackers: projectTrackers(deps.vaultDataPath, project),
+        logs: latestLogs(db, logsLimit, project).map(logEntry),
         handoffs: {
           open: inbox.filter(h => h.status === 'open').map(inboxItem),
           returned: inbox.filter(h => h.status === 'returned').map(inboxItem),
@@ -404,13 +414,7 @@ export const resumeBundleHandler =
         active: emptySection(activeRaw) ? null : activeRaw,
         clarify_pending: clarifyPending
       },
-      logs: logRows.map(r => ({
-        file_path: r.file_path,
-        title: r.title,
-        updated: r.updated,
-        summary: r.agent_summary,
-        summary_stale: staleSummary(r.agent_summary, r.agent_derived_from_hash, r.body_hash)
-      })),
+      logs: logRows.map(logEntry),
       project: projectBlock
     };
 

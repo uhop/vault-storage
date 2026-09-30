@@ -203,6 +203,12 @@ export interface VaultRecord {
    * `agent:` block exists.
    */
   agentDerivedFromHash: string | null;
+  /**
+   * The project the record belongs to (schema 0033): `projects/<name>/…` by
+   * its path, a log by its `project:` key or the project its file name
+   * starts with; null elsewhere.
+   */
+  project?: string | null;
 }
 
 export interface Edge {

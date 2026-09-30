@@ -49,6 +49,7 @@ interface RecordRow {
   archived_at: string | null;
   agent_summary: string | null;
   agent_derived_from_hash: string | null;
+  project: string | null;
 }
 
 const rowToRecord = (row: RecordRow) => ({
@@ -70,7 +71,8 @@ const rowToRecord = (row: RecordRow) => ({
   priority: row.priority,
   archivedAt: row.archived_at,
   agentSummary: row.agent_summary,
-  agentDerivedFromHash: row.agent_derived_from_hash
+  agentDerivedFromHash: row.agent_derived_from_hash,
+  project: row.project
 });
 
 // modified_at sorts by COALESCE(modified_at, updated): rows re-imported since

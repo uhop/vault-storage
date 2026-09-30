@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    32,
-    'schema version is 32 after all migrations through the frontmatter findings'
+    33,
+    'schema version is 33 after all migrations through the record project'
   );
   t.deepEqual(
     result.applied,
@@ -54,7 +54,8 @@ test('runs the init migration and creates required tables', t => {
       '0029_tag_origin.sql',
       '0030_tag_vecs.sql',
       '0031_edge_vocabulary.sql',
-      '0032_fm_findings.sql'
+      '0032_fm_findings.sql',
+      '0033_records_project.sql'
     ],
     'all migrations applied in order'
   );
@@ -111,6 +112,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     ALTER TABLE suggestions DROP COLUMN claim_token;
     DROP TABLE enrichment_baselines;
     ALTER TABLE tags_taxonomy DROP COLUMN origin;
+    DROP INDEX idx_records_project;
+    ALTER TABLE records DROP COLUMN project;
     UPDATE meta SET value = '25' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created, claimed_by, claimed_at, claim_expires)
       VALUES ('s1', 'duplicate', '{}', 'claimed', '2026-09-26T00:00:00Z', 'sweep-A',
@@ -124,7 +127,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0029_tag_origin.sql',
     '0030_tag_vecs.sql',
     '0031_edge_vocabulary.sql',
-    '0032_fm_findings.sql'
+    '0032_fm_findings.sql',
+    '0033_records_project.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -139,6 +143,8 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
   runMigrations(db);
   db.exec(`
     ALTER TABLE tags_taxonomy DROP COLUMN origin;
+    DROP INDEX idx_records_project;
+    ALTER TABLE records DROP COLUMN project;
     UPDATE meta SET value = '27' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created) VALUES
       ('p', 'edge_type', '{}', 'pending', '2026-09-27T00:00:00Z'),
@@ -153,9 +159,14 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     '0029_tag_origin.sql',
     '0030_tag_vecs.sql',
     '0031_edge_vocabulary.sql',
-    '0032_fm_findings.sql'
+    '0032_fm_findings.sql',
+    '0033_records_project.sql'
   ]);
-  t.deepEqual(result.reindex, ['0032_fm_findings.sql'], 'only the findings table forces a reindex');
+  t.deepEqual(
+    result.reindex,
+    ['0032_fm_findings.sql', '0033_records_project.sql'],
+    'the findings table and the project column force a reindex'
+  );
   const rows = db
     .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
     .all()
@@ -173,6 +184,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
   runMigrations(db);
   db.exec(`
     ALTER TABLE tags_taxonomy DROP COLUMN origin;
+    DROP INDEX idx_records_project;
+    ALTER TABLE records DROP COLUMN project;
     UPDATE meta SET value = '28' WHERE key = 'schema_version';
     INSERT INTO tags_taxonomy (tag, added) VALUES
       ('seed', '2026-04-29'), ('later', '2026-06-14T10:00:00.000Z');
@@ -181,7 +194,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     '0029_tag_origin.sql',
     '0030_tag_vecs.sql',
     '0031_edge_vocabulary.sql',
-    '0032_fm_findings.sql'
+    '0032_fm_findings.sql',
+    '0033_records_project.sql'
   ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
@@ -204,7 +218,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 32, 'schema version stays at 32');
+  t.equal(second.current, 33, 'schema version stays at 33');
   db.close();
 });
 
@@ -269,7 +283,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0029_tag_origin.sql',
       '0030_tag_vecs.sql',
       '0031_edge_vocabulary.sql',
-      '0032_fm_findings.sql'
+      '0032_fm_findings.sql',
+      '0033_records_project.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );

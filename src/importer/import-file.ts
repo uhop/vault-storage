@@ -1,4 +1,5 @@
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import type {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {parseQueueFile} from '../queue/parse.ts';
@@ -42,6 +43,27 @@ const asString = (value: unknown): string | undefined =>
  * body change is still caught by `content_hash`.
  */
 const sameDate = (a: string, b: string): boolean => a === b || a.slice(0, 10) === b.slice(0, 10);
+
+const PROJECT_PATH = /^projects\/([^/]+)\//;
+const LOG_PATH = /^logs\/\d{4}-\d{2}-\d{2}-(.+)\.md$/;
+
+/**
+ * The project a path belongs to: a note under `projects/<name>/`, or a log
+ * whose file name after the date starts with the name of a project folder in
+ * the vault (the longest such name, so `vault-storage-…` is not `vault`).
+ */
+export const projectFromPath = (relativePath: string, vaultRoot: string): string | null => {
+  const inProject = PROJECT_PATH.exec(relativePath);
+  if (inProject) return inProject[1]!;
+  const log = LOG_PATH.exec(relativePath);
+  if (!log) return null;
+  const words = log[1]!.split('-');
+  for (let n = words.length; n > 0; --n) {
+    const name = words.slice(0, n).join('-');
+    if (existsSync(join(vaultRoot, 'projects', name))) return name;
+  }
+  return null;
+};
 
 /**
  * Normalize FM `status` into a canonical {@link RecordStatus}. Canonical
@@ -221,6 +243,9 @@ export const importFile = (
   const priority = normalizePriority(data['priority']);
   const title = asString(data['title']) ?? null;
   const agent = readAgentBlock(data);
+  const project =
+    asString(data['project']) ??
+    projectFromPath(relativePath, absolutePath.slice(0, -relativePath.length));
 
   // Hashes the embedding input (body + agent.summary when present) so
   // summary-only edits drive reembedding the same way body edits do.
@@ -241,7 +266,8 @@ export const importFile = (
     sameDate(existing.created, created) &&
     sameDate(existing.updated, updated) &&
     existing.agentSummary === agent.summary &&
-    existing.agentDerivedFromHash === agent.derivedFromHash;
+    existing.agentDerivedFromHash === agent.derivedFromHash &&
+    (existing.project ?? null) === project;
 
   let recordId: string;
   let action: 'inserted' | 'updated' | 'unchanged';
@@ -268,7 +294,8 @@ export const importFile = (
       priority,
       archivedAt: existing?.archivedAt ?? null,
       agentSummary: agent.summary,
-      agentDerivedFromHash: agent.derivedFromHash
+      agentDerivedFromHash: agent.derivedFromHash,
+      project
     };
 
     records.upsertByPath(record);

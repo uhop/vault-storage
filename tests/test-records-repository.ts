@@ -30,6 +30,7 @@ const makeRecord = (overrides: Partial<VaultRecord> = {}): VaultRecord => {
     archivedAt: null,
     agentSummary: null,
     agentDerivedFromHash: null,
+    project: null,
     ...overrides
   };
 };

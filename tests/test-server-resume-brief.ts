@@ -412,3 +412,65 @@ test('resume brief + bundle — summary_stale flips when the body outruns its ag
     t.equal(stale.files['feedback']?.summary_stale, true, 'bundle: marked stale beside it');
   });
 });
+
+// A resume for one project read the fleet's three newest logs and could miss
+// every one of its own (2026-09-29, D104): the bundle's project block carries
+// the project's latest logs, and the brief's latest log is the project's when
+// it has one.
+test("resume brief + bundle — the project's own logs, beside the fleet's", async t => {
+  await withServer(async url => {
+    const bundle = await fetch(`${url}/system/resume-bundle?project=vs-demo&logs=5`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const body = (await bundle.json()) as {
+      logs: {file_path: string}[];
+      project: {logs: {file_path: string; summary_stale: boolean}[]};
+    };
+    t.equal(bundle.status, 200);
+    t.deepEqual(
+      body.logs.map(l => l.file_path),
+      ['logs/2026-07-22-last-session.md', 'logs/2026-05-31-stale-session.md'],
+      "the fleet's logs as before"
+    );
+    t.deepEqual(body.project.logs, [], 'no log names vs-demo, so its list is empty');
+
+    const brief = await fetchRaw(`${url}/system/resume-brief?project=vs-demo`);
+    const briefBody = JSON.parse(brief.raw) as {latest_log: {file_path: string; scope: string}};
+    t.equal(briefBody.latest_log.scope, 'fleet', "the brief falls back to the fleet's latest log");
+    t.equal(briefBody.latest_log.file_path, 'logs/2026-07-22-last-session.md');
+
+    const put = await fetch(`${url}/vault/logs/2026-08-01-vs-demo-session.md`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        frontmatter: {
+          title: 'vs-demo session',
+          type: 'log',
+          created: '2026-08-01',
+          updated: '2026-08-01'
+        },
+        body: 'A log named after the project by its file name.\n'
+      })
+    });
+    t.equal(put.status, 204, 'the log is written');
+
+    const after = await fetch(`${url}/system/resume-bundle?project=vs-demo&logs=5`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const afterBody = (await after.json()) as {project: {logs: {file_path: string}[]}};
+    t.deepEqual(
+      afterBody.project.logs.map(l => l.file_path),
+      ['logs/2026-08-01-vs-demo-session.md'],
+      "the project's log, by its file name"
+    );
+    const brief2 = JSON.parse(
+      (await fetchRaw(`${url}/system/resume-brief?project=vs-demo`)).raw
+    ) as {
+      latest_log: {file_path: string; scope: string};
+    };
+    t.equal(brief2.latest_log.scope, 'project', "the brief prefers the project's latest log");
+    t.equal(brief2.latest_log.file_path, 'logs/2026-08-01-vs-demo-session.md');
+  });
+});
