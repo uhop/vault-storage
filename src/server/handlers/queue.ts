@@ -51,6 +51,7 @@ const toApi = (row: QueueItemRow, includeBody = true): Record<string, unknown> =
   source_line: row.source_line,
   body_hash: row.body_hash,
   blocked_by: row.blocked_by,
+  source: row.source,
   created_at: row.created_at,
   updated_at: row.updated_at
 });
@@ -71,6 +72,7 @@ const QUEUE_ITEM_FIELDS: ReadonlySet<string> = new Set([
   'source_line',
   'body_hash',
   'blocked_by',
+  'source',
   'created_at',
   'updated_at'
 ]);

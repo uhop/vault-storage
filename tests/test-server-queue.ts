@@ -99,6 +99,7 @@ const seedFleet = (db: ReturnType<typeof openDatabase>, root: string): void => {
         '## Active',
         '',
         '- **A-active.** in flight',
+        '  - source: github uhop/alpha#7',
         '',
         '## Backlog',
         '',
@@ -261,7 +262,7 @@ test('GET /queue/projects/{name} — open items only, section-grouped order', as
     t.equal(status, 200);
     const payload = body as {
       project: string;
-      items: Array<{section: string; title: string; priority: number}>;
+      items: Array<{section: string; title: string; priority: number; source: string | null}>;
     };
     t.equal(payload.project, 'alpha');
     t.deepEqual(
@@ -274,6 +275,23 @@ test('GET /queue/projects/{name} — open items only, section-grouped order', as
         ['watching', 0, 'A-watch.']
       ],
       'active first; backlog by priority desc; watching last'
+    );
+    t.deepEqual(
+      payload.items.map(it => it.source),
+      ['github uhop/alpha#7', null, null, null, null],
+      'the `source:` marker rides on the item; null without one'
+    );
+    const only = await fetchJson(`${url}/queue/projects/alpha?fields=title,source`, {
+      headers: authHeader
+    });
+    t.deepEqual(
+      (only.body as {items: Array<Record<string, unknown>>}).items[0],
+      {
+        id: (only.body as {items: Array<{id: string}>}).items[0]!.id,
+        title: 'A-active.',
+        source: 'github uhop/alpha#7'
+      },
+      'fields= knows source'
     );
   });
 });

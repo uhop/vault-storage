@@ -115,6 +115,8 @@ const seed = (root: string): void => {
       '## Active',
       '',
       '- **Mid-flight thing.** in progress',
+      '- **Ticket in flight.** worked at the tracker',
+      '  - source: github uhop/vs-demo#12',
       '',
       '## Backlog',
       '',
@@ -221,6 +223,7 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
         name: string;
         queue: {
           active: string[];
+          in_flight: Array<{title: string; source: string | null}>;
           backlog: number;
           ready: number;
           blocked: number;
@@ -229,7 +232,15 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
         feedback: {updated: string} | null;
       };
     };
-    t.deepEqual(body.project.queue.active, ['Mid-flight thing.']);
+    t.deepEqual(body.project.queue.active, ['Mid-flight thing.', 'Ticket in flight.']);
+    t.deepEqual(
+      body.project.queue.in_flight,
+      [
+        {title: 'Mid-flight thing.', source: null},
+        {title: 'Ticket in flight.', source: 'github uhop/vs-demo#12'}
+      ],
+      'the Active items with the ticket each mirrors'
+    );
     t.equal(body.project.queue.backlog, 2, 'two backlog items');
     t.equal(body.project.queue.ready, 1, 'only the unblocked one is ready');
     t.equal(body.project.queue.blocked, 1, 'the ref-carrying one is blocked');

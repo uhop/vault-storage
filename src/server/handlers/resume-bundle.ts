@@ -145,8 +145,9 @@ const staleSummary = (
  * it. Strictly read-only (no reindex, no claim reverts — GET semantics), no
  * bodies, no summaries: titles, counts, and dates only. Fields: lint ok +
  * issue count, pending-suggestion total, agent-workflow flags (Active
- * present? clarify pending), the project's Active item titles + ready /
- * blocked counts (backed by the 0016 `blocked-by:` views), a feedback.md
+ * present? clarify pending), the project's Active item titles, the same items
+ * with the ticket each mirrors (`in_flight`), + ready / blocked counts (backed
+ * by the 0016 `blocked-by:` views), a feedback.md
  * pointer (exists + updated — the hook says "fetch it", it never inlines
  * it), and the latest session log's title + date. Unknown query params 400.
  */
@@ -205,7 +206,13 @@ export const resumeBriefHandler =
           problems: trackers.problems
         },
         queue: {
+          // `active` keeps the titles for hooks before 2026-09-30; `in_flight`
+          // adds the ticket each item mirrors (D107 `source:`), which is what
+          // the item in flight is in a project whose primary tracker is outside.
           active: mine.filter(row => row.section === 'active').map(row => row.title),
+          in_flight: mine
+            .filter(row => row.section === 'active')
+            .map(row => ({title: row.title, source: row.source})),
           backlog: mine.filter(row => row.section === 'backlog').length,
           ready: readyView(mine, universe).length,
           blocked: blockedView(mine, universe).length,
