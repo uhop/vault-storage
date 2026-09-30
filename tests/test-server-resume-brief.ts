@@ -474,3 +474,23 @@ test("resume brief + bundle — the project's own logs, beside the fleet's", asy
     t.equal(brief2.latest_log.file_path, 'logs/2026-08-01-vs-demo-session.md');
   });
 });
+
+test("GET /sections carries a record's project, and only when it has one", async t => {
+  await withServer(async url => {
+    const res = await fetch(`${url}/sections?type=project&fields=file_path,project&limit=50`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const body = (await res.json()) as {items: {file_path: string; project?: string}[]};
+    t.equal(res.status, 200);
+    const byPath = new Map(body.items.map(i => [i.file_path, i.project]));
+    t.equal(byPath.get('projects/vs-demo/queue.md'), 'vs-demo', 'a project note names its project');
+    const logs = await fetch(`${url}/sections?type=log&fields=file_path,project&limit=50`, {
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const logItems = (await logs.json()) as {items: {file_path: string; project?: string}[]};
+    t.ok(
+      logItems.items.every(i => !('project' in i)),
+      'a log that names no project carries no key'
+    );
+  });
+});

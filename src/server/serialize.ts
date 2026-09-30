@@ -40,6 +40,8 @@ export interface JsonRecord {
   agent_summary?: string;
   /** Body content_hash recorded at LLM derivation. Only present when set. */
   agent_derived_from_hash?: string;
+  /** The record's project (schema 0033). Only present when set. */
+  project?: string;
 }
 
 export interface JsonEdge {
@@ -76,7 +78,8 @@ export const JSON_RECORD_FIELDS: ReadonlySet<string> = new Set([
   'archived_at',
   'body',
   'agent_summary',
-  'agent_derived_from_hash'
+  'agent_derived_from_hash',
+  'project'
 ]);
 /** Identity fields a subset never drops. */
 export const JSON_RECORD_ALWAYS: ReadonlySet<string> = new Set(['record_id', 'file_path']);
@@ -103,6 +106,7 @@ export const toJsonRecord = (r: VaultRecord, opts: SerializeOptions = {}): JsonR
   if (opts.includeBody !== false) out.body = r.body;
   if (r.agentSummary !== null) out.agent_summary = r.agentSummary;
   if (r.agentDerivedFromHash !== null) out.agent_derived_from_hash = r.agentDerivedFromHash;
+  if (r.project != null) out.project = r.project;
   return out;
 };
 
