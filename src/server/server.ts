@@ -2,6 +2,7 @@ import {join} from 'node:path';
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
 import {checkBearer} from './auth.ts';
+import {coder} from './compress.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {contextPackHandler} from './handlers/context-pack.ts';
@@ -594,6 +595,7 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
           });
         });
         await renderer.terminate();
+        await coder.terminate();
       };
       resolveListening({server, url, close});
     });

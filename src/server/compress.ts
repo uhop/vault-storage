@@ -1,22 +1,102 @@
 import type {ServerResponse} from 'node:http';
-import {brotliCompress, constants, gzip, zstdCompress} from 'node:zlib';
+import {Worker} from 'node:worker_threads';
+import type {CodeReply, CodeRequest} from './compress-worker.ts';
 
-type Encoding = 'zstd' | 'br' | 'gzip';
-type Compressor = (body: Buffer, cb: (err: Error | null, out: Buffer) => void) => void;
+export type Encoding = 'zstd' | 'br' | 'gzip';
 
 /** Below one TCP segment the framing costs more than the coding saves. */
 const MIN_BYTES = 1400;
 
+const WORKER_URL = new URL('./compress-worker.ts', import.meta.url);
+
+interface Waiter {
+  resolve: (out: Buffer | null) => void;
+  timer: NodeJS.Timeout;
+}
+
+interface Channel {
+  worker: Worker;
+  pending: Map<number, Waiter>;
+}
+
 /**
- * Levels chosen for the read path: one whose CPU exceeds the transfer it
- * saves is a regression. Brotli defaults to quality 11, seconds per
- * megabyte; 4 is the level meant for serving.
+ * Bodies are coded on a worker thread, one message each way: `zlib`'s own
+ * asynchronous coders take two turns of the event loop, and on a busy server
+ * every turn waits behind the queued work (D102). A coding that fails or
+ * outlasts the limit answers null, and the body goes out as it is.
  */
-const COMPRESSORS: Record<Encoding, Compressor> = {
-  zstd: (body, cb) => zstdCompress(body, {params: {[constants.ZSTD_c_compressionLevel]: 3}}, cb),
-  br: (body, cb) => brotliCompress(body, {params: {[constants.BROTLI_PARAM_QUALITY]: 4}}, cb),
-  gzip: (body, cb) => gzip(body, {level: 5}, cb)
-};
+export class Coder {
+  readonly #timeoutMs: number;
+  #channel: Channel | null = null;
+  #nextId = 0;
+
+  constructor(timeoutMs = 10_000) {
+    this.#timeoutMs = timeoutMs;
+  }
+
+  /** The worker's thread id while one runs. */
+  get threadId(): number | null {
+    return this.#channel?.worker.threadId ?? null;
+  }
+
+  code(encoding: Encoding, body: Buffer): Promise<Buffer | null> {
+    const channel = (this.#channel ??= this.#spawn());
+    const id = ++this.#nextId;
+    // A copy: the body may sit in a shared pool, and only an owned buffer transfers.
+    const bytes = new Uint8Array(body);
+    const request: CodeRequest = {id, encoding, bytes};
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        this.#fail(channel);
+        void channel.worker.terminate();
+      }, this.#timeoutMs);
+      channel.pending.set(id, {resolve, timer});
+      channel.worker.ref();
+      channel.worker.postMessage(request, [bytes.buffer]);
+    });
+  }
+
+  /** Stops the worker; pending codings answer null. */
+  async terminate(): Promise<void> {
+    const channel = this.#channel;
+    if (!channel) return;
+    this.#fail(channel);
+    await channel.worker.terminate();
+  }
+
+  #spawn(): Channel {
+    const worker = new Worker(WORKER_URL);
+    const channel: Channel = {worker, pending: new Map()};
+    worker.on('message', (reply: CodeReply) => {
+      const waiter = channel.pending.get(reply.id);
+      if (!waiter) return;
+      channel.pending.delete(reply.id);
+      clearTimeout(waiter.timer);
+      // An idle worker must not keep a CLI or test process alive.
+      if (!channel.pending.size) worker.unref();
+      waiter.resolve(
+        reply.ok
+          ? Buffer.from(reply.bytes.buffer, reply.bytes.byteOffset, reply.bytes.byteLength)
+          : null
+      );
+    });
+    worker.on('error', () => this.#fail(channel));
+    worker.on('exit', () => this.#fail(channel));
+    worker.unref();
+    return channel;
+  }
+
+  #fail(channel: Channel): void {
+    if (this.#channel === channel) this.#channel = null;
+    for (const waiter of channel.pending.values()) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(null);
+    }
+    channel.pending.clear();
+  }
+}
+
+export const coder = new Coder();
 
 /** Our order among codings the client rates equally: fastest at a given ratio first. */
 const PREFERENCE: readonly Encoding[] = ['zstd', 'br', 'gzip'];
@@ -113,8 +193,9 @@ const writeOut = (
 
 /**
  * Write a fully buffered body, coded when the client asked for it and it
- * pays. Compression completes on a later tick, so callers must treat the
- * response as finished and write nothing more; every caller already does.
+ * pays. A coded body is written when the worker answers, so callers must
+ * treat the response as finished and write nothing more; every caller
+ * already does.
  *
  * `Vary` rides on every compressible response whether or not this one was
  * coded, so a cache keys the variants apart.
@@ -136,8 +217,8 @@ export const sendBuffer = (
     writeOut(res, status, varied, body, null);
     return;
   }
-  COMPRESSORS[encoding](body, (err, out) => {
-    const worthIt = err === null && out.byteLength < body.byteLength;
+  void coder.code(encoding, body).then(out => {
+    const worthIt = out !== null && out.byteLength < body.byteLength;
     writeOut(res, status, varied, worthIt ? out : body, worthIt ? encoding : null);
   });
 };

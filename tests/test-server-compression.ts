@@ -1,3 +1,4 @@
+import {randomBytes} from 'node:crypto';
 import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {request} from 'node:http';
 import type {IncomingHttpHeaders, ServerResponse} from 'node:http';
@@ -8,7 +9,7 @@ import test from 'tape-six';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
-import {negotiateEncoding} from '../src/server/compress.ts';
+import {coder, negotiateEncoding, sendBuffer} from '../src/server/compress.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {sendJson} from '../src/server/responses.ts';
 import {startServer} from '../src/server/server.ts';
@@ -231,6 +232,24 @@ test('sendJson codes a payload past the floor and leaves a small one alone', asy
   await identity.finished;
   t.equal(identity.res.head['Content-Encoding'], undefined, 'no Accept-Encoding, no coding');
   t.deepEqual(JSON.parse(identity.body().toString('utf8')), big, 'and the payload is intact');
+});
+
+test('bodies are coded on the worker thread, and one that does not shrink goes out as it is', async t => {
+  const headers = {'Content-Type': 'text/markdown; charset=utf-8'};
+  const coded = stubRes('zstd');
+  sendBuffer(asResponse(coded.res), 200, Buffer.from(BIG), headers);
+  t.notOk(coded.res.writableEnded, 'written when the worker answers, not before');
+  await coded.finished;
+  t.equal(typeof coder.threadId, 'number', 'a worker thread runs');
+  t.equal(coded.res.head['Content-Encoding'], 'zstd', 'coded');
+  t.ok(zstdDecompressSync(coded.body()).equals(Buffer.from(BIG)), 'decodes to the body');
+
+  const noise = randomBytes(4096);
+  const plain = stubRes('gzip');
+  sendBuffer(asResponse(plain.res), 200, noise, headers);
+  await plain.finished;
+  t.equal(plain.res.head['Content-Encoding'], undefined, 'no coding that does not pay');
+  t.ok(plain.body().equals(noise), 'the body as it is');
 });
 
 test('a revalidated static file stays a 304 with no coding', async t => {
