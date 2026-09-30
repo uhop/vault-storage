@@ -205,6 +205,7 @@ const runEmbedPending = async (
   const rowStmt = db.prepare(
     'SELECT record_id, body, content_hash, agent_summary FROM records WHERE record_id = ?'
   );
+  const hashStmt = db.prepare('SELECT content_hash FROM records WHERE record_id = ?');
 
   const vecs = new RecordVecRepository(db);
   const docVecs = new RecordDocVecRepository(db);
@@ -245,6 +246,10 @@ const runEmbedPending = async (
         const id = p.row.record_id;
         for (const i of p.missing) p.vectors[i] = flatVecs[idx++]!;
         const summaryVector = p.summary === null ? null : (p.summary.vector ?? flatVecs[idx++]!);
+        // Deleted or edited during the await: its delete trigger has run, so
+        // a write now would outlive the record; an edit re-queues it (D114).
+        const current = hashStmt.get(id) as {content_hash: string} | undefined;
+        if (current?.content_hash !== p.row.content_hash) continue;
         const vecs_ = p.vectors as Float32Array[];
         // Non-finite chunk vectors are not stored beside finite ones: one NaN in
         // the mean pool makes the doc vector NaN, and sqlite-vec then returns null

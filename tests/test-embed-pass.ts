@@ -10,6 +10,7 @@ import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import type {Embedder} from '../src/embeddings/types.ts';
 import {backfillChunkTextHashes} from '../src/maintenance/backfill-chunk-text-hashes.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
+import {computeLintReport} from '../src/server/handlers/lint.ts';
 import type {VaultRecord} from '../src/records/types.ts';
 import {contentHash, embedInputHash} from '../src/util/hash.ts';
 import {uuidv7} from '../src/util/uuid.ts';
@@ -729,6 +730,45 @@ test('embedAllPending lets another pass run between its rounds', async t => {
     t.equal(all.embedded, 4, 'the backlog finishes');
     t.equal(all.remaining, 0, 'nothing left');
     t.equal(new Set(embedder.embedded).size, 5, 'no text embedded twice');
+  } finally {
+    fx.db.close();
+  }
+});
+
+test('embedPending: a record deleted or edited while its batch embeds gets no vectors', async t => {
+  const fx = setup();
+  const embedder = new CountingEmbedder();
+  try {
+    const gone = makeRecord('topics/gone.md', 'gone body');
+    const edited = makeRecord('topics/edited.md', 'edited body');
+    const kept = makeRecord('topics/kept.md', 'kept body');
+    for (const r of [gone, edited, kept]) fx.records.insert(r);
+    embedder.beforeBatch = () => {
+      embedder.beforeBatch = () => {};
+      fx.records.delete(gone.recordId);
+      const body = 'edited again';
+      fx.records.upsertByPath({
+        ...edited,
+        body,
+        contentHash: contentHash(body),
+        bodyHash: contentHash(body)
+      });
+    };
+
+    const first = await embedPending(fx.db, embedder);
+    t.equal(first.embedded, 1, 'only the record that stood still is embedded');
+    const {checks} = computeLintReport(fx.db);
+    t.equal(checks['orphan_embeddings']?.count, 0, 'no chunk vector outlives its record');
+    t.equal(checks['orphan_doc_embeddings']?.count, 0, 'nor a doc vector');
+    t.equal(
+      fx.vecs.getVectorsByTextHash(edited.recordId).size,
+      0,
+      'the edited record keeps no vector of its old text'
+    );
+
+    const second = await embedPending(fx.db, embedder);
+    t.equal(second.embedded, 1, 'the next pass embeds the edited record');
+    t.deepEqual(embedder.embedded.slice(-1), ['edited again'], 'from its new text');
   } finally {
     fx.db.close();
   }

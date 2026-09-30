@@ -62,6 +62,7 @@ const run = async (
     const hash = contentHash(text);
     if (stored.get(row.tag) !== hash) pending.push({tag: row.tag, text, hash});
   }
+  const current = db.prepare('SELECT description FROM tags_taxonomy WHERE tag = ?');
   let embedded = 0;
   for (let i = 0; i < pending.length; i += batchSize) {
     const batch = pending.slice(i, i + batchSize);
@@ -70,6 +71,10 @@ const run = async (
       const vec = vecs[j];
       const item = batch[j]!;
       if (!vec || !vec.every(Number.isFinite)) continue;
+      // Deleted or re-described during the await: its delete trigger has run,
+      // or its text moved on (D114).
+      const row = current.get(item.tag) as {description: string | null} | undefined;
+      if (!row || contentHash(tagEmbedText(item.tag, row.description)) !== item.hash) continue;
       repo.set(item.tag, item.hash, vec);
       ++embedded;
     }

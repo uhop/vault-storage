@@ -5,8 +5,9 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
-import {tagEmbedText} from '../src/embeddings/embed-tags.ts';
+import {embedTagsPending, tagEmbedText} from '../src/embeddings/embed-tags.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
+import type {Embedder} from '../src/embeddings/types.ts';
 import {importVault} from '../src/importer/import.ts';
 import type {ServerEnv} from '../src/server/env.ts';
 import {startServer, type ServerHandle} from '../src/server/server.ts';
@@ -254,5 +255,49 @@ test('embed-pending refreshes the tag vectors after the records', async t => {
     t.ok(typeof r.body.embedded === 'number', 'the record summary is still there');
   } finally {
     await stopCtx(ctx);
+  }
+});
+
+test('embedTagsPending: a tag deleted or re-described while its batch embeds gets no stale vector', async t => {
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  try {
+    db.exec(`INSERT INTO tags_taxonomy (tag, description, added) VALUES
+      ('gone', 'Deleted mid-pass.', '2026-09-30'),
+      ('moved', 'Before.', '2026-09-30'),
+      ('kept', 'Stands still.', '2026-09-30')`);
+    const fake = new FakeEmbedder();
+    let beforeBatch = (): void => {
+      beforeBatch = () => {};
+      db.exec(`DELETE FROM tags_taxonomy WHERE tag = 'gone'`);
+      db.exec(`UPDATE tags_taxonomy SET description = 'After.' WHERE tag = 'moved'`);
+    };
+    const embedder: Embedder = {
+      dim: fake.dim,
+      modelName: fake.modelName,
+      retained: false,
+      embed: text => fake.embed(text),
+      embedQuery: text => fake.embedQuery(text),
+      embedBatch: async texts => {
+        beforeBatch();
+        return fake.embedBatch(texts);
+      },
+      releaseRetained: async () => {}
+    };
+    const stored = (): string[] =>
+      (db.prepare('SELECT tag FROM tag_vec_meta ORDER BY tag').all() as {tag: string}[]).map(
+        r => r.tag
+      );
+
+    const first = await embedTagsPending(db, embedder);
+    t.equal(first.embedded, 1, 'only the tag that stood still is embedded');
+    t.deepEqual(stored(), ['kept'], 'no vector for the deleted tag or the old description');
+    t.equal(count(db, 'tag_vec'), 1);
+
+    const second = await embedTagsPending(db, embedder);
+    t.equal(second.embedded, 1, 'the next pass embeds the re-described tag');
+    t.deepEqual(stored(), ['kept', 'moved']);
+  } finally {
+    db.close();
   }
 });
