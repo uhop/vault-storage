@@ -404,6 +404,22 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
   }
 };
 
+type PathView = Pick<PassContext, 'resolver' | 'pathById'>;
+
+const viewOf = (entries: readonly Pick<VaultRecord, 'recordId' | 'filePath'>[]): PathView => ({
+  resolver: new WikilinkResolver(entries),
+  pathById: new Map(entries.map(e => [e.recordId, e.filePath]))
+});
+
+/** The resolver over the current path set, from ids and paths alone (no bodies). */
+const pathView = (db: DatabaseSync): PathView => {
+  const rows = db.prepare('SELECT record_id, file_path FROM records').all() as unknown[] as {
+    record_id: string;
+    file_path: string;
+  }[];
+  return viewOf(rows.map(r => ({recordId: r.record_id, filePath: r.file_path})));
+};
+
 type EdgeKey = Pick<Edge, 'fromId' | 'toId' | 'type'>;
 
 /** Delete each edge the pass did not back, except those touching a record in `spared`. */
@@ -470,19 +486,17 @@ export const buildEdges = (
 ): EdgeBuildSummary => {
   const records = new RecordsRepository(db);
   const edges = new EdgesRepository(db);
-  const all = records.listAll();
-
-  // O(1) lookup from record_id to record (the scoped GC re-reads a counterparty).
-  const byRecordId = new Map<string, VaultRecord>();
-  for (const r of all) byRecordId.set(r.recordId, r);
+  const scope = options.scope;
+  // A scoped pass reads no body outside its scope: a full listing made every
+  // write cost what the vault's text costs to read.
+  const work = scope === undefined ? records.listAll() : records.listByIds(scope);
 
   const source = options.vaultRoot ? fsRecordSource(options.vaultRoot) : dbRecordSource();
   const summary: EdgeBuildSummary = scratchSummary();
   const start = performance.now();
   const ctx: PassContext = {
     source,
-    resolver: new WikilinkResolver(all),
-    pathById: new Map(all.map(r => [r.recordId, r.filePath])),
+    ...(scope === undefined ? viewOf(work) : pathView(db)),
     edges,
     filer: new SuggestionFiler(db, 'edge_type'),
     // Every edge that the current pass backs. The GC below deletes edges not
@@ -494,9 +508,6 @@ export const buildEdges = (
     skipFilingFromTypes: options.skipEdgeTypeFilingFromTypes ?? DEFAULT_SKIP_EDGE_TYPE_FILING_FROM
   };
   const {resolver, touched} = ctx;
-
-  const scope = options.scope;
-  const work = scope === undefined ? all : all.filter(r => scope.has(r.recordId));
 
   db.exec('BEGIN');
   try {
@@ -538,8 +549,8 @@ export const buildEdges = (
           }
           let otherKeys = counterpartyKeys.get(otherId);
           if (otherKeys === undefined) {
-            const otherRecord = byRecordId.get(otherId);
-            otherKeys = otherRecord === undefined ? new Set() : keysFor(otherRecord);
+            const otherRecord = records.getById(otherId);
+            otherKeys = otherRecord === null ? new Set() : keysFor(otherRecord);
             counterpartyKeys.set(otherId, otherKeys);
           }
           if (!otherKeys.has(k)) {
@@ -568,21 +579,6 @@ const inTransaction = (db: DatabaseSync, fn: () => void): void => {
     db.exec('ROLLBACK');
     throw err;
   }
-};
-
-/** The resolver over the current path set, from ids and paths alone (no bodies). */
-const pathView = (
-  db: DatabaseSync
-): {resolver: WikilinkResolver; pathById: Map<string, string>} => {
-  const rows = db.prepare('SELECT record_id, file_path FROM records').all() as unknown[] as {
-    record_id: string;
-    file_path: string;
-  }[];
-  const entries = rows.map(r => ({recordId: r.record_id, filePath: r.file_path}));
-  return {
-    resolver: new WikilinkResolver(entries),
-    pathById: new Map(entries.map(e => [e.recordId, e.filePath]))
-  };
 };
 
 /**

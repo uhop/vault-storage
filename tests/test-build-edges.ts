@@ -964,6 +964,76 @@ test('scoped buildEdges: dropping a symmetric declaration removes the mirror too
   }
 });
 
+test('scoped buildEdges: reads the counterparties of its stale edges and lists nothing', async t => {
+  const fx = setup();
+  const proto = RecordsRepository.prototype;
+  const {listAll, getById} = proto;
+  try {
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\n---\nCites [[topics/beta]] and [[topics/gamma]].\n'
+    );
+    writeMd(
+      fx.root,
+      'topics/beta.md',
+      '---\ntitle: Beta\nrelated:\n  - "[[topics/alpha]]"\n---\nbody\n'
+    );
+    writeMd(fx.root, 'topics/gamma.md', '---\ntitle: Gamma\n---\nNo links.\n');
+    writeMd(fx.root, 'topics/delta.md', '---\ntitle: Delta\n---\nCites [[topics/gamma]].\n');
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const edges = new EdgesRepository(fx.db);
+    const alpha = records.getByPath('topics/alpha.md')!;
+    const beta = records.getByPath('topics/beta.md')!;
+    const gamma = records.getByPath('topics/gamma.md')!;
+    const delta = records.getByPath('topics/delta.md')!;
+
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\n---\nCites [[topics/beta]] only now.\n'
+    );
+    importFile(records, 'topics/alpha.md', join(fx.root, 'topics/alpha.md'));
+
+    let listed = 0;
+    const read = new Set<string>();
+    proto.listAll = function () {
+      ++listed;
+      return listAll.call(this);
+    };
+    proto.getById = function (id) {
+      read.add(id);
+      return getById.call(this, id);
+    };
+    const summary = buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([alpha.recordId])});
+    proto.listAll = listAll;
+    proto.getById = getById;
+
+    await t.test('no full listing', t => {
+      t.equal(listed, 0);
+    });
+    await t.test('only the counterparties of untouched edges were read', t => {
+      t.deepEqual([...read].sort(), [beta.recordId, gamma.recordId].sort());
+      t.notOk(read.has(delta.recordId), 'delta shares no edge with alpha');
+    });
+    await t.test('the result is the full pass would give', t => {
+      t.equal(summary.edgesDeleted, 1, 'alpha→gamma');
+      const out = edges.listOutbound(alpha.recordId).map(e => `${e.type} ${e.toId}`);
+      t.deepEqual(out.sort(), [`cites ${beta.recordId}`, `related-to ${beta.recordId}`].sort());
+      t.ok(
+        edges.listOutbound(delta.recordId).some(e => e.toId === gamma.recordId),
+        'delta→gamma stands'
+      );
+    });
+  } finally {
+    proto.listAll = listAll;
+    proto.getById = getById;
+    teardown(fx);
+  }
+});
+
 test('frontmatter `edges:` entry without a body link is stored as declared', async t => {
   const fx = setup();
   try {

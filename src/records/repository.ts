@@ -61,6 +61,7 @@ export class RecordsRepository {
   readonly #delete: StatementSync;
   readonly #listByParent: StatementSync;
   readonly #listAll: StatementSync;
+  readonly #listByIds: StatementSync;
   readonly #countAll: StatementSync;
   readonly #bumpLastReferenced: StatementSync;
   readonly #updateFilePath: StatementSync;
@@ -110,6 +111,10 @@ export class RecordsRepository {
       `SELECT ${RECORD_COLUMNS} FROM records WHERE parent_path = ? ORDER BY sequence_key, created`
     );
     this.#listAll = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records ORDER BY file_path`);
+    this.#listByIds = db.prepare(
+      `SELECT ${RECORD_COLUMNS} FROM records
+        WHERE record_id IN (SELECT value FROM json_each(?)) ORDER BY file_path`
+    );
     this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
     this.#bumpLastReferenced = db.prepare(
       'UPDATE records SET last_referenced = ? WHERE record_id = ?'
@@ -212,6 +217,12 @@ export class RecordsRepository {
 
   listAll(): VaultRecord[] {
     return (this.#listAll.all() as unknown[] as RecordRow[]).map(rowToRecord);
+  }
+
+  /** The records with these ids, in {@link listAll}'s order; an unknown id is left out. */
+  listByIds(ids: Iterable<string>): VaultRecord[] {
+    const rows = this.#listByIds.all(JSON.stringify([...ids])) as unknown[] as RecordRow[];
+    return rows.map(rowToRecord);
   }
 
   count(): number {

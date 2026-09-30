@@ -105,6 +105,26 @@ test('listByParent returns pieces ordered by sequence_key', t => {
   db.close();
 });
 
+test('listByIds returns the named records in file_path order and leaves out unknown ids', t => {
+  const {db, records} = setup();
+  const a = makeRecord({filePath: 'topics/a.md'});
+  const b = makeRecord({filePath: 'topics/b.md'});
+  const c = makeRecord({filePath: 'topics/c.md'});
+  for (const r of [c, a, b]) records.insert(r);
+  t.deepEqual(
+    records.listByIds([c.recordId, 'no-such-id', a.recordId]).map(r => r.filePath),
+    ['topics/a.md', 'topics/c.md'],
+    'two records, ordered by path'
+  );
+  t.deepEqual(records.listByIds([]), [], 'an empty list names nothing');
+  t.deepEqual(
+    records.listByIds(new Set([b.recordId])),
+    [records.getById(b.recordId)],
+    'the record getById returns'
+  );
+  db.close();
+});
+
 test('delete removes the record and cascades edges', t => {
   const {db, records, edges} = setup();
   const a = makeRecord({filePath: 'a.md'});
