@@ -100,19 +100,25 @@ export const extractRelatedFromFrontmatter = (data: {[key: string]: unknown}): s
  * ambiguous body wikilinks. An explicit `target: cites` entry is meaningful —
  * it marks "reviewed, cites is correct", distinct from no-entry (= unreviewed).
  *
- * Invalid entries (unknown edge types, non-string values) are silently
- * skipped; the parser is permissive so a typo doesn't crash the indexer.
+ * Invalid entries (unknown edge types, non-string values) are skipped; the
+ * parser is permissive so a typo doesn't crash the indexer. The skipped
+ * string types are reported through `dropped`, so the edge pass can record
+ * them (D103).
  */
 export const extractEdgesFromFrontmatter = (
   data: {[key: string]: unknown},
-  validTypes: ReadonlySet<string>
+  validTypes: ReadonlySet<string>,
+  dropped?: (target: string, type: string) => void
 ): Map<string, string> => {
   const out = new Map<string, string>();
   const raw = data['edges'];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [target, type] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof type !== 'string') continue;
-    if (!validTypes.has(type)) continue;
+    if (!validTypes.has(type)) {
+      dropped?.(target, type);
+      continue;
+    }
     out.set(target, type);
   }
   return out;

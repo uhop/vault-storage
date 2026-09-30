@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {countMismatch, itemCount, parseQueue, queueFindings} from '../../queue/lint.ts';
+import {FmFindingsRepository} from '../../records/fm-findings.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -349,6 +350,18 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
       samples: findings
         .slice(0, SAMPLE_LIMIT)
         .map(f => ({file_path: f.file_path, finding: f.finding}))
+    };
+  }
+
+  // Stored frontmatter values outside a closed enum (D103): the importer
+  // defaulted them or the edge pass dropped them, and the file still says them.
+  {
+    const findings = new FmFindingsRepository(db);
+    checks['frontmatter_outside_enum'] = {
+      count: findings.count(),
+      samples: findings
+        .list(SAMPLE_LIMIT)
+        .map(f => ({id: f.recordId, file_path: f.filePath, field: f.field, value: f.value}))
     };
   }
 

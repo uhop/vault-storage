@@ -6,6 +6,7 @@ import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {parseQueueFile} from '../src/queue/parse.ts';
 import {QueueItemsRepository} from '../src/queue/repo.ts';
 import type {ServerEnv} from '../src/server/env.ts';
+import {FmFindingsRepository} from '../src/records/fm-findings.ts';
 import {startServer} from '../src/server/server.ts';
 
 const TEST_TOKEN = 'test-token-lint';
@@ -1195,5 +1196,29 @@ test('GET /queue/lint: the queue_hygiene list uncapped, one project on request',
 
     const none = await fetchJson(`${url}/queue/lint?project=clean`);
     t.equal((none.body as {count: number}).count, 0, 'a clean or unknown project is an empty list');
+  });
+});
+
+test('GET /system/lint reports frontmatter_outside_enum with the field and the value', async t => {
+  await withServer(async (url, db) => {
+    insertRecord(db, {record_id: 'rec-fm', file_path: 'topics/fm.md'});
+    insertVecChunk(db, {chunk_id: 'chunk-fm-0', record_id: 'rec-fm', content_hash: 'hash-fresh'});
+    new FmFindingsRepository(db).replace(
+      'rec-fm',
+      ['type'],
+      [{field: 'type', value: 'novel'}],
+      '2026-09-29T00:00:00Z'
+    );
+
+    const {body} = await fetchJson(`${url}/system/lint`);
+    const r = body as {
+      ok: boolean;
+      checks: {frontmatter_outside_enum: {count: number; samples: Array<Record<string, unknown>>}};
+    };
+    t.equal(r.ok, false, 'not ok');
+    t.equal(r.checks.frontmatter_outside_enum.count, 1);
+    t.deepEqual(r.checks.frontmatter_outside_enum.samples, [
+      {id: 'rec-fm', file_path: 'topics/fm.md', field: 'type', value: 'novel'}
+    ]);
   });
 });

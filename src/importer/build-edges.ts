@@ -5,6 +5,7 @@ import {extractEdgesFromFrontmatter, extractRelatedFromFrontmatter} from '../mar
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {readFileSync} from 'node:fs';
 import {EdgesRepository} from '../records/edges.ts';
+import {FmFindingsRepository, type FmFinding} from '../records/fm-findings.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
 import {
@@ -173,6 +174,8 @@ interface DeclarationHooks {
   onCiteNeedingReview?: (toId: string, context: string) => void;
   /** Every resolved body link, whatever its type — the set a pending `edge_type` row must still be in. */
   onBodyLink?: (toId: string) => void;
+  /** An FM `edges:` entry whose type is outside the accepted names, dropped as written. */
+  onDroppedEdge?: (target: string, type: string) => void;
 }
 
 /**
@@ -197,7 +200,11 @@ const forEachDeclaredEdge = (
   // strings to record_ids so build-edges can match by toId regardless of
   // which slug form ([[foo]] vs [[topics/foo]]) the body uses. Aliases
   // (`basis-for`) normalize here to canonical type + flipped direction.
-  const fmEdgesRaw = extractEdgesFromFrontmatter(fmData, ACCEPTED_EDGE_DECLARATION_SET);
+  const fmEdgesRaw = extractEdgesFromFrontmatter(
+    fmData,
+    ACCEPTED_EDGE_DECLARATION_SET,
+    hooks.onDroppedEdge
+  );
   const fmOverrides = new Map<
     string,
     {type: EdgeType; inverse: boolean; target: string; note?: string}
@@ -309,6 +316,7 @@ interface PassContext {
   pathById: ReadonlyMap<string, string>;
   edges: EdgesRepository;
   filer: SuggestionFiler<'edge_type'>;
+  findings: FmFindingsRepository;
   /** Every edge the pass backs; the GC deletes what is not in it. */
   touched: Set<string>;
   summary: EdgeBuildSummary;
@@ -325,11 +333,13 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
   // this pass since none land in `touched`.
   if (record.status === 'archived') {
     summary.archivedSkipped++;
+    ctx.findings.replace(record.recordId, ['edges'], [], now);
     return;
   }
 
   const citesNeedingReview: Array<{toId: string; context: string}> = [];
   const bodyLinkIds = new Set<string>();
+  const dropped: FmFinding[] = [];
 
   forEachDeclaredEdge(
     record,
@@ -347,9 +357,12 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
       onOverride: toId =>
         filer.accept({from_record: record.recordId, to_record: toId}, 'fm-override', now),
       onCiteNeedingReview: (toId, context) => citesNeedingReview.push({toId, context}),
-      onBodyLink: toId => bodyLinkIds.add(toId)
+      onBodyLink: toId => bodyLinkIds.add(toId),
+      onDroppedEdge: (target, type) =>
+        dropped.push({field: 'edges', value: `${type} for ${target}`})
     }
   );
+  ctx.findings.replace(record.recordId, ['edges'], dropped, now);
 
   // File one suggestion per (fromRecord, toRecord) for default-cites, already
   // rejected as default-cites: the agents typed 1.3% of these (D76), so the row
@@ -499,6 +512,7 @@ export const buildEdges = (
     ...(scope === undefined ? viewOf(work) : pathView(db)),
     edges,
     filer: new SuggestionFiler(db, 'edge_type'),
+    findings: new FmFindingsRepository(db),
     // Every edge that the current pass backs. The GC below deletes edges not
     // in this set — so a wikilink removal in a markdown file actually removes
     // the corresponding edge instead of leaving a dangling row.
@@ -625,6 +639,7 @@ export const buildEdgesAsync = async (
     source: options.vaultRoot ? fsRecordSource(options.vaultRoot) : dbRecordSource(),
     edges: new EdgesRepository(db),
     filer: new SuggestionFiler(db, 'edge_type'),
+    findings: new FmFindingsRepository(db),
     touched: new Set<string>(),
     summary,
     now: options.now ?? new Date().toISOString(),

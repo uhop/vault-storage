@@ -9,6 +9,7 @@ import {buildEdges} from '../src/importer/build-edges.ts';
 import {importFile} from '../src/importer/import-file.ts';
 import {importVault} from '../src/importer/import.ts';
 import {EdgesRepository} from '../src/records/edges.ts';
+import {FmFindingsRepository} from '../src/records/fm-findings.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 
 const writeMd = (root: string, relativePath: string, content: string): void => {
@@ -1072,6 +1073,42 @@ test('frontmatter `edges:` entry without a body link is stored as declared', asy
       [['derived-from', a.recordId]],
       'basis-for lands flipped: c → derived-from → a'
     );
+  } finally {
+    teardown(fx);
+  }
+});
+
+test('an FM `edges:` entry outside the accepted names is recorded and cleared once fixed', async t => {
+  const fx = setup();
+  try {
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\nedges:\n  topics/beta: mentions\n---\nSee [[topics/beta]].\n'
+    );
+    writeMd(fx.root, 'topics/beta.md', '---\ntitle: Beta\n---\nNo links.\n');
+    importVault(fx.db, fx.root);
+
+    const records = new RecordsRepository(fx.db);
+    const findings = new FmFindingsRepository(fx.db);
+    const alpha = records.getByPath('topics/alpha.md')!;
+    await t.test('the dropped declaration is recorded by the full pass', t => {
+      t.deepEqual(
+        findings.list(10).map(f => [f.filePath, f.field, f.value]),
+        [['topics/alpha.md', 'edges', 'mentions for topics/beta']]
+      );
+    });
+
+    writeMd(
+      fx.root,
+      'topics/alpha.md',
+      '---\ntitle: Alpha\nedges:\n  topics/beta: derived-from\n---\nSee [[topics/beta]].\n'
+    );
+    importFile(records, 'topics/alpha.md', join(fx.root, 'topics/alpha.md'));
+    buildEdges(fx.db, {vaultRoot: fx.root, scope: new Set([alpha.recordId])});
+    await t.test('the scoped pass clears it once the name is accepted', t => {
+      t.equal(findings.count(), 0);
+    });
   } finally {
     teardown(fx);
   }

@@ -6,6 +6,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {IMPORT_BATCH_FILES, importVault, importVaultAsync} from '../src/importer/import.ts';
+import {FmFindingsRepository} from '../src/records/fm-findings.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import {contentHash} from '../src/util/hash.ts';
 
@@ -1022,6 +1023,69 @@ test('importVaultAsync matches importVault and lets the event loop run between b
     t.equal(summary.inserted, files, 'every file inserted');
     t.equal(summary.edges.edgesCreated, expected.edges.edgesCreated, 'same edges');
     t.ok(turns >= 2, `other work ran during the import (${turns} turns)`);
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importer records frontmatter values outside a closed enum and clears them once fixed', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const bad = [
+      '---',
+      'title: Odd',
+      'type: novel',
+      'status: pending-ish',
+      'priority: urgent',
+      'agent:',
+      '  summary: s',
+      '  derived_from_hash: h',
+      '  complexity: moderate',
+      '---',
+      'body\n'
+    ].join('\n');
+    writeMd(root, 'topics/odd.md', bad);
+    writeMd(
+      root,
+      'topics/fine.md',
+      '---\ntitle: Fine\ntype: permanent\nstatus: completed\npriority: high\n---\nbody\n'
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    importVault(db, root);
+    const findings = new FmFindingsRepository(db);
+    t.deepEqual(
+      findings.list(10).map(f => [f.filePath, f.field, f.value]),
+      [
+        ['topics/odd.md', 'agent.complexity', 'moderate'],
+        ['topics/odd.md', 'priority', 'urgent'],
+        ['topics/odd.md', 'status', 'pending-ish'],
+        ['topics/odd.md', 'type', 'novel']
+      ],
+      'every defaulted value is recorded; an alias is not a finding'
+    );
+    const records = new RecordsRepository(db);
+    t.equal(
+      records.getByPath('topics/odd.md')?.type,
+      'permanent',
+      'the type fell back to the folder'
+    );
+
+    writeMd(
+      root,
+      'topics/odd.md',
+      bad.replace('type: novel', 'type: design').replace('priority: urgent', 'priority: 2')
+    );
+    importVault(db, root);
+    t.deepEqual(
+      findings.list(10).map(f => [f.field, f.value]),
+      [
+        ['agent.complexity', 'moderate'],
+        ['status', 'pending-ish']
+      ],
+      'a corrected value clears its finding'
+    );
     db.close();
   } finally {
     cleanup();

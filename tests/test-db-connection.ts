@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    31,
-    'schema version is 31 after all migrations through the edge vocabulary'
+    32,
+    'schema version is 32 after all migrations through the frontmatter findings'
   );
   t.deepEqual(
     result.applied,
@@ -53,7 +53,8 @@ test('runs the init migration and creates required tables', t => {
       '0028_edge_type_default_cites.sql',
       '0029_tag_origin.sql',
       '0030_tag_vecs.sql',
-      '0031_edge_vocabulary.sql'
+      '0031_edge_vocabulary.sql',
+      '0032_fm_findings.sql'
     ],
     'all migrations applied in order'
   );
@@ -122,7 +123,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0028_edge_type_default_cites.sql',
     '0029_tag_origin.sql',
     '0030_tag_vecs.sql',
-    '0031_edge_vocabulary.sql'
+    '0031_edge_vocabulary.sql',
+    '0032_fm_findings.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -150,9 +152,10 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     '0028_edge_type_default_cites.sql',
     '0029_tag_origin.sql',
     '0030_tag_vecs.sql',
-    '0031_edge_vocabulary.sql'
+    '0031_edge_vocabulary.sql',
+    '0032_fm_findings.sql'
   ]);
-  t.deepEqual(result.reindex, [], 'no reindex');
+  t.deepEqual(result.reindex, ['0032_fm_findings.sql'], 'only the findings table forces a reindex');
   const rows = db
     .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
     .all()
@@ -177,7 +180,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
   t.deepEqual(runMigrations(db).applied, [
     '0029_tag_origin.sql',
     '0030_tag_vecs.sql',
-    '0031_edge_vocabulary.sql'
+    '0031_edge_vocabulary.sql',
+    '0032_fm_findings.sql'
   ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
@@ -200,7 +204,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 31, 'schema version stays at 31');
+  t.equal(second.current, 32, 'schema version stays at 32');
   db.close();
 });
 
@@ -264,7 +268,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0028_edge_type_default_cites.sql',
       '0029_tag_origin.sql',
       '0030_tag_vecs.sql',
-      '0031_edge_vocabulary.sql'
+      '0031_edge_vocabulary.sql',
+      '0032_fm_findings.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );

@@ -4,8 +4,14 @@ import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {parseQueueFile} from '../queue/parse.ts';
 import type {ApplyResult, QueueItemsRepository} from '../queue/repo.ts';
 import {matchQueueFile} from '../queue/sync.ts';
+import {
+  IMPORTER_FM_FIELDS,
+  type FmFinding,
+  type FmFindingsRepository
+} from '../records/fm-findings.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {
+  AGENT_COMPLEXITY,
   PRIORITY_ALIASES,
   RECORD_STATUSES,
   STATUS_ALIASES,
@@ -20,6 +26,7 @@ import {isRecordType, typeFromPath} from './type-from-path.ts';
 
 const DEFAULT_STATUS: RecordStatus = 'active';
 const STATUS_SET: ReadonlySet<string> = new Set(RECORD_STATUSES);
+const COMPLEXITY_SET: ReadonlySet<string> = new Set(AGENT_COMPLEXITY);
 
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
@@ -69,6 +76,8 @@ interface AgentBlock {
   summary: string | null;
   derivedFromHash: string | null;
   tagsSuggested: string[];
+  /** As written; read only to report a value outside the enum. */
+  complexity: string | null;
 }
 
 /**
@@ -80,7 +89,7 @@ interface AgentBlock {
 const readAgentBlock = (data: Record<string, unknown>): AgentBlock => {
   const raw = data['agent'];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return {summary: null, derivedFromHash: null, tagsSuggested: []};
+    return {summary: null, derivedFromHash: null, tagsSuggested: [], complexity: null};
   }
   const block = raw as Record<string, unknown>;
   const summary = asString(block['summary']);
@@ -92,8 +101,37 @@ const readAgentBlock = (data: Record<string, unknown>): AgentBlock => {
   return {
     summary: summary && summary.length > 0 ? summary : null,
     derivedFromHash: derivedFromHash && derivedFromHash.length > 0 ? derivedFromHash : null,
-    tagsSuggested
+    tagsSuggested,
+    complexity: asString(block['complexity']) ?? null
   };
+};
+
+/**
+ * The closed-enum values the file states that the record will not carry: a
+ * type outside the list, a status or priority that is neither canonical nor
+ * an alias, an agent.complexity outside its list. Absent and non-string values
+ * are the defaults at work, not findings.
+ */
+const fmFindings = (data: Record<string, unknown>, agent: AgentBlock): FmFinding[] => {
+  const out: FmFinding[] = [];
+  const type = data['type'];
+  if (typeof type === 'string' && !isRecordType(type)) out.push({field: 'type', value: type});
+  const status = data['status'];
+  if (
+    typeof status === 'string' &&
+    !STATUS_SET.has(status) &&
+    STATUS_ALIASES[status] === undefined
+  ) {
+    out.push({field: 'status', value: status});
+  }
+  const priority = data['priority'];
+  if (typeof priority === 'string' && PRIORITY_ALIASES[priority] === undefined) {
+    out.push({field: 'priority', value: priority});
+  }
+  if (agent.complexity !== null && !COMPLEXITY_SET.has(agent.complexity)) {
+    out.push({field: 'agent.complexity', value: agent.complexity});
+  }
+  return out;
 };
 
 export interface ImportFileResult {
@@ -141,6 +179,11 @@ export interface ImportFileOptions {
    * only the chunks added since.
    */
   enrichmentBaselines?: EnrichmentBaselineRepository;
+  /**
+   * When provided, records the frontmatter values outside their closed enums
+   * that this import defaulted, and clears the ones it no longer sees.
+   */
+  fmFindings?: FmFindingsRepository;
 }
 
 /**
@@ -232,6 +275,8 @@ export const importFile = (
     recordId = record.recordId;
     action = existing ? 'updated' : 'inserted';
   }
+
+  options.fmFindings?.replace(recordId, IMPORTER_FM_FIELDS, fmFindings(data, agent), now);
 
   if (options.tags) {
     const result = options.tags.syncTags(recordId, relativePath, data['tags']);
