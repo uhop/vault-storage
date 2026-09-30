@@ -103,6 +103,10 @@ export interface ApplyResult {
   deleted: number;
 }
 
+/** A project's open items in display order: Inbox, Active, Backlog by priority, Watching. */
+export const OPEN_ORDER = `CASE section WHEN 'inbox' THEN 0 WHEN 'active' THEN 1 WHEN 'backlog' THEN 2 ELSE 3 END,
+  priority DESC, position`;
+
 export class QueueItemsRepository {
   readonly #db: DatabaseSync;
   readonly #selectBySlice: StatementSync;
@@ -161,10 +165,7 @@ export class QueueItemsRepository {
     this.#listOpenByProject = db.prepare(
       `SELECT * FROM queue_items
          WHERE project = ? AND section != 'archive'
-         ORDER BY
-           CASE section WHEN 'inbox' THEN 0 WHEN 'active' THEN 1 WHEN 'backlog' THEN 2 ELSE 3 END,
-           priority DESC,
-           position`
+         ORDER BY ${OPEN_ORDER}`
     );
 
     this.#listArchiveByProject = db.prepare(

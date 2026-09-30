@@ -4,7 +4,7 @@
 // closed upstream (D111). Stored data only: nothing here calls GitHub.
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
-import {QueueItemsRepository} from '../queue/repo.ts';
+import {OPEN_ORDER} from '../queue/repo.ts';
 
 export type ThreadKind = 'item' | 'discussion' | 'advisory';
 
@@ -59,19 +59,42 @@ const asObject = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 const stringOr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
+interface Statements {
+  tracked: StatementSync;
+  byRepo: StatementSync;
+}
+
+// Prepared once per database: every project read and every brief asks.
+const statements = new WeakMap<DatabaseSync, Statements>();
+const prepared = (db: DatabaseSync): Statements => {
+  let s = statements.get(db);
+  if (s === undefined) {
+    s = {
+      tracked: db.prepare(
+        `SELECT title, section, source FROM queue_items
+          WHERE project = ? AND section != 'archive' AND source IS NOT NULL
+          ORDER BY ${OPEN_ORDER}`
+      ),
+      // GitHub repository names are case-insensitive; the freshest baseline wins
+      // when two projects store the same repository.
+      byRepo: db.prepare(
+        `SELECT github FROM fleet_baselines
+          WHERE lower(repo) = lower(?) AND github IS NOT NULL
+          ORDER BY github_collected_at DESC LIMIT 1`
+      )
+    };
+    statements.set(db, s);
+  }
+  return s;
+};
+
 /** Thread states from the stored baselines, each repository's parsed once per instance. */
 export class GithubThreadStates {
   readonly #byRepo: StatementSync;
   readonly #parsed = new Map<string, Record<string, unknown> | null>();
 
   constructor(db: DatabaseSync) {
-    // GitHub repository names are case-insensitive; the freshest baseline wins
-    // when two projects store the same repository.
-    this.#byRepo = db.prepare(
-      `SELECT github FROM fleet_baselines
-        WHERE lower(repo) = lower(?) AND github IS NOT NULL
-        ORDER BY github_collected_at DESC LIMIT 1`
-    );
+    this.#byRepo = prepared(db).byRepo;
   }
 
   #github(repo: string): Record<string, unknown> | null {
@@ -102,13 +125,16 @@ export class GithubThreadStates {
 
 /** A project's open queue items that mirror a GitHub thread, in queue order, with its state. */
 export const trackedItems = (db: DatabaseSync, project: string): TrackedItem[] => {
+  const rows = prepared(db).tracked.all(project) as unknown[] as {
+    title: string;
+    section: string;
+    source: string;
+  }[];
   const states = new GithubThreadStates(db);
   const out: TrackedItem[] = [];
-  for (const row of new QueueItemsRepository(db).listOpenByProject(project)) {
-    if (row.source === null) continue;
+  for (const row of rows) {
     const thread = githubThread(row.source);
-    if (!thread) continue;
-    out.push({title: row.title, section: row.section, source: row.source, ...states.state(thread)});
+    if (thread) out.push({...row, ...states.state(thread)});
   }
   return out;
 };
