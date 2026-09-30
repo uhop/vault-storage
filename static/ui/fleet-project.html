@@ -95,6 +95,13 @@
         color: var(--muted);
         font-size: 0.85rem;
       }
+      details.mentions {
+        margin: 0.1rem 0 0;
+      }
+      details.mentions ul {
+        margin: 0.1rem 0 0.2rem;
+        font-size: 0.85rem;
+      }
       .relations {
         display: grid;
         grid-template-columns: max-content 1fr;
@@ -169,6 +176,7 @@
         projectHref,
         npmHref,
         githubDetail,
+        mentionsList,
         closedUpstream,
         trackItem,
         closedTrail,
@@ -190,6 +198,7 @@
       let runs = [],
         trackers = null,
         tracked = null,
+        mentions = null,
         baseline = null,
         packages = null;
 
@@ -214,7 +223,8 @@
           return `<section class="fmw-card"><h3>GitHub</h3><div class="empty">No stored GitHub baseline — the project has no public fleet repository, or <code>/fleet-status</code> has not collected it yet.</div></section>`;
         const {html, links} = githubDetail({project, baseline}, runs, cutoffOf(windowState()), {
           tracked,
-          track: true
+          track: true,
+          mentions
         });
         return `<section id="github" class="fmw-card"><h3>GitHub</h3>${html}<div class="links">${links}</div></section>`;
       };
@@ -235,7 +245,7 @@
             const archive = closed
               ? ` <button type="button" class="fmw-pill" data-archive="${esc(x.title)}" data-upstream="${esc(x.upstream)}">Archive</button>`
               : '';
-            return `<li><a href="${queueHref(project)}">${esc(x.title)}</a> <span class="fmw-pill">${esc(x.section)}</span> · ${thread} · ${state}${archive}</li>`;
+            return `<li><a href="${queueHref(project)}">${esc(x.title)}</a> <span class="fmw-pill">${esc(x.section)}</span> · ${thread} · ${state}${archive}${mentionsList(mentions?.get(x.source.toLowerCase()))}</li>`;
           })
           .join('');
         return `<section id="tracked" class="fmw-card"><h3>Tracked on the queue</h3>${
@@ -485,6 +495,15 @@
           scrollToHash();
           $('#footer').textContent =
             `${plural(packages?.packages?.length ?? 0, 'package')} · ${plural(runs.length, 'stored run')}`;
+          // The notes that mention each thread (D112) fill in after the first paint.
+          const repo = baseline?.repo;
+          const found = repo
+            ? await apiJson(`/links?repo=${encodeURIComponent(repo)}`).catch(() => null)
+            : null;
+          if (found?.links.length) {
+            mentions = new Map(found.links.map(l => [l.key.toLowerCase(), l]));
+            render();
+          }
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();

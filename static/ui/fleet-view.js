@@ -92,27 +92,44 @@ export const closedTrail = (date, upstream) =>
 export const localDate = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+// The notes that mention one outside object (D112), from a `GET /links` entry.
+export const mentionsList = entry => {
+  const mentions = entry?.mentions ?? [];
+  if (mentions.length === 0) return '';
+  const items = mentions
+    .map(
+      m =>
+        `<li><a href="${noteHref(m.file_path)}">${esc(m.title ?? m.file_path)}</a>${
+          m.queue_items.length ? ` · ${m.queue_items.map(q => esc(q.title)).join('; ')}` : ''
+        }</li>`
+    )
+    .join('');
+  return `<details class="mentions"><summary>${esc(plural(mentions.length, 'note'))}</summary><ul>${items}</ul></details>`;
+};
+
 // The stored GitHub baseline of one project and its movement in the window;
-// `tracked` and `track` add the queue marks and the Track offer (D111).
+// `tracked` and `track` add the queue marks and the Track offer (D111), and
+// `mentions`, a map from a lowercased key, the notes that mention a thread (D112).
 export const githubDetail = (
   {project, baseline: b},
   runs,
   cutoff,
-  {tracked = null, track = false} = {}
+  {tracked = null, track = false, mentions = null} = {}
 ) => {
   const r = baselineRow(b),
     d = baselineDetail(b);
   const {digest} = storedMovement(runs, {cutoff, repo: r.repo});
   const byKey = new Map((tracked ?? []).map(x => [x.source.toLowerCase(), x]));
   const mark = (kind, key, title, url, offer = true) => {
-    if (!tracked) return '';
     const source = threadSource(r.repo, kind, key);
+    const noted = mentionsList(mentions?.get(source.toLowerCase()));
+    if (!tracked) return noted;
     const item = byKey.get(source.toLowerCase());
     if (item)
-      return ` · on the queue: <a href="${queueHref(project)}">${esc(item.title)}</a> <span class="fmw-pill">${esc(item.section)}</span>`;
+      return ` · on the queue: <a href="${queueHref(project)}">${esc(item.title)}</a> <span class="fmw-pill">${esc(item.section)}</span>${noted}`;
     return track && offer
-      ? ` <button type="button" class="fmw-pill" data-track="${esc(source)}" data-heading="${esc(trackHeading(r.repo, kind, key, title))}" data-url="${esc(url ?? '')}">Track</button>`
-      : '';
+      ? ` <button type="button" class="fmw-pill" data-track="${esc(source)}" data-heading="${esc(trackHeading(r.repo, kind, key, title))}" data-url="${esc(url ?? '')}">Track</button>${noted}`
+      : noted;
   };
   const lines = [
     `${esc(plural(r.stars ?? 0, 'star'))}, ${esc(plural(r.forks ?? 0, 'fork'))}, ${esc(plural(r.watchers ?? 0, 'watcher'))}; ${esc(plural(r.issues, 'open issue'))}, ${esc(plural(r.prs, 'open PR'))}${r.hasDiscussions ? `, ${esc(plural(r.discussions, 'open discussion'))}` : ''}; CI ${

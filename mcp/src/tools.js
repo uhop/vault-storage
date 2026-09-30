@@ -796,6 +796,24 @@ export const registerTools = (mcp, client) => {
     wrap(async ({project, since, runs}) => client.getJson('/fleet/status', {project, since, runs}))
   );
 
+  mcp.registerTool(
+    'vault_links',
+    {
+      description:
+        "The index of external links (vault-storage D112; absent on an older server): the notes that mention an outside object, so a ticket, a design, or an error lists what the vault holds about it. Pass exactly one: key, the object as a queue item's `source:` spells it (`github owner/repo#5`, `github owner/repo discussion#9`, `github owner/repo GHSA-…`, `figma <file key>`, `sentry <org>/<id>`, `slack <workspace>/<channel>/<ts>`, `gitlab <path>#5` or `!5`, `bitbucket <ws>/<repo>#5` or `!5`, `linear ENG-123`, `jira VS-7`, or `url <normalized URL>`); url, any http(s) URL, keyed as the index keys it; or repo, `owner/name`, for every thread of that GitHub repository at once. A bare `#5` in a project's note counts toward the repository the project declares or the stored baseline names. Returns {key|repo, url?, links: [{key, url, mentions: [{record_id, file_path, title, type, project, raw, queue_items: [{title, section}]}]}], as_of}: `raw` is the text as written, `queue_items` the items of a queue note that hold it. A key answers one entry, with empty mentions when nothing mentions it. Call this before starting on a ticket to read what the vault already knows about it. Unpaginated.",
+      inputSchema: {
+        key: z.string().min(1).optional().describe('The object, e.g. "github uhop/deep6#12"'),
+        url: z.string().min(1).optional().describe('Any http(s) URL'),
+        repo: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('A GitHub repository, e.g. "uhop/deep6", for all its threads')
+      }
+    },
+    wrap(async ({key, url, repo}) => client.getJson('/links', {key, url, repo}))
+  );
+
   // ── insight: neighborhood, similar, backlinks ─────────────────────────────
   mcp.registerTool(
     'vault_neighborhood',

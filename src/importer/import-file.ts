@@ -2,6 +2,7 @@ import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
 import type {FleetStateRepository} from '../fleet/state.ts';
+import type {ExternalLinksRepository} from '../links/external.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {parseQueueFile} from '../queue/parse.ts';
 import type {ApplyResult, QueueItemsRepository} from '../queue/repo.ts';
@@ -213,6 +214,11 @@ export interface ImportFileOptions {
    * for any other path (D110).
    */
   fleetState?: FleetStateRepository;
+  /**
+   * When provided, keeps the index of external links in step with the body,
+   * and a queue's declared `github` tracker with its frontmatter (D112).
+   */
+  externalLinks?: ExternalLinksRepository;
 }
 
 /**
@@ -398,6 +404,7 @@ export const importFile = (
   }
 
   options.fleetState?.apply(recordId, relativePath, body);
+  options.externalLinks?.apply(recordId, relativePath, project, body, data);
 
   let queue: ApplyResult | null = null;
   const queueFile = matchQueueFile(relativePath);

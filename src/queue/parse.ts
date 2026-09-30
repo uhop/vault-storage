@@ -97,7 +97,7 @@ const ARCHIVE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 // survive verbatim.
 const BLOCKED_BY_RE = /^\s*(?:[-*+]\s+)?blocked-by:\s*(.+?)\s*$/i;
 // A `source:` marker line, the same way: the outside ticket the item mirrors.
-const SOURCE_RE = /^\s*(?:[-*+]\s+)?source:\s*(.+?)\s*$/i;
+export const SOURCE_RE = /^\s*(?:[-*+]\s+)?source:\s*(.+?)\s*$/i;
 
 export const normalizeSource = (raw: string): string => raw.trim().replace(/\s+/g, ' ');
 

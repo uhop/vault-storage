@@ -9,7 +9,8 @@ import {
   advisoryOpen,
   localDate,
   repoLinks,
-  githubDetail
+  githubDetail,
+  mentionsList
 } from '/static/ui/fleet-view.js';
 
 const repo = 'uhop/node-re2';
@@ -147,4 +148,30 @@ test('githubDetail marks a tracked thread and offers Track on the rest', t => {
     plain.html.includes('data-track') || plain.html.includes('on the queue'),
     'no marks without tracked'
   );
+  const mentions = new Map([
+    [
+      'github uhop/node-re2#6',
+      {
+        key: 'github uhop/node-re2#6',
+        url: null,
+        mentions: [
+          {file_path: 'topics/t.md', title: 'A topic', queue_items: []},
+          {
+            file_path: 'projects/node-re2/queue.md',
+            title: null,
+            queue_items: [{title: 'Six.', section: 'active'}]
+          }
+        ]
+      }
+    ]
+  ]);
+  const noted = githubDetail({project: 'node-re2', baseline}, [], null, {mentions}).html;
+  t.ok(noted.includes('<summary>2 notes</summary>'), 'a mentioned thread says how many notes');
+  t.ok(noted.includes('<a href="/ui/note.html?path=topics%2Ft.md">A topic</a>'), 'each note links');
+  t.ok(noted.includes('projects/node-re2/queue.md</a> · Six.'), 'a queue note names its item');
+});
+
+test('mentionsList: nothing for no mentions', t => {
+  t.equal(mentionsList(undefined), '');
+  t.equal(mentionsList({key: 'x', url: null, mentions: []}), '');
 });

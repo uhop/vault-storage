@@ -67,6 +67,7 @@ export class RecordsRepository {
   readonly #countAll: StatementSync;
   readonly #bumpLastReferenced: StatementSync;
   readonly #updateFilePath: StatementSync;
+  readonly #updatePathAndProject: StatementSync;
   readonly #bumpGeneration: StatementSync;
 
   constructor(db: DatabaseSync) {
@@ -123,6 +124,9 @@ export class RecordsRepository {
       'UPDATE records SET last_referenced = ? WHERE record_id = ?'
     );
     this.#updateFilePath = db.prepare('UPDATE records SET file_path = ? WHERE record_id = ?');
+    this.#updatePathAndProject = db.prepare(
+      'UPDATE records SET file_path = ?, project = ? WHERE record_id = ?'
+    );
 
     // Content-generation bump (see src/db/meta.ts CONTENT_GENERATION_KEY):
     // every content-shaping mutation below increments the counter so the
@@ -209,9 +213,13 @@ export class RecordsRepository {
    * Used by `POST /vault/move` to rename a file without rebuilding edges,
    * embeddings, or refiling suggestions — body content_hash is unchanged
    * so derived state remains valid; only the path field needs to follow.
+   * `project`, when given, follows too, since it derives from the path (D104).
    */
-  updateFilePath(recordId: string, newFilePath: string): boolean {
-    const result = this.#updateFilePath.run(newFilePath, recordId);
+  updateFilePath(recordId: string, newFilePath: string, project?: string | null): boolean {
+    const result =
+      project === undefined
+        ? this.#updateFilePath.run(newFilePath, recordId)
+        : this.#updatePathAndProject.run(newFilePath, project, recordId);
     if (result.changes > 0) this.#bumpGeneration.run();
     return result.changes > 0;
   }

@@ -18,7 +18,7 @@ test('migration 0008 applies and queue_items is empty', t => {
   const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as {
     value: string;
   };
-  t.equal(row.value, '36', 'schema_version bumped to 36');
+  t.equal(row.value, '37', 'schema_version bumped to 37');
   db.close();
 });
 

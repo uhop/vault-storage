@@ -34,7 +34,7 @@ import {
 import type {Embedder} from '../../embeddings/types.ts';
 import {buildEdges} from '../../importer/build-edges.ts';
 import {repathPendingSuggestions} from '../../importer/file-suggestions.ts';
-import {importFile} from '../../importer/import-file.ts';
+import {importFile, projectFromPath} from '../../importer/import-file.ts';
 import {fullImportOptions} from '../../importer/import-options.ts';
 import {findDuplicateBlockers, proposeNearest} from '../../maintenance/propose.ts';
 import {itemSource} from '../../queue/parse.ts';
@@ -42,6 +42,7 @@ import {QueueItemsRepository} from '../../queue/repo.ts';
 import {matchQueueFile} from '../../queue/sync.ts';
 import {syncQueueFile} from '../../queue/sync.ts';
 import {FleetStateRepository} from '../../fleet/state.ts';
+import {ExternalLinksRepository} from '../../links/external.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {rejectUnknownParams} from '../query.ts';
@@ -1551,8 +1552,14 @@ export const moveVaultHandler =
     renameSync(fromAbs, toAbs);
 
     // DB update — preserves record_id, and therefore every reference to it
-    // (edges, tags, suggestions, embeddings, agent block).
-    records.updateFilePath(existing.recordId, toPath);
+    // (edges, tags, suggestions, embeddings, agent block). The project derives
+    // from the path unless the frontmatter names one (D104).
+    const {data} = parseFrontmatter(readFileSync(toAbs, 'utf8'));
+    const project =
+      typeof data['project'] === 'string'
+        ? data['project']
+        : projectFromPath(toPath, deps.vaultDataPath);
+    records.updateFilePath(existing.recordId, toPath, project);
     // Unresolved suggestions carry filing-time paths; strand them and a
     // review skill writing to the old path resurrects a ghost record there.
     repathPendingSuggestions(deps.db, existing.recordId, toPath);
@@ -1561,6 +1568,13 @@ export const moveVaultHandler =
     syncQueueFile(queueItems, toPath, deps.vaultDataPath);
     // The fleet derivative is keyed by record, and the project by path (D110).
     new FleetStateRepository(deps.db).apply(existing.recordId, toPath, existing.body);
+    new ExternalLinksRepository(deps.db).apply(
+      existing.recordId,
+      toPath,
+      project,
+      existing.body,
+      data
+    );
     deps.resolverCache.invalidate();
 
     sendNoContent(ctx.res);
