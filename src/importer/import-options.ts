@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
+import {FleetStateRepository} from '../fleet/state.ts';
 import {QueueItemsRepository} from '../queue/repo.ts';
 import {FmFindingsRepository} from '../records/fm-findings.ts';
 import {SuggestionFiler} from './file-suggestions.ts';
@@ -17,5 +18,6 @@ export const fullImportOptions = (db: DatabaseSync): Required<ImportFileOptions>
   archiveCandidate: new SuggestionFiler(db, 'archive_candidate'),
   queueItems: new QueueItemsRepository(db),
   enrichmentBaselines: new EnrichmentBaselineRepository(db),
-  fmFindings: new FmFindingsRepository(db)
+  fmFindings: new FmFindingsRepository(db),
+  fleetState: new FleetStateRepository(db)
 });

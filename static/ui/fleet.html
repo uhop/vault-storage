@@ -16,7 +16,7 @@
         performance.mark('head script');
         const token = localStorage.getItem('vault.token');
         if (!token) return;
-        const urls = ['/vault/projects/'];
+        const urls = ['/fleet/status?runs=0'];
         const early = (window.__early ??= new Map());
         for (const url of urls) {
           const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
@@ -153,11 +153,8 @@
     <div class="footer" id="footer"></div>
 
     <script type="module">
-      import {api, apiJson, esc, existingPaths, getToken, showAuthDialog} from '/ui/api.js';
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {
-        stateDocPath,
-        parseBaseline,
-        parsePackages,
         parseWhen,
         repoGlance,
         packageMovement,
@@ -681,25 +678,14 @@
         $('#glance').innerHTML = LOADING;
         $('#table').innerHTML = LOADING;
         try {
-          const list = await apiJson('/vault/projects/');
-          const folders = (list.files ?? []).filter(f => f.endsWith('/')).map(f => f.slice(0, -1));
-          const stored = await existingPaths(folders.map(stateDocPath));
-          const found = await Promise.all(
-            folders.map(async project => {
-              if (!stored.has(stateDocPath(project))) return null;
-              try {
-                const res = await api(`/vault/${stateDocPath(encodeURIComponent(project))}`);
-                const doc = await res.text();
-                const baseline = parseBaseline(doc),
-                  packages = parsePackages(doc);
-                return baseline || packages ? {project, baseline, packages} : null;
-              } catch (e) {
-                if (e.message === 'not-found') return null;
-                throw e;
-              }
-            })
-          );
-          entries = found.filter(Boolean);
+          // One read of the stored baselines (D110), where v1 listed the
+          // projects and fetched each state.md to parse its blocks here.
+          const status = await apiJson('/fleet/status?runs=0');
+          entries = status.baselines.map(b => ({
+            project: b.project,
+            baseline: b.github,
+            packages: b.packages
+          }));
           renderView();
           const repos = repoEntries(),
             rows = packageRows(entries);

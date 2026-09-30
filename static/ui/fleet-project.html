@@ -18,8 +18,7 @@
         const project = new URLSearchParams(location.search).get('project');
         if (!token || !project) return;
         const urls = [
-          '/vault/projects/agent-workflow/fleet-status.md',
-          `/vault/projects/${encodeURIComponent(project)}/state.md`,
+          `/fleet/status?project=${encodeURIComponent(project)}`,
           `/projects/${encodeURIComponent(project)}/trackers`
         ];
         const early = (window.__early ??= new Map());
@@ -142,13 +141,9 @@
     <div class="footer" id="footer"></div>
 
     <script type="module">
-      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {
-        DIGEST_PATH,
         stateDocPath,
-        parseRuns,
-        parseBaseline,
-        parsePackages,
         parseWhen,
         short,
         plural,
@@ -434,23 +429,17 @@
         }
         $('#status').innerHTML = '';
         $('#content').innerHTML = LOADING;
-        const text = path =>
-          api(`/vault/${path}`)
-            .then(r => r.text())
-            .catch(e => {
-              if (e.message === 'not-found') return '';
-              throw e;
-            });
         try {
-          const [digest, state, trackersView] = await Promise.all([
-            text(DIGEST_PATH),
-            text(stateDocPath(encodeURIComponent(project))),
+          // One read of the project's baseline and the runs that mention it
+          // (D110), where v1 fetched the digest and the state document whole.
+          const [status, trackersView] = await Promise.all([
+            apiJson(`/fleet/status?project=${encodeURIComponent(project)}`),
             apiJson(`/projects/${encodeURIComponent(project)}/trackers`).catch(() => null)
           ]);
           trackers = trackersView;
-          runs = parseRuns(digest);
-          baseline = parseBaseline(state);
-          packages = parsePackages(state);
+          runs = status.runs;
+          baseline = status.baselines[0]?.github ?? null;
+          packages = status.baselines[0]?.packages ?? null;
           if (!baseline && !packages) {
             $('#title').textContent = project;
             $('#content').innerHTML =

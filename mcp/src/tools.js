@@ -772,6 +772,30 @@ export const registerTools = (mcp, client) => {
     wrap(async ({project}) => client.getJson(`/projects/${encodeURIComponent(project)}/trackers`))
   );
 
+  mcp.registerTool(
+    'vault_fleet_status',
+    {
+      description:
+        "The stored fleet-status data in one read (vault-storage D110; server ≥ 2026-09-30): what the `fleet-status` skill collected and wrote into each project's `state.md` (`## GitHub` and `## Packages`) and into the digest note `projects/agent-workflow/fleet-status.md`, parsed at import into a derivative. Returns {project?, baselines: [{project, repo, github, packages}], runs, as_of}: `github` is the repository's last collected snapshot (open items, advisories, alert counts, the last CI run, `collected_at`) or null, `packages` the npm snapshot or null; `runs` are the digest's runs newest first, each {collected_at, mode, gh_user, totals, repos: [{repo, project, first_run, since, events, summary}]}. Pass project to get that project's baseline alone and each run narrowed to its repository entries, with runs that have none dropped; since (an ISO time or `7d`) bounds the runs by collected_at; runs caps their number (default 30, the digest's own cap) and 0 leaves them out for a baselines-only read. Read this instead of the state documents when you want what a repository looks like or what moved on it; a stale `collected_at` means the skill has not run, never that nothing happened. Unpaginated. Carries as_of: {generation, indexed_commit, at}.",
+      inputSchema: {
+        project: z.string().min(1).optional().describe('One project, e.g. "deep6"'),
+        since: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Runs at or after this ISO time, or days back such as "7d"'),
+        runs: z
+          .number()
+          .int()
+          .min(0)
+          .max(1000)
+          .optional()
+          .describe('At most this many runs, newest first; 0 for the baselines alone')
+      }
+    },
+    wrap(async ({project, since, runs}) => client.getJson('/fleet/status', {project, since, runs}))
+  );
+
   // ── insight: neighborhood, similar, backlinks ─────────────────────────────
   mcp.registerTool(
     'vault_neighborhood',

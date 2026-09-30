@@ -1,6 +1,7 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
+import type {FleetStateRepository} from '../fleet/state.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import {parseQueueFile} from '../queue/parse.ts';
 import type {ApplyResult, QueueItemsRepository} from '../queue/repo.ts';
@@ -206,6 +207,12 @@ export interface ImportFileOptions {
    * that this import defaulted, and clears the ones it no longer sees.
    */
   fmFindings?: FmFindingsRepository;
+  /**
+   * When provided, keeps the fleet-status derivative in step with the file:
+   * a `projects/<name>/state.md` baseline, the digest note's runs, or nothing
+   * for any other path (D110).
+   */
+  fleetState?: FleetStateRepository;
 }
 
 /**
@@ -389,6 +396,8 @@ export const importFile = (
   if (options.enrichmentBaselines && agent.summary !== null && agent.derivedFromHash === bodyHash) {
     options.enrichmentBaselines.record(recordId, body, bodyHash, now);
   }
+
+  options.fleetState?.apply(recordId, relativePath, body);
 
   let queue: ApplyResult | null = null;
   const queueFile = matchQueueFile(relativePath);

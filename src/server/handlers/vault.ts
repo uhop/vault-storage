@@ -41,6 +41,7 @@ import {itemSource} from '../../queue/parse.ts';
 import {QueueItemsRepository} from '../../queue/repo.ts';
 import {matchQueueFile} from '../../queue/sync.ts';
 import {syncQueueFile} from '../../queue/sync.ts';
+import {FleetStateRepository} from '../../fleet/state.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
 import {rejectUnknownParams} from '../query.ts';
@@ -1558,6 +1559,8 @@ export const moveVaultHandler =
     const queueItems = new QueueItemsRepository(deps.db);
     syncQueueFile(queueItems, fromPath, deps.vaultDataPath);
     syncQueueFile(queueItems, toPath, deps.vaultDataPath);
+    // The fleet derivative is keyed by record, and the project by path (D110).
+    new FleetStateRepository(deps.db).apply(existing.recordId, toPath, existing.body);
     deps.resolverCache.invalidate();
 
     sendNoContent(ctx.res);

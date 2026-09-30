@@ -15,7 +15,7 @@ test('runs the init migration and creates required tables', t => {
   const db = openDatabase({path: ':memory:'});
   const result = runMigrations(db);
 
-  t.equal(result.current, 35, 'schema version is 35 after all migrations through the queue inbox');
+  t.equal(result.current, 36, 'schema version is 36 after all migrations through the fleet state');
   t.deepEqual(
     result.applied,
     [
@@ -53,7 +53,8 @@ test('runs the init migration and creates required tables', t => {
       '0032_fm_findings.sql',
       '0033_records_project.sql',
       '0034_queue_source.sql',
-      '0035_queue_inbox.sql'
+      '0035_queue_inbox.sql',
+      '0036_fleet_state.sql'
     ],
     'all migrations applied in order'
   );
@@ -120,6 +121,8 @@ test('0035 rebuilds queue_items with the inbox section and keeps every row', t =
       source_file, source_line, body_hash, created_at, updated_at, blocked_by, source)
       VALUES ('q1', 'p', 'backlog', 1, 1, 'One.', 'one.', 'b', 'projects/p/queue.md', 3, 'h',
               '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', '["Two."]', 'github a/b#1');
+    DROP TABLE fleet_runs;
+    DROP TABLE fleet_baselines;
     UPDATE meta SET value = '34' WHERE key = 'schema_version';
   `);
   t.throws(
@@ -130,8 +133,12 @@ test('0035 rebuilds queue_items with the inbox section and keeps every row', t =
     'inbox is refused before 0035'
   );
   const result = runMigrations(db);
-  t.deepEqual(result.applied, ['0035_queue_inbox.sql']);
-  t.deepEqual(result.reindex, [], 'the rows are the same rows: no reindex');
+  t.deepEqual(result.applied, ['0035_queue_inbox.sql', '0036_fleet_state.sql']);
+  t.deepEqual(
+    result.reindex,
+    ['0036_fleet_state.sql'],
+    'the rebuilt rows are the same rows: 0035 asks no reindex'
+  );
   t.deepEqual(
     db
       .prepare('SELECT id, section, created_at, updated_at, blocked_by, source FROM queue_items')
@@ -194,6 +201,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     ALTER TABLE records DROP COLUMN project;
     DROP INDEX idx_queue_items_source;
     ALTER TABLE queue_items DROP COLUMN source;
+    DROP TABLE fleet_runs;
+    DROP TABLE fleet_baselines;
     UPDATE meta SET value = '25' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created, claimed_by, claimed_at, claim_expires)
       VALUES ('s1', 'duplicate', '{}', 'claimed', '2026-09-26T00:00:00Z', 'sweep-A',
@@ -210,7 +219,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0032_fm_findings.sql',
     '0033_records_project.sql',
     '0034_queue_source.sql',
-    '0035_queue_inbox.sql'
+    '0035_queue_inbox.sql',
+    '0036_fleet_state.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -229,6 +239,8 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     ALTER TABLE records DROP COLUMN project;
     DROP INDEX idx_queue_items_source;
     ALTER TABLE queue_items DROP COLUMN source;
+    DROP TABLE fleet_runs;
+    DROP TABLE fleet_baselines;
     UPDATE meta SET value = '27' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created) VALUES
       ('p', 'edge_type', '{}', 'pending', '2026-09-27T00:00:00Z'),
@@ -246,12 +258,18 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     '0032_fm_findings.sql',
     '0033_records_project.sql',
     '0034_queue_source.sql',
-    '0035_queue_inbox.sql'
+    '0035_queue_inbox.sql',
+    '0036_fleet_state.sql'
   ]);
   t.deepEqual(
     result.reindex,
-    ['0032_fm_findings.sql', '0033_records_project.sql', '0034_queue_source.sql'],
-    'the findings table, the project column, and the source column force a reindex'
+    [
+      '0032_fm_findings.sql',
+      '0033_records_project.sql',
+      '0034_queue_source.sql',
+      '0036_fleet_state.sql'
+    ],
+    'the findings table, the project and source columns, and the fleet tables force a reindex'
   );
   const rows = db
     .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
@@ -274,6 +292,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     ALTER TABLE records DROP COLUMN project;
     DROP INDEX idx_queue_items_source;
     ALTER TABLE queue_items DROP COLUMN source;
+    DROP TABLE fleet_runs;
+    DROP TABLE fleet_baselines;
     UPDATE meta SET value = '28' WHERE key = 'schema_version';
     INSERT INTO tags_taxonomy (tag, added) VALUES
       ('seed', '2026-04-29'), ('later', '2026-06-14T10:00:00.000Z');
@@ -285,7 +305,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     '0032_fm_findings.sql',
     '0033_records_project.sql',
     '0034_queue_source.sql',
-    '0035_queue_inbox.sql'
+    '0035_queue_inbox.sql',
+    '0036_fleet_state.sql'
   ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
@@ -308,7 +329,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 35, 'schema version stays at 35');
+  t.equal(second.current, 36, 'schema version stays at 36');
   db.close();
 });
 
@@ -376,7 +397,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0032_fm_findings.sql',
       '0033_records_project.sql',
       '0034_queue_source.sql',
-      '0035_queue_inbox.sql'
+      '0035_queue_inbox.sql',
+      '0036_fleet_state.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );
