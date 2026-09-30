@@ -494,3 +494,57 @@ test("GET /sections carries a record's project, and only when it has one", async
     );
   });
 });
+
+// A session that ends without a wrap leaves its record in the project's
+// sessions note (D105); the resume surfaces the ones with no log.
+test("resume brief + bundle — the project's sessions, and the ones that wrote no log", async t => {
+  await withServer(async url => {
+    const body = [
+      'Sessions of vs-demo.',
+      '',
+      '- **2026-09-30T02:00:00Z** nuke/aaaaaaaa: started 2026-09-30T01:00:00Z, ended by exit, commits: 1 (abc1234), wrote: 1 (logs/2026-09-30-vs-demo-one.md), log: logs/2026-09-30-vs-demo-one.md.',
+      '- **2026-09-30T03:00:00Z** nuke/bbbbbbbb: started 2026-09-30T02:30:00Z, ended by other, commits: 0, wrote: 1 (projects/vs-demo/queue.md), log: none.',
+      ''
+    ].join('\n');
+    const put = await fetch(`${url}/vault/projects/vs-demo/sessions.md`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/json'},
+      body: JSON.stringify({frontmatter: {title: 'vs-demo — Sessions', type: 'state'}, body})
+    });
+    t.equal(put.status, 204, 'the sessions note is written');
+
+    const bundle = await fetch(`${url}/system/resume-bundle?project=vs-demo&logs=0`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const b = (await bundle.json()) as {
+      project: {
+        sessions: {recent: {holder: string}[]; unlogged: {holder: string; wrote: string[]}[]};
+      };
+    };
+    t.deepEqual(
+      b.project.sessions.recent.map(x => x.holder),
+      ['nuke/bbbbbbbb', 'nuke/aaaaaaaa'],
+      'newest first'
+    );
+    t.deepEqual(
+      b.project.sessions.unlogged.map(x => [x.holder, x.wrote]),
+      [['nuke/bbbbbbbb', ['projects/vs-demo/queue.md']]],
+      'the session that wrote no log, with what it wrote'
+    );
+
+    const brief = JSON.parse(
+      (await fetchRaw(`${url}/system/resume-brief?project=vs-demo`)).raw
+    ) as {
+      project: {sessions_unlogged: number};
+    };
+    t.equal(brief.project.sessions_unlogged, 1);
+
+    const other = JSON.parse(
+      (await fetchRaw(`${url}/system/resume-brief?project=vs-messy`)).raw
+    ) as {
+      project: {sessions_unlogged: number};
+    };
+    t.equal(other.project.sessions_unlogged, 0, 'a project with no sessions note counts none');
+  });
+});

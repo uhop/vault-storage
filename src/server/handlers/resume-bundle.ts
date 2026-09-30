@@ -11,6 +11,7 @@ import {computeLintReport, queueHygieneFindings, type LintReport} from './lint.t
 import {rejectUnknownParams} from '../query.ts';
 import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
+import {parseSessions, type SessionRecord} from '../sessions.ts';
 import {projectTrackers, trackerLine} from '../trackers.ts';
 import type {Handler} from '../router.ts';
 
@@ -83,6 +84,13 @@ const latestLogs = (db: DatabaseSync, limit: number, project?: string): LogRow[]
             LIMIT ?`
         )
         .all(project ?? null, project ?? null, limit) as unknown[] as LogRow[]);
+
+/** The last sessions of a project from its sessions note (D105); none when the note is absent. */
+const RECENT_SESSIONS = 20;
+const projectSessions = (records: RecordsRepository, project: string): SessionRecord[] => {
+  const note = records.getByPath(`projects/${project}/sessions.md`);
+  return note ? parseSessions(note.body).slice(0, RECENT_SESSIONS) : [];
+};
 
 const logEntry = (r: LogRow) => ({
   file_path: r.file_path,
@@ -175,6 +183,7 @@ export const resumeBriefHandler =
       const universe = queueRepo.listAll();
       const mine = universe.filter(row => row.project === project);
       const feedback = records.getByPath(`projects/${project}/feedback.md`);
+      const sessions = projectSessions(records, project);
       // Read-only view of the handoff inbox (GET semantics — no lazy-expiry
       // writes): a claimed-but-expired entry already counts as pending,
       // because that is what the next mutating touch will make it.
@@ -207,6 +216,7 @@ export const resumeBriefHandler =
             .map(f => f.finding)
         },
         handoffs_pending: pendingHandoffs.n,
+        sessions_unlogged: sessions.filter(x => x.log === null).length,
         feedback: feedback
           ? {
               updated: feedback.updated,
@@ -393,6 +403,10 @@ export const resumeBundleHandler =
         notices,
         trackers: projectTrackers(deps.vaultDataPath, project),
         logs: latestLogs(db, logsLimit, project).map(logEntry),
+        sessions: (() => {
+          const recent = projectSessions(records, project);
+          return {recent: recent.slice(0, 5), unlogged: recent.filter(x => x.log === null)};
+        })(),
         handoffs: {
           open: inbox.filter(h => h.status === 'open').map(inboxItem),
           returned: inbox.filter(h => h.status === 'returned').map(inboxItem),
