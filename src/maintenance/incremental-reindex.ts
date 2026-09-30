@@ -22,7 +22,7 @@ import {importVaultAsync} from '../importer/import.ts';
 import {syncQueueFile} from '../queue/sync.ts';
 import {failureMessage} from '../records/import-failures.ts';
 import {RecordsRepository} from '../records/repository.ts';
-import {getCurrentHead, runGit} from '../util/git.ts';
+import {getCurrentHead, gitFailure, runGit} from '../util/git.ts';
 
 export interface IncrementalReindexSummary {
   fromCommit: string | null;
@@ -105,7 +105,7 @@ const workingTreeChanges = async (db: DatabaseSync, vaultDataPath: string): Prom
     '-z',
     '--untracked-files=all'
   ]);
-  if (status.exitCode !== 0) throw new Error(`git status failed: ${status.stderr.trim()}`);
+  if (status.exitCode !== 0) throw new Error(`git status failed: ${gitFailure(status)}`);
   const records = new RecordsRepository(db);
   const tokens = status.stdout.split('\x00');
   const changes: Change[] = [];

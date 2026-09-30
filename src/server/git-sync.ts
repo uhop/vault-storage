@@ -36,7 +36,7 @@ import {statSync, unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
-import {getCurrentHead, isGitRepo, runGit, type GitResult} from '../util/git.ts';
+import {getCurrentHead, gitFailure, isGitRepo, runGit, type GitResult} from '../util/git.ts';
 import type {HealthMonitor} from './health.ts';
 
 export interface WorkHoursWindow {
@@ -245,7 +245,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
 
     const status = await git(['status', '--porcelain']);
     if (status.exitCode !== 0) {
-      return fail(new Error(`git status failed: ${status.stderr.trim()}`));
+      return fail(new Error(`git status failed: ${gitFailure(status)}`));
     }
     const dirtyLines = status.stdout.split('\n').filter(l => l.length > 0);
     if (dirtyLines.length === 0) {
@@ -259,7 +259,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
       if (add.exitCode !== 0) {
         if (attempt < MAX_COMMIT_ATTEMPTS && isLockCollision(add.stderr) && removeStaleLock())
           continue;
-        return fail(new Error(`git add failed: ${add.stderr.trim()}`));
+        return fail(new Error(`git add failed: ${gitFailure(add)}`));
       }
       const commit = await git([...identityArgs, 'commit', '-m', subject]);
       if (commit.exitCode !== 0) {
@@ -276,9 +276,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
           removeStaleLock()
         )
           continue;
-        return fail(
-          new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`)
-        );
+        return fail(new Error(`git commit failed: ${gitFailure(commit)}`));
       }
       break;
     }
@@ -297,7 +295,7 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
     if (autoPush) {
       const push = await git(['push']);
       if (push.exitCode !== 0) {
-        onError(new Error(`git push failed: ${push.stderr.trim()}`));
+        onError(new Error(`git push failed: ${gitFailure(push)}`));
         return 'committed';
       }
       log('git-sync: pushed to remote');

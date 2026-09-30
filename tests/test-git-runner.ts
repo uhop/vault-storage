@@ -1,6 +1,6 @@
 import test from 'tape-six';
 import {tmpdir} from 'node:os';
-import {GIT_TIMEOUT_MS, runGit} from '../src/util/git.ts';
+import {GIT_TIMEOUT_MS, gitFailure, runGit} from '../src/util/git.ts';
 
 test('runGit kills a child that outlives its timeout and says so', async t => {
   const started = Date.now();
@@ -16,4 +16,13 @@ test('runGit: a child that finishes in time is untouched, and the default timeou
   t.equal(result.exitCode, 0);
   t.equal(result.timedOut, undefined, 'no timeout flag on a normal exit');
   t.ok(GIT_TIMEOUT_MS >= 60_000, 'the default is not a test value');
+});
+
+test('gitFailure names the stderr, else the stdout, else the exit code', t => {
+  t.equal(gitFailure({exitCode: 1, stdout: 'out\n', stderr: ' err \n'}), 'err');
+  t.equal(
+    gitFailure({exitCode: 1, stdout: 'nothing to commit\n', stderr: ''}),
+    'nothing to commit'
+  );
+  t.equal(gitFailure({exitCode: -1, stdout: '', stderr: '  '}), 'git exited -1', 'never empty');
 });

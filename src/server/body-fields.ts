@@ -57,6 +57,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'from_agent',
     'to_agent'
   ],
+  'POST /vault/restore': ['path', 'sha', 'from_path', 'expected_etag'],
   'POST /vault/supersede': [
     'old_path',
     'new_path',
@@ -158,6 +159,7 @@ export const STRICT_BODY_ROUTES: ReadonlySet<string> = new Set([
   'POST /vault/move-item',
   'POST /vault/propose',
   'POST /vault/render',
+  'POST /vault/restore',
   'POST /vault/supersede',
   'PUT /drafts',
   'PUT /vault/{path}'

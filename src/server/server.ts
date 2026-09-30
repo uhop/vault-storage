@@ -66,6 +66,7 @@ import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {projectTrackersHandler} from './handlers/trackers.ts';
 import {fleetStatusHandler} from './handlers/fleet.ts';
+import {historyHandler, restoreHandler} from './handlers/history.ts';
 import {linksHandler} from './handlers/links.ts';
 import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
 import {
@@ -296,6 +297,15 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.post('/vault/move-item', moveItemHandler(vaultDeps));
   router.post('/vault/supersede', supersedeVaultHandler(vaultDeps));
   router.post('/vault/propose', proposeVaultHandler(vaultDeps));
+  router.post(
+    '/vault/restore',
+    restoreHandler({
+      ...vaultDeps,
+      gitAuthorName: opts.env.gitAuthorName,
+      gitAuthorEmail: opts.env.gitAuthorEmail
+    })
+  );
+  router.get('/history', historyHandler({vaultDataPath: opts.env.vaultDataPath}));
 
   const draftDeps = {
     drafts: new DraftStore(join(opts.env.vaultDataPath, '.vault-storage', 'drafts')),

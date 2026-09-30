@@ -303,16 +303,22 @@ export const registerTools = (mcp, client) => {
     'vault_read_file',
     {
       description:
-        'Read a file by vault-relative path. Returns the markdown source. For atomized folders, the path can be the original `<stem>.md` and the server composes pieces back into one document. Set include_etag to get {path, etag, composed, content} instead — the etag is what vault_write_file takes as expected_etag, and composed=true marks a folder view that has no single file behind it and must be edited through its pieces.',
+        'Read a file by vault-relative path. Returns the markdown source. For atomized folders, the path can be the original `<stem>.md` and the server composes pieces back into one document. Set include_etag to get {path, etag, composed, content} instead — the etag is what vault_write_file takes as expected_etag, and composed=true marks a folder view that has no single file behind it and must be edited through its pieces. Pass at, a commit sha from vault_history, to read the note as it was at that commit, by the path the version lists (vault-storage D115; a 404 when that commit has no such file); a version carries no etag, so include_etag does not apply.',
       inputSchema: {
         path: z.string().min(1),
         include_etag: z
           .boolean()
           .optional()
-          .describe('Return a JSON envelope with the etag instead of bare markdown')
+          .describe('Return a JSON envelope with the etag instead of bare markdown'),
+        at: z
+          .string()
+          .regex(/^[0-9a-f]{7,40}$/)
+          .optional()
+          .describe('A commit sha from vault_history: read the version at that commit')
       }
     },
-    wrap(async ({path, include_etag}) => {
+    wrap(async ({path, include_etag, at}) => {
+      if (at) return client.getText(`/vault/${path}`, {at});
       if (!include_etag) return client.getText(`/vault/${path}`);
       const {text, etag, composed} = await client.getTextWithMeta(`/vault/${path}`);
       return {path, etag, composed, content: text};
@@ -812,6 +818,44 @@ export const registerTools = (mcp, client) => {
       }
     },
     wrap(async ({key, url, repo}) => client.getJson('/links', {key, url, repo}))
+  );
+
+  mcp.registerTool(
+    'vault_history',
+    {
+      description:
+        "A note's committed versions, newest first (vault-storage D115; absent on an older server). Returns {path, uncommitted, items: [{sha, date, subject, path, change}], offset, limit, last}: `path` on an item is the note's path at that commit, since history follows renames, and that is the path to read the version by (vault_read_file with at) or to restore it from (vault_restore's from_path); `change` is added, modified, renamed, copied, or deleted, and a deleted version has no content. `uncommitted: true` means the file differs from its last commit, so its current content is not listed yet. Paged by offset and limit (default 50, at most 100); `last: true` on the final page, and no total, since counting walks the whole history. A 503 when the vault is not a git repository.",
+      inputSchema: {
+        path: z.string().min(1).describe('Vault-relative path; must end with .md'),
+        offset: z.number().int().min(0).optional(),
+        limit: z.number().int().min(1).max(100).optional()
+      }
+    },
+    wrap(async ({path, offset, limit}) => client.getJson('/history', {path, offset, limit}))
+  );
+
+  mcp.registerTool(
+    'vault_restore',
+    {
+      description:
+        "Write a note back to one of its versions (vault-storage D115; absent on an older server): the version's bytes at sha, read from from_path (the version's own path from vault_history; default path), go through the writer with the frontmatter replaced whole, then the import and the edge pass, as any write does, so a value the writer now refuses is a 400 naming it. When the note differs from its last commit, the current content is committed on its own first, so it stays a version; nothing is written if that commit fails (503 git_commit_failed). A deleted note is created again, under a new record id. Pass expected_etag from vault_read_file{include_etag} to make the restore conditional (412 on conflict). Returns {path, etag, restored_from: {sha, path}, committed_before, unknown_tags?}; committed_before is the sha of that commit, or null when there was nothing to keep. 404 version_not_found when the commit has no such file.",
+      inputSchema: {
+        path: z.string().min(1).describe('The note to restore; must end with .md'),
+        sha: z
+          .string()
+          .regex(/^[0-9a-f]{7,40}$/)
+          .describe('The commit to restore from, from vault_history'),
+        from_path: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("The version's own path when a rename came between; default path"),
+        expected_etag: z.string().optional().describe('Sent in the body; 412 on conflict')
+      }
+    },
+    wrap(async ({path, sha, from_path, expected_etag}) =>
+      client.postJson('/vault/restore', {path, sha, from_path, expected_etag})
+    )
   );
 
   // ── insight: neighborhood, similar, backlinks ─────────────────────────────

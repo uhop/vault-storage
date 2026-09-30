@@ -1,6 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../../maintenance/incremental-reindex.ts';
-import {getCurrentHead, isGitRepo, runGit} from '../../util/git.ts';
+import {getCurrentHead, gitFailure, isGitRepo, runGit} from '../../util/git.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendJson} from '../responses.ts';
@@ -124,7 +124,7 @@ export const commitHandler =
     // Status — what's dirty?
     const status = await runGit(deps.vaultDataPath, ['status', '--porcelain']);
     if (status.exitCode !== 0) {
-      sendError(ctx.res, 500, 'git_status_failed', status.stderr.trim() || status.stdout.trim());
+      sendError(ctx.res, 500, 'git_status_failed', gitFailure(status));
       return;
     }
     const dirtyLines = status.stdout.split('\n').filter(l => l.length > 0);
@@ -141,7 +141,7 @@ export const commitHandler =
     const addArgs = body.paths ? ['add', '--', ...body.paths] : ['add', '-A'];
     const add = await runGit(deps.vaultDataPath, addArgs);
     if (add.exitCode !== 0) {
-      sendError(ctx.res, 500, 'git_add_failed', add.stderr.trim() || add.stdout.trim());
+      sendError(ctx.res, 500, 'git_add_failed', gitFailure(add));
       return;
     }
 
@@ -150,7 +150,7 @@ export const commitHandler =
     // dirty count we just measured (modulo .gitignore'd paths).
     const staged = await runGit(deps.vaultDataPath, ['diff', '--cached', '--name-only']);
     if (staged.exitCode !== 0) {
-      sendError(ctx.res, 500, 'git_diff_failed', staged.stderr.trim() || staged.stdout.trim());
+      sendError(ctx.res, 500, 'git_diff_failed', gitFailure(staged));
       return;
     }
     const stagedFiles = staged.stdout.split('\n').filter(l => l.length > 0);
@@ -182,7 +182,7 @@ export const commitHandler =
         });
         return;
       }
-      sendError(ctx.res, 500, 'git_commit_failed', commit.stderr.trim() || commit.stdout.trim());
+      sendError(ctx.res, 500, 'git_commit_failed', gitFailure(commit));
       return;
     }
 

@@ -59,6 +59,10 @@ export const runGit = (cwd: string, args: string[], opts: RunGitOptions = {}): P
     proc.on('error', err => finish({exitCode: -1, stdout, stderr: String(err)}));
   });
 
+/** Why a git child failed: its stderr, else its stdout, else its exit code, so never empty. */
+export const gitFailure = (r: GitResult): string =>
+  r.stderr.trim() || r.stdout.trim() || `git exited ${r.exitCode}`;
+
 export const isGitRepo = (path: string): boolean =>
   existsSync(join(path, '.git')) || existsSync(join(path, '.git/HEAD'));
 

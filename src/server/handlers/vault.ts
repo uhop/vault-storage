@@ -44,12 +44,14 @@ import {syncQueueFile} from '../../queue/sync.ts';
 import {FleetStateRepository} from '../../fleet/state.ts';
 import {ExternalLinksRepository} from '../../links/external.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
+import {isGitRepo} from '../../util/git.ts';
 import {readBodyText} from '../body.ts';
 import {rejectUnknownParams} from '../query.ts';
 import type {ResolverCache} from '../resolver-cache.ts';
 import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {refuseUnresolvedEdges, requestEdges, type EdgeChecker} from '../edge-check.ts';
+import {readVersion, SHA_RE} from './history.ts';
 import {refResolver} from '../refs.ts';
 import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
@@ -266,13 +268,18 @@ export const getVaultHandler =
   (deps: VaultDeps): Handler =>
   async ctx => {
     // Precedes bumpLastReferenced: a rejected request must not leave a trace.
-    if (!rejectUnknownParams(ctx, new Set(['section', 'occurrence', 'render', 'frontmatter'])))
+    if (
+      !rejectUnknownParams(ctx, new Set(['section', 'occurrence', 'render', 'frontmatter', 'at']))
+    )
       return;
     const path = ctx.params['path'] ?? '';
     const section = ctx.query['section'];
     const render = ctx.query['render'];
     const frontmatter = ctx.query['frontmatter'];
-    const modes = ['section', 'render', 'frontmatter'].filter(k => ctx.query[k] !== undefined);
+    const at = ctx.query['at'];
+    const modes = ['section', 'render', 'frontmatter', 'at'].filter(
+      k => ctx.query[k] !== undefined
+    );
     if (modes.length > 1) {
       sendError(ctx.res, 400, 'bad_request', `${modes.join(' and ')} cannot be combined`);
       return;
@@ -302,6 +309,25 @@ export const getVaultHandler =
 
     const abs = safePathOrError(deps.vaultDataPath, path, ctx.res);
     if (abs === null) return;
+
+    if (at !== undefined) {
+      if (!SHA_RE.test(at)) {
+        sendError(ctx.res, 400, 'bad_request', 'at must be 7 to 40 lowercase hex digits');
+        return;
+      }
+      if (!isGitRepo(deps.vaultDataPath)) {
+        sendError(ctx.res, 503, 'not_a_git_repo', 'vault data path is not a git repository');
+        return;
+      }
+      const version = await readVersion(deps.vaultDataPath, at, path);
+      if (version === null) {
+        sendError(ctx.res, 404, 'version_not_found', `no ${path} at ${at}`);
+        return;
+      }
+      // No ETag: a version is no write's precondition.
+      sendText(ctx.res, 200, 'text/markdown; charset=utf-8', version, {'X-Vault-Version': at});
+      return;
+    }
 
     if (existsSync(abs) && statSync(abs).isFile()) {
       // Phase E: bump last_referenced for the record at this path (when
