@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first request.
+      (() => {
+        performance.mark('head script');
+        const token = localStorage.getItem('vault.token');
+        const q = new URLSearchParams(location.search);
+        const path = q.get('path');
+        if (!token || !path) return;
+        const offset = Math.max(0, Number.parseInt(q.get('offset') ?? '0', 10) || 0);
+        const url =
+          `/history?path=${encodeURIComponent(path)}&limit=50` +
+          (offset ? `&offset=${offset}` : '');
+        const early = (window.__early ??= new Map());
+        const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+        res.catch(() => {});
+        early.set(url, res);
+      })();
+    </script>
+    <title>vault-storage — history</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      main {
+        max-width: 72rem;
+      }
+      .note-title {
+        margin: 0 0 0.8rem;
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(16rem, 24rem) 1fr;
+        gap: 1rem;
+        align-items: start;
+      }
+      .pager {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin: 0.4rem 0;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .pager .range {
+        margin-right: auto;
+      }
+      .versions {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .versions li + li {
+        border-top: 1px solid var(--line);
+      }
+      .versions .version {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.1rem 0.6rem;
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-radius: 0;
+        background: none;
+        padding: 0.45rem 0.4rem;
+      }
+      .versions .version[aria-pressed='true'] {
+        background: var(--card);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .versions .when {
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .versions .change {
+        justify-self: end;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .versions .change.deleted {
+        color: var(--bad);
+      }
+      .versions .subject {
+        grid-column: 1 / -1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .versions .path {
+        grid-column: 1 / -1;
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: var(--text-s);
+      }
+      .version-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem 1rem;
+        margin-bottom: 0.8rem;
+      }
+      .version-head code {
+        font-family: var(--mono);
+        font-size: var(--text-s);
+        color: var(--muted);
+      }
+      .why {
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      #notice {
+        margin-bottom: 0.8rem;
+      }
+      @media (max-width: 720px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body class="fmw">
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <p class="note-title" id="title"></p>
+      <div id="status"></div>
+      <div class="fmw-notice" id="notice" hidden>
+        This note has changes not yet committed, so its current content is not listed. A restore
+        commits them first, so they stay a version.
+      </div>
+      <div class="layout">
+        <section>
+          <div class="pager" id="top">
+            <span class="range"></span>
+            <button data-dir="-1" disabled>Previous</button>
+            <button data-dir="1" disabled>Next</button>
+          </div>
+          <div id="list"></div>
+          <div class="pager">
+            <span class="range"></span>
+            <button data-dir="-1" disabled>Previous</button>
+            <button data-dir="1" disabled>Next</button>
+          </div>
+        </section>
+        <section id="version" class="fmw-card" hidden></section>
+      </div>
+    </main>
+
+    <script type="module">
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {
+        encodePath,
+        PAGE_SIZE,
+        rangeText,
+        renderVersionHead,
+        renderVersions
+      } from '/ui/history-view.js';
+      const $ = sel => document.querySelector(sel);
+
+      const q = new URLSearchParams(location.search);
+      const path = q.get('path') ?? '';
+      let offset = Math.max(0, Number.parseInt(q.get('offset') ?? '0', 10) || 0);
+      let items = [];
+      let selected = null;
+      let seq = 0;
+      const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
+      const reason = e =>
+        e.code === 'not_a_git_repo'
+          ? 'This vault is not a git repository, so it keeps no versions.'
+          : `Failed: ${esc(e.message)}`;
+
+      const historyUrl = () =>
+        `/history?path=${encodeURIComponent(path)}&limit=${PAGE_SIZE}` +
+        (offset ? `&offset=${offset}` : '');
+
+      const showStatus = html => {
+        $('#status').innerHTML = html;
+      };
+
+      const load = async () => {
+        const my = ++seq;
+        if (!path) {
+          $('#list').innerHTML = '<div class="empty">Open a note and choose History.</div>';
+          return;
+        }
+        $('#title').innerHTML =
+          `<a href="/ui/note.html?path=${encodeURIComponent(path)}">${esc(path)}</a>`;
+        $('#list').innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
+        try {
+          const page = await apiJson(historyUrl());
+          if (my !== seq) return;
+          items = page.items;
+          $('#notice').hidden = !page.uncommitted;
+          $('#list').innerHTML = renderVersions(items, path, selected?.sha, esc);
+          for (const el of document.querySelectorAll('.pager .range'))
+            el.textContent = rangeText(offset, items.length);
+          for (const b of document.querySelectorAll('.pager [data-dir="-1"]'))
+            b.disabled = offset === 0;
+          for (const b of document.querySelectorAll('.pager [data-dir="1"]'))
+            b.disabled = page.last;
+        } catch (e) {
+          if (my !== seq) return;
+          if (isAuthError(e)) {
+            showAuthDialog();
+            return;
+          }
+          $('#list').innerHTML = `<div class="err">${reason(e)}</div>`;
+        }
+      };
+
+      const show = async version => {
+        selected = version;
+        for (const b of document.querySelectorAll('.version'))
+          b.setAttribute('aria-pressed', String(b.dataset.sha === version.sha));
+        const pane = $('#version');
+        pane.hidden = false;
+        pane.innerHTML = renderVersionHead(version, esc);
+        if (version.change === 'deleted') return;
+        const body = document.createElement('div');
+        body.className = 'fmw-prose';
+        body.innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
+        pane.append(body);
+        try {
+          const doc = await apiJson(
+            `/vault/${encodePath(version.path)}?at=${version.sha}&render=html`
+          );
+          if (selected !== version) return;
+          body.innerHTML = doc.html;
+        } catch (e) {
+          if (isAuthError(e)) {
+            showAuthDialog();
+            return;
+          }
+          body.innerHTML = `<div class="err">${reason(e)}</div>`;
+        }
+      };
+
+      const restore = async () => {
+        const v = selected;
+        if (!v) return;
+        const ok = confirm(
+          `Restore ${path} to its version of ${v.date}?\n\nThe current content stays in the history as a version.`
+        );
+        if (!ok) return;
+        $('#restore').disabled = true;
+        try {
+          const res = await apiJson('/vault/restore', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path, sha: v.sha, from_path: v.path})
+          });
+          showStatus(
+            `<div class="fmw-notice ok">Restored to ${esc(v.sha.slice(0, 8))}${res.committed_before ? '; the content it replaced was committed first' : ''}. <a href="/ui/note.html?path=${encodeURIComponent(path)}">Open the note</a></div>`
+          );
+          offset = 0;
+          selected = null;
+          $('#version').hidden = true;
+          load();
+        } catch (e) {
+          if (isAuthError(e)) {
+            showAuthDialog();
+            return;
+          }
+          showStatus(
+            `<div class="err">${e.code === 'not_a_git_repo' ? reason(e) : `Restore failed: ${esc(e.message)}`}</div>`
+          );
+          $('#restore').disabled = false;
+        }
+      };
+
+      const page = delta => {
+        offset = Math.max(0, offset + delta);
+        const next = new URLSearchParams({path});
+        if (offset) next.set('offset', String(offset));
+        history.replaceState(null, '', `?${next}`);
+        load();
+      };
+
+      $('#list').addEventListener('click', e => {
+        const btn = e.target.closest('button.version');
+        const v = btn && items.find(i => i.sha === btn.dataset.sha);
+        if (v) show(v);
+      });
+      $('#version').addEventListener('click', e => {
+        if (e.target.closest('#restore')) restore();
+      });
+      for (const pager of document.querySelectorAll('.pager'))
+        pager.addEventListener('click', e => {
+          const btn = e.target.closest('button[data-dir]');
+          if (!btn) return;
+          page(Number(btn.dataset.dir) * PAGE_SIZE);
+          if (pager.id !== 'top') $('#top').scrollIntoView();
+        });
+
+      const init = () => {
+        if (!getToken()) {
+          showAuthDialog();
+          return;
+        }
+        load();
+      };
+      document.addEventListener('token-change', init);
+      init();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>

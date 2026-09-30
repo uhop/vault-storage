@@ -235,7 +235,8 @@ const sendRendered = async (
   res: ServerResponse,
   path: string,
   document: string,
-  composed: boolean
+  composed: boolean,
+  version?: string
 ): Promise<void> => {
   const {yaml, body} = splitFrontmatter(document);
   const head = document.slice(0, document.length - body.length);
@@ -243,7 +244,7 @@ const sendRendered = async (
   if (rendered === null) return;
   sendJson(res, 200, {
     path,
-    etag: documentEtag(document),
+    ...(version === undefined ? {etag: documentEtag(document)} : {version}),
     composed,
     frontmatter: yaml,
     html: rendered.html,
@@ -280,7 +281,8 @@ export const getVaultHandler =
     const modes = ['section', 'render', 'frontmatter', 'at'].filter(
       k => ctx.query[k] !== undefined
     );
-    if (modes.length > 1) {
+    const renderedVersion = modes.length === 2 && at !== undefined && render !== undefined;
+    if (modes.length > 1 && !renderedVersion) {
       sendError(ctx.res, 400, 'bad_request', `${modes.join(' and ')} cannot be combined`);
       return;
     }
@@ -322,6 +324,10 @@ export const getVaultHandler =
       const version = await readVersion(deps.vaultDataPath, at, path);
       if (version === null) {
         sendError(ctx.res, 404, 'version_not_found', `no ${path} at ${at}`);
+        return;
+      }
+      if (render !== undefined) {
+        await sendRendered(deps, ctx.res, path, version, false, at);
         return;
       }
       // No ETag: a version is no write's precondition.

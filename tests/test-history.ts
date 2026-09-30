@@ -203,10 +203,15 @@ test('GET /vault/{path}?at= reads a version by its own path', async t => {
     t.equal((await call(`${ctx.url}/vault/topics/b.md?at=deadbee`)).status, 404);
     t.equal((await call(`${ctx.url}/vault/topics/b.md?at=HEAD`)).status, 400, 'a sha only');
     t.equal((await call(`${ctx.url}/vault/topics/b.md?at=-p`)).status, 400, 'no option');
+    const rendered = await json(`${ctx.url}/vault/topics/a.md?at=${shas['one']}&render=html`);
+    t.equal(rendered.status, 200, 'a version renders');
+    t.matchString(rendered.body.html, /The first version of the note/);
+    t.equal(rendered.body.version, shas['one']);
+    t.equal(rendered.body.etag, undefined, 'and carries no etag');
     t.equal(
-      (await call(`${ctx.url}/vault/topics/b.md?at=${shas['one']}&render=html`)).status,
+      (await call(`${ctx.url}/vault/topics/a.md?at=${shas['one']}&section=x`)).status,
       400,
-      'at combines with no other mode'
+      'at combines with render only'
     );
   } finally {
     await stop(ctx);

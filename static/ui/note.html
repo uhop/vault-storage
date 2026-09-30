@@ -243,6 +243,7 @@
       <a class="button" id="neighborhood" hidden title="Notes within two hops of this one"
         >Neighborhood</a
       >
+      <a class="button" id="history" hidden title="Earlier versions of this note">History</a>
       <div id="find-bar" class="find-bar" hidden role="search" aria-label="Find in note">
         <input
           id="find-input"
@@ -432,6 +433,8 @@
           if (perfOn) time('view: forced layout', () => $('#doc').getBoundingClientRect().height);
           $('#edit').href = editHref();
           $('#edit').hidden = note.composed;
+          $('#history').href = `/ui/history.html?path=${encodeURIComponent(path)}`;
+          $('#history').hidden = note.composed;
           for (const id of ['#outline', '#find-btn']) $(id).hidden = false;
           findIndex = null;
           fetchBacklinks();
