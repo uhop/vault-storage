@@ -3608,3 +3608,95 @@ test('drafts — PUT replaces one unit, GET lists by note, DELETE discards; kept
     cleanup();
   }
 });
+
+// A collector run twice must not file the same ticket twice: an item's
+// `source:` marker names the outside ticket it mirrors, and an insert that
+// carries the same source updates the open item that has it (D107).
+test('POST /vault/edit — insert-item with a `source:` marker updates the open item that mirrors it', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'projects/p/queue.md', QUEUE_DOC);
+    const ctx = await startTestServer(root);
+    try {
+      const first = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Active',
+        item: '- **GitHub: uhop/p#15 — Nexus.** New issue, read 2026-09-29.\n  - source: github uhop/p#15\n'
+      });
+      t.equal(first.status, 200, 'first insert lands');
+      t.match(first.body, {section: '## Active', created: false, source: 'github uhop/p#15'});
+
+      const again = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Backlog',
+        item: '- **GitHub: uhop/p#15 — Nexus, now with a reply.** Two comments, read 2026-09-30.\n  - source:  github   uhop/p#15\n'
+      });
+      t.equal(again.status, 200, 'the second insert answers 200');
+      t.match(
+        again.body,
+        {
+          section: 'active',
+          replaced: {title: 'GitHub: uhop/p#15 — Nexus.', source: 'github uhop/p#15'}
+        },
+        'it replaced the open item in its own section, the source read with its whitespace collapsed'
+      );
+      const body = parseFrontmatter(readFileSync(join(root, 'projects/p/queue.md'), 'utf8')).body;
+      t.equal(
+        (body.match(/uhop\/p#15/g) ?? []).length,
+        2,
+        'one item: its title and its marker, the first insert gone'
+      );
+      t.ok(
+        body.includes('## Active\n\n- **GitHub: uhop/p#15 — Nexus, now with a reply.**'),
+        'the new text stands where the old one was'
+      );
+      t.notOk(body.includes('New issue, read 2026-09-29'), 'the old text is gone');
+
+      const kept = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Backlog',
+        on_existing: 'keep',
+        item: '- **GitHub: uhop/p#15 — third read.** Nothing new.\n  - source: github uhop/p#15\n'
+      });
+      t.equal(kept.status, 200);
+      t.match(
+        kept.body,
+        {existing: {title: 'GitHub: uhop/p#15 — Nexus, now with a reply.', section: 'active'}},
+        'keep leaves the item and names it'
+      );
+      t.notOk(
+        readFileSync(join(root, 'projects/p/queue.md'), 'utf8').includes('third read'),
+        'nothing written'
+      );
+
+      const other = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Backlog',
+        item: '- **GitHub: uhop/p#16 — Another.** Read 2026-09-30.\n  - source: github uhop/p#16\n'
+      });
+      t.equal(other.status, 200);
+      t.match(
+        other.body,
+        {section: '## Backlog', created: false, source: 'github uhop/p#16'},
+        'a new source inserts as asked'
+      );
+
+      const bad = await editJson(ctx.url, {
+        path: 'projects/p/queue.md',
+        op: 'insert-item',
+        section: '## Backlog',
+        on_existing: 'merge',
+        item: '- **X.** y'
+      });
+      t.equal(bad.status, 400, 'on_existing takes replace or keep');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

@@ -37,6 +37,8 @@ export interface QueueItemRow {
   body_hash: string;
   /** Raw `blocked-by:` refs parsed from the body; resolved at query time (ready.ts). */
   blocked_by: string[];
+  /** The outside ticket the item mirrors, from its `source:` marker; null without one. */
+  source: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -56,6 +58,7 @@ interface DbRow {
   source_line: number;
   body_hash: string;
   blocked_by: string;
+  source: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -84,6 +87,7 @@ const rowFromDb = (row: DbRow): QueueItemRow => ({
   source_line: row.source_line,
   body_hash: row.body_hash,
   blocked_by: parseBlockedBy(row.blocked_by),
+  source: row.source,
   created_at: row.created_at,
   updated_at: row.updated_at
 });
@@ -115,6 +119,7 @@ export class QueueItemsRepository {
   readonly #listByPriority: StatementSync;
   readonly #listAll: StatementSync;
   readonly #countAll: StatementSync;
+  readonly #openBySource: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#db = db;
@@ -126,15 +131,15 @@ export class QueueItemsRepository {
       `INSERT INTO queue_items (
          id, project, section, priority, position, title, title_norm, body,
          closed_at, close_reason, source_file, source_line, body_hash,
-         blocked_by, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         blocked_by, source, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     this.#updateBody = db.prepare(
       `UPDATE queue_items
          SET priority = ?, position = ?, title = ?, body = ?,
              closed_at = ?, close_reason = ?, source_line = ?,
-             body_hash = ?, blocked_by = ?, updated_at = ?
+             body_hash = ?, blocked_by = ?, source = ?, updated_at = ?
        WHERE id = ?`
     );
 
@@ -145,6 +150,10 @@ export class QueueItemsRepository {
     );
 
     this.#deleteById = db.prepare('DELETE FROM queue_items WHERE id = ?');
+    this.#openBySource = db.prepare(
+      `SELECT * FROM queue_items WHERE project = ? AND source = ? AND section != 'archive'
+        ORDER BY updated_at DESC LIMIT 1`
+    );
     this.#deleteBySource = db.prepare(
       'DELETE FROM queue_items WHERE project = ? AND source_file = ?'
     );
@@ -242,6 +251,7 @@ export class QueueItemsRepository {
             it.source_line,
             it.body_hash,
             JSON.stringify(it.blocked_by),
+            it.source,
             now,
             now
           );
@@ -260,6 +270,7 @@ export class QueueItemsRepository {
             it.source_line,
             it.body_hash,
             JSON.stringify(it.blocked_by),
+            it.source,
             now,
             prior.id
           );
@@ -327,6 +338,12 @@ export class QueueItemsRepository {
   /** Fleet-wide for one priority tier in Backlog. */
   listByPriority(priority: number): QueueItemRow[] {
     return (this.#listByPriority.all(priority) as unknown as DbRow[]).map(rowFromDb);
+  }
+
+  /** The open item of a project that mirrors this source, the most recently updated when several do. */
+  openBySource(project: string, source: string): QueueItemRow | null {
+    const row = this.#openBySource.get(project, source) as unknown as DbRow | undefined;
+    return row ? rowFromDb(row) : null;
   }
 
   listAll(): QueueItemRow[] {

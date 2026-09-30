@@ -1,5 +1,5 @@
 import test from 'tape-six';
-import {inferCloseReason, normalizeTitle, parseQueueFile} from '../src/queue/parse.ts';
+import {inferCloseReason, itemSource, normalizeTitle, parseQueueFile} from '../src/queue/parse.ts';
 
 const QUEUE_PATH = 'projects/demo/queue.md';
 const ARCHIVE_PATH = 'projects/demo/queue-archive.md';
@@ -653,4 +653,43 @@ test('parseQueueFile — inner emphasis flush against the bold close', async t =
     t.equal(items[0]?.title, 'Deps');
     t.equal(items[0]?.body, ': tape-six `^1.16`, prettier `^3.9`.');
   });
+});
+
+test('a `source:` marker line names the ticket an item mirrors', t => {
+  const items = parseQueueFile(
+    'p',
+    'projects/p/queue.md',
+    [
+      '## Backlog',
+      '',
+      '- **Mirrored.** From GitHub.',
+      '  - source:   github   uhop/p#15  ',
+      '  - blocked-by: Other',
+      '- **Twice.** Two markers, the first wins.',
+      '  - source: linear ENG-1',
+      '  - source: linear ENG-2',
+      '- **Quoted.** Mentions `source: not one` in code.',
+      '- **Plain.** No marker.',
+      ''
+    ].join('\n')
+  );
+  t.deepEqual(
+    items.map(i => [i.title, i.source, i.blocked_by]),
+    [
+      ['Mirrored.', 'github uhop/p#15', ['Other']],
+      ['Twice.', 'linear ENG-1', []],
+      ['Quoted.', null, []],
+      ['Plain.', null, []]
+    ]
+  );
+  t.equal(
+    itemSource('- **A.** x\n  - source: jira VS-7\n'),
+    'jira VS-7',
+    'the helper reads one item'
+  );
+  t.equal(
+    itemSource('- **A.** source: not on the first line'),
+    null,
+    'the bullet line carries the title'
+  );
 });

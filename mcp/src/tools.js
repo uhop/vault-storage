@@ -503,7 +503,7 @@ export const registerTools = (mcp, client) => {
     'vault_insert_item',
     {
       description:
-        "Insert one queue item (a `- **Title.**` bullet with any continuation lines) into a section of a document, at its start or end (default end), framed by blank lines, every other byte untouched. The section is a heading line matched exactly once with code fences masked; a section that reads `(empty)` is replaced by the item. create_section: true adds a missing heading before the first heading of the same level (a newest-first archive's new date block); otherwise an absent heading is a 409 `section_assert_failed`. Returns {path, etag, section, position, created}." +
+        "Insert one queue item (a `- **Title.**` bullet with any continuation lines) into a section of a document, at its start or end (default end), framed by blank lines, every other byte untouched. The section is a heading line matched exactly once with code fences masked; a section that reads `(empty)` is replaced by the item. create_section: true adds a missing heading before the first heading of the same level (a newest-first archive's new date block); otherwise an absent heading is a 409 `section_assert_failed`. Returns {path, etag, section, position, created, source?}. An item that mirrors an outside ticket names it in a `source:` marker line (`  - source: github owner/repo#15`, `linear ENG-123`; whitespace collapsed): in a queue file, an insert whose source an open item already carries updates that item where it stands instead of filing a second, answering {path, etag, section, replaced: {title, source}} — pass on_existing: keep to leave the item and get {path, etag, existing: {title, section, source}} with nothing written (vault-storage D107). An archived item never matches." +
         AGENT_NOTE,
       inputSchema: {
         path: z.string().min(1).describe('Vault-relative path; must end with .md'),
@@ -514,10 +514,16 @@ export const registerTools = (mcp, client) => {
         item: z.string().min(1).describe('The item text, starting with "- **"'),
         position: z.enum(['start', 'end']).optional().describe('Where in the section; default end'),
         create_section: z.boolean().optional().describe('Add the heading when it is missing'),
+        on_existing: z
+          .enum(['replace', 'keep'])
+          .optional()
+          .describe(
+            'When an open item already carries the inserted item’s source: replace it where it stands (default), or keep it and write nothing'
+          ),
         agent: agentPatch
       }
     },
-    wrap(async ({path, section, item, position, create_section, agent}) =>
+    wrap(async ({path, section, item, position, create_section, on_existing, agent}) =>
       client.postJson('/vault/edit', {
         path,
         op: 'insert-item',
@@ -525,6 +531,7 @@ export const registerTools = (mcp, client) => {
         item,
         position,
         create_section,
+        on_existing,
         agent
       })
     )

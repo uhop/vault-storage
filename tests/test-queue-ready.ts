@@ -28,6 +28,7 @@ const row = (spec: RowSpec): QueueItemRow => ({
   source_file: `projects/${spec.project}/queue.md`,
   source_line: 1,
   body_hash: `hash-${nextId}`,
+  source: null,
   blocked_by: spec.blocked_by ?? [],
   created_at: '2026-07-23T00:00:00Z',
   updated_at: '2026-07-23T00:00:00Z'

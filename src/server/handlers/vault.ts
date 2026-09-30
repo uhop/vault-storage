@@ -37,7 +37,9 @@ import {repathPendingSuggestions} from '../../importer/file-suggestions.ts';
 import {importFile} from '../../importer/import-file.ts';
 import {fullImportOptions} from '../../importer/import-options.ts';
 import {findDuplicateBlockers, proposeNearest} from '../../maintenance/propose.ts';
+import {itemSource} from '../../queue/parse.ts';
 import {QueueItemsRepository} from '../../queue/repo.ts';
+import {matchQueueFile} from '../../queue/sync.ts';
 import {syncQueueFile} from '../../queue/sync.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyText} from '../body.ts';
@@ -656,6 +658,7 @@ interface EditBody {
   item?: unknown;
   position?: unknown;
   create_section?: unknown;
+  on_existing?: unknown;
   occurrence?: unknown;
   expected_hash?: unknown;
   yaml?: unknown;
@@ -971,6 +974,15 @@ export const editVaultHandler =
       );
       return;
     }
+    if (
+      req.op === 'insert-item' &&
+      req.on_existing !== undefined &&
+      req.on_existing !== 'replace' &&
+      req.on_existing !== 'keep'
+    ) {
+      sendError(ctx.res, 400, 'bad_request', 'on_existing must be "replace" or "keep"');
+      return;
+    }
 
     const abs = safePathOrError(deps.vaultDataPath, path, ctx.res);
     if (abs === null) return;
@@ -1017,13 +1029,50 @@ export const editVaultHandler =
       const position = positionOrError(ctx.res, req.position);
       if (position === null) return;
       const heading = req.section as string;
-      const outcome = insertItem(body, heading, item, position, req.create_section === true);
-      if (!outcome.ok) {
-        sectionInsertError(ctx.res, path, heading, outcome.occurrences);
-        return;
+      // An item that mirrors an outside ticket names it in a `source:` marker;
+      // a second insert with the same source updates the open item that has it
+      // (D107), so a collector run twice files nothing twice.
+      const source = itemSource(item);
+      const queueFile = source === null ? null : matchQueueFile(path);
+      const mirrored =
+        queueFile === null
+          ? null
+          : new QueueItemsRepository(deps.db).openBySource(queueFile.project, source as string);
+      const existing = mirrored !== null && mirrored.source_file === path ? mirrored : null;
+      const found = existing === null ? null : findItem(body, existing.title);
+      if (found !== null && found.ok) {
+        if (req.on_existing === 'keep') {
+          sendJson(ctx.res, 200, {
+            path,
+            etag: documentEtag(document),
+            existing: {title: existing!.title, section: existing!.section, source}
+          });
+          return;
+        }
+        const lines = body.split('\n');
+        edited = [
+          ...lines.slice(0, found.span.start),
+          ...item.replace(/\s+$/, '').split('\n'),
+          '',
+          ...lines.slice(found.span.end)
+        ]
+          .join('\n')
+          .replace(/\n{3,}/g, '\n\n');
+        extra = {section: existing!.section, replaced: {title: existing!.title, source}};
+      } else {
+        const outcome = insertItem(body, heading, item, position, req.create_section === true);
+        if (!outcome.ok) {
+          sectionInsertError(ctx.res, path, heading, outcome.occurrences);
+          return;
+        }
+        edited = outcome.body;
+        extra = {
+          section: heading.trim(),
+          position,
+          created: outcome.created,
+          ...(source === null ? {} : {source})
+        };
       }
-      edited = outcome.body;
-      extra = {section: heading.trim(), position, created: outcome.created};
     } else if (req.op === 'replace-section') {
       const span = sectionOrError(ctx.res, path, body, req.heading as string, occurrence);
       if (span === null) return;

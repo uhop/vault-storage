@@ -46,6 +46,12 @@ export interface ParsedQueueItem {
    * `<project>/`-prefixed), resolved at query time — see `ready.ts`.
    */
   blocked_by: string[];
+  /**
+   * The outside ticket the item mirrors, from a `source:` marker line in the
+   * body, as written with its whitespace collapsed; null without one. The
+   * first marker wins.
+   */
+  source: string | null;
 }
 
 const SECTION_HEADINGS: Record<string, Exclude<QueueSection, 'archive'>> = {
@@ -87,6 +93,22 @@ const ARCHIVE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 // while refs are cut from the raw line so backticked spans inside a ref
 // survive verbatim.
 const BLOCKED_BY_RE = /^\s*(?:[-*+]\s+)?blocked-by:\s*(.+?)\s*$/i;
+// A `source:` marker line, the same way: the outside ticket the item mirrors.
+const SOURCE_RE = /^\s*(?:[-*+]\s+)?source:\s*(.+?)\s*$/i;
+
+export const normalizeSource = (raw: string): string => raw.trim().replace(/\s+/g, ' ');
+
+/** The `source:` marker of one item's text (its continuation lines), or null. */
+export const itemSource = (item: string): string | null => {
+  const raw = item.split('\n');
+  const masked = maskCodeRegions(item).split('\n');
+  for (let i = 1; i < raw.length; ++i) {
+    if (!SOURCE_RE.test(masked[i] ?? '')) continue;
+    const m = SOURCE_RE.exec(raw[i] ?? '');
+    if (m && (m[1] ?? '').trim().length > 0) return normalizeSource(m[1] ?? '');
+  }
+  return null;
+};
 
 const CLOSE_REASON_RULES: Array<{re: RegExp; reason: CloseReason}> = [
   {re: /\bshipped\b|\bpublished\b|\breleased\b/i, reason: 'shipped'},
@@ -171,7 +193,13 @@ const flushItem = (state: ParseState, project: string, sourceFile: string): void
   // degenerate no-bold item as its own blocker ref.
   const blockedBy: string[] = [];
   const seenRefs = new Set<string>();
+  let source: string | null = null;
   for (let i = 1; i < pending.rawLines.length; ++i) {
+    if (source === null && SOURCE_RE.test(pending.maskedLines[i] ?? '')) {
+      const raw = SOURCE_RE.exec(pending.rawLines[i] ?? '');
+      if (raw && (raw[1] ?? '').trim().length > 0) source = normalizeSource(raw[1] ?? '');
+      continue;
+    }
     if (!BLOCKED_BY_RE.test(pending.maskedLines[i] ?? '')) continue;
     const raw = BLOCKED_BY_RE.exec(pending.rawLines[i] ?? '');
     if (!raw) continue;
@@ -203,7 +231,8 @@ const flushItem = (state: ParseState, project: string, sourceFile: string): void
     source_file: sourceFile,
     source_line: pending.startLine,
     body_hash: hashBody(title, body),
-    blocked_by: blockedBy
+    blocked_by: blockedBy,
+    source
   });
 };
 

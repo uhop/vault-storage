@@ -37,6 +37,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'item',
     'position',
     'create_section',
+    'on_existing',
     'occurrence',
     'expected_hash',
     'yaml',
