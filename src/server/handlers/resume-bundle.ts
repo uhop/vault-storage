@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {GithubThreadStates} from '../../fleet/threads.ts';
 import {incrementalReindex} from '../../maintenance/incremental-reindex.ts';
 import {maskCodeRegions} from '../../markdown/wikilinks.ts';
 import {blockedView, readyView} from '../../queue/ready.ts';
@@ -197,6 +198,7 @@ export const resumeBriefHandler =
         )
         .get(project, new Date().toISOString()) as {n: number};
       const trackers = projectTrackers(deps.vaultDataPath, project);
+      const threads = new GithubThreadStates(db);
       projectBlock = {
         name: project,
         trackers: {
@@ -208,11 +210,16 @@ export const resumeBriefHandler =
         queue: {
           // `active` keeps the titles for hooks before 2026-09-30; `in_flight`
           // adds the ticket each item mirrors (D107 `source:`), which is what
-          // the item in flight is in a project whose primary tracker is outside.
+          // the item in flight is in a project whose primary tracker is outside;
+          // `upstream` is that ticket's stored GitHub state (D111).
           active: mine.filter(row => row.section === 'active').map(row => row.title),
           in_flight: mine
             .filter(row => row.section === 'active')
-            .map(row => ({title: row.title, source: row.source})),
+            .map(row => ({
+              title: row.title,
+              source: row.source,
+              upstream: threads.ofSource(row.source).upstream
+            })),
           // Items a secondary tracker's intake put up for triage (2026-09-30).
           inbox: mine.filter(row => row.section === 'inbox').length,
           backlog: mine.filter(row => row.section === 'backlog').length,

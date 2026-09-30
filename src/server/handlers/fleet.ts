@@ -1,5 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {FleetStateRepository, type FleetRun} from '../../fleet/state.ts';
+import {trackedItems} from '../../fleet/threads.ts';
 import {asOf} from '../as-of.ts';
 import {rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
@@ -73,7 +74,7 @@ export const fleetStatusHandler =
               .slice(0, limit);
     }
     sendJson(ctx.res, 200, {
-      ...(project === undefined ? {} : {project}),
+      ...(project === undefined ? {} : {project, tracked: trackedItems(deps.db, project)}),
       baselines,
       runs,
       as_of: asOf(deps.db)

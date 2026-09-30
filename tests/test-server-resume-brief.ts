@@ -136,6 +136,27 @@ const seed = (root: string): void => {
   );
   writeMd(
     root,
+    'projects/vs-demo/state.md',
+    [
+      '---',
+      'title: vs-demo — State',
+      'type: state',
+      '---',
+      '',
+      '## GitHub',
+      '',
+      '```json',
+      JSON.stringify({
+        repo: 'uhop/vs-demo',
+        collected_at: '2026-09-30T01:00:00Z',
+        items: {'12': {state: 'closed', html_url: 'https://github.com/uhop/vs-demo/issues/12'}}
+      }),
+      '```',
+      ''
+    ].join('\n')
+  );
+  writeMd(
+    root,
     'projects/vs-messy/queue.md',
     [
       '---',
@@ -227,7 +248,7 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
         name: string;
         queue: {
           active: string[];
-          in_flight: Array<{title: string; source: string | null}>;
+          in_flight: Array<{title: string; source: string | null; upstream: string | null}>;
           inbox: number;
           backlog: number;
           ready: number;
@@ -241,10 +262,10 @@ test('GET /system/resume-brief?project= — queue counts + feedback pointer, sti
     t.deepEqual(
       body.project.queue.in_flight,
       [
-        {title: 'Mid-flight thing.', source: null},
-        {title: 'Ticket in flight.', source: 'github uhop/vs-demo#12'}
+        {title: 'Mid-flight thing.', source: null, upstream: null},
+        {title: 'Ticket in flight.', source: 'github uhop/vs-demo#12', upstream: 'closed'}
       ],
-      'the Active items with the ticket each mirrors'
+      'the Active items with the ticket each mirrors and its stored state'
     );
     t.equal(body.project.queue.inbox, 1, 'one item waits for triage');
     t.equal(body.project.queue.backlog, 2, 'two backlog items');

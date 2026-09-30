@@ -6,6 +6,7 @@ import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
 import {FakeEmbedder} from '../src/embeddings/fake.ts';
 import {DIGEST_PATH, FleetStateRepository, parseRuns, parseSection} from '../src/fleet/state.ts';
+import {closedUpstream, githubThread} from '../src/fleet/threads.ts';
 import {importVault} from '../src/importer/import.ts';
 import {RecordsRepository} from '../src/records/repository.ts';
 import type {ServerEnv} from '../src/server/env.ts';
@@ -140,6 +141,33 @@ test('parseSection and parseRuns read the fenced blocks the CLI writes', t => {
     [],
     'a section without a block is skipped'
   );
+});
+
+test('githubThread reads the three source shapes, and closedUpstream the two end states', t => {
+  const repo = 'uhop/node-re2';
+  t.deepEqual(githubThread(`github ${repo}#233`), {repo, kind: 'item', key: '233'});
+  t.deepEqual(githubThread(`github ${repo} discussion#89`), {repo, kind: 'discussion', key: '89'});
+  t.deepEqual(
+    githubThread(`github ${repo} GHSA-579H-GQQ2-r8cx`),
+    {repo, kind: 'advisory', key: 'GHSA-579h-gqq2-r8cx'},
+    'an advisory id keys as the baseline stores it'
+  );
+  for (const source of [
+    'linear ENG-123',
+    `github ${repo}`,
+    `github ${repo}#12 and more`,
+    `github ${repo} GHSA-1234`,
+    'github node-re2#12'
+  ]) {
+    t.equal(githubThread(source), null, `${source} names no GitHub thread`);
+  }
+  t.deepEqual([null, 'open', 'published', 'closed', 'merged'].map(closedUpstream), [
+    false,
+    false,
+    false,
+    true,
+    true
+  ]);
 });
 
 test('parseSince: Nd and ISO', t => {
@@ -365,6 +393,145 @@ test('GET /fleet/status: the import fills the derivative, and the route reads it
       (await get(`${ctx.url}/fleet/status?runs=0`)).body.baselines.map((b: any) => b.project),
       ['alpha'],
       'a deleted state.md takes its baseline along'
+    );
+  } finally {
+    await stop(ctx);
+  }
+});
+
+test('GET /fleet/status?project=: tracked, the open items that mirror a GitHub thread, with its stored state', async t => {
+  const baseline = (repo: string, github: object): string =>
+    [
+      fm(`${repo} — State`),
+      '## GitHub',
+      '',
+      '```json',
+      JSON.stringify({repo, collected_at: '2026-09-30T01:00:00Z', ...github}),
+      '```',
+      ''
+    ].join('\n');
+  const ctx = await start(root => {
+    writeMd(
+      root,
+      'projects/alpha/state.md',
+      baseline('uhop/alpha', {
+        items: {
+          '5': {state: 'open', html_url: 'https://github.com/uhop/alpha/issues/5'},
+          '6': {state: 'merged', html_url: 'https://github.com/uhop/alpha/pull/6'}
+        },
+        discussions: {'7': {closed: true, url: 'https://github.com/uhop/alpha/discussions/7'}},
+        advisories: {
+          'GHSA-aaaa-bbbb-cccc': {
+            state: 'published',
+            html_url: 'https://github.com/uhop/alpha/security/advisories/GHSA-aaaa-bbbb-cccc'
+          }
+        }
+      })
+    );
+    writeMd(
+      root,
+      'projects/beta/state.md',
+      baseline('uhop/Beta', {items: {'1': {state: 'closed'}}})
+    );
+    writeMd(
+      root,
+      'projects/alpha/queue.md',
+      [
+        fm('alpha — Queue'),
+        '## Active',
+        '',
+        '- **Issue five.** reviewed here',
+        '  - source: github uhop/alpha#5',
+        '- **PR six.** merged since',
+        '  - source: github uhop/alpha#6',
+        '- **No ticket.** plain work',
+        '',
+        '## Backlog',
+        '',
+        '- **Discussion seven.** closed upstream',
+        '  - source: github uhop/alpha discussion#7',
+        '- **An advisory.** published',
+        '  - source: github uhop/alpha GHSA-aaaa-bbbb-cccc',
+        '- **Beta one.** another repository, named in another case',
+        '  - source: github uhop/beta#1',
+        '- **Not collected.** no baseline carries it',
+        '  - source: github uhop/alpha#99',
+        '- **Linear.** outside GitHub',
+        '  - source: linear ENG-1',
+        '',
+        '## Watching',
+        '',
+        '(empty)',
+        ''
+      ].join('\n')
+    );
+    writeMd(
+      root,
+      'projects/alpha/queue-archive.md',
+      [
+        fm('alpha — Queue archive'),
+        '## 2026-09-29',
+        '',
+        '- **Archived.** **Shipped 2026-09-29**.',
+        '  - source: github uhop/alpha#4',
+        ''
+      ].join('\n')
+    );
+  });
+  try {
+    const {status, body} = await get(`${ctx.url}/fleet/status?project=alpha&runs=0`);
+    t.equal(status, 200);
+    t.deepEqual(body.tracked, [
+      {
+        title: 'Issue five.',
+        section: 'active',
+        source: 'github uhop/alpha#5',
+        upstream: 'open',
+        url: 'https://github.com/uhop/alpha/issues/5'
+      },
+      {
+        title: 'PR six.',
+        section: 'active',
+        source: 'github uhop/alpha#6',
+        upstream: 'merged',
+        url: 'https://github.com/uhop/alpha/pull/6'
+      },
+      {
+        title: 'Discussion seven.',
+        section: 'backlog',
+        source: 'github uhop/alpha discussion#7',
+        upstream: 'closed',
+        url: 'https://github.com/uhop/alpha/discussions/7'
+      },
+      {
+        title: 'An advisory.',
+        section: 'backlog',
+        source: 'github uhop/alpha GHSA-aaaa-bbbb-cccc',
+        upstream: 'published',
+        url: 'https://github.com/uhop/alpha/security/advisories/GHSA-aaaa-bbbb-cccc'
+      },
+      {
+        title: 'Beta one.',
+        section: 'backlog',
+        source: 'github uhop/beta#1',
+        upstream: 'closed',
+        url: null
+      },
+      {
+        title: 'Not collected.',
+        section: 'backlog',
+        source: 'github uhop/alpha#99',
+        upstream: null,
+        url: null
+      }
+    ]);
+    const fleet = await get(`${ctx.url}/fleet/status?runs=0`);
+    t.equal(fleet.body.tracked, undefined, 'only a project read carries tracked');
+    const brief = await get(`${ctx.url}/system/resume-brief?project=alpha`);
+    t.deepEqual(
+      brief.body.project.queue.in_flight.map((x: any) => x.upstream),
+      ['open', 'merged', null],
+      'the brief marks the in-flight tickets the same way'
     );
   } finally {
     await stop(ctx);

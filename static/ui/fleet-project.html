@@ -141,7 +141,7 @@
     <div class="footer" id="footer"></div>
 
     <script type="module">
-      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {
         stateDocPath,
         parseWhen,
@@ -168,7 +168,11 @@
         queueHref,
         projectHref,
         npmHref,
-        githubDetail
+        githubDetail,
+        closedUpstream,
+        trackItem,
+        closedTrail,
+        localDate
       } from '/ui/fleet-view.js';
       import {
         weeklyBars,
@@ -185,6 +189,7 @@
 
       let runs = [],
         trackers = null,
+        tracked = null,
         baseline = null,
         packages = null;
 
@@ -207,8 +212,37 @@
       const renderGithub = () => {
         if (!baseline)
           return `<section class="fmw-card"><h3>GitHub</h3><div class="empty">No stored GitHub baseline — the project has no public fleet repository, or <code>/fleet-status</code> has not collected it yet.</div></section>`;
-        const {html, links} = githubDetail({project, baseline}, runs, cutoffOf(windowState()));
+        const {html, links} = githubDetail({project, baseline}, runs, cutoffOf(windowState()), {
+          tracked,
+          track: true
+        });
         return `<section id="github" class="fmw-card"><h3>GitHub</h3>${html}<div class="links">${links}</div></section>`;
+      };
+
+      // The open queue items that mirror a GitHub thread, with its stored state (D111).
+      const renderTracked = () => {
+        if (!tracked) return '';
+        const rows = tracked
+          .map(x => {
+            const closed = closedUpstream(x.upstream);
+            const thread = x.url
+              ? ext(x.url, x.source.replace(/^github /, ''))
+              : `<code>${esc(x.source.replace(/^github /, ''))}</code>`;
+            const state =
+              x.upstream === null
+                ? '<span class="fmw-quiet">not in the stored baseline</span>'
+                : `<span class="${closed ? 'fmw-warn' : ''}">${esc(x.upstream)}</span>`;
+            const archive = closed
+              ? ` <button type="button" class="fmw-pill" data-archive="${esc(x.title)}" data-upstream="${esc(x.upstream)}">Archive</button>`
+              : '';
+            return `<li><a href="${queueHref(project)}">${esc(x.title)}</a> <span class="fmw-pill">${esc(x.section)}</span> · ${thread} · ${state}${archive}</li>`;
+          })
+          .join('');
+        return `<section id="tracked" class="fmw-card"><h3>Tracked on the queue</h3>${
+          rows
+            ? `<ul class="trackers">${rows}</ul>`
+            : '<div class="empty">No open queue item mirrors a GitHub thread.</div>'
+        }</section>`;
       };
 
       const renderFleet = p => {
@@ -399,7 +433,7 @@
           (a, b) => Number(Boolean(b.npm)) - Number(Boolean(a.npm)) || a.name.localeCompare(b.name)
         );
         $('#content').innerHTML =
-          `${renderTrackers()}${renderGithub()}${list.map(renderPackage).join('')}${
+          `${renderTrackers()}${renderGithub()}${renderTracked()}${list.map(renderPackage).join('')}${
             packages
               ? ''
               : '<section class="fmw-card"><h3>Packages</h3><div class="empty">No stored packages for this project.</div></section>'
@@ -437,6 +471,7 @@
             apiJson(`/projects/${encodeURIComponent(project)}/trackers`).catch(() => null)
           ]);
           trackers = trackersView;
+          tracked = status.tracked ?? null;
           runs = status.runs;
           baseline = status.baselines[0]?.github ?? null;
           packages = status.baselines[0]?.packages ?? null;
@@ -469,6 +504,86 @@
         if (baseline || packages) render();
       });
       bindTips($('#content'));
+
+      const queuePath = `projects/${project}/queue.md`;
+      const archivePath = `projects/${project}/queue-archive.md`;
+      const postJson = (path, body) =>
+        api(path, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+      // edit and move-item never create a document, so a missing queue or archive
+      // is created on their 404 and the request sent again.
+      const withDoc = async (path, frontmatter, body, send) => {
+        try {
+          await send();
+        } catch (e) {
+          if (e.status !== 404) throw e;
+          await api(`/vault/${path}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({frontmatter, body})
+          });
+          await send();
+        }
+      };
+      const track = ({track: source, heading, url}) =>
+        withDoc(
+          queuePath,
+          {
+            title: `${project} — Queue`,
+            type: 'project',
+            status: 'active',
+            tags: [project, 'queue']
+          },
+          `Outstanding work for ${project}.\n\n## Active\n\n## Backlog\n\n## Watching\n`,
+          () =>
+            postJson('/vault/edit', {
+              path: queuePath,
+              op: 'insert-item',
+              section: '## Active',
+              item: trackItem({heading, source, url, date: localDate()}),
+              position: 'start',
+              create_section: true
+            })
+        );
+      const archive = ({archive: title, upstream}) => {
+        const date = localDate();
+        return withDoc(
+          archivePath,
+          {
+            title: `${project} — Queue Archive`,
+            type: 'project',
+            status: 'active',
+            tags: [project, 'queue', 'archive'],
+            related: [`[[projects/${project}/queue]]`]
+          },
+          `Closed and shipped queue items for ${project}. Open work lives at [[projects/${project}/queue]].\n`,
+          () =>
+            postJson('/vault/move-item', {
+              from_path: queuePath,
+              to_path: archivePath,
+              title,
+              to_section: `## ${date}`,
+              create_section: true,
+              position: 'start',
+              trail: closedTrail(date, upstream)
+            })
+        );
+      };
+      $('#content').addEventListener('click', async e => {
+        const button = e.target.closest('button[data-track], button[data-archive]');
+        if (!button) return;
+        button.disabled = true;
+        try {
+          await ('track' in button.dataset ? track(button.dataset) : archive(button.dataset));
+          await load();
+        } catch (err) {
+          button.disabled = false;
+          $('#status').innerHTML = `<div class="err">${esc(err.message)}</div>`;
+        }
+      });
       window.addEventListener('hashchange', scrollToHash);
       let resizeTimer = null,
         renderedWidth = 0;
