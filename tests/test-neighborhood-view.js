@@ -93,5 +93,13 @@ test('countEdgeTypes counts a mirrored pair once and each directed edge', t => {
     {cites: 2},
     'two directed edges between one pair are two'
   );
+  t.deepEqual(
+    countEdgeTypes([
+      {from_id: 'x', to_id: 'y', type: 'contradicts'},
+      {from_id: 'y', to_id: 'x', type: 'contradicts'}
+    ]),
+    {contradicts: 1},
+    'a contradiction is stored mirrored and counted once'
+  );
   t.deepEqual(countEdgeTypes(undefined), {});
 });

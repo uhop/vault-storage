@@ -11,10 +11,8 @@ export const TYPE_ORDER = [
   'related-to'
 ];
 
-/** Types whose lists run long on a hub note; shown folded past SHOW_FIRST. */
-
-/** Stored mirrored, so each neighbour is listed once, under `out`. */
-export const SYMMETRIC_TYPES = new Set(['related-to']);
+/** Stored mirrored, so each neighbour is listed once, under `out`; the server's MIRRORED_EDGE_TYPES, pinned by tests/test-mirrored-types.ts. */
+export const SYMMETRIC_TYPES = new Set(['contradicts', 'related-to']);
 
 export const SHOW_FIRST = 8;
 
@@ -67,11 +65,12 @@ export const groupLinks = (rootId, neighborhood) => {
   });
 };
 
-/** The inbound edges a reader should see before the note: what supersedes or contradicts it. */
+/** What a reader should see before the note: what supersedes or contradicts it. */
 export const warnings = groups =>
   groups
-    .filter(g => (g.type === 'supersedes' || g.type === 'contradicts') && g.in.length > 0)
-    .map(g => ({type: g.type, records: g.in}));
+    .filter(g => g.type === 'supersedes' || g.type === 'contradicts')
+    .map(g => ({type: g.type, records: SYMMETRIC_TYPES.has(g.type) ? g.out : g.in}))
+    .filter(w => w.records.length > 0);
 
 const noteLink = (r, esc) =>
   `<a href="/ui/note.html?path=${encodeURIComponent(r.file_path)}"${r.note ? ` title="${esc(r.note)}"` : ''}>${esc(titleOf(r))}</a>`;

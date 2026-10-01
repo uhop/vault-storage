@@ -78,6 +78,27 @@ test('warnings names what supersedes or contradicts the note, and nothing else',
   t.ok(html.includes('note.html?path=topics%2Fsuccessor.md'), 'and links to the successor');
 });
 
+test('a mirrored contradicts lists its neighbour once and still warns', t => {
+  const groups = groupLinks('root', {
+    layers: [{depth: 1, records: [rec('k', 'topics/counter.md', 'Counter')]}],
+    edges: [
+      {from_id: 'root', to_id: 'k', type: 'contradicts', weight: 1, note: null, created: 't'},
+      {from_id: 'k', to_id: 'root', type: 'contradicts', weight: 1, note: null, created: 't'}
+    ]
+  });
+  t.equal(groups.length, 1);
+  t.equal(groups[0].out.length, 1, 'listed once');
+  t.equal(groups[0].in.length, 0);
+  t.deepEqual(
+    warnings(groups).map(w => [w.type, w.records.map(r => r.title)]),
+    [['contradicts', ['Counter']]],
+    'the notice names the other note'
+  );
+  const html = renderLinks(groups, esc);
+  t.ok(html.includes('links · contradicts 1'), 'counted once');
+  t.ok(html.includes('<span class="arrow">↔</span>'), 'marked as mirrored');
+});
+
 test('renderLinks counts each type in the summary, stays closed, and folds a long list', t => {
   const groups = groupLinks('root', neighborhood);
   const html = renderLinks(groups, esc);

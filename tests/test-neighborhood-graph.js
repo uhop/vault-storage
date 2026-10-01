@@ -109,6 +109,19 @@ test('layoutGraph draws a mirrored pair once, undirected, and drops a self edge'
   t.equal(layout.edges.length, 5);
 });
 
+test('layoutGraph draws a mirrored contradicts once, undirected', t => {
+  const pair = {
+    layers: [{depth: 1, records: [rec('k', 't/k.md', 'K')]}],
+    edges: [
+      {from_id: 'root', to_id: 'k', type: 'contradicts'},
+      {from_id: 'k', to_id: 'root', type: 'contradicts'}
+    ]
+  };
+  const drawn = layoutGraph('root', root, arrangeHops('root', pair), pair.edges).edges;
+  t.equal(drawn.length, 1);
+  t.equal(drawn[0].directed, false);
+});
+
 test('renderGraph escapes titles, links each note, and arrows only directed edges', t => {
   const svg = renderGraph(layout, esc, r => `/n?path=${encodeURIComponent(r.file_path)}&x="1"`);
   t.ok(svg.startsWith('<svg class="graph"'));

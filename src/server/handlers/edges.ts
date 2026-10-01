@@ -1,6 +1,6 @@
 import type {DatabaseSync} from 'node:sqlite';
 import type {EdgesRepository} from '../../records/edges.ts';
-import {EDGE_TYPES, type Edge, type EdgeType} from '../../records/types.ts';
+import {EDGE_TYPES, MIRRORED_EDGE_TYPES, type Edge, type EdgeType} from '../../records/types.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {
   parseFields,
@@ -66,8 +66,8 @@ const parseEdgeTypes = (raw: string | undefined): EdgeType[] | string => {
   return types as EdgeType[];
 };
 
-/** Which stored rows the listing counts: a mirrored `related-to` pair once. */
-const LISTED = "(e.type != 'related-to' OR e.from_id < e.to_id)";
+/** Which stored rows the listing counts: a mirrored pair once. */
+const LISTED = `(e.type NOT IN (${[...MIRRORED_EDGE_TYPES].map(t => `'${t}'`).join(', ')}) OR e.from_id < e.to_id)`;
 
 interface ListedEdgeRow {
   type: EdgeType;
@@ -86,7 +86,7 @@ interface ListedEdgeRow {
  * GET /edges?type=&offset=&limit=
  * Every stored edge, newest first, each with both records; `type` is a CSV
  * of edge types (unknown ones are a 400), `by_type` counts the whole table
- * under the same rule, a mirrored `related-to` pair listed once. Behind the
+ * under the same rule, a mirrored pair listed once. Behind the
  * edges page; agents get a note's own edges from the neighborhood route.
  */
 export const listEdgesHandler =

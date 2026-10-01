@@ -1014,7 +1014,7 @@ export const registerTools = (mcp, client) => {
     'vault_list_edges',
     {
       description:
-        "Every stored edge in the vault, newest first, paged: the listing behind the edges page. Filter with `type` (edge types; unknown ones are a 400). Returns the paginated envelope {items: [{type, weight, note, created, from: {record_id, file_path, title}, to: {record_id, file_path, title}}], offset, limit, total, by_type}, `by_type` counting the whole table per type and a mirrored related-to pair listed and counted once; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at}. For one note's own edges use vault_neighborhood or vault_backlinks instead.",
+        "Every stored edge in the vault, newest first, paged: the listing behind the edges page. Filter with `type` (edge types; unknown ones are a 400). Returns the paginated envelope {items: [{type, weight, note, created, from: {record_id, file_path, title}, to: {record_id, file_path, title}}], offset, limit, total, by_type}, `by_type` counting the whole table per type and a mirrored pair (related-to, contradicts) listed and counted once; page by items.length (limit caps at 100). Carries as_of: {generation, indexed_commit, at}. For one note's own edges use vault_neighborhood or vault_backlinks instead.",
       inputSchema: {
         type: z.array(EDGE_TYPE).optional().describe('Edge types to list; default all'),
         offset: z.number().int().min(0).optional().default(0),

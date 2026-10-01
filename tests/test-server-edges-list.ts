@@ -127,6 +127,33 @@ test('GET /edges lists every edge newest first with both records, a mirrored pai
   }
 });
 
+test('GET /edges lists and counts a mirrored contradicts pair once', async t => {
+  const ctx = await startCtx();
+  try {
+    const records = new RecordsRepository(ctx.db);
+    const id = (path: string) => records.getByPath(path)!.recordId;
+    const edges = new EdgesRepository(ctx.db);
+    for (const [from, to] of [
+      ['topics/a.md', 'topics/b.md'],
+      ['topics/b.md', 'topics/a.md']
+    ] as const)
+      edges.upsert({
+        fromId: id(from),
+        toId: id(to),
+        type: 'contradicts',
+        weight: 1,
+        note: null,
+        created: '2026-09-04T00:00:00.000Z'
+      });
+    const r = await get(`${ctx.url}/edges?type=contradicts`);
+    t.equal(r.body.total, 1, 'two stored rows, one listed');
+    t.equal(r.body.items.length, 1);
+    t.equal(r.body.by_type.contradicts, 1);
+  } finally {
+    await stopCtx(ctx);
+  }
+});
+
 test('GET /edges filters by type, pages by the envelope, and refuses an unknown type', async t => {
   const ctx = await startCtx();
   try {

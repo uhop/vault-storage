@@ -181,20 +181,11 @@
 
     <script type="module">
       import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {SYMMETRIC_TYPES, TYPE_ORDER} from '/ui/note-links.js';
       const $ = sel => document.querySelector(sel);
       const $$ = sel => document.querySelectorAll(sel);
 
       const PAGE = 100;
-      const TYPE_ORDER = [
-        'supersedes',
-        'revises',
-        'contradicts',
-        'derived-from',
-        'applies-to',
-        'cites',
-        'related-to'
-      ];
-      const SYMMETRIC = new Set(['related-to']);
 
       const list = {items: [], offset: 0, total: 0, seq: 0};
       let byType = {};
@@ -257,7 +248,7 @@
             e => `
       <div class="edge">
         ${noteLink(e.from)}
-        <span class="via"><span class="type">${esc(e.type)}</span>${SYMMETRIC.has(e.type) ? '↔' : '→'}</span>
+        <span class="via"><span class="type">${esc(e.type)}</span>${SYMMETRIC_TYPES.has(e.type) ? '↔' : '→'}</span>
         ${noteLink(e.to)}
         <small class="meta">${esc(fmtDate(e.created))}${e.note ? ` · ${esc(e.note)}` : ''}</small>
       </div>`
