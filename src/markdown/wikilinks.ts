@@ -15,6 +15,15 @@ const INLINE_CODE_RE = /`+[^`\n]+?`+/g;
 
 const blank = (s: string): string => s.replace(/[^\n]/g, ' ');
 
+// INLINE_CODE_RE spans no newline.
+const blankLine = (s: string): string => ' '.repeat(s.length);
+
+/** Texts this long keep their masks, up to this many characters in all (D125). */
+const MEMO_MIN_LENGTH = 16_384;
+const MEMO_CHARS = 4_000_000;
+const memo = new Map<string, string>();
+let memoChars = 0;
+
 /**
  * Fenced code blocks as `[start, end)` offsets. CommonMark § 4.5: a fence
  * closes only on a line of the same character, at least as long as the
@@ -44,12 +53,7 @@ const fencedRanges = (text: string): [number, number][] => {
   return ranges;
 };
 
-/**
- * Replace fenced code blocks and inline code spans with whitespace of the same
- * length. Indices are preserved so callers using `match.index` for context
- * windows still align with the original text.
- */
-export const maskCodeRegions = (text: string): string => {
+const mask = (text: string): string => {
   let masked = '';
   let from = 0;
   for (const [start, end] of fencedRanges(text)) {
@@ -57,7 +61,31 @@ export const maskCodeRegions = (text: string): string => {
     from = end;
   }
   masked += text.slice(from);
-  return masked.replace(INLINE_CODE_RE, blank);
+  return masked.replace(INLINE_CODE_RE, blankLine);
+};
+
+/**
+ * Replace fenced code blocks and inline code spans with whitespace of the same
+ * length. Indices are preserved so callers using `match.index` for context
+ * windows still align with the original text. The masks of the most recent
+ * long texts are kept, so the repeats of one write are lookups (D125).
+ */
+export const maskCodeRegions = (text: string): string => {
+  if (text.length < MEMO_MIN_LENGTH || text.length > MEMO_CHARS) return mask(text);
+  let masked = memo.get(text);
+  if (masked === undefined) {
+    masked = mask(text);
+    memoChars += text.length;
+    for (const kept of memo.keys()) {
+      if (memoChars <= MEMO_CHARS) break;
+      memo.delete(kept);
+      memoChars -= kept.length;
+    }
+  } else {
+    memo.delete(text);
+  }
+  memo.set(text, masked);
+  return masked;
 };
 
 /** Pull every wikilink target out of arbitrary text. Display segments are dropped. */

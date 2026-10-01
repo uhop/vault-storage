@@ -99,6 +99,32 @@ test('maskCodeRegions', async t => {
     const masked = maskCodeRegions(['````', 'open to the end'].join('\n'));
     t.ok(masked.includes('open to the end'));
   });
+  await t.test('an inline span becomes spaces of its length', t => {
+    t.equal(maskCodeRegions('a `x[[y]]` b ``z`` c'), `a ${' '.repeat(8)} b ${' '.repeat(5)} c`);
+  });
+  await t.test('a long text answers the same mask again, and a changed one is masked anew', t => {
+    const line = 'a `[[code]]` and [[real]]\n';
+    const text = line.repeat(1000);
+    const expected = `a ${' '.repeat(10)} and [[real]]\n`.repeat(1000);
+    t.ok(text.length >= 16_384, 'long enough to be kept');
+    t.equal(maskCodeRegions(text), expected);
+    t.equal(maskCodeRegions([...text].join('')), expected, 'an equal copy answers the kept mask');
+    const changed = text.replace('and [[real]]', 'and `[[real]]`');
+    t.equal(
+      maskCodeRegions(changed).split('\n')[0],
+      `a ${' '.repeat(10)} and ${' '.repeat(10)}`,
+      'the changed span is masked'
+    );
+    t.equal(maskCodeRegions(changed).length, changed.length);
+  });
+  await t.test('long texts past the kept budget are still masked right', t => {
+    let wrong = 0;
+    for (let i = 0; i < 300; ++i) {
+      const text = `${i} \`[[code]]\` [[real]]\n`.repeat(1200);
+      if (maskCodeRegions(text).includes('[[code]]')) ++wrong;
+    }
+    t.equal(wrong, 0, 'about 8.5 million characters masked, more than are kept');
+  });
 });
 
 test('extractRelatedFromFrontmatter', async t => {
