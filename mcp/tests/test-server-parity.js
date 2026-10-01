@@ -35,7 +35,7 @@ const UNEXPOSED = new Map([
   ['POST /maintenance/find-retention-candidates', 'deliberately not on MCP: vault_run_scans'],
   ['POST /maintenance/find-upgrade-signals', 'deliberately not on MCP: vault_run_scans'],
   ['POST /maintenance/expire-logs', 'a /vault sweep one-shot through vault-curl'],
-  ['POST /search/simple', 'vault_search uses the GET form'],
+  ['POST /search/simple', 'vault_search uses the trailing-slash form'],
   ['GET /sections/{id}/fm', 'vault_read_file and vault_read_meta cover it'],
   ['GET /sections/{id}/tags', 'vault_read_file covers it'],
   ['GET /handoffs/{id}/artifact', 'vault_handoff_get_artifact reaches it only for a real handoff']

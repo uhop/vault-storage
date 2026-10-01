@@ -67,6 +67,13 @@ Search & list:
   comma-separated (`supersedes:outbound`, `!cites:outbound:<id>`); `edges: true`
   adds each hit's `record_id` and edges; `edge_window` marks a semantic search
   whose window ran out first. Needs vault-storage from 2026-10-01.
+- vault_search_facets — for a query and mode, {total, edges: [{type,
+  direction: out|in|both, hits}], as_of}: how many of the notes it matches
+  (every lexical match, or the 100 nearest) carry each edge type each way,
+  each row what vault_search's `edge: "<type>:<direction>"` would keep;
+  hits counts notes, not edges, and a mirrored type is one `both` row. Takes
+  no edge conditions. Needs vault-storage from 2026-10-01; a server deployed
+  before this tool answers without as_of.
 - vault_context_pack — one prepared RAG pack anchored by exactly one of
   `query` (hybrid: lexical FTS + semantic ranking, fused by reciprocal
   rank; the semantic leg scores a record by the better of its best chunk

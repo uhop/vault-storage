@@ -622,7 +622,13 @@ test('POST /search/facets counts the hits with each type each way, over what a f
     try {
       const lexical = await fetchAuthed(`${ctx.url}/search/facets?query=cache`, {method: 'POST'});
       t.equal(lexical.status, 200);
-      t.deepEqual(lexical.body, {
+      const {as_of, ...counts} = lexical.body as {as_of: object};
+      t.deepEqual(
+        Object.keys(as_of),
+        ['generation', 'indexed_commit', 'at'],
+        'the stamp rides in the object body'
+      );
+      t.deepEqual(counts, {
         total: 5,
         edges: [
           {type: 'supersedes', direction: 'out', hits: 1},
@@ -639,7 +645,8 @@ test('POST /search/facets counts the hits with each type each way, over what a f
       const none = await fetchAuthed(`${ctx.url}/search/facets?query=nothing_matches`, {
         method: 'POST'
       });
-      t.deepEqual(none.body, {total: 0, edges: []});
+      const {as_of: _, ...nothing} = none.body as {as_of: object};
+      t.deepEqual(nothing, {total: 0, edges: []});
       t.equal(
         (await fetchAuthed(`${ctx.url}/search/facets?query=cache&edge=cites`, {method: 'POST'}))
           .status,

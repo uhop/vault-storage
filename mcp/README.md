@@ -42,7 +42,9 @@ that is down or older changes nothing.
 
 The tools map to the REST surface, grouped by purpose:
 
-- **Search & list** — `vault_search`, `vault_context_pack` (one prepared
+- **Search & list** — `vault_search`, `vault_search_facets` (how many of a
+  query's matches carry each edge type each way, the counts behind
+  `vault_search`'s `edge` filter), `vault_context_pack` (one prepared
   RAG pack — hybrid top-K chunks + a deduped 1-hop graph whose inbound
   entries are the backlinks, byte-budgeted chunks-first with every trim
   reported — replacing the search → similar → neighborhood → read chains),

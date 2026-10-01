@@ -166,6 +166,19 @@ export const registerTools = (mcp, client) => {
   );
 
   mcp.registerTool(
+    'vault_search_facets',
+    {
+      description:
+        'Count, for a search query, how many of the notes it matches carry each edge type each way, so an agent can pick vault_search\'s `edge` condition before searching with it. Returns {total, edges: [{type, direction: out|in|both, hits}], as_of}: total is how many notes the counts cover, every lexical match or the 100 nearest in semantic mode (vault_search\'s semantic window at its default limit); hits counts notes with at least one such edge, not edges; a mirrored type (related-to, contradicts) is one row with direction both. Each row is what `edge: "<type>:<outbound|inbound|both>"` on vault_search would keep, out being outbound and in inbound. Takes no edge conditions. as_of {generation, indexed_commit, at} is the content generation the counts were computed at. Needs vault-storage from 2026-10-01; a server deployed before this tool answers without as_of.',
+      inputSchema: {
+        query: z.string().min(1).describe('Search query text, as for vault_search'),
+        mode: z.enum(['lexical', 'semantic']).optional().default('lexical')
+      }
+    },
+    wrap(async ({query, mode}) => client.postJson('/search/facets', undefined, {query, mode}))
+  );
+
+  mcp.registerTool(
     'vault_context_pack',
     {
       description:

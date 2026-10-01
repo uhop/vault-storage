@@ -268,8 +268,9 @@ const FACET_WINDOW = 100;
 
 /**
  * POST /search/facets?query=...&mode=lexical|semantic: `{total, edges: [{type,
- * direction, hits}]}` over the records an `edge=` filter would test, every
- * match in lexical mode and the FACET_WINDOW nearest in semantic mode (D130).
+ * direction, hits}], as_of}` over the records an `edge=` filter would test,
+ * every match in lexical mode and the FACET_WINDOW nearest in semantic mode
+ * (D130, D131).
  */
 export const searchFacetsHandler =
   (deps: SearchDeps): Handler =>
@@ -295,10 +296,9 @@ export const searchFacetsHandler =
     } else {
       ids = lexicalIds(deps.db, query);
     }
-    sendJson(
-      ctx.res,
-      200,
-      {total: ids.length, edges: edgeFacets(deps.db, ids)},
-      asOfHeaders(asOf(deps.db))
-    );
+    sendJson(ctx.res, 200, {
+      total: ids.length,
+      edges: edgeFacets(deps.db, ids),
+      as_of: asOf(deps.db)
+    });
   };

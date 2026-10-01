@@ -284,6 +284,28 @@ test('vault_search passes edge conditions and edges, and reports a short window'
   t.equal(JSON.parse(firstText(result)).edge_window, 25);
 });
 
+test('vault_search_facets → POST /search/facets with the query and mode, body passed through', async t => {
+  const facets = {
+    total: 3,
+    edges: [{type: 'related-to', direction: 'both', hits: 2}],
+    as_of: {generation: 42, indexed_commit: 'abc1234', at: '2026-10-01T00:00:00.000Z'}
+  };
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify(facets), {
+        status: 200,
+        headers: {'Content-Type': 'application/json'}
+      })
+  );
+  const result = await call('vault_search_facets', {query: 'alpha', mode: 'semantic'});
+  t.equal(getCaptured().init.method, 'POST');
+  const url = new URL(getCaptured().url);
+  t.equal(url.pathname, '/search/facets');
+  t.equal(url.searchParams.get('query'), 'alpha');
+  t.equal(url.searchParams.get('mode'), 'semantic');
+  t.deepEqual(JSON.parse(firstText(result)), facets);
+});
+
 test('vault_health → GET /system/health, no parameters', async t => {
   const {call, getCaptured} = setup(
     () =>
