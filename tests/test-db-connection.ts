@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    38,
-    'schema version is 38 after all migrations through the import failures'
+    39,
+    'schema version is 39 after all migrations through the queue title key'
   );
   t.deepEqual(
     result.applied,
@@ -60,7 +60,8 @@ test('runs the init migration and creates required tables', t => {
       '0035_queue_inbox.sql',
       '0036_fleet_state.sql',
       '0037_external_links.sql',
-      '0038_import_failures.sql'
+      '0038_import_failures.sql',
+      '0039_queue_title_not_unique.sql'
     ],
     'all migrations applied in order'
   );
@@ -146,11 +147,17 @@ test('0035 rebuilds queue_items with the inbox section and keeps every row', t =
     '0035_queue_inbox.sql',
     '0036_fleet_state.sql',
     '0037_external_links.sql',
-    '0038_import_failures.sql'
+    '0038_import_failures.sql',
+    '0039_queue_title_not_unique.sql'
   ]);
   t.deepEqual(
     result.reindex,
-    ['0036_fleet_state.sql', '0037_external_links.sql', '0038_import_failures.sql'],
+    [
+      '0036_fleet_state.sql',
+      '0037_external_links.sql',
+      '0038_import_failures.sql',
+      '0039_queue_title_not_unique.sql'
+    ],
     'the rebuilt rows are the same rows: 0035 asks no reindex'
   );
   t.deepEqual(
@@ -193,10 +200,11 @@ test('0035 rebuilds queue_items with the inbox section and keeps every row', t =
       'idx_queue_items_archive_by_date',
       'idx_queue_items_by_priority',
       'idx_queue_items_by_project',
+      'idx_queue_items_by_title',
       'idx_queue_items_open_by_prio',
       'idx_queue_items_source'
     ],
-    'the five indexes are back'
+    'the indexes are back, a plain title index where the unique key was'
   );
   db.close();
 });
@@ -239,7 +247,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0035_queue_inbox.sql',
     '0036_fleet_state.sql',
     '0037_external_links.sql',
-    '0038_import_failures.sql'
+    '0038_import_failures.sql',
+    '0039_queue_title_not_unique.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -283,7 +292,8 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     '0035_queue_inbox.sql',
     '0036_fleet_state.sql',
     '0037_external_links.sql',
-    '0038_import_failures.sql'
+    '0038_import_failures.sql',
+    '0039_queue_title_not_unique.sql'
   ]);
   t.deepEqual(
     result.reindex,
@@ -293,9 +303,10 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
       '0034_queue_source.sql',
       '0036_fleet_state.sql',
       '0037_external_links.sql',
-      '0038_import_failures.sql'
+      '0038_import_failures.sql',
+      '0039_queue_title_not_unique.sql'
     ],
-    'the findings table, the project and source columns, the fleet tables, the link index, and the import failures force a reindex'
+    'the findings table, the project and source columns, the fleet tables, the link index, the import failures, and the queue rebuild force a reindex'
   );
   const rows = db
     .prepare('SELECT id, status, resolved_by FROM suggestions ORDER BY id')
@@ -337,7 +348,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     '0035_queue_inbox.sql',
     '0036_fleet_state.sql',
     '0037_external_links.sql',
-    '0038_import_failures.sql'
+    '0038_import_failures.sql',
+    '0039_queue_title_not_unique.sql'
   ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
@@ -360,7 +372,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 38, 'schema version stays at 38');
+  t.equal(second.current, 39, 'schema version stays at 39');
   db.close();
 });
 
@@ -431,7 +443,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0035_queue_inbox.sql',
       '0036_fleet_state.sql',
       '0037_external_links.sql',
-      '0038_import_failures.sql'
+      '0038_import_failures.sql',
+      '0039_queue_title_not_unique.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );
@@ -714,4 +727,63 @@ test('0020 backfills payload.evidence by kind on rows filed before the filer sta
   } finally {
     db.close();
   }
+});
+
+test('0039 drops the queue title key and keeps every row', t => {
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  // Rewind to 38: the 0035 table, unique on project, section, and title.
+  db.exec(`
+    DROP TABLE queue_items;
+    CREATE TABLE queue_items (
+      id TEXT PRIMARY KEY, project TEXT NOT NULL,
+      section TEXT NOT NULL CHECK (section IN ('inbox', 'active', 'backlog', 'watching', 'archive')),
+      priority INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL, title TEXT NOT NULL,
+      title_norm TEXT NOT NULL, body TEXT NOT NULL, closed_at TEXT, close_reason TEXT,
+      source_file TEXT NOT NULL, source_line INTEGER NOT NULL, body_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      blocked_by TEXT NOT NULL DEFAULT '[]', source TEXT,
+      UNIQUE (project, section, title_norm));
+    INSERT INTO queue_items (id, project, section, priority, position, title, title_norm, body,
+      closed_at, source_file, source_line, body_hash, created_at, updated_at)
+      VALUES ('q1', 'p', 'archive', 0, 1, 'Alerts open.', 'alerts open.', 'b',
+              '2026-09-29', 'projects/p/queue-archive.md', 5, 'h1',
+              '2026-09-29T00:00:00Z', '2026-09-29T01:00:00Z');
+    UPDATE meta SET value = '38' WHERE key = 'schema_version';
+  `);
+  const result = runMigrations(db);
+  t.deepEqual(result.applied, ['0039_queue_title_not_unique.sql']);
+  t.deepEqual(
+    result.reindex,
+    ['0039_queue_title_not_unique.sql'],
+    'a full import derives the slices'
+  );
+  t.deepEqual(
+    {
+      ...(db
+        .prepare('SELECT id, closed_at, created_at, updated_at FROM queue_items')
+        .get() as object)
+    },
+    {
+      id: 'q1',
+      closed_at: '2026-09-29',
+      created_at: '2026-09-29T00:00:00Z',
+      updated_at: '2026-09-29T01:00:00Z'
+    },
+    'the row survives with its id and stamps'
+  );
+  db.exec(`INSERT INTO queue_items (id, project, section, priority, position, title, title_norm, body,
+      closed_at, source_file, source_line, body_hash, created_at, updated_at)
+      VALUES ('q2', 'p', 'archive', 0, 2, 'Alerts open.', 'alerts open.', 'b2',
+              '2026-09-30', 'projects/p/queue-archive.md', 9, 'h2', 'x', 'x')`);
+  t.equal(
+    (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM queue_items WHERE title_norm = 'alerts open.'`)
+        .get() as {n: number}
+    ).n,
+    2,
+    'a second item of the same title is stored'
+  );
+  db.close();
 });

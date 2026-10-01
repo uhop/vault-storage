@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
-import {importFile} from '../src/importer/import-file.ts';
+import {importFile, importFileAtomically} from '../src/importer/import-file.ts';
 import {fullImportOptions} from '../src/importer/import-options.ts';
 import {IMPORT_BATCH_FILES, importVault, importVaultAsync} from '../src/importer/import.ts';
 import {FmFindingsRepository} from '../src/records/fm-findings.ts';
@@ -1181,6 +1181,58 @@ test('importer records a file that fails to parse, and clears it once the file i
     rmSync(join(root, 'topics/gone.md'));
     importVault(db, root);
     t.equal(failures.count(), 0, 'a full import rebuilds the table from the files');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('importFileAtomically: a throw after the record is written leaves none of the file', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    writeMd(root, 'topics/a.md', '---\ntitle: A\n---\nbody\n');
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    const records = new RecordsRepository(db);
+    const throwing = {
+      replace: () => {
+        throw new Error('after the upsert');
+      }
+    } as unknown as FmFindingsRepository;
+    const abs = join(root, 'topics/a.md');
+    t.throws(() =>
+      importFileAtomically(db, records, 'topics/a.md', abs, undefined, {fmFindings: throwing})
+    );
+    t.equal(records.getByPath('topics/a.md'), null, 'the record was rolled back');
+    t.throws(() => importFile(records, 'topics/a.md', abs, undefined, {fmFindings: throwing}));
+    t.ok(records.getByPath('topics/a.md'), 'where the plain import leaves it half written');
+    db.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('an archive holding two items of one title imports whole from an empty database', t => {
+  const {root, cleanup} = setupVault();
+  try {
+    const item = (body: string) => `- **GitHub: o/r — alerts open.** ${body}\n`;
+    writeMd(
+      root,
+      'projects/demo/queue-archive.md',
+      `---\ntitle: demo — Queue archive\n---\n## 2026-09-30\n\n${item('Closed again.')}\n## 2026-09-29\n\n${item('Shipped.')}`
+    );
+    const db = openDatabase({path: ':memory:'});
+    runMigrations(db);
+    t.equal(importVault(db, root).skipped, 0, 'no failure');
+    t.equal(
+      (
+        db.prepare(`SELECT COUNT(*) AS n FROM queue_items WHERE project = 'demo'`).get() as {
+          n: number;
+        }
+      ).n,
+      2,
+      'both items are in the slice'
+    );
     db.close();
   } finally {
     cleanup();

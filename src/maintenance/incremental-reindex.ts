@@ -16,7 +16,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
-import {importFile} from '../importer/import-file.ts';
+import {importFileAtomically} from '../importer/import-file.ts';
 import {fullImportOptions} from '../importer/import-options.ts';
 import {importVaultAsync} from '../importer/import.ts';
 import {syncQueueFile} from '../queue/sync.ts';
@@ -256,7 +256,7 @@ const runIncrementalReindex = async (
             db.prepare('UPDATE records SET file_path = ? WHERE file_path = ?').run(c.new, c.old);
             const abs = join(vaultDataPath, c.new);
             if (existsSync(abs)) {
-              importFile(records, c.new, abs, now, options);
+              importFileAtomically(db, records, c.new, abs, now, options);
             }
             syncQueueFile(options.queueItems, c.old, vaultDataPath, now);
             summary.renamed++;
@@ -273,7 +273,7 @@ const runIncrementalReindex = async (
             // New .md appeared (renamed from non-.md).
             const abs = join(vaultDataPath, c.new);
             if (existsSync(abs)) {
-              importFile(records, c.new, abs, now, options);
+              importFileAtomically(db, records, c.new, abs, now, options);
               summary.imported++;
             }
           }
@@ -293,7 +293,7 @@ const runIncrementalReindex = async (
           if (c.kind === 'add') pathSetChanged = true;
           const abs = join(vaultDataPath, c.path);
           if (existsSync(abs)) {
-            importFile(records, c.path, abs, now, options);
+            importFileAtomically(db, records, c.path, abs, now, options);
             summary.imported++;
             if (c.kind === 'modify') {
               const rec = records.getByPath(c.path);

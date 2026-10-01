@@ -14,7 +14,7 @@ import {EMBED_ROUND, embedPending} from '../embeddings/embed-pass.ts';
 import {warmChunkMatrix} from '../db/chunk-matrix.ts';
 import type {Embedder} from '../embeddings/types.ts';
 import {buildEdges, buildEdgesAsync} from '../importer/build-edges.ts';
-import {importFile} from '../importer/import-file.ts';
+import {importFileAtomically} from '../importer/import-file.ts';
 import {fullImportOptions} from '../importer/import-options.ts';
 import {syncQueueFile} from '../queue/sync.ts';
 import {failureMessage} from '../records/import-failures.ts';
@@ -165,7 +165,7 @@ export const startWatcher = (opts: WatcherOptions): WatcherHandle => {
             if (dropped) queueItemsTouched += dropped.deleted;
             continue;
           }
-          const importResult = importFile(records, relativePath, abs, now, options);
+          const importResult = importFileAtomically(db, records, relativePath, abs, now, options);
           if (importResult.action === 'inserted') {
             pathSetChanged = true;
           } else {

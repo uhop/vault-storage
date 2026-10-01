@@ -3,7 +3,7 @@ import {setImmediate as nextTurn} from 'node:timers/promises';
 import {failureMessage} from '../records/import-failures.ts';
 import {RecordsRepository} from '../records/repository.ts';
 import {buildEdges, buildEdgesAsync, type EdgeBuildSummary} from './build-edges.ts';
-import {importFile} from './import-file.ts';
+import {importFileAtomically} from './import-file.ts';
 import {fullImportOptions} from './import-options.ts';
 import {walkMarkdown, type MarkdownFile} from './walk.ts';
 
@@ -44,7 +44,14 @@ function* importBatches(
       for (const file of batch) {
         ++counts.total;
         try {
-          const result = importFile(records, file.relativePath, file.absolutePath, now, options);
+          const result = importFileAtomically(
+            db,
+            records,
+            file.relativePath,
+            file.absolutePath,
+            now,
+            options
+          );
           ++counts[result.action];
         } catch (err) {
           ++counts.skipped;

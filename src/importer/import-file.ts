@@ -1,5 +1,6 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import type {DatabaseSync} from 'node:sqlite';
 import type {EnrichmentBaselineRepository} from '../db/enrichment-baseline-repo.ts';
 import type {FleetStateRepository} from '../fleet/state.ts';
 import type {ExternalLinksRepository} from '../links/external.ts';
@@ -425,4 +426,29 @@ export const importFile = (
   }
 
   return {action, recordId, queue};
+};
+
+/**
+ * {@link importFile} inside a savepoint: a file whose import throws leaves
+ * none of its writes, where it had left its record without its queue slice
+ * (D118). Rethrows, so the caller records the failure after the rollback.
+ */
+export const importFileAtomically = (
+  db: DatabaseSync,
+  records: RecordsRepository,
+  relativePath: string,
+  absolutePath: string,
+  now?: string,
+  options: ImportFileOptions = {}
+): ImportFileResult => {
+  db.exec('SAVEPOINT import_file');
+  try {
+    const result = importFile(records, relativePath, absolutePath, now, options);
+    db.exec('RELEASE import_file');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK TO import_file');
+    db.exec('RELEASE import_file');
+    throw err;
+  }
 };

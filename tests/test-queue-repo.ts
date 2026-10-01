@@ -18,7 +18,7 @@ test('migration 0008 applies and queue_items is empty', t => {
   const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get() as {
     value: string;
   };
-  t.equal(row.value, '38', 'schema_version bumped to 38');
+  t.equal(row.value, '39', 'schema_version bumped to 39');
   db.close();
 });
 
@@ -386,5 +386,53 @@ test('applyParsed — parser-upgrade re-extraction: refs refresh on an unchanged
   const row = repo.listOpenByProject('demo')[0];
   t.deepEqual(row?.blocked_by, ['The blocker.'], 'refs materialized');
   t.equal(row?.updated_at, '2026-07-23T10:00:00Z', 'updated_at not churned by the refresh');
+  db.close();
+});
+
+test('applyParsed — items sharing a title in a section each keep a row, and a resync edits none', t => {
+  const {db, repo} = setup();
+  const path = 'projects/demo/queue-archive.md';
+  const day = (date: string, body: string): string =>
+    `## ${date}\n\n- **GitHub: o/r — alerts open.** ${body}\n`;
+  const twice = FM + day('2026-09-30', 'Closed: the second time.') + day('2026-09-29', 'Shipped.');
+  const parse = (src: string) => parseQueueFile('demo', path, src);
+
+  t.equal(
+    repo.applyParsed('demo', path, parse(twice), '2026-09-30T00:00:00Z').inserted,
+    2,
+    'both are stored from an empty slice'
+  );
+  t.deepEqual(
+    repo.applyParsed('demo', path, parse(twice), '2026-09-30T01:00:00Z'),
+    {inserted: 0, updated: 0, refreshed: 0, deleted: 0},
+    'a resync of the same text changes nothing'
+  );
+
+  const thrice = FM + day('2026-10-01', 'Closed: the third time.') + twice.slice(FM.length);
+  const third = repo.applyParsed('demo', path, parse(thrice), '2026-10-01T00:00:00Z');
+  t.deepEqual(
+    [third.inserted, third.updated, third.deleted],
+    [1, 0, 0],
+    'archived again: one more'
+  );
+  t.deepEqual(
+    repo.listArchiveByProject('demo').map(r => [r.closed_at, r.updated_at]),
+    [
+      ['2026-10-01', '2026-10-01T00:00:00Z'],
+      ['2026-09-30', '2026-09-30T00:00:00Z'],
+      ['2026-09-29', '2026-09-30T00:00:00Z']
+    ],
+    'the earlier two keep their stamps'
+  );
+
+  const edited = thrice.replace('the second time.', 'the second time, amended.');
+  const edit = repo.applyParsed('demo', path, parse(edited), '2026-10-02T00:00:00Z');
+  t.deepEqual([edit.inserted, edit.updated, edit.deleted], [0, 1, 0], 'an edit updates one row');
+  t.equal(
+    repo.listArchiveByProject('demo').filter(r => r.updated_at === '2026-10-02T00:00:00Z')[0]
+      ?.closed_at,
+    '2026-09-30',
+    'the one edited'
+  );
   db.close();
 });

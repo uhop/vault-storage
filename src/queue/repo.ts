@@ -9,10 +9,11 @@
 //   - Items in both, body_hash differs → UPDATE everything, bump updated_at.
 //   - Items in DB, missing from parse → DELETE.
 //
-// Identity for diffing within the slice is `(section, title_norm)` because
-// the unique key includes section: a Backlog → Active move shows up as a
-// DELETE + INSERT, which is what we want — title_norm collisions across
-// sections are real (an item really did move).
+// Identity for diffing within the slice is `(section, title_norm)`, so a
+// Backlog → Active move shows up as a DELETE + INSERT, which is what we want.
+// Items sharing a title in one section (an archive keeps every review item
+// filed under a fixed title) are told apart by body hash, then by file order
+// (D118).
 //
 // All reconciliation runs inside a single transaction so a parse-error or
 // constraint violation mid-way doesn't leave the slice half-rebuilt.
@@ -92,7 +93,14 @@ const rowFromDb = (row: DbRow): QueueItemRow => ({
   updated_at: row.updated_at
 });
 
-const sliceKey = (section: QueueSection, titleNorm: string): string => `${section}\0${titleNorm}`;
+const sliceKey = (section: QueueSection, titleNorm: string): string => `${section}\t${titleNorm}`;
+
+/** Append to the list kept under `key`, creating it. */
+const pushTo = <T>(map: Map<string, T[]>, key: string, value: T): void => {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+};
 
 export interface ApplyResult {
   inserted: number;
@@ -128,7 +136,7 @@ export class QueueItemsRepository {
   constructor(db: DatabaseSync) {
     this.#db = db;
     this.#selectBySlice = db.prepare(
-      'SELECT * FROM queue_items WHERE project = ? AND source_file = ?'
+      'SELECT * FROM queue_items WHERE project = ? AND source_file = ? ORDER BY source_line'
     );
 
     this.#insert = db.prepare(
@@ -219,87 +227,107 @@ export class QueueItemsRepository {
       }
     }
 
-    const existing = new Map<string, DbRow>();
+    const existing = new Map<string, DbRow[]>();
     for (const row of this.#selectBySlice.all(project, sourceFile) as unknown as DbRow[]) {
-      existing.set(sliceKey(row.section as QueueSection, row.title_norm), row);
+      pushTo(existing, sliceKey(row.section as QueueSection, row.title_norm), row);
     }
+    const groups = new Map<string, ParsedQueueItem[]>();
+    for (const it of parsed) pushTo(groups, sliceKey(it.section, it.title_norm), it);
 
-    const seen = new Set<string>();
     const result: ApplyResult = {inserted: 0, updated: 0, refreshed: 0, deleted: 0};
+
+    const apply = (it: ParsedQueueItem, prior: DbRow | undefined): void => {
+      if (!prior) {
+        this.#insert.run(
+          uuidv7(),
+          it.project,
+          it.section,
+          it.priority,
+          it.position,
+          it.title,
+          it.title_norm,
+          it.body,
+          it.closed_at,
+          it.close_reason,
+          it.source_file,
+          it.source_line,
+          it.body_hash,
+          JSON.stringify(it.blocked_by),
+          it.source,
+          now,
+          now
+        );
+        ++result.inserted;
+        return;
+      }
+
+      if (prior.body_hash !== it.body_hash) {
+        this.#updateBody.run(
+          it.priority,
+          it.position,
+          it.title,
+          it.body,
+          it.closed_at,
+          it.close_reason,
+          it.source_line,
+          it.body_hash,
+          JSON.stringify(it.blocked_by),
+          it.source,
+          now,
+          prior.id
+        );
+        ++result.updated;
+        return;
+      }
+
+      // blocked_by rides the refresh path even though refs live in the
+      // body: a PARSER upgrade can extract new refs from an unchanged
+      // body (hash equal), and the 2026-07-23 deploy proved it — rows
+      // synced pre-deploy kept stale '[]' through a full reindex.
+      const nextRefs = JSON.stringify(it.blocked_by);
+      const placementChanged =
+        prior.priority !== it.priority ||
+        prior.position !== it.position ||
+        prior.source_line !== it.source_line ||
+        prior.blocked_by !== nextRefs;
+      if (placementChanged) {
+        this.#refreshPlacement.run(it.priority, it.position, it.source_line, nextRefs, prior.id);
+        ++result.refreshed;
+      }
+    };
 
     // sqlite savepoint guards atomicity inside an outer transaction (if any);
     // standalone callers are still all-or-nothing.
     const db = this.#db;
     db.exec('SAVEPOINT queue_items_apply');
     try {
-      for (const it of parsed) {
-        const key = sliceKey(it.section, it.title_norm);
-        seen.add(key);
-        const prior = existing.get(key);
-
-        if (!prior) {
-          this.#insert.run(
-            uuidv7(),
-            it.project,
-            it.section,
-            it.priority,
-            it.position,
-            it.title,
-            it.title_norm,
-            it.body,
-            it.closed_at,
-            it.close_reason,
-            it.source_file,
-            it.source_line,
-            it.body_hash,
-            JSON.stringify(it.blocked_by),
-            it.source,
-            now,
-            now
-          );
-          ++result.inserted;
-          continue;
+      for (const [key, items] of groups) {
+        const free = existing.get(key) ?? [];
+        existing.delete(key);
+        const take = (match: (row: DbRow) => boolean): DbRow | undefined => {
+          const i = free.findIndex(match);
+          return i < 0 ? undefined : free.splice(i, 1)[0];
+        };
+        const unmatched: ParsedQueueItem[] = [];
+        const pairs: [ParsedQueueItem, DbRow | undefined][] = [];
+        for (const it of items) {
+          const same = take(row => row.body_hash === it.body_hash);
+          if (same) pairs.push([it, same]);
+          else unmatched.push(it);
         }
-
-        if (prior.body_hash !== it.body_hash) {
-          this.#updateBody.run(
-            it.priority,
-            it.position,
-            it.title,
-            it.body,
-            it.closed_at,
-            it.close_reason,
-            it.source_line,
-            it.body_hash,
-            JSON.stringify(it.blocked_by),
-            it.source,
-            now,
-            prior.id
-          );
-          ++result.updated;
-          continue;
-        }
-
-        // blocked_by rides the refresh path even though refs live in the
-        // body: a PARSER upgrade can extract new refs from an unchanged
-        // body (hash equal), and the 2026-07-23 deploy proved it — rows
-        // synced pre-deploy kept stale '[]' through a full reindex.
-        const nextRefs = JSON.stringify(it.blocked_by);
-        const placementChanged =
-          prior.priority !== it.priority ||
-          prior.position !== it.position ||
-          prior.source_line !== it.source_line ||
-          prior.blocked_by !== nextRefs;
-        if (placementChanged) {
-          this.#refreshPlacement.run(it.priority, it.position, it.source_line, nextRefs, prior.id);
-          ++result.refreshed;
+        for (const it of unmatched) pairs.push([it, take(() => true)]);
+        for (const [it, prior] of pairs) apply(it, prior);
+        for (const row of free) {
+          this.#deleteById.run(row.id);
+          ++result.deleted;
         }
       }
 
-      for (const [key, row] of existing) {
-        if (seen.has(key)) continue;
-        this.#deleteById.run(row.id);
-        ++result.deleted;
+      for (const rows of existing.values()) {
+        for (const row of rows) {
+          this.#deleteById.run(row.id);
+          ++result.deleted;
+        }
       }
 
       db.exec('RELEASE queue_items_apply');
