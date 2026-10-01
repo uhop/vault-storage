@@ -37,6 +37,7 @@ import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
 import {getCurrentHead, gitFailure, isGitRepo, runGit, type GitResult} from '../util/git.ts';
+import {exportVaultState} from '../vault-state.ts';
 import type {HealthMonitor} from './health.ts';
 
 export interface WorkHoursWindow {
@@ -242,6 +243,15 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
   /** Returns 'committed', 'quiet', or 'skipped'. */
   const syncOnce = async (force: boolean): Promise<'committed' | 'quiet' | 'skipped'> => {
     if (!force && !inWindow()) return 'skipped';
+
+    // The database-only state rides in the commit with the content it belongs to (D121).
+    if (opts.db) {
+      try {
+        await exportVaultState(opts.db, vaultDataPath);
+      } catch (err) {
+        log(`git-sync: state export failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
 
     const status = await git(['status', '--porcelain']);
     if (status.exitCode !== 0) {

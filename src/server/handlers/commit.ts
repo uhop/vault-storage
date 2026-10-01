@@ -1,6 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../../maintenance/incremental-reindex.ts';
 import {getCurrentHead, gitFailure, isGitRepo, runGit} from '../../util/git.ts';
+import {exportVaultState} from '../../vault-state.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {readBodyText} from '../body.ts';
 import {sendError, sendJson} from '../responses.ts';
@@ -120,6 +121,9 @@ export const commitHandler =
         }
       }
     }
+
+    // A whole-tree commit carries the database-only state as git-sync's does (D121).
+    if (!body.paths) await exportVaultState(deps.db, deps.vaultDataPath);
 
     // Status — what's dirty?
     const status = await runGit(deps.vaultDataPath, ['status', '--porcelain']);

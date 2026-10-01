@@ -160,18 +160,28 @@ test('POST /commit with paths only stages those paths', async t => {
   }
 });
 
-test('POST /commit returns committed=false on a clean tree', async t => {
+test('POST /commit carries the state export, then returns committed=false on a clean tree', async t => {
   const ctx = await startTestServer(initRepo());
   try {
-    const {body} = await fetchJson(`${ctx.url}/commit`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({})
-    });
-    const r = body as {committed: boolean; reason?: string};
-    t.equal(r.committed, false, 'committed=false');
-    t.equal(r.reason, 'nothing-to-commit', 'reason field');
-    t.equal(log(ctx.root).length, 1, 'no new commit added');
+    const commit = async () =>
+      (
+        await fetchJson(`${ctx.url}/commit`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({})
+        })
+      ).body as {committed: boolean; reason?: string; files?: string[]};
+    const first = await commit();
+    t.equal(first.committed, true, 'the first export is a change');
+    t.deepEqual(
+      first.files,
+      ['.vault-storage-state/records.jsonl', '.vault-storage-state/tags.jsonl'],
+      'the state files, and nothing else'
+    );
+    const second = await commit();
+    t.equal(second.committed, false, 'committed=false');
+    t.equal(second.reason, 'nothing-to-commit', 'reason field');
+    t.equal(log(ctx.root).length, 2, 'no commit after the export');
   } finally {
     await teardown(ctx);
   }
