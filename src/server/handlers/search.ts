@@ -6,7 +6,13 @@ import {asOf, asOfHeaders} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {prepared} from '../../db/prepared.ts';
-import {edgeFilterSql, edgesOf, parseEdgeFilter, type EdgeCondition} from '../edge-filter.ts';
+import {
+  edgeFacets,
+  edgeFilterSql,
+  edgesOf,
+  parseEdgeFilter,
+  type EdgeCondition
+} from '../edge-filter.ts';
 
 interface SearchDeps {
   db: DatabaseSync;
@@ -238,4 +244,61 @@ export const simpleSearchHandler =
     const headers = asOfHeaders(asOf(deps.db));
     if (window !== null) headers['X-Vault-Edge-Window'] = String(window);
     sendJson(ctx.res, 200, body, headers);
+  };
+
+/** Every record the lexical query matches, unranked; none for a query FTS5 cannot read. */
+const lexicalIds = (db: DatabaseSync, query: string): string[] => {
+  const built = buildMatch(query);
+  if (!built) return [];
+  try {
+    return (
+      prepared(
+        db,
+        `SELECT r.record_id FROM records_fts JOIN records r ON r.rowid = records_fts.rowid
+          WHERE records_fts MATCH ?`
+      ).all(built.match) as unknown[] as {record_id: string}[]
+    ).map(r => r.record_id);
+  } catch {
+    return [];
+  }
+};
+
+/** How many nearest records a semantic facet counts over: the filter's window at the page's 20 hits. */
+const FACET_WINDOW = 100;
+
+/**
+ * POST /search/facets?query=...&mode=lexical|semantic: `{total, edges: [{type,
+ * direction, hits}]}` over the records an `edge=` filter would test, every
+ * match in lexical mode and the FACET_WINDOW nearest in semantic mode (D130).
+ */
+export const searchFacetsHandler =
+  (deps: SearchDeps): Handler =>
+  async ctx => {
+    if (!rejectUnknownParams(ctx, new Set(['query', 'mode']))) return;
+    const query = ctx.query['query'];
+    if (!query) {
+      sendError(ctx.res, 400, 'bad_request', 'missing query parameter');
+      return;
+    }
+    const mode = ctx.query['mode'] ?? 'lexical';
+    if (mode !== 'lexical' && mode !== 'semantic') {
+      sendError(ctx.res, 400, 'bad_request', `unknown mode: ${mode}`);
+      return;
+    }
+    let ids: string[];
+    if (mode === 'semantic') {
+      const near = await new RecordVecRepository(deps.db).nearest(
+        await deps.embedder.embedQuery(query),
+        FACET_WINDOW
+      );
+      ids = near.map(h => h.recordId);
+    } else {
+      ids = lexicalIds(deps.db, query);
+    }
+    sendJson(
+      ctx.res,
+      200,
+      {total: ids.length, edges: edgeFacets(deps.db, ids)},
+      asOfHeaders(asOf(deps.db))
+    );
   };

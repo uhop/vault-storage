@@ -12,7 +12,8 @@ import type {Edge, EdgeType, VaultRecord} from '../records/types.ts';
 import {
   ACCEPTED_EDGE_DECLARATIONS,
   DECLARED_EDGE_TYPES,
-  EDGE_TYPE_ALIASES
+  EDGE_TYPE_ALIASES,
+  MIRRORED_EDGE_TYPES
 } from '../records/types.ts';
 import {classifyBodyLinks} from './classify-wikilinks.ts';
 import {DEFAULT_CITES, LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
@@ -123,8 +124,6 @@ interface ClassifiedTarget {
   note?: string;
 }
 
-const SYMMETRIC_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
-
 /** Receives every resolved directed edge (mirrors included) a record's content backs. */
 type EdgeSink = (fromId: string, toId: string, type: EdgeType, note?: string) => void;
 
@@ -164,7 +163,7 @@ const resolveEdges = (
     sink(fromId, toId, type, note);
 
     // Auto-mirror symmetric types (contradicts, related-to) per edge-taxonomy.md.
-    if (SYMMETRIC_TYPES.has(type)) {
+    if (MIRRORED_EDGE_TYPES.has(type)) {
       const mirrorKey = touchKey(toId, fromId, type);
       if (!seen.has(mirrorKey)) {
         seen.add(mirrorKey);

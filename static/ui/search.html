@@ -60,6 +60,64 @@
         gap: 0.5rem;
         margin-top: 1.2rem;
       }
+      .facets {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem;
+        margin-top: 0.9rem;
+        font-size: var(--text-s);
+      }
+      .facets[hidden] {
+        display: none;
+      }
+      .facets .total,
+      .facets .others {
+        color: var(--muted);
+        margin-right: 0.4rem;
+      }
+      .facets .facet,
+      .facets .facet-clear {
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        font-size: var(--text-s);
+      }
+      .facets .facet .type {
+        font-family: var(--mono);
+      }
+      .facets .facet .count {
+        color: var(--muted);
+      }
+      .facets .facet[data-state='has'] {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-fg, #fff);
+      }
+      .facets .facet[data-state='has'] .count {
+        color: inherit;
+      }
+      .facets .facet[data-state='lacks'] {
+        border-color: var(--bad);
+        color: var(--bad);
+      }
+      .facets .facet[data-state='lacks'] .type {
+        text-decoration: line-through;
+      }
+      #results .edges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.2rem 0.8rem;
+        margin-top: 0.35rem;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      #results .edges .type {
+        font-family: var(--mono);
+      }
+      #results .edges .match {
+        color: var(--accent);
+        font-weight: 600;
+      }
       #results .filename {
         font-family: var(--mono);
         font-size: 0.9rem;
@@ -112,12 +170,22 @@
         <button id="go" class="primary">Search</button>
       </div>
       <div class="recents" id="recents"></div>
+      <div class="facets" id="facets" hidden></div>
       <div class="results" id="results"></div>
     </main>
     <div class="footer" id="footer"></div>
 
     <script type="module">
       import {api, apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {
+        cycle,
+        edgeParam,
+        facetRows,
+        parseEdgeParam,
+        renderEdgeSummary,
+        renderFacets,
+        summarizeEdges
+      } from '/ui/search-edges.js';
       const RECENT_KEY = 'vault.recent-searches';
       const RECENT_MAX = 8;
       const $ = sel => document.querySelector(sel);
@@ -156,13 +224,10 @@
         return esc(ctx);
       };
 
-      const fmtScore = (score, mode) => {
-        if (mode === 'semantic') return Number(score).toFixed(3);
-        const n = Number(score);
-        return `${n} match${n === 1 ? '' : 'es'}`;
-      };
+      // A lexical score is a relevance, bm25 with a title boost, not a count of matches.
+      const fmtScore = score => `score ${Number(score).toFixed(3)}`;
 
-      const renderResults = (results, mode) => {
+      const renderResults = results => {
         if (!Array.isArray(results) || results.length === 0) {
           $('#results').innerHTML = '<div class="empty">No matches.</div>';
           return;
@@ -177,14 +242,16 @@
               })
               .join('');
             const path = encodeURIComponent(r.filename);
+            const edges = renderEdgeSummary(summarizeEdges(r.edges), picks, esc);
             return `
       <div class="fmw-card" data-idx="${i}">
         <header>
           <span class="filename" data-path="${esc(r.filename)}">${esc(r.filename)}</span>
           <a class="fmw-pill" href="/ui/note.html?path=${path}" title="View rendered">view</a>
           <a class="fmw-pill" href="/ui/edit.html?path=${path}" title="Edit">edit</a>
-          <small>${fmtScore(r.score, mode)}</small>
+          <small>${fmtScore(r.score)}</small>
         </header>
+        ${edges ? `<div class="edges">${edges}</div>` : ''}
         ${snippets ? `<div class="snippets">${snippets}</div>` : ''}
         <pre id="body-${i}"></pre>
       </div>
@@ -193,18 +260,59 @@
           .join('');
       };
 
+      // The URL is the state: q, mode, and edge, the search route's conditions.
+      const initial = new URLSearchParams(location.search);
+      let {picks, extra} = parseEdgeParam(initial.get('edge'));
+      let facets = null;
+      let seq = 0;
+
+      const writeState = (q, mode) => {
+        const params = new URLSearchParams({q});
+        if (mode === 'semantic') params.set('mode', 'semantic');
+        const edge = edgeParam(picks, extra);
+        if (edge) params.set('edge', edge);
+        history.replaceState(null, '', `?${params}`);
+      };
+
+      const showFacets = () => {
+        $('#facets').hidden = !facets;
+        if (!facets) return;
+        $('#facets').innerHTML = renderFacets(
+          facetRows(facets.edges, picks),
+          picks,
+          extra,
+          facets.total,
+          esc
+        );
+      };
+
       const search = async () => {
         const q = $('#q').value.trim();
         if (!q) return;
         const mode = document.querySelector('input[name=mode]:checked').value;
+        const my = ++seq;
+        writeState(q, mode);
         $('#results').innerHTML =
           '<div class="empty"><span class="spinner"></span> searching…</div>';
         try {
-          const params = new URLSearchParams({query: q});
+          const params = new URLSearchParams({query: q, edges: '1'});
           if (mode === 'semantic') params.set('mode', 'semantic');
-          const data = await apiJson(`/search/simple/?${params.toString()}`, {method: 'POST'});
+          const edge = edgeParam(picks, extra);
+          if (edge) params.set('edge', edge);
+          const counts = new URLSearchParams({query: q});
+          if (mode === 'semantic') counts.set('mode', 'semantic');
+          const key = counts.toString();
+          const [data, counted] = await Promise.all([
+            apiJson(`/search/simple/?${params}`, {method: 'POST'}),
+            facets?.key === key
+              ? facets
+              : apiJson(`/search/facets?${counts}`, {method: 'POST'}).then(f => ({...f, key}))
+          ]);
+          if (my !== seq) return;
+          facets = counted;
           pushRecent(q);
-          renderResults(data, mode);
+          showFacets();
+          renderResults(data);
         } catch (e) {
           if (e.message === 'unauthorized' || e.message === 'no-token') {
             showAuthDialog();
@@ -250,6 +358,20 @@
       });
 
       document.addEventListener('click', e => {
+        const facet = e.target.closest('button.facet');
+        if (facet) {
+          const next = cycle(picks.get(facet.dataset.key));
+          if (next === 'off') picks.delete(facet.dataset.key);
+          else picks.set(facet.dataset.key, next);
+          search();
+          return;
+        }
+        if (e.target.closest('button.facet-clear')) {
+          picks = new Map();
+          extra = [];
+          search();
+          return;
+        }
         const chip = e.target.closest('button.fmw-pill');
         if (chip) {
           $('#q').value = chip.dataset.q;
@@ -265,7 +387,12 @@
 
       if (!getToken()) showAuthDialog();
       renderRecents();
+      if (initial.get('mode') === 'semantic') {
+        document.querySelector('input[name=mode][value=semantic]').checked = true;
+      }
+      $('#q').value = initial.get('q') ?? '';
       $('#q').focus();
+      if ($('#q').value && getToken()) search();
     </script>
     <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>

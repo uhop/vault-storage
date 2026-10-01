@@ -613,3 +613,43 @@ test('POST /search/simple/?mode=semantic filters a wider window and says when it
     cleanup();
   }
 });
+
+test('POST /search/facets counts the hits with each type each way, over what a filter tests', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEdges(root);
+    const ctx = await startTestServer(root, true);
+    try {
+      const lexical = await fetchAuthed(`${ctx.url}/search/facets?query=cache`, {method: 'POST'});
+      t.equal(lexical.status, 200);
+      t.deepEqual(lexical.body, {
+        total: 5,
+        edges: [
+          {type: 'supersedes', direction: 'out', hits: 1},
+          {type: 'supersedes', direction: 'in', hits: 1},
+          {type: 'cites', direction: 'out', hits: 1},
+          {type: 'cites', direction: 'in', hits: 1},
+          {type: 'related-to', direction: 'both', hits: 2}
+        ]
+      });
+      const semantic = await fetchAuthed(`${ctx.url}/search/facets?query=cache&mode=semantic`, {
+        method: 'POST'
+      });
+      t.equal((semantic.body as {total: number}).total, 5, 'the nearest notes, all five here');
+      const none = await fetchAuthed(`${ctx.url}/search/facets?query=nothing_matches`, {
+        method: 'POST'
+      });
+      t.deepEqual(none.body, {total: 0, edges: []});
+      t.equal(
+        (await fetchAuthed(`${ctx.url}/search/facets?query=cache&edge=cites`, {method: 'POST'}))
+          .status,
+        400,
+        'the counts take no conditions'
+      );
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

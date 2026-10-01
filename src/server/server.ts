@@ -47,7 +47,7 @@ import {
   queueTopHandler,
   reindexQueuesHandler
 } from './handlers/queue.ts';
-import {simpleSearchHandler} from './handlers/search.ts';
+import {searchFacetsHandler, simpleSearchHandler} from './handlers/search.ts';
 import {similarHandler} from './handlers/similar.ts';
 import {enrichmentDeltaHandler} from './handlers/enrichment-delta.ts';
 import {
@@ -325,6 +325,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
 
   router.post('/search/simple/', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
   router.post('/search/simple', simpleSearchHandler({db: opts.db, embedder: opts.embedder}));
+  router.post('/search/facets', searchFacetsHandler({db: opts.db, embedder: opts.embedder}));
 
   router.get('/resolve', resolveHandler({resolverCache}));
   router.post('/resolve', resolveBatchHandler({resolverCache}));

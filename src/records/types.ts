@@ -105,6 +105,9 @@ export const EDGE_TYPES = [
 ] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
+/** Types stored both ways: the edge build writes the mirror of each one it writes. */
+export const MIRRORED_EDGE_TYPES: ReadonlySet<EdgeType> = new Set(['contradicts', 'related-to']);
+
 /**
  * Pre-canonicalization aliases for *declared* edge types — FM `edges:` map
  * values and `edge_type` suggestion accepts. Notation only, never stored:

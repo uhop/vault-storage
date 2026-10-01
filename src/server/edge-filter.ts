@@ -1,8 +1,8 @@
-// The edge conditions a search can carry (D129), and each hit's edges.
+// The edge conditions a search can carry (D129), each hit's edges, and the hits per type (D130).
 
 import type {DatabaseSync, SQLInputValue} from 'node:sqlite';
 import {prepared} from '../db/prepared.ts';
-import {EDGE_TYPES} from '../records/types.ts';
+import {EDGE_TYPES, MIRRORED_EDGE_TYPES, type EdgeType} from '../records/types.ts';
 
 export type EdgeDirection = 'outbound' | 'inbound' | 'both';
 
@@ -135,4 +135,39 @@ export const edgesOf = (db: DatabaseSync, ids: readonly string[]): Map<string, H
     );
   }
   return out;
+};
+
+export interface EdgeFacet {
+  type: string;
+  /** `both` for a type stored both ways, whose two directions are one relation. */
+  direction: 'out' | 'in' | 'both';
+  hits: number;
+}
+
+/**
+ * How many of the records carry each type each way, as the matching edge
+ * conditions count them: `out` any outbound edge of the type, `in` any
+ * inbound, one `both` row for a mirrored type (D130).
+ */
+export const edgeFacets = (db: DatabaseSync, ids: readonly string[]): EdgeFacet[] => {
+  if (!ids.length) return [];
+  const rows = prepared(
+    db,
+    `WITH h(id) AS (SELECT value FROM json_each(?))
+     SELECT e.type, 'out' AS direction, count(DISTINCT e.from_id) AS hits
+       FROM edges e JOIN h ON h.id = e.from_id GROUP BY e.type
+     UNION ALL
+     SELECT e.type, 'in' AS direction, count(DISTINCT e.to_id) AS hits
+       FROM edges e JOIN h ON h.id = e.to_id GROUP BY e.type`
+  ).all(JSON.stringify(ids)) as unknown as EdgeFacet[];
+  const facets: EdgeFacet[] = [];
+  for (const r of rows) {
+    if (!MIRRORED_EDGE_TYPES.has(r.type as EdgeType)) facets.push({...r});
+    else if (r.direction === 'out') facets.push({type: r.type, direction: 'both', hits: r.hits});
+  }
+  return facets.sort(
+    (a, b) =>
+      (ORDER.get(a.type) ?? ORDER.size) - (ORDER.get(b.type) ?? ORDER.size) ||
+      DIRECTION_ORDER[a.direction] - DIRECTION_ORDER[b.direction]
+  );
 };

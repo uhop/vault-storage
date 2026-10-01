@@ -79,6 +79,7 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
   'PUT /drafts': ['path', 'unit', 'base_hash', 'text'],
   'POST /search/simple/': [],
   'POST /search/simple': [],
+  'POST /search/facets': [],
   'POST /resolve': ['wikilinks'],
   'POST /commit': ['message', 'paths'],
   'POST /maintenance/find-duplicates': [],
