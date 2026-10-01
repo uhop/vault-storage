@@ -3,6 +3,7 @@
 // database does not, and without a row nothing would.
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
+import {prepared} from '../db/prepared.ts';
 
 export type FmField = 'type' | 'status' | 'priority' | 'agent.complexity' | 'edges';
 
@@ -32,13 +33,15 @@ export class FmFindingsRepository {
   readonly #list: StatementSync;
 
   constructor(db: DatabaseSync) {
-    this.#deleteField = db.prepare('DELETE FROM fm_findings WHERE record_id = ? AND field = ?');
-    this.#insert = db.prepare(
+    this.#deleteField = prepared(db, 'DELETE FROM fm_findings WHERE record_id = ? AND field = ?');
+    this.#insert = prepared(
+      db,
       `INSERT INTO fm_findings (record_id, field, value, seen_at) VALUES (?, ?, ?, ?)
        ON CONFLICT(record_id, field, value) DO UPDATE SET seen_at = excluded.seen_at`
     );
-    this.#count = db.prepare('SELECT COUNT(*) AS n FROM fm_findings');
-    this.#list = db.prepare(
+    this.#count = prepared(db, 'SELECT COUNT(*) AS n FROM fm_findings');
+    this.#list = prepared(
+      db,
       `SELECT f.record_id, r.file_path, f.field, f.value, f.seen_at
          FROM fm_findings f JOIN records r ON r.record_id = f.record_id
         ORDER BY r.file_path, f.field, f.value LIMIT ?`

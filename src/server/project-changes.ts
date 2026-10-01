@@ -5,6 +5,7 @@
 
 import type {DatabaseSync} from 'node:sqlite';
 import type {SessionRecord} from './sessions.ts';
+import {prepared} from '../db/prepared.ts';
 
 export const CHANGES_CAP = 50;
 
@@ -44,25 +45,23 @@ export const projectChanges = (
   since: string
 ): ProjectChanges => {
   const prefix = `projects/${project}/`;
-  const notes = db
-    .prepare(
-      `SELECT file_path, title, modified_at FROM records
+  const notes = prepared(
+    db,
+    `SELECT file_path, title, modified_at FROM records
         WHERE substr(file_path, 1, ?) = ? AND file_path != ?
           AND julianday(modified_at) > julianday(?)
         ORDER BY julianday(modified_at) DESC`
-    )
-    .all(prefix.length, prefix, `${prefix}sessions.md`, since) as unknown[] as {
+  ).all(prefix.length, prefix, `${prefix}sessions.md`, since) as unknown[] as {
     file_path: string;
     title: string | null;
     modified_at: string;
   }[];
-  const items = db
-    .prepare(
-      `SELECT title, section, julianday(created_at) > julianday(?) AS entered FROM queue_items
+  const items = prepared(
+    db,
+    `SELECT title, section, julianday(created_at) > julianday(?) AS entered FROM queue_items
         WHERE project = ? AND julianday(updated_at) > julianday(?)
         ORDER BY julianday(updated_at) DESC`
-    )
-    .all(since, project, since) as unknown[] as {title: string; section: string; entered: number}[];
+  ).all(since, project, since) as unknown[] as {title: string; section: string; entered: number}[];
   const kept = items.slice(0, CHANGES_CAP);
   return {
     notes: notes

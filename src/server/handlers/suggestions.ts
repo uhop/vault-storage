@@ -16,6 +16,7 @@ import {
   type EffectDeps
 } from '../suggestion-effects.ts';
 import {WriterError} from '../writer.ts';
+import {prepared} from '../../db/prepared.ts';
 
 interface SuggestionsDeps {
   db: DatabaseSync;
@@ -126,12 +127,11 @@ const attachContext = (db: DatabaseSync, items: Array<Record<string, unknown>>):
   const briefs = new Map<string, unknown>();
   if (recordIds.size > 0) {
     const ids = [...recordIds];
-    const rows = db
-      .prepare(
-        `SELECT record_id, file_path, title, type, status, updated, agent_summary
+    const rows = prepared(
+      db,
+      `SELECT record_id, file_path, title, type, status, updated, agent_summary
            FROM records WHERE record_id IN (${ids.map(() => '?').join(',')})`
-      )
-      .all(...ids) as unknown[] as Array<{
+    ).all(...ids) as unknown[] as Array<{
       record_id: string;
       file_path: string;
       title: string | null;
@@ -155,14 +155,15 @@ const attachContext = (db: DatabaseSync, items: Array<Record<string, unknown>>):
 
   const tagInfo = new Map<string, unknown>();
   for (const t of tags) {
-    const aliasRow = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?').get(t) as
+    const aliasRow = prepared(db, 'SELECT canonical FROM tag_aliases WHERE alias = ?').get(t) as
       {canonical: string} | undefined;
     const canonical = aliasRow?.canonical ?? t;
-    const tax = db
-      .prepare('SELECT tag, description FROM tags_taxonomy WHERE tag = ?')
-      .get(canonical) as {tag: string; description: string | null} | undefined;
+    const tax = prepared(db, 'SELECT tag, description FROM tags_taxonomy WHERE tag = ?').get(
+      canonical
+    ) as {tag: string; description: string | null} | undefined;
     const count = tax
-      ? (db.prepare('SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {n: number}).n
+      ? (prepared(db, 'SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {n: number})
+          .n
       : 0;
     tagInfo.set(t, {
       requested: t,
@@ -241,18 +242,19 @@ export const listSuggestionsHandler =
     }
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = deps.db
-      .prepare(
-        `SELECT ${ROW_COLUMNS}
+    const rows = prepared(
+      deps.db,
+      `SELECT ${ROW_COLUMNS}
            FROM suggestions
            ${whereClause}
            ORDER BY created DESC
            LIMIT ? OFFSET ?`
-      )
-      .all(...bindings, limit, offset) as unknown[] as SuggestionRow[];
+    ).all(...bindings, limit, offset) as unknown[] as SuggestionRow[];
 
     const total = (
-      deps.db.prepare(`SELECT COUNT(*) AS n FROM suggestions ${whereClause}`).get(...bindings) as {
+      prepared(deps.db, `SELECT COUNT(*) AS n FROM suggestions ${whereClause}`).get(
+        ...bindings
+      ) as {
         n: number;
       }
     ).n;
@@ -291,15 +293,14 @@ export const summarySuggestionsHandler =
     }
 
     revertExpiredClaims(deps.db);
-    const rows = deps.db
-      .prepare(
-        `SELECT kind, COUNT(*) AS n
+    const rows = prepared(
+      deps.db,
+      `SELECT kind, COUNT(*) AS n
            FROM suggestions
            WHERE status IN (${statuses.map(() => '?').join(',')})
            GROUP BY kind
            ORDER BY n DESC, kind ASC`
-      )
-      .all(...statuses) as Array<{kind: string; n: number}>;
+    ).all(...statuses) as Array<{kind: string; n: number}>;
 
     const byKind: Record<string, number> = {};
     let total = 0;
@@ -328,7 +329,7 @@ export const getSuggestionHandler =
       return;
     }
     revertExpiredClaims(deps.db);
-    const row = deps.db.prepare(`SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`).get(id) as
+    const row = prepared(deps.db, `SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`).get(id) as
       SuggestionRow | undefined;
     if (!row) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
@@ -408,14 +409,13 @@ const flipStatus = (
   now: string,
   token: string | null
 ): boolean =>
-  db
-    .prepare(
-      `UPDATE suggestions
+  prepared(
+    db,
+    `UPDATE suggestions
           SET status = ?, resolved_at = ?, resolved_by = ?,
               claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
         WHERE id = ? AND status IN ('pending', 'claimed') AND claim_token IS ?`
-    )
-    .run(target, now, resolvedBy, id, token).changes > 0;
+  ).run(target, now, resolvedBy, id, token).changes > 0;
 
 const UNSETTLED = new Set(['pending', 'claimed']);
 const CHANGED_WHILE_RESOLVING = 'suggestion changed while resolving; read it again';
@@ -449,11 +449,10 @@ const makeResolveHandler =
     }
 
     revertExpiredClaims(deps.db);
-    const existing = deps.db
-      .prepare(
-        'SELECT status, claimed_by, claim_expires, claim_token FROM suggestions WHERE id = ?'
-      )
-      .get(id) as ResolvableRow | undefined;
+    const existing = prepared(
+      deps.db,
+      'SELECT status, claimed_by, claim_expires, claim_token FROM suggestions WHERE id = ?'
+    ).get(id) as ResolvableRow | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;
@@ -473,9 +472,9 @@ const makeResolveHandler =
       existing.claim_token
     );
 
-    const updated = deps.db
-      .prepare(`SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`)
-      .get(id) as unknown as SuggestionRow;
+    const updated = prepared(deps.db, `SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`).get(
+      id
+    ) as unknown as SuggestionRow;
     if (!flipped && UNSETTLED.has(updated.status)) {
       sendError(ctx.res, 409, 'conflict', CHANGED_WHILE_RESOLVING);
       return;
@@ -586,16 +585,15 @@ export const createSuggestionHandler =
 
     const id = uuidv7();
     const now = new Date().toISOString();
-    deps.db
-      .prepare(
-        `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
+    prepared(
+      deps.db,
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
          VALUES (?, ?, ?, ?, 'pending', ?)`
-      )
-      .run(id, body.kind, subjectId, JSON.stringify(body.payload), now);
+    ).run(id, body.kind, subjectId, JSON.stringify(body.payload), now);
 
-    const row = deps.db
-      .prepare(`SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`)
-      .get(id) as unknown as SuggestionRow;
+    const row = prepared(deps.db, `SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`).get(
+      id
+    ) as unknown as SuggestionRow;
     sendJson(ctx.res, 201, rowToJson(row));
   };
 
@@ -643,11 +641,10 @@ export const reopenSuggestionHandler =
     }
 
     revertExpiredClaims(deps.db);
-    const existing = deps.db
-      .prepare(
-        'SELECT status, claimed_by, claim_expires, claim_token FROM suggestions WHERE id = ?'
-      )
-      .get(id) as ResolvableRow | undefined;
+    const existing = prepared(
+      deps.db,
+      'SELECT status, claimed_by, claim_expires, claim_token FROM suggestions WHERE id = ?'
+    ).get(id) as ResolvableRow | undefined;
     if (!existing) {
       sendError(ctx.res, 404, 'suggestion_not_found', `no suggestion with id ${id}`);
       return;
@@ -661,21 +658,20 @@ export const reopenSuggestionHandler =
       sendError(ctx.res, 409, conflict.code, conflict.message, conflict.details);
       return;
     }
-    const changed = deps.db
-      .prepare(
-        `UPDATE suggestions
+    const changed = prepared(
+      deps.db,
+      `UPDATE suggestions
             SET status = 'pending', resolved_at = NULL, resolved_by = NULL,
                 claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
           WHERE id = ? AND status = ? AND claim_token IS ?`
-      )
-      .run(id, existing.status, existing.claim_token).changes;
+    ).run(id, existing.status, existing.claim_token).changes;
     if (changed === 0) {
       sendError(ctx.res, 409, 'conflict', 'suggestion changed while reopening; read it again');
       return;
     }
-    const row = deps.db
-      .prepare(`SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`)
-      .get(id) as unknown as SuggestionRow;
+    const row = prepared(deps.db, `SELECT ${ROW_COLUMNS} FROM suggestions WHERE id = ?`).get(
+      id
+    ) as unknown as SuggestionRow;
     sendJson(ctx.res, 200, rowToJson(row));
   };
 
@@ -784,46 +780,44 @@ export const claimSuggestionsHandler =
     revertExpiredClaims(deps.db, nowIso);
 
     const ids = (
-      deps.db
-        .prepare(
-          `SELECT id FROM suggestions
+      prepared(
+        deps.db,
+        `SELECT id FROM suggestions
             WHERE kind = ? AND status = 'pending'
             ORDER BY created
             LIMIT ?`
-        )
-        .all(kind, limit) as Array<{id: string}>
+      ).all(kind, limit) as Array<{id: string}>
     ).map(r => r.id);
 
     const expires = new Date(now.getTime() + ttl * 1000).toISOString();
     const token = randomUUID();
     if (ids.length > 0) {
-      deps.db
-        .prepare(
-          `UPDATE suggestions
+      prepared(
+        deps.db,
+        `UPDATE suggestions
               SET status = 'claimed', claimed_by = ?, claimed_at = ?, claim_expires = ?, claim_token = ?
             WHERE id IN (${ids.map(() => '?').join(',')}) AND status = 'pending'`
-        )
-        .run(holder, nowIso, expires, token, ...ids);
+      ).run(holder, nowIso, expires, token, ...ids);
     }
 
     const items =
       ids.length > 0
         ? (
-            deps.db
-              .prepare(
-                `SELECT ${ROW_COLUMNS} FROM suggestions
+            prepared(
+              deps.db,
+              `SELECT ${ROW_COLUMNS} FROM suggestions
                   WHERE id IN (${ids.map(() => '?').join(',')}) AND claim_token = ?
                   ORDER BY created`
-              )
-              .all(...ids, token) as unknown[] as SuggestionRow[]
+            ).all(...ids, token) as unknown[] as SuggestionRow[]
           ).map(rowToJson)
         : [];
     if (expand === 'context') attachContext(deps.db, items);
 
     const remaining = (
-      deps.db
-        .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE kind = ? AND status = 'pending'`)
-        .get(kind) as {n: number}
+      prepared(
+        deps.db,
+        `SELECT COUNT(*) AS n FROM suggestions WHERE kind = ? AND status = 'pending'`
+      ).get(kind) as {n: number}
     ).n;
 
     sendJson(ctx.res, 200, {
@@ -963,12 +957,11 @@ export const resolveBatchSuggestionsHandler =
         continue;
       }
 
-      const row = deps.db
-        .prepare(
-          `SELECT id, kind, payload, status, claimed_by, claim_expires, claim_token
+      const row = prepared(
+        deps.db,
+        `SELECT id, kind, payload, status, claimed_by, claim_expires, claim_token
              FROM suggestions WHERE id = ?`
-        )
-        .get(id) as
+      ).get(id) as
         | {
             id: string;
             kind: string;
@@ -1033,12 +1026,11 @@ export const resolveBatchSuggestionsHandler =
           }
           flipped = flipStatus(deps.db, id, 'accepted', resolvedBy, now, row.claim_token);
           if (!flipped && row.kind === 'tag_suggestion' && resolvedBy !== null) {
-            deps.db
-              .prepare(
-                `UPDATE suggestions SET resolved_by = ?
+            prepared(
+              deps.db,
+              `UPDATE suggestions SET resolved_by = ?
                   WHERE id = ? AND status = 'accepted' AND resolved_by = 'tag-realized'`
-              )
-              .run(resolvedBy, id);
+            ).run(resolvedBy, id);
           }
         } else {
           if (row.kind === 'tag_suggestion') {
@@ -1056,9 +1048,10 @@ export const resolveBatchSuggestionsHandler =
         throw err;
       }
 
-      const final = deps.db
-        .prepare('SELECT status, resolved_by FROM suggestions WHERE id = ?')
-        .get(id) as {status: string; resolved_by: string | null};
+      const final = prepared(
+        deps.db,
+        'SELECT status, resolved_by FROM suggestions WHERE id = ?'
+      ).get(id) as {status: string; resolved_by: string | null};
       if (!flipped && UNSETTLED.has(final.status)) {
         fail(id, 'conflict', CHANGED_WHILE_RESOLVING);
         continue;

@@ -21,6 +21,7 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import type {CloseReason, ParsedQueueItem, QueueSection} from './parse.ts';
 import {uuidv7} from '../util/uuid.ts';
+import {prepared} from '../db/prepared.ts';
 
 export interface QueueItemRow {
   id: string;
@@ -135,11 +136,13 @@ export class QueueItemsRepository {
 
   constructor(db: DatabaseSync) {
     this.#db = db;
-    this.#selectBySlice = db.prepare(
+    this.#selectBySlice = prepared(
+      db,
       'SELECT * FROM queue_items WHERE project = ? AND source_file = ? ORDER BY source_line'
     );
 
-    this.#insert = db.prepare(
+    this.#insert = prepared(
+      db,
       `INSERT INTO queue_items (
          id, project, section, priority, position, title, title_norm, body,
          closed_at, close_reason, source_file, source_line, body_hash,
@@ -147,7 +150,8 @@ export class QueueItemsRepository {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
-    this.#updateBody = db.prepare(
+    this.#updateBody = prepared(
+      db,
       `UPDATE queue_items
          SET priority = ?, position = ?, title = ?, body = ?,
              closed_at = ?, close_reason = ?, source_line = ?,
@@ -155,55 +159,63 @@ export class QueueItemsRepository {
        WHERE id = ?`
     );
 
-    this.#refreshPlacement = db.prepare(
+    this.#refreshPlacement = prepared(
+      db,
       `UPDATE queue_items
          SET priority = ?, position = ?, source_line = ?, blocked_by = ?
        WHERE id = ?`
     );
 
-    this.#deleteById = db.prepare('DELETE FROM queue_items WHERE id = ?');
-    this.#openBySource = db.prepare(
+    this.#deleteById = prepared(db, 'DELETE FROM queue_items WHERE id = ?');
+    this.#openBySource = prepared(
+      db,
       `SELECT * FROM queue_items WHERE project = ? AND source = ? AND section != 'archive'
         ORDER BY updated_at DESC LIMIT 1`
     );
-    this.#deleteBySource = db.prepare(
+    this.#deleteBySource = prepared(
+      db,
       'DELETE FROM queue_items WHERE project = ? AND source_file = ?'
     );
 
-    this.#listOpenByProject = db.prepare(
+    this.#listOpenByProject = prepared(
+      db,
       `SELECT * FROM queue_items
          WHERE project = ? AND section != 'archive'
          ORDER BY ${OPEN_ORDER}`
     );
 
-    this.#listArchiveByProject = db.prepare(
+    this.#listArchiveByProject = prepared(
+      db,
       `SELECT * FROM queue_items
          WHERE project = ? AND section = 'archive'
          ORDER BY closed_at DESC NULLS LAST, position`
     );
 
     // The inbox is not open work until triage accepts it, so `top` skips it.
-    this.#listTopOpen = db.prepare(
+    this.#listTopOpen = prepared(
+      db,
       `SELECT * FROM queue_items
          WHERE section NOT IN ('archive', 'inbox')
          ORDER BY priority DESC, project, section, position
          LIMIT ?`
     );
 
-    this.#listBySection = db.prepare(
+    this.#listBySection = prepared(
+      db,
       `SELECT * FROM queue_items
          WHERE section = ?
          ORDER BY priority DESC, project, position`
     );
 
-    this.#listByPriority = db.prepare(
+    this.#listByPriority = prepared(
+      db,
       `SELECT * FROM queue_items
          WHERE section = 'backlog' AND priority = ?
          ORDER BY project, position`
     );
 
-    this.#listAll = db.prepare(`SELECT * FROM queue_items ORDER BY project, section, position`);
-    this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM queue_items');
+    this.#listAll = prepared(db, `SELECT * FROM queue_items ORDER BY project, section, position`);
+    this.#countAll = prepared(db, 'SELECT COUNT(*) AS n FROM queue_items');
   }
 
   /**

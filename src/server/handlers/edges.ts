@@ -13,6 +13,7 @@ import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {toJsonEdge, toJsonRecord} from '../serialize.ts';
+import {prepared} from '../../db/prepared.ts';
 
 const EDGE_TYPE_SET: ReadonlySet<string> = new Set(EDGE_TYPES);
 const MAX_DEPTH = 5;
@@ -100,9 +101,9 @@ export const listEdgesHandler =
     const {offset, limit} = parsePagination(ctx.query);
     const typeClause =
       types.length > 0 ? ` AND e.type IN (${types.map(() => '?').join(', ')})` : '';
-    const rows = deps.db
-      .prepare(
-        `SELECT e.type, e.weight, e.note, e.created,
+    const rows = prepared(
+      deps.db,
+      `SELECT e.type, e.weight, e.note, e.created,
                 e.from_id, f.file_path AS from_path, f.title AS from_title,
                 e.to_id, t.file_path AS to_path, t.title AS to_title
            FROM edges e
@@ -111,17 +112,17 @@ export const listEdgesHandler =
           WHERE ${LISTED}${typeClause}
           ORDER BY e.created DESC, e.from_id, e.to_id, e.type
           LIMIT ? OFFSET ?`
-      )
-      .all(...types, limit, offset) as unknown[] as ListedEdgeRow[];
+    ).all(...types, limit, offset) as unknown[] as ListedEdgeRow[];
     const total = (
-      deps.db
-        .prepare(`SELECT COUNT(*) AS n FROM edges e WHERE ${LISTED}${typeClause}`)
-        .get(...types) as {n: number}
+      prepared(deps.db, `SELECT COUNT(*) AS n FROM edges e WHERE ${LISTED}${typeClause}`).get(
+        ...types
+      ) as {n: number}
     ).n;
     const byType: Record<string, number> = Object.fromEntries(EDGE_TYPES.map(t => [t, 0]));
-    for (const row of deps.db
-      .prepare(`SELECT e.type, COUNT(*) AS n FROM edges e WHERE ${LISTED} GROUP BY e.type`)
-      .all() as unknown[] as {type: string; n: number}[]) {
+    for (const row of prepared(
+      deps.db,
+      `SELECT e.type, COUNT(*) AS n FROM edges e WHERE ${LISTED} GROUP BY e.type`
+    ).all() as unknown[] as {type: string; n: number}[]) {
       byType[row.type] = row.n;
     }
     sendJson(ctx.res, 200, {

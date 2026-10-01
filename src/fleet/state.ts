@@ -6,6 +6,7 @@
 // `static/ui/fleet-digest.js` and the CLI's in claude-config, line for line.
 
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
+import {prepared} from '../db/prepared.ts';
 
 export const DIGEST_PATH = 'projects/agent-workflow/fleet-status.md';
 const STATE_RE = /^projects\/([^/]+)\/state\.md$/;
@@ -80,8 +81,9 @@ export class FleetStateRepository {
   readonly #listRuns: StatementSync;
 
   constructor(db: DatabaseSync) {
-    this.#deleteBaseline = db.prepare('DELETE FROM fleet_baselines WHERE record_id = ?');
-    this.#upsertBaseline = db.prepare(
+    this.#deleteBaseline = prepared(db, 'DELETE FROM fleet_baselines WHERE record_id = ?');
+    this.#upsertBaseline = prepared(
+      db,
       `INSERT INTO fleet_baselines
          (record_id, project, repo, github, github_collected_at, packages, packages_collected_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -90,18 +92,22 @@ export class FleetStateRepository {
          github = excluded.github, github_collected_at = excluded.github_collected_at,
          packages = excluded.packages, packages_collected_at = excluded.packages_collected_at`
     );
-    this.#deleteRuns = db.prepare('DELETE FROM fleet_runs WHERE record_id = ?');
-    this.#insertRun = db.prepare(
+    this.#deleteRuns = prepared(db, 'DELETE FROM fleet_runs WHERE record_id = ?');
+    this.#insertRun = prepared(
+      db,
       `INSERT INTO fleet_runs (record_id, collected_at, mode, run) VALUES (?, ?, ?, ?)
        ON CONFLICT(record_id, collected_at) DO UPDATE SET mode = excluded.mode, run = excluded.run`
     );
-    this.#listBaselines = db.prepare(
+    this.#listBaselines = prepared(
+      db,
       'SELECT project, repo, github, packages FROM fleet_baselines ORDER BY project'
     );
-    this.#getBaseline = db.prepare(
+    this.#getBaseline = prepared(
+      db,
       'SELECT project, repo, github, packages FROM fleet_baselines WHERE project = ?'
     );
-    this.#listRuns = db.prepare(
+    this.#listRuns = prepared(
+      db,
       `SELECT run FROM fleet_runs WHERE collected_at >= ? ORDER BY collected_at DESC LIMIT ?`
     );
   }

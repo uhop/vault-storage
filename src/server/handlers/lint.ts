@@ -5,6 +5,7 @@ import {ImportFailuresRepository} from '../../records/import-failures.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {prepared} from '../../db/prepared.ts';
 
 interface LintDeps {
   db: DatabaseSync;
@@ -71,22 +72,20 @@ export interface QueueHygieneFinding {
  * resume brief filters it to the session's project.
  */
 export const queueHygieneFindings = (db: DatabaseSync): QueueHygieneFinding[] => {
-  const rows = db
-    .prepare(
-      `SELECT file_path, body FROM records
+  const rows = prepared(
+    db,
+    `SELECT file_path, body FROM records
         WHERE file_path LIKE 'projects/%/queue.md'
           AND status NOT IN ('archived', 'superseded')
         ORDER BY file_path`
-    )
-    .all() as {file_path: string; body: string | null}[];
+  ).all() as {file_path: string; body: string | null}[];
   const served = new Map<string, number>();
-  const counts = db
-    .prepare(
-      `SELECT source_file, COUNT(*) AS n FROM queue_items
+  const counts = prepared(
+    db,
+    `SELECT source_file, COUNT(*) AS n FROM queue_items
         WHERE source_file LIKE 'projects/%/queue.md'
         GROUP BY source_file`
-    )
-    .all() as {source_file: string; n: number}[];
+  ).all() as {source_file: string; n: number}[];
   for (const row of counts) served.set(row.source_file, Number(row.n));
   const out: QueueHygieneFinding[] = [];
   for (const row of rows) {
@@ -121,9 +120,9 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // persistent drift means the pass didn't run (or crashed) since the
   // record changed.
   {
-    const rows = db
-      .prepare(
-        `SELECT DISTINCT c.record_id, r.file_path
+    const rows = prepared(
+      db,
+      `SELECT DISTINCT c.record_id, r.file_path
              FROM chunks c
              JOIN records r ON r.record_id = c.record_id
             WHERE c.content_hash != r.content_hash
@@ -135,8 +134,7 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
               AND NOT EXISTS (
                     SELECT 1 FROM record_summaries s
                      WHERE s.record_id = r.record_id AND s.content_hash = r.content_hash)`
-      )
-      .all() as {record_id: string; file_path: string}[];
+    ).all() as {record_id: string; file_path: string}[];
     checks['embedding_hash_drift'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
@@ -152,15 +150,14 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // is B-tree-indexed since schema 0010; the pre-0010 CTE workaround
   // for the unindexed vec0 aux column is gone.)
   {
-    const rows = db
-      .prepare(
-        `SELECT r.record_id, r.file_path
+    const rows = prepared(
+      db,
+      `SELECT r.record_id, r.file_path
              FROM records r
             WHERE NOT EXISTS (
               SELECT 1 FROM chunks c WHERE c.record_id = r.record_id
             )`
-      )
-      .all() as {record_id: string; file_path: string}[];
+    ).all() as {record_id: string; file_path: string}[];
     checks['records_without_embeddings'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
@@ -176,15 +173,14 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // record_vec; orphans that slip past it (raw DB access) need
   // /maintenance/cleanup-lint to drain.
   {
-    const rows = db
-      .prepare(
-        `SELECT DISTINCT c.record_id
+    const rows = prepared(
+      db,
+      `SELECT DISTINCT c.record_id
              FROM chunks c
             WHERE NOT EXISTS (
               SELECT 1 FROM records r WHERE r.record_id = c.record_id
             )`
-      )
-      .all() as {record_id: string}[];
+    ).all() as {record_id: string}[];
     checks['orphan_embeddings'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
@@ -197,15 +193,14 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // failure class introduced by the 0010 metadata split; cleaned by
   // /maintenance/cleanup-lint.
   {
-    const rows = db
-      .prepare(
-        `SELECT v.chunk_id
+    const rows = prepared(
+      db,
+      `SELECT v.chunk_id
              FROM record_vec v
             WHERE NOT EXISTS (
               SELECT 1 FROM chunks c WHERE c.chunk_id = v.chunk_id
             )`
-      )
-      .all() as {chunk_id: string}[];
+    ).all() as {chunk_id: string}[];
     checks['orphan_vec_rows'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.chunk_id}))
@@ -216,15 +211,14 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // Same structural cause + cascade as orphan_embeddings; tracked
   // separately so the operator sees which vec table is affected.
   {
-    const rows = db
-      .prepare(
-        `SELECT v.record_id
+    const rows = prepared(
+      db,
+      `SELECT v.record_id
              FROM record_doc_vec v
             WHERE NOT EXISTS (
               SELECT 1 FROM records r WHERE r.record_id = v.record_id
             )`
-      )
-      .all() as {record_id: string}[];
+    ).all() as {record_id: string}[];
     checks['orphan_doc_embeddings'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({id: r.record_id}))
@@ -236,13 +230,12 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // time; updated < created indicates frontmatter corruption.
   {
     const now = new Date().toISOString();
-    const rows = db
-      .prepare(
-        `SELECT record_id, file_path, created, updated
+    const rows = prepared(
+      db,
+      `SELECT record_id, file_path, created, updated
              FROM records
             WHERE updated < created OR created > ? OR updated > ?`
-      )
-      .all(now, now) as {
+    ).all(now, now) as {
       record_id: string;
       file_path: string;
       created: string;
@@ -267,17 +260,16 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // to drain. NULL subject_id is allowed (system-level kinds like
   // inefficiency_detected); only NOT NULL rows are checked.
   {
-    const rows = db
-      .prepare(
-        `SELECT s.id, s.kind, s.subject_id
+    const rows = prepared(
+      db,
+      `SELECT s.id, s.kind, s.subject_id
              FROM suggestions s
             WHERE s.status IN ('pending', 'claimed')
               AND s.subject_id IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1 FROM records r WHERE r.record_id = s.subject_id
               )`
-      )
-      .all() as {id: string; kind: string; subject_id: string}[];
+    ).all() as {id: string; kind: string; subject_id: string}[];
     checks['orphan_suggestions'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
@@ -292,15 +284,14 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // Foreign keys prevent this when PRAGMA foreign_keys = ON, but
   // check as a safety net.
   {
-    const rows = db
-      .prepare(
-        `SELECT a.alias, a.canonical
+    const rows = prepared(
+      db,
+      `SELECT a.alias, a.canonical
              FROM tag_aliases a
             WHERE NOT EXISTS (
               SELECT 1 FROM tags_taxonomy t WHERE t.tag = a.canonical
             )`
-      )
-      .all() as {alias: string; canonical: string}[];
+    ).all() as {alias: string; canonical: string}[];
     checks['dangling_tag_aliases'] = {
       count: rows.length,
       samples: rows.slice(0, SAMPLE_LIMIT).map(r => ({
@@ -317,12 +308,11 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
   // incident: a stale index.lock starved auto-commit silently for four
   // days (2026-06-08→11) with the only signal in container stderr.
   {
-    const rows = db
-      .prepare(
-        `SELECT key, value FROM meta
+    const rows = prepared(
+      db,
+      `SELECT key, value FROM meta
             WHERE key IN ('git_sync_consecutive_failures', 'git_sync_last_error', 'git_sync_failing_since')`
-      )
-      .all() as {key: string; value: string}[];
+    ).all() as {key: string; value: string}[];
     const meta = new Map(rows.map(r => [r.key, r.value]));
     const failures = Number(meta.get('git_sync_consecutive_failures') ?? '0');
     const failing = Number.isFinite(failures) && failures >= AUTO_COMMIT_FAILURE_THRESHOLD;
@@ -390,9 +380,9 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
     // so a "null\n" body matches vault-lint.mjs's `.trim()` empty-detection.
     const trimmed = `TRIM(body, char(32) || char(9) || char(10) || char(13))`;
     const emptyBody = `(body IS NULL OR ${trimmed} = '' OR LOWER(${trimmed}) = 'null')`;
-    const rows = db
-      .prepare(
-        `SELECT type,
+    const rows = prepared(
+      db,
+      `SELECT type,
                   COUNT(*) AS total,
                   SUM(CASE WHEN agent_summary IS NOT NULL AND agent_summary != '' THEN 1 ELSE 0 END) AS enriched,
                   SUM(CASE WHEN ${emptyBody} THEN 1 ELSE 0 END) AS empty,
@@ -402,8 +392,7 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
               AND file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
             GROUP BY type
             ORDER BY type`
-      )
-      .all() as {
+    ).all() as {
       type: string | null;
       total: number;
       enriched: number;
@@ -430,9 +419,9 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
     // Capped; a consumer detects truncation by comparing length to `unenriched`.
     const unenrichedRecords =
       total - enriched > 0
-        ? (db
-            .prepare(
-              `SELECT record_id, file_path, type
+        ? (prepared(
+            db,
+            `SELECT record_id, file_path, type
                  FROM records
                 WHERE status NOT IN ('archived', 'superseded')
               AND file_path NOT LIKE 'archive/%' AND file_path NOT LIKE '%/archive/%'
@@ -441,8 +430,7 @@ export const computeLintReport = (db: DatabaseSync): LintReport => {
                   AND (agent_summary IS NULL OR agent_summary = '')
                 ORDER BY file_path
                 LIMIT ${UNENRICHED_RECORDS_CAP}`
-            )
-            .all(...ENRICHABLE_TYPES) as unknown[] as Array<{
+          ).all(...ENRICHABLE_TYPES) as unknown[] as Array<{
             record_id: string;
             file_path: string;
             type: string;

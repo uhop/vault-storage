@@ -2,15 +2,16 @@
 // runner; also home to `schema_version` and `last_indexed_commit`).
 
 import type {DatabaseSync} from 'node:sqlite';
+import {prepared} from './prepared.ts';
 
 export const getMetaValue = (db: DatabaseSync, key: string): string | null => {
-  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+  const row = prepared(db, 'SELECT value FROM meta WHERE key = ?').get(key) as
     {value: string} | undefined;
   return row?.value ?? null;
 };
 
 export const setMetaValue = (db: DatabaseSync, key: string, value: string): void => {
-  db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
+  prepared(db, 'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(key, value);
 };
 
 /**

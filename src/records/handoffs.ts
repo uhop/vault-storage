@@ -16,6 +16,7 @@ import {
   type SpoolEntry,
   type SpoolSidecar
 } from './handoff-spool.ts';
+import {prepared} from '../db/prepared.ts';
 
 // Handoff queue (agent-coordination design, leg 2) — the sibling of
 // leases.ts, addressed to a *role* (`repo:<normalized-remote-url>`), never a
@@ -363,9 +364,10 @@ export class HandoffsRepository {
    */
   expireLazy(now?: string): number {
     const at = now ?? new Date().toISOString();
-    const rows = this.#db
-      .prepare(`SELECT * FROM handoffs WHERE status = 'claimed' AND claim_expires < ?`)
-      .all(at) as unknown[] as HandoffRow[];
+    const rows = prepared(
+      this.#db,
+      `SELECT * FROM handoffs WHERE status = 'claimed' AND claim_expires < ?`
+    ).all(at) as unknown[] as HandoffRow[];
     let reverted = 0;
     for (const row of rows) if (this.#revertClaim(toHandoff(row), at)) ++reverted;
     return reverted;
@@ -374,9 +376,9 @@ export class HandoffsRepository {
   /** Idempotent by key: a retry after an ambiguous failure returns the original. */
   create(req: HandoffCreate): CreateOutcome {
     const now = req.now ?? new Date().toISOString();
-    const existing = this.#db
-      .prepare('SELECT * FROM handoffs WHERE idempotency_key = ?')
-      .get(req.idempotencyKey) as HandoffRow | undefined;
+    const existing = prepared(this.#db, 'SELECT * FROM handoffs WHERE idempotency_key = ?').get(
+      req.idempotencyKey
+    ) as HandoffRow | undefined;
     if (existing) return {status: 'existing', handoff: toHandoff(existing)};
 
     const handoff: Handoff = {
@@ -418,7 +420,7 @@ export class HandoffsRepository {
 
   get(id: string, now?: string): Handoff | null {
     this.expireLazy(now);
-    const row = this.#db.prepare('SELECT * FROM handoffs WHERE id = ?').get(id) as
+    const row = prepared(this.#db, 'SELECT * FROM handoffs WHERE id = ?').get(id) as
       HandoffRow | undefined;
     return row ? this.#attachArtifact(toHandoff(row)) : null;
   }
@@ -444,9 +446,9 @@ export class HandoffsRepository {
       values.push(filters.kind);
     }
     const where = clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '';
-    const rows = this.#db
-      .prepare(`SELECT * FROM handoffs${where} ORDER BY created`)
-      .all(...values) as unknown[] as HandoffRow[];
+    const rows = prepared(this.#db, `SELECT * FROM handoffs${where} ORDER BY created`).all(
+      ...values
+    ) as unknown[] as HandoffRow[];
     return rows.map(row => this.#attachArtifact(toHandoff(row)));
   }
 
@@ -696,10 +698,11 @@ export class HandoffsRepository {
 
   events(handoffId?: string, limit = 100): HandoffEvent[] {
     const rows = (handoffId === undefined
-      ? this.#db.prepare('SELECT * FROM handoff_events ORDER BY seq DESC LIMIT ?').all(limit)
-      : this.#db
-          .prepare('SELECT * FROM handoff_events WHERE handoff_id = ? ORDER BY seq DESC LIMIT ?')
-          .all(handoffId, limit)) as unknown[] as HandoffEvent[];
+      ? prepared(this.#db, 'SELECT * FROM handoff_events ORDER BY seq DESC LIMIT ?').all(limit)
+      : prepared(
+          this.#db,
+          'SELECT * FROM handoff_events WHERE handoff_id = ? ORDER BY seq DESC LIMIT ?'
+        ).all(handoffId, limit)) as unknown[] as HandoffEvent[];
     return rows;
   }
 
@@ -737,7 +740,7 @@ export class HandoffsRepository {
       claimToken: null,
       result: null // an open handoff carries no verdict (schema CHECK)
     };
-    const exists = this.#db.prepare('SELECT 1 FROM handoffs WHERE id = ?').get(handoff.id);
+    const exists = prepared(this.#db, 'SELECT 1 FROM handoffs WHERE id = ?').get(handoff.id);
     if (!exists) this.#insert(next);
     else if (!this.#update(next, handoff)) return false;
     writeSidecar(this.#vaultDataPath, {...this.#toSpool(next), status: 'claimed'});
@@ -792,29 +795,54 @@ export class HandoffsRepository {
   }
 
   #insert(h: Handoff): void {
-    this.#db
-      .prepare(
-        `INSERT INTO handoffs (
+    prepared(
+      this.#db,
+      `INSERT INTO handoffs (
            id, idempotency_key, project, to_role, kind, ref_type, ref_value,
            from_host, from_session, from_repo, body, status, created, updated,
            claimed_by, claimed_at, claim_expires, claim_token, result, notes,
            touches, verifications, base_sha
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        h.id,
-        h.idempotencyKey,
-        h.project,
-        h.to,
-        h.kind,
-        h.ref?.type ?? null,
-        h.ref?.value ?? null,
-        h.from.host,
-        h.from.session,
-        h.from.repo,
-        h.body,
+    ).run(
+      h.id,
+      h.idempotencyKey,
+      h.project,
+      h.to,
+      h.kind,
+      h.ref?.type ?? null,
+      h.ref?.value ?? null,
+      h.from.host,
+      h.from.session,
+      h.from.repo,
+      h.body,
+      h.status,
+      h.created,
+      h.updated,
+      h.claimedBy,
+      h.claimedAt,
+      h.claimExpires,
+      h.claimToken,
+      h.result === null ? null : JSON.stringify(h.result),
+      JSON.stringify(h.notes),
+      JSON.stringify(h.touches),
+      JSON.stringify(h.verifications),
+      h.baseSha
+    );
+  }
+
+  /** Writes `h` over `read` as read; false when another writer changed the row first (D69). */
+  #update(h: Handoff, read: Handoff): boolean {
+    return (
+      prepared(
+        this.#db,
+        `UPDATE handoffs
+              SET status = ?, updated = ?, claimed_by = ?, claimed_at = ?, claim_expires = ?,
+                  claim_token = ?, result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
+                  from_host = ?, from_session = ?, from_repo = ?,
+                  touches = ?, verifications = ?, base_sha = ?
+            WHERE id = ? AND status = ? AND updated = ? AND claim_token IS ?`
+      ).run(
         h.status,
-        h.created,
         h.updated,
         h.claimedBy,
         h.claimedAt,
@@ -822,47 +850,20 @@ export class HandoffsRepository {
         h.claimToken,
         h.result === null ? null : JSON.stringify(h.result),
         JSON.stringify(h.notes),
+        h.ref?.type ?? null,
+        h.ref?.value ?? null,
+        h.body,
+        h.from.host,
+        h.from.session,
+        h.from.repo,
         JSON.stringify(h.touches),
         JSON.stringify(h.verifications),
-        h.baseSha
-      );
-  }
-
-  /** Writes `h` over `read` as read; false when another writer changed the row first (D69). */
-  #update(h: Handoff, read: Handoff): boolean {
-    return (
-      this.#db
-        .prepare(
-          `UPDATE handoffs
-              SET status = ?, updated = ?, claimed_by = ?, claimed_at = ?, claim_expires = ?,
-                  claim_token = ?, result = ?, notes = ?, ref_type = ?, ref_value = ?, body = ?,
-                  from_host = ?, from_session = ?, from_repo = ?,
-                  touches = ?, verifications = ?, base_sha = ?
-            WHERE id = ? AND status = ? AND updated = ? AND claim_token IS ?`
-        )
-        .run(
-          h.status,
-          h.updated,
-          h.claimedBy,
-          h.claimedAt,
-          h.claimExpires,
-          h.claimToken,
-          h.result === null ? null : JSON.stringify(h.result),
-          JSON.stringify(h.notes),
-          h.ref?.type ?? null,
-          h.ref?.value ?? null,
-          h.body,
-          h.from.host,
-          h.from.session,
-          h.from.repo,
-          JSON.stringify(h.touches),
-          JSON.stringify(h.verifications),
-          h.baseSha,
-          h.id,
-          read.status,
-          read.updated,
-          read.claimToken
-        ).changes > 0
+        h.baseSha,
+        h.id,
+        read.status,
+        read.updated,
+        read.claimToken
+      ).changes > 0
     );
   }
 
@@ -873,10 +874,9 @@ export class HandoffsRepository {
     actor: string | null,
     detail: string | null
   ): void {
-    this.#db
-      .prepare(
-        'INSERT INTO handoff_events (at, handoff_id, event, actor, detail) VALUES (?, ?, ?, ?, ?)'
-      )
-      .run(at, handoffId, event, actor, detail);
+    prepared(
+      this.#db,
+      'INSERT INTO handoff_events (at, handoff_id, event, actor, detail) VALUES (?, ?, ?, ?, ?)'
+    ).run(at, handoffId, event, actor, detail);
   }
 }

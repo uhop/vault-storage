@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
+import {prepared} from '../db/prepared.ts';
 
 // Repo-lease registry (agent-coordination design, D21/D23) — the sibling of
 // claims.ts, generalized: one row per resource, atomic claim with a 409-style
@@ -132,18 +133,18 @@ export class LeasesRepository {
    */
   expireLazy(now?: string): number {
     const at = now ?? new Date().toISOString();
-    const expired = this.#db
-      .prepare('SELECT * FROM leases WHERE expires_at IS NOT NULL AND expires_at < ?')
-      .all(at) as unknown[] as LeaseRow[];
+    const expired = prepared(
+      this.#db,
+      'SELECT * FROM leases WHERE expires_at IS NOT NULL AND expires_at < ?'
+    ).all(at) as unknown[] as LeaseRow[];
     let dropped = 0;
     for (const row of expired) {
       // A renew in the gap moves expires_at: skip, the next read sweeps again.
-      const changed = this.#db
-        .prepare(
-          `DELETE FROM leases
+      const changed = prepared(
+        this.#db,
+        `DELETE FROM leases
             WHERE resource = ? AND holder = ? AND claim_token IS ? AND expires_at = ?`
-        )
-        .run(row.resource, row.holder, row.claim_token, row.expires_at).changes;
+      ).run(row.resource, row.holder, row.claim_token, row.expires_at).changes;
       if (changed === 0) continue;
       this.#logEvent(at, row.resource, 'expired', row.holder, null);
       ++dropped;
@@ -153,15 +154,16 @@ export class LeasesRepository {
 
   list(now?: string): Lease[] {
     this.expireLazy(now);
-    const rows = this.#db
-      .prepare('SELECT * FROM leases ORDER BY resource')
-      .all() as unknown[] as LeaseRow[];
+    const rows = prepared(
+      this.#db,
+      'SELECT * FROM leases ORDER BY resource'
+    ).all() as unknown[] as LeaseRow[];
     return rows.map(toLease);
   }
 
   get(resource: string, now?: string): Lease | null {
     this.expireLazy(now);
-    const row = this.#db.prepare('SELECT * FROM leases WHERE resource = ?').get(resource) as
+    const row = prepared(this.#db, 'SELECT * FROM leases WHERE resource = ?').get(resource) as
       LeaseRow | undefined;
     return row ? toLease(row) : null;
   }
@@ -229,12 +231,11 @@ export class LeasesRepository {
       const stand = standing(current, holder, token);
       if (stand !== 'ok') return {status: stand, current};
       const expires = current.holderKind === 'human' ? null : this.#expiry(at, ttlSeconds);
-      const changed = this.#db
-        .prepare(
-          `UPDATE leases SET renewed_at = ?, expires_at = ?
+      const changed = prepared(
+        this.#db,
+        `UPDATE leases SET renewed_at = ?, expires_at = ?
             WHERE resource = ? AND holder = ? AND claim_token IS ?`
-        )
-        .run(at, expires, resource, current.holder, current.claimToken).changes;
+      ).run(at, expires, resource, current.holder, current.claimToken).changes;
       if (changed === 0) continue;
       this.#logEvent(at, resource, 'renewed', holder, null);
       const renewed = this.get(resource, at);
@@ -259,9 +260,10 @@ export class LeasesRepository {
         const stand = standing(current, holder, token);
         if (stand !== 'ok') return {status: stand, current};
       }
-      const changed = this.#db
-        .prepare('DELETE FROM leases WHERE resource = ? AND holder = ? AND claim_token IS ?')
-        .run(resource, current.holder, current.claimToken).changes;
+      const changed = prepared(
+        this.#db,
+        'DELETE FROM leases WHERE resource = ? AND holder = ? AND claim_token IS ?'
+      ).run(resource, current.holder, current.claimToken).changes;
       if (changed === 0) continue;
       this.#logEvent(
         at,
@@ -295,25 +297,24 @@ export class LeasesRepository {
       if (current === null) return {status: 'not_found'};
       const stand = standing(current, holder, token);
       if (stand !== 'ok') return {status: stand, current};
-      const changed = this.#db
-        .prepare(
-          `UPDATE leases
+      const changed = prepared(
+        this.#db,
+        `UPDATE leases
               SET holder = ?, holder_kind = ?, priority = ?, attestation = NULL,
                   claimed_at = ?, renewed_at = ?, expires_at = ?, claim_token = ?
             WHERE resource = ? AND holder = ? AND claim_token IS ?`
-        )
-        .run(
-          to.holder,
-          to.holderKind,
-          human ? null : (to.priority ?? 'side'),
-          at,
-          at,
-          human ? null : this.#expiry(at, to.ttlSeconds),
-          human ? null : randomUUID(),
-          resource,
-          current.holder,
-          current.claimToken
-        ).changes;
+      ).run(
+        to.holder,
+        to.holderKind,
+        human ? null : (to.priority ?? 'side'),
+        at,
+        at,
+        human ? null : this.#expiry(at, to.ttlSeconds),
+        human ? null : randomUUID(),
+        resource,
+        current.holder,
+        current.claimToken
+      ).changes;
       if (changed === 0) continue;
       this.#logEvent(at, resource, 'transferred', holder, JSON.stringify({to: to.holder}));
       const lease = this.get(resource, at);
@@ -324,10 +325,11 @@ export class LeasesRepository {
 
   events(resource?: string, limit = 100): LeaseEvent[] {
     const rows = (resource === undefined
-      ? this.#db.prepare('SELECT * FROM lease_events ORDER BY seq DESC LIMIT ?').all(limit)
-      : this.#db
-          .prepare('SELECT * FROM lease_events WHERE resource = ? ORDER BY seq DESC LIMIT ?')
-          .all(resource, limit)) as unknown[] as LeaseEvent[];
+      ? prepared(this.#db, 'SELECT * FROM lease_events ORDER BY seq DESC LIMIT ?').all(limit)
+      : prepared(
+          this.#db,
+          'SELECT * FROM lease_events WHERE resource = ? ORDER BY seq DESC LIMIT ?'
+        ).all(resource, limit)) as unknown[] as LeaseEvent[];
     return rows;
   }
 
@@ -348,13 +350,12 @@ export class LeasesRepository {
 
   /** Null when another writer created the row first. */
   #insert(req: ClaimRequest, now: string): Lease | null {
-    const changed = this.#db
-      .prepare(
-        `INSERT INTO leases (resource, holder, holder_kind, priority, attestation, claimed_at, renewed_at, expires_at, claim_token)
+    const changed = prepared(
+      this.#db,
+      `INSERT INTO leases (resource, holder, holder_kind, priority, attestation, claimed_at, renewed_at, expires_at, claim_token)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(resource) DO NOTHING`
-      )
-      .run(req.resource, ...this.#values(req, now, now)).changes;
+    ).run(req.resource, ...this.#values(req, now, now)).changes;
     return changed === 0 ? null : this.#landed(req.resource, now);
   }
 
@@ -366,19 +367,18 @@ export class LeasesRepository {
     now: string,
     token?: string | null
   ): Lease | null {
-    const changed = this.#db
-      .prepare(
-        `UPDATE leases
+    const changed = prepared(
+      this.#db,
+      `UPDATE leases
             SET holder = ?, holder_kind = ?, priority = ?, attestation = ?,
                 claimed_at = ?, renewed_at = ?, expires_at = ?, claim_token = ?
           WHERE resource = ? AND holder = ? AND claim_token IS ?`
-      )
-      .run(
-        ...this.#values(req, claimedAt, now, token),
-        req.resource,
-        current.holder,
-        current.claimToken
-      ).changes;
+    ).run(
+      ...this.#values(req, claimedAt, now, token),
+      req.resource,
+      current.holder,
+      current.claimToken
+    ).changes;
     return changed === 0 ? null : this.#landed(req.resource, now);
   }
 
@@ -414,10 +414,9 @@ export class LeasesRepository {
     holder: string | null,
     detail: string | null
   ): void {
-    this.#db
-      .prepare(
-        'INSERT INTO lease_events (at, resource, event, holder, detail) VALUES (?, ?, ?, ?, ?)'
-      )
-      .run(at, resource, event, holder, detail);
+    prepared(
+      this.#db,
+      'INSERT INTO lease_events (at, resource, event, holder, detail) VALUES (?, ?, ?, ?, ?)'
+    ).run(at, resource, event, holder, detail);
   }
 }

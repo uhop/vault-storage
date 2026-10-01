@@ -6,6 +6,7 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {chunkBody} from '../embeddings/chunker.ts';
 import {contentHash} from '../util/hash.ts';
+import {prepared} from './prepared.ts';
 
 export interface BaselineChunk {
   hash: string;
@@ -78,11 +79,13 @@ export class EnrichmentBaselineRepository {
   readonly #upsert: StatementSync;
 
   constructor(db: DatabaseSync) {
-    this.#get = db.prepare(
+    this.#get = prepared(
+      db,
       'SELECT body_hash, body_bytes, chunks, created FROM enrichment_baselines WHERE record_id = ?'
     );
-    this.#getHash = db.prepare('SELECT body_hash FROM enrichment_baselines WHERE record_id = ?');
-    this.#upsert = db.prepare(
+    this.#getHash = prepared(db, 'SELECT body_hash FROM enrichment_baselines WHERE record_id = ?');
+    this.#upsert = prepared(
+      db,
       `INSERT INTO enrichment_baselines (record_id, body_hash, body_bytes, chunks, created)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(record_id) DO UPDATE SET

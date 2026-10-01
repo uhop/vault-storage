@@ -1,6 +1,7 @@
 import type {IncomingMessage} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
 import {bodyRead} from './body.ts';
+import {prepared} from '../db/prepared.ts';
 
 /**
  * The top-level fields each write route reads from a JSON body; an empty
@@ -200,7 +201,8 @@ export const unknownBodyFields = (route: string, raw: Buffer): string[] => {
 export const bodyFieldObserver = (
   db: DatabaseSync
 ): ((route: string, req: IncomingMessage) => void) => {
-  const upsert = db.prepare(
+  const upsert = prepared(
+    db,
     `INSERT INTO body_field_observations (route, field, client, count, first_seen, last_seen)
      VALUES (?, ?, ?, 1, ?, ?)
      ON CONFLICT (route, field, client) DO UPDATE SET count = count + 1, last_seen = excluded.last_seen`
@@ -252,11 +254,10 @@ interface ObservationRow {
 
 /** Every declared route, with its JSON request count per client and the unknown fields seen on it. */
 export const bodyFieldReport = (db: DatabaseSync): BodyFieldReport => {
-  const rows = db
-    .prepare(
-      'SELECT route, field, client, count, first_seen, last_seen FROM body_field_observations ORDER BY route, field, client'
-    )
-    .all() as unknown[] as ObservationRow[];
+  const rows = prepared(
+    db,
+    'SELECT route, field, client, count, first_seen, last_seen FROM body_field_observations ORDER BY route, field, client'
+  ).all() as unknown[] as ObservationRow[];
   let since: string | null = null;
   const byRoute = new Map<string, BodyFieldReport['routes'][number]>(
     [...BODY_FIELDS.keys()].map(route => [route, {route, requests: 0, clients: [], unknown: []}])

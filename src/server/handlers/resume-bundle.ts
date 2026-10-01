@@ -16,6 +16,7 @@ import {lastWorkingSession, projectChanges} from '../project-changes.ts';
 import {parseSessions, type SessionRecord} from '../sessions.ts';
 import {projectTrackers, trackerLine} from '../trackers.ts';
 import type {Handler} from '../router.ts';
+import {prepared} from '../../db/prepared.ts';
 
 interface ResumeBundleDeps {
   db: DatabaseSync;
@@ -73,9 +74,9 @@ interface LogRow {
 const latestLogs = (db: DatabaseSync, limit: number, project?: string): LogRow[] =>
   limit === 0
     ? []
-    : (db
-        .prepare(
-          `SELECT file_path, title, updated, agent_summary, agent_derived_from_hash, body_hash
+    : (prepared(
+        db,
+        `SELECT file_path, title, updated, agent_summary, agent_derived_from_hash, body_hash
              FROM records
             WHERE type = 'log'
               AND status NOT IN ('archived', 'superseded')
@@ -84,8 +85,7 @@ const latestLogs = (db: DatabaseSync, limit: number, project?: string): LogRow[]
               AND (? IS NULL OR project = ?)
             ORDER BY created DESC, COALESCE(modified_at, updated) DESC, file_path DESC
             LIMIT ?`
-        )
-        .all(project ?? null, project ?? null, limit) as unknown[] as LogRow[]);
+      ).all(project ?? null, project ?? null, limit) as unknown[] as LogRow[]);
 
 /** The last sessions of a project from its sessions note (D105); none when the note is absent. */
 const RECENT_SESSIONS = 20;
@@ -166,9 +166,10 @@ export const resumeBriefHandler =
     const {db, records} = deps;
     const lint = computeLintReport(db);
 
-    const pendingRow = db
-      .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`)
-      .get() as {n: number};
+    const pendingRow = prepared(
+      db,
+      `SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`
+    ).get() as {n: number};
 
     const workflowQueue = records.getByPath(WORKFLOW_QUEUE_PATH);
     const activeRaw = workflowQueue ? extractSection(workflowQueue.body, 'Active') : null;
@@ -190,14 +191,13 @@ export const resumeBriefHandler =
       // Read-only view of the handoff inbox (GET semantics — no lazy-expiry
       // writes): a claimed-but-expired entry already counts as pending,
       // because that is what the next mutating touch will make it.
-      const pendingHandoffs = db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM handoffs
+      const pendingHandoffs = prepared(
+        db,
+        `SELECT COUNT(*) AS n FROM handoffs
             WHERE project = ?
               AND (status IN ('open', 'returned')
                    OR (status = 'claimed' AND claim_expires < ?))`
-        )
-        .get(project, new Date().toISOString()) as {n: number};
+      ).get(project, new Date().toISOString()) as {n: number};
       const trackers = projectTrackers(deps.vaultDataPath, project);
       const threads = new GithubThreadStates(db);
       projectBlock = {
@@ -329,11 +329,10 @@ export const resumeBundleHandler =
     const {total, enriched, unenriched} = fullLint.coverage.enrichment;
 
     revertExpiredClaims(db);
-    const suggestionRows = db
-      .prepare(
-        `SELECT kind, COUNT(*) AS n FROM suggestions WHERE status = 'pending' GROUP BY kind ORDER BY n DESC`
-      )
-      .all() as unknown[] as {kind: string; n: number}[];
+    const suggestionRows = prepared(
+      db,
+      `SELECT kind, COUNT(*) AS n FROM suggestions WHERE status = 'pending' GROUP BY kind ORDER BY n DESC`
+    ).all() as unknown[] as {kind: string; n: number}[];
     const byKind: Record<string, number> = {};
     let suggestionsTotal = 0;
     for (const row of suggestionRows) {

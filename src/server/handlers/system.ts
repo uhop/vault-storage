@@ -6,6 +6,7 @@ import {revertExpiredClaims} from '../../records/claims.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {prepared} from '../../db/prepared.ts';
 
 export interface SystemDeps {
   db: DatabaseSync;
@@ -21,18 +22,19 @@ export const systemStatusHandler =
   ctx => {
     if (!rejectUnknownParams(ctx, NO_QUERY_PARAMS)) return;
     const {db, schemaVersion, vaultDataPath, embedder} = deps;
-    const vecVersion = (db.prepare('SELECT vec_version() AS v').get() as {v: string}).v;
-    const recordCount = (db.prepare('SELECT COUNT(*) AS n FROM records').get() as {n: number}).n;
-    const edgeCount = (db.prepare('SELECT COUNT(*) AS n FROM edges').get() as {n: number}).n;
+    const vecVersion = (prepared(db, 'SELECT vec_version() AS v').get() as {v: string}).v;
+    const recordCount = (prepared(db, 'SELECT COUNT(*) AS n FROM records').get() as {n: number}).n;
+    const edgeCount = (prepared(db, 'SELECT COUNT(*) AS n FROM edges').get() as {n: number}).n;
     revertExpiredClaims(db);
     const pendingSuggestions = (
-      db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`).get() as {
+      prepared(db, `SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'`).get() as {
         n: number;
       }
     ).n;
-    const lastIndexedRow = db
-      .prepare(`SELECT value FROM meta WHERE key = 'last_indexed_commit'`)
-      .get() as {value: string} | undefined;
+    const lastIndexedRow = prepared(
+      db,
+      `SELECT value FROM meta WHERE key = 'last_indexed_commit'`
+    ).get() as {value: string} | undefined;
 
     const m = process.memoryUsage();
 

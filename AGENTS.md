@@ -22,6 +22,7 @@ vault-storage is an AI-agent-first knowledge base **server**: markdown files (in
 - Prettier: 100 char width, single quotes, no bracket spacing, no trailing commas, arrow parens "avoid".
 - 2-space indentation (`.editorconfig`).
 - **No comments that narrate the code.** Don't write a comment that restates _what_ the code does. Allowed, each as the shortest possible marker: JSDoc when requested or required; a reference for a non-trivial algorithm; a non-trivial _decision_ or constraint — _why_ it's this way, including footgun/ordering caveats that have a real reason. The bar is _why_, never _what_. Strip narrating comments opportunistically in files you're already editing.
+- **Statements that repeat come from `prepared(db, sql)`** (`src/db/prepared.ts`, D124): a request's, a write's, a repository's. It keeps one statement per SQL text and database, so a repository built per request costs lookups, not prepares. `db.prepare` is for one-off text, a scan's, a migration's, or the CLI's, which would only crowd the cache.
 
 ## Architecture quick reference
 

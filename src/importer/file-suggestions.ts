@@ -10,6 +10,7 @@
 import type {DatabaseSync, SQLInputValue, StatementSync} from 'node:sqlite';
 import type {Evidence} from '../records/types.ts';
 import {uuidv7} from '../util/uuid.ts';
+import {prepared} from '../db/prepared.ts';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -412,12 +413,14 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     this.#spec = FILER_SPECS[kind];
     const query = findExistingQuery(kind);
     this.#identityKeys = query.identityKeys;
-    this.#findExisting = db.prepare(query.sql);
-    this.#insert = db.prepare(
+    this.#findExisting = prepared(db, query.sql);
+    this.#insert = prepared(
+      db,
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
        VALUES (?, '${kind}', ?, ?, 'pending', ?)`
     );
-    this.#insertResolved = db.prepare(
+    this.#insertResolved = prepared(
+      db,
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created, resolved_at, resolved_by)
        VALUES (?, '${kind}', ?, ?, ?, ?, ?, ?)`
     );
@@ -547,7 +550,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     const cacheKey = `${op}|${keys.join(',')}`;
     let stmt = this.#prepared.get(cacheKey);
     if (!stmt) {
-      stmt = this.#db.prepare(sql(keys));
+      stmt = prepared(this.#db, sql(keys));
       this.#prepared.set(cacheKey, stmt);
     }
     return stmt;
@@ -590,15 +593,14 @@ export const repathPendingSuggestions = (
   for (const {kinds, idField, pathField} of PAYLOAD_PATHS) {
     const kindList = kinds.map(k => `'${k}'`).join(', ');
     changed += Number(
-      db
-        .prepare(
-          `UPDATE suggestions
+      prepared(
+        db,
+        `UPDATE suggestions
               SET payload = json_set(payload, '$.${pathField}', ?)
             WHERE kind IN (${kindList})
               AND status IN ('pending', 'claimed')
               AND json_extract(payload, '$.${idField}') = ?`
-        )
-        .run(newPath, recordId).changes
+      ).run(newPath, recordId).changes
     );
   }
   return changed;

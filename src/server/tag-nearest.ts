@@ -5,6 +5,7 @@ import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {TagVecRepository} from '../db/tag-vec-repo.ts';
 import {embedTagsPending} from '../embeddings/embed-tags.ts';
 import type {Embedder} from '../embeddings/types.ts';
+import {prepared} from '../db/prepared.ts';
 
 export type Matched = 'exact' | 'alias' | 'name' | 'embedding';
 
@@ -92,15 +93,18 @@ export class TagNearest {
   constructor(db: DatabaseSync, embedder: Embedder) {
     this.#db = db;
     this.#embedder = embedder;
-    this.#canonicalOf = db.prepare('SELECT tag FROM tags_taxonomy WHERE tag = ?');
-    this.#aliasOf = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?');
-    this.#tagsLike = db.prepare(
+    this.#canonicalOf = prepared(db, 'SELECT tag FROM tags_taxonomy WHERE tag = ?');
+    this.#aliasOf = prepared(db, 'SELECT canonical FROM tag_aliases WHERE alias = ?');
+    this.#tagsLike = prepared(
+      db,
       `SELECT tag FROM tags_taxonomy WHERE tag LIKE ? ESCAPE '\\' ORDER BY tag LIMIT ${NEAREST_K_MAX}`
     );
-    this.#aliasesLike = db.prepare(
+    this.#aliasesLike = prepared(
+      db,
       `SELECT canonical FROM tag_aliases WHERE alias LIKE ? ESCAPE '\\' ORDER BY alias LIMIT ${NEAREST_K_MAX}`
     );
-    this.#detail = db.prepare(
+    this.#detail = prepared(
+      db,
       `SELECT t.tag, t.description, t.origin,
               (SELECT COUNT(*) FROM tags WHERE tags.tag = t.tag) AS record_count
          FROM tags_taxonomy t WHERE t.tag = ?`

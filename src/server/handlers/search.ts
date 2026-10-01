@@ -5,6 +5,7 @@ import {rejectUnknownParams} from '../query.ts';
 import {asOf, asOfHeaders} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
+import {prepared} from '../../db/prepared.ts';
 
 interface SearchDeps {
   db: DatabaseSync;
@@ -84,14 +85,13 @@ export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): S
   // Bodies are read for the kept hits only: the score never uses them (D120).
   let rows: FtsRow[];
   try {
-    rows = db
-      .prepare(
-        `SELECT r.rowid AS rid, r.file_path, r.title, bm25(records_fts) AS rank
+    rows = prepared(
+      db,
+      `SELECT r.rowid AS rid, r.file_path, r.title, bm25(records_fts) AS rank
            FROM records_fts
            JOIN records r ON r.rowid = records_fts.rowid
           WHERE records_fts MATCH ?`
-      )
-      .all(built.match) as unknown[] as FtsRow[];
+    ).all(built.match) as unknown[] as FtsRow[];
   } catch {
     // Defensive: any residual FTS5 query-syntax error degrades to no results
     // rather than a 500. Quoting already neutralizes operators.
@@ -116,7 +116,7 @@ export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): S
 
   // Context spans come from the body via the same substring scan as before, so
   // the {match:{start,end}, context} output contract is unchanged.
-  const bodyOf = db.prepare('SELECT body FROM records WHERE rowid = ?');
+  const bodyOf = prepared(db, 'SELECT body FROM records WHERE rowid = ?');
   return ranked.map(({row, score}) => {
     const body = (bodyOf.get(row.rid) as {body: string} | undefined)?.body ?? '';
     const matches: MatchSpan[] = [];
@@ -142,9 +142,10 @@ const semanticSearch = async (
 
   const ids = hits.map(h => h.recordId);
   const placeholders = ids.map(() => '?').join(',');
-  const rows = db
-    .prepare(`SELECT record_id, file_path FROM records WHERE record_id IN (${placeholders})`)
-    .all(...ids) as unknown[] as {record_id: string; file_path: string}[];
+  const rows = prepared(
+    db,
+    `SELECT record_id, file_path FROM records WHERE record_id IN (${placeholders})`
+  ).all(...ids) as unknown[] as {record_id: string; file_path: string}[];
   const pathById = new Map(rows.map(r => [r.record_id, r.file_path]));
 
   return hits

@@ -17,6 +17,7 @@ import {
 import {classifyBodyLinks} from './classify-wikilinks.ts';
 import {DEFAULT_CITES, LINK_REMOVED, SuggestionFiler} from './file-suggestions.ts';
 import {WikilinkResolver} from './resolver.ts';
+import {prepared} from '../db/prepared.ts';
 
 const DECLARED_EDGE_TYPE_SET: ReadonlySet<string> = new Set(DECLARED_EDGE_TYPES);
 const ACCEPTED_EDGE_DECLARATION_SET: ReadonlySet<string> = new Set(ACCEPTED_EDGE_DECLARATIONS);
@@ -458,7 +459,7 @@ const viewOf = (entries: readonly Pick<VaultRecord, 'recordId' | 'filePath'>[]):
 
 /** The resolver over the current path set, from ids and paths alone (no bodies). */
 const pathView = (db: DatabaseSync): PathView => {
-  const rows = db.prepare('SELECT record_id, file_path FROM records').all() as unknown[] as {
+  const rows = prepared(db, 'SELECT record_id, file_path FROM records').all() as unknown[] as {
     record_id: string;
     file_path: string;
   }[];
@@ -662,10 +663,10 @@ export const buildEdgesAsync = async (
   const start = performance.now();
   // The database clock, which stamps `modified_at`.
   const began = (
-    db.prepare(`SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS t`).get() as {t: string}
+    prepared(db, `SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS t`).get() as {t: string}
   ).t;
   const ids = (
-    db.prepare('SELECT record_id FROM records ORDER BY file_path').all() as unknown[] as {
+    prepared(db, 'SELECT record_id FROM records ORDER BY file_path').all() as unknown[] as {
       record_id: string;
     }[]
   ).map(r => r.record_id);
@@ -706,12 +707,13 @@ export const buildEdgesAsync = async (
   // An edge a write adds ahead of the cursor has an endpoint stamped since the
   // pass began, so each page re-reads the spared set; one added behind the
   // cursor is never visited.
-  const page = db.prepare(
+  const page = prepared(
+    db,
     `SELECT from_id, to_id, type FROM edges
       WHERE (from_id, to_id, type) > (?, ?, ?)
       ORDER BY from_id, to_id, type LIMIT ?`
   );
-  const writtenSince = db.prepare('SELECT record_id FROM records WHERE modified_at >= ?');
+  const writtenSince = prepared(db, 'SELECT record_id FROM records WHERE modified_at >= ?');
   let after: [string, string, string] = ['', '', ''];
   for (;;) {
     const rows = page.all(...after, gcPage) as unknown[] as {

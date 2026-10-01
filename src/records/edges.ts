@@ -1,5 +1,6 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import type {Edge, EdgeType} from './types.ts';
+import {prepared} from '../db/prepared.ts';
 
 interface EdgeRow {
   from_id: string;
@@ -28,18 +29,19 @@ export class EdgesRepository {
   readonly #listAll: StatementSync;
 
   constructor(db: DatabaseSync) {
-    this.#insert = db.prepare(
+    this.#insert = prepared(
+      db,
       `INSERT INTO edges (from_id, to_id, type, weight, note, created)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(from_id, to_id, type) DO UPDATE SET
          weight = excluded.weight,
          note   = excluded.note`
     );
-    this.#delete = db.prepare('DELETE FROM edges WHERE from_id = ? AND to_id = ? AND type = ?');
-    this.#listOutbound = db.prepare('SELECT * FROM edges WHERE from_id = ? ORDER BY type, to_id');
-    this.#listInbound = db.prepare('SELECT * FROM edges WHERE to_id = ? ORDER BY type, from_id');
-    this.#listByType = db.prepare('SELECT * FROM edges WHERE type = ? ORDER BY created');
-    this.#listAll = db.prepare('SELECT * FROM edges');
+    this.#delete = prepared(db, 'DELETE FROM edges WHERE from_id = ? AND to_id = ? AND type = ?');
+    this.#listOutbound = prepared(db, 'SELECT * FROM edges WHERE from_id = ? ORDER BY type, to_id');
+    this.#listInbound = prepared(db, 'SELECT * FROM edges WHERE to_id = ? ORDER BY type, from_id');
+    this.#listByType = prepared(db, 'SELECT * FROM edges WHERE type = ? ORDER BY created');
+    this.#listAll = prepared(db, 'SELECT * FROM edges');
   }
 
   /** Idempotent insert keyed on (from_id, to_id, type). Updates weight + note on re-insert. */

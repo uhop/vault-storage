@@ -6,6 +6,7 @@ import {fullImportOptions} from '../importer/import-options.ts';
 import {parseFrontmatter} from '../markdown/frontmatter.ts';
 import type {RecordsRepository} from '../records/repository.ts';
 import {ensureSafePath, writeSplitRecordToDisk} from './writer.ts';
+import {prepared} from '../db/prepared.ts';
 
 /**
  * Server-side FM mutations for `POST /suggestions/resolve-batch` — the
@@ -41,9 +42,9 @@ interface LocatedRecord {
 }
 
 const locate = (deps: EffectDeps, recordId: string): LocatedRecord => {
-  const row = deps.db
-    .prepare('SELECT record_id, file_path FROM records WHERE record_id = ?')
-    .get(recordId) as {record_id: string; file_path: string} | undefined;
+  const row = prepared(deps.db, 'SELECT record_id, file_path FROM records WHERE record_id = ?').get(
+    recordId
+  ) as {record_id: string; file_path: string} | undefined;
   if (!row) throw new EffectError(`no record with id ${recordId}`, 'record_not_found');
   const abs = ensureSafePath(deps.vaultDataPath, row.file_path);
   if (!existsSync(abs) || !statSync(abs).isFile()) {

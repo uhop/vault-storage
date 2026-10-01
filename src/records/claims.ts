@@ -1,4 +1,5 @@
 import type {DatabaseSync} from 'node:sqlite';
+import {prepared} from '../db/prepared.ts';
 
 /**
  * Lazily revert expired claims to `pending`, clearing the claim columns.
@@ -8,11 +9,10 @@ import type {DatabaseSync} from 'node:sqlite';
  */
 export const revertExpiredClaims = (db: DatabaseSync, now?: string): number =>
   Number(
-    db
-      .prepare(
-        `UPDATE suggestions
+    prepared(
+      db,
+      `UPDATE suggestions
             SET status = 'pending', claimed_by = NULL, claimed_at = NULL, claim_expires = NULL, claim_token = NULL
           WHERE status = 'claimed' AND claim_expires < ?`
-      )
-      .run(now ?? new Date().toISOString()).changes
+    ).run(now ?? new Date().toISOString()).changes
   );

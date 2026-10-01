@@ -2,6 +2,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {WikilinkResolver} from '../importer/resolver.ts';
 import type {PathEntry} from '../render/render.ts';
 import {contentHash} from '../util/hash.ts';
+import {prepared} from '../db/prepared.ts';
 
 export interface ResolvedView {
   resolver: WikilinkResolver;
@@ -38,9 +39,10 @@ export class ResolverCache {
 
   get(): ResolvedView {
     if (this.#view === null) {
-      const rows = this.#db
-        .prepare('SELECT record_id, file_path FROM records ORDER BY file_path')
-        .all() as unknown[] as {record_id: string; file_path: string}[];
+      const rows = prepared(
+        this.#db,
+        'SELECT record_id, file_path FROM records ORDER BY file_path'
+      ).all() as unknown[] as {record_id: string; file_path: string}[];
       const entries: PathEntry[] = rows.map(r => ({recordId: r.record_id, filePath: r.file_path}));
       const signature = contentHash(entries.map(e => e.filePath + '\t' + e.recordId).join('\n'));
       if (signature !== this.#signature) {

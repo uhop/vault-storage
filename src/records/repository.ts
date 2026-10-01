@@ -1,5 +1,6 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import type {RecordStatus, RecordType, VaultRecord} from './types.ts';
+import {prepared} from '../db/prepared.ts';
 
 interface RecordRow {
   record_id: string;
@@ -74,7 +75,8 @@ export class RecordsRepository {
   constructor(db: DatabaseSync) {
     // modified_at is DB-stamped (strftime 'now', UTC, ms precision), not a
     // bound param — every write re-stamps it. See schema 0012.
-    this.#insert = db.prepare(
+    this.#insert = prepared(
+      db,
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
          title, created, updated, last_referenced, decay_score, status, priority, archived_at,
@@ -83,7 +85,8 @@ export class RecordsRepository {
     );
 
     // Upsert keyed on file_path. ON CONFLICT preserves record_id and created.
-    this.#upsert = db.prepare(
+    this.#upsert = prepared(
+      db,
       `INSERT INTO records (
          record_id, file_path, parent_path, sequence_key, type, body, content_hash, body_hash,
          title, created, updated, last_referenced, decay_score, status, priority, archived_at,
@@ -109,23 +112,27 @@ export class RecordsRepository {
          modified_at             = strftime('%Y-%m-%dT%H:%M:%fZ','now')`
     );
 
-    this.#getById = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records WHERE record_id = ?`);
-    this.#getByPath = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records WHERE file_path = ?`);
-    this.#delete = db.prepare('DELETE FROM records WHERE record_id = ?');
-    this.#listByParent = db.prepare(
+    this.#getById = prepared(db, `SELECT ${RECORD_COLUMNS} FROM records WHERE record_id = ?`);
+    this.#getByPath = prepared(db, `SELECT ${RECORD_COLUMNS} FROM records WHERE file_path = ?`);
+    this.#delete = prepared(db, 'DELETE FROM records WHERE record_id = ?');
+    this.#listByParent = prepared(
+      db,
       `SELECT ${RECORD_COLUMNS} FROM records WHERE parent_path = ? ORDER BY sequence_key, created`
     );
-    this.#listAll = db.prepare(`SELECT ${RECORD_COLUMNS} FROM records ORDER BY file_path`);
-    this.#listByIds = db.prepare(
+    this.#listAll = prepared(db, `SELECT ${RECORD_COLUMNS} FROM records ORDER BY file_path`);
+    this.#listByIds = prepared(
+      db,
       `SELECT ${RECORD_COLUMNS} FROM records
         WHERE record_id IN (SELECT value FROM json_each(?)) ORDER BY file_path`
     );
-    this.#countAll = db.prepare('SELECT COUNT(*) AS n FROM records');
-    this.#bumpLastReferenced = db.prepare(
+    this.#countAll = prepared(db, 'SELECT COUNT(*) AS n FROM records');
+    this.#bumpLastReferenced = prepared(
+      db,
       'UPDATE records SET last_referenced = ? WHERE record_id = ?'
     );
-    this.#updateFilePath = db.prepare('UPDATE records SET file_path = ? WHERE record_id = ?');
-    this.#updatePathAndProject = db.prepare(
+    this.#updateFilePath = prepared(db, 'UPDATE records SET file_path = ? WHERE record_id = ?');
+    this.#updatePathAndProject = prepared(
+      db,
       'UPDATE records SET file_path = ?, project = ? WHERE record_id = ?'
     );
 
@@ -134,11 +141,13 @@ export class RecordsRepository {
     // C8.1 scan scheduler can tell "vault changed since the last pass"
     // without fingerprinting record content. Read paths (bumpLastReferenced)
     // deliberately don't touch it.
-    this.#bumpGeneration = db.prepare(
+    this.#bumpGeneration = prepared(
+      db,
       `INSERT INTO meta (key, value) VALUES ('content_generation', '1')
        ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`
     );
-    this.#takeSeededId = db.prepare(
+    this.#takeSeededId = prepared(
+      db,
       'DELETE FROM seeded_record_ids WHERE file_path = ? RETURNING record_id'
     );
   }

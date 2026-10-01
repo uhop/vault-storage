@@ -39,6 +39,7 @@ import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
 import {getCurrentHead, gitFailure, isGitRepo, runGit, type GitResult} from '../util/git.ts';
 import {exportVaultState} from '../vault-state.ts';
 import type {HealthMonitor} from './health.ts';
+import {prepared} from '../db/prepared.ts';
 
 export interface WorkHoursWindow {
   /** `HH:MM` in 24-hour local time. */
@@ -183,23 +184,25 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
 
   const recordFailure = (message: string): void => {
     if (!opts.db) return;
-    const row = opts.db
-      .prepare(`SELECT value FROM meta WHERE key = 'git_sync_consecutive_failures'`)
-      .get() as {value?: string} | undefined;
+    const row = prepared(
+      opts.db,
+      `SELECT value FROM meta WHERE key = 'git_sync_consecutive_failures'`
+    ).get() as {value?: string} | undefined;
     const prior = Number(row?.value ?? '0');
-    const upsert = opts.db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
+    const upsert = prepared(opts.db, 'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)');
     upsert.run('git_sync_consecutive_failures', String((Number.isFinite(prior) ? prior : 0) + 1));
     upsert.run('git_sync_last_error', message);
-    const since = opts.db
-      .prepare(`SELECT value FROM meta WHERE key = 'git_sync_failing_since'`)
-      .get();
+    const since = prepared(
+      opts.db,
+      `SELECT value FROM meta WHERE key = 'git_sync_failing_since'`
+    ).get();
     if (!since) upsert.run('git_sync_failing_since', now().toISOString());
   };
 
   const clearFailures = (): void => {
     opts.health?.recordGitSync({ok: true});
     if (!opts.db) return;
-    opts.db.prepare(`DELETE FROM meta WHERE key IN ${FAILURE_META_KEYS}`).run();
+    prepared(opts.db, `DELETE FROM meta WHERE key IN ${FAILURE_META_KEYS}`).run();
   };
 
   // Whether the most recent git child was killed by its timeout — what turns

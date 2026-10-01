@@ -28,6 +28,7 @@ import {
   WriterError,
   writeSplitRecordToDisk
 } from '../writer.ts';
+import {prepared} from '../../db/prepared.ts';
 
 interface RecordRow {
   record_id: string;
@@ -166,9 +167,9 @@ const resolveRecord = (
     sendError(res, 400, 'bad_request', 'missing record_id');
     return null;
   }
-  const row = deps.db
-    .prepare('SELECT record_id, file_path FROM records WHERE record_id = ?')
-    .get(id) as RecordPathRow | undefined;
+  const row = prepared(deps.db, 'SELECT record_id, file_path FROM records WHERE record_id = ?').get(
+    id
+  ) as RecordPathRow | undefined;
   if (!row) {
     sendError(res, 404, 'record_not_found', `no record with id ${id}`);
     return null;
@@ -379,7 +380,7 @@ export const getRecordFmHandler =
       sendError(ctx.res, 400, 'bad_request', 'missing record_id');
       return;
     }
-    const row = deps.db.prepare('SELECT file_path FROM records WHERE record_id = ?').get(id) as
+    const row = prepared(deps.db, 'SELECT file_path FROM records WHERE record_id = ?').get(id) as
       {file_path: string} | undefined;
     if (!row) {
       sendError(ctx.res, 404, 'record_not_found', `no record with id ${id}`);
@@ -714,10 +715,10 @@ const parseListFilters = (query: Record<string, string>): ListFilters | string =
 const resolveTagFilters = (db: DatabaseSync, raw: string[]): string[] | string => {
   const canonicalTags: string[] = [];
   for (const tag of raw) {
-    const aliasRow = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?').get(tag) as
+    const aliasRow = prepared(db, 'SELECT canonical FROM tag_aliases WHERE alias = ?').get(tag) as
       {canonical: string} | undefined;
     const canonical = aliasRow?.canonical ?? tag;
-    const exists = db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(canonical);
+    const exists = prepared(db, 'SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(canonical);
     if (!exists) return `unknown tag: ${tag}`;
     canonicalTags.push(canonical);
   }
@@ -863,8 +864,8 @@ export const listRecordsHandler =
       offset
     );
 
-    const rows = db.prepare(sql).all(...(bindings as never[])) as unknown[] as RecordRow[];
-    const total = (db.prepare(countSql).get(...(countBindings as never[])) as {n: number}).n;
+    const rows = prepared(db, sql).all(...(bindings as never[])) as unknown[] as RecordRow[];
+    const total = (prepared(db, countSql).get(...(countBindings as never[])) as {n: number}).n;
 
     sendJson(ctx.res, 200, {
       items: rows

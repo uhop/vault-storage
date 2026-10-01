@@ -23,6 +23,7 @@ import {
   type NearestQuery
 } from '../tag-nearest.ts';
 import {ensureSafePath, writeSplitRecordToDisk, WriterError} from '../writer.ts';
+import {prepared} from '../../db/prepared.ts';
 
 interface TagsDeps {
   db: DatabaseSync;
@@ -97,13 +98,13 @@ export const listTagsHandler =
        LIMIT ? OFFSET ?`;
     const countSql = `SELECT COUNT(*) AS n FROM tags_taxonomy t ${whereClause}`;
 
-    const rows = deps.db.prepare(sql).all(...bindings, limit, offset) as unknown[] as {
+    const rows = prepared(deps.db, sql).all(...bindings, limit, offset) as unknown[] as {
       tag: string;
       description: string | null;
       origin: string;
       record_count: number;
     }[];
-    const total = (deps.db.prepare(countSql).get(...bindings) as {n: number}).n;
+    const total = (prepared(deps.db, countSql).get(...bindings) as {n: number}).n;
 
     sendJson(ctx.res, 200, {
       items: rows.map(r => ({
@@ -135,14 +136,15 @@ export const tagInfoHandler =
       return;
     }
 
-    const aliasRow = deps.db
-      .prepare('SELECT canonical FROM tag_aliases WHERE alias = ?')
-      .get(tag) as {canonical: string} | undefined;
+    const aliasRow = prepared(deps.db, 'SELECT canonical FROM tag_aliases WHERE alias = ?').get(
+      tag
+    ) as {canonical: string} | undefined;
     const canonical = aliasRow?.canonical ?? tag;
 
-    const row = deps.db
-      .prepare('SELECT tag, description, added, origin FROM tags_taxonomy WHERE tag = ?')
-      .get(canonical) as
+    const row = prepared(
+      deps.db,
+      'SELECT tag, description, added, origin FROM tags_taxonomy WHERE tag = ?'
+    ).get(canonical) as
       {tag: string; description: string | null; added: string | null; origin: string} | undefined;
     if (!row) {
       sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
@@ -150,12 +152,14 @@ export const tagInfoHandler =
     }
 
     const aliases = (
-      deps.db
-        .prepare('SELECT alias FROM tag_aliases WHERE canonical = ? ORDER BY alias')
-        .all(canonical) as unknown[] as {alias: string}[]
+      prepared(deps.db, 'SELECT alias FROM tag_aliases WHERE canonical = ? ORDER BY alias').all(
+        canonical
+      ) as unknown[] as {alias: string}[]
     ).map(r => r.alias);
     const recordCount = (
-      deps.db.prepare('SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {n: number}
+      prepared(deps.db, 'SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {
+        n: number;
+      }
     ).n;
 
     sendJson(ctx.res, 200, {
@@ -185,14 +189,14 @@ export const recordsByTagHandler =
     }
 
     // Resolve aliases so the caller can use either canonical or alias form.
-    const aliasRow = deps.db
-      .prepare('SELECT canonical FROM tag_aliases WHERE alias = ?')
-      .get(tag) as {canonical: string} | undefined;
+    const aliasRow = prepared(deps.db, 'SELECT canonical FROM tag_aliases WHERE alias = ?').get(
+      tag
+    ) as {canonical: string} | undefined;
     const canonical = aliasRow?.canonical ?? tag;
 
-    const exists = deps.db
-      .prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?')
-      .get(canonical) as {x: number} | undefined;
+    const exists = prepared(deps.db, 'SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(
+      canonical
+    ) as {x: number} | undefined;
     if (!exists) {
       sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
       return;
@@ -201,19 +205,20 @@ export const recordsByTagHandler =
     const {offset, limit} = parsePagination(ctx.query);
     const {records} = deps;
 
-    const idRows = deps.db
-      .prepare(
-        `SELECT tags.record_id AS record_id
+    const idRows = prepared(
+      deps.db,
+      `SELECT tags.record_id AS record_id
            FROM tags
            JOIN records r ON r.record_id = tags.record_id
           WHERE tags.tag = ?
           ORDER BY r.updated DESC, tags.record_id
           LIMIT ? OFFSET ?`
-      )
-      .all(canonical, limit, offset) as unknown[] as {record_id: string}[];
+    ).all(canonical, limit, offset) as unknown[] as {record_id: string}[];
 
     const total = (
-      deps.db.prepare('SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {n: number}
+      prepared(deps.db, 'SELECT COUNT(*) AS n FROM tags WHERE tag = ?').get(canonical) as {
+        n: number;
+      }
     ).n;
 
     const items = idRows
@@ -311,15 +316,14 @@ const linkBackfillAndAutoAccept = (
   // carries the record_id where the tag was originally typed; INSERT OR
   // IGNORE the canonical tag on that record so the link materializes
   // immediately rather than waiting for the next per-record reindex.
-  const pending = db
-    .prepare(
-      `SELECT payload FROM suggestions
+  const pending = prepared(
+    db,
+    `SELECT payload FROM suggestions
         WHERE kind = 'new_tag'
           AND status IN ('pending', 'claimed')
           AND json_extract(payload, '$.tag') = ?`
-    )
-    .all(pendingTag) as Array<{payload: string}>;
-  const linkInsert = db.prepare('INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
+  ).all(pendingTag) as Array<{payload: string}>;
+  const linkInsert = prepared(db, 'INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
   let linked = 0;
   for (const row of pending) {
     let parsed: NewTagSuggestionPayload;
@@ -432,7 +436,7 @@ export const nearestTagsHandler = (deps: TagsDeps): Handler => {
 export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
   const nearest = new TagNearest(deps.db, deps.embedder);
   const summaries = new RecordSummaryVecRepository(deps.db);
-  const carries = deps.db.prepare('SELECT 1 AS x FROM tags WHERE record_id = ? AND tag = ?');
+  const carries = prepared(deps.db, 'SELECT 1 AS x FROM tags WHERE record_id = ? AND tag = ?');
 
   const overlapsOf = async (tag: string, description: string | null): Promise<OverlapItem[]> => {
     const {queries} = await nearest.query(
@@ -540,8 +544,9 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
     }
     const description = typeof body.description === 'string' ? body.description : null;
 
-    const existing = deps.db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag) as
-      {x: number} | undefined;
+    const existing = prepared(deps.db, 'SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(
+      tag
+    ) as {x: number} | undefined;
     if (body.dry_run === true) {
       const [overlaps, reach] = await Promise.all([
         overlapsOf(tag, description),
@@ -572,9 +577,10 @@ export const addTaxonomyHandler = (deps: TagsDeps): Handler => {
 
     deps.db.exec('BEGIN');
     try {
-      deps.db
-        .prepare('INSERT INTO tags_taxonomy (tag, description, added, origin) VALUES (?, ?, ?, ?)')
-        .run(tag, description, now, origin as string);
+      prepared(
+        deps.db,
+        'INSERT INTO tags_taxonomy (tag, description, added, origin) VALUES (?, ?, ?, ?)'
+      ).run(tag, description, now, origin as string);
       const {linked, accepted} = linkBackfillAndAutoAccept(
         deps.db,
         filer,
@@ -681,9 +687,10 @@ export const updateTaxonomyHandler =
       ...(hasDescription ? [description as string | null] : []),
       ...(hasOrigin ? [origin as string] : [])
     ];
-    const result = deps.db
-      .prepare(`UPDATE tags_taxonomy SET ${sets.join(', ')} WHERE tag = ?`)
-      .run(...values, tag);
+    const result = prepared(
+      deps.db,
+      `UPDATE tags_taxonomy SET ${sets.join(', ')} WHERE tag = ?`
+    ).run(...values, tag);
     if (Number(result.changes) === 0) {
       sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
       return;
@@ -715,20 +722,20 @@ export const deleteTaxonomyHandler =
       return;
     }
     const {db, records} = deps;
-    if (!db.prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag)) {
+    if (!prepared(db, 'SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(tag)) {
       sendError(ctx.res, 404, 'tag_not_found', `tag '${tag}' is not in the taxonomy`);
       return;
     }
     const forms = new Set([
       tag,
       ...(
-        db.prepare('SELECT alias FROM tag_aliases WHERE canonical = ?').all(tag) as {
+        prepared(db, 'SELECT alias FROM tag_aliases WHERE canonical = ?').all(tag) as {
           alias: string;
         }[]
       ).map(r => r.alias)
     ]);
     const ids = (
-      db.prepare('SELECT record_id FROM tags WHERE tag = ?').all(tag) as {record_id: string}[]
+      prepared(db, 'SELECT record_id FROM tags WHERE tag = ?').all(tag) as {record_id: string}[]
     ).map(r => r.record_id);
 
     let stripped = 0;
@@ -768,7 +775,7 @@ export const deleteTaxonomyHandler =
     db.exec('BEGIN');
     let dropped: {aliases: number; suggestions: number};
     try {
-      db.prepare('DELETE FROM tags WHERE tag = ?').run(tag);
+      prepared(db, 'DELETE FROM tags WHERE tag = ?').run(tag);
       dropped = dropTaxonomyTag(db, tag, new Date().toISOString());
       db.exec('COMMIT');
     } catch (err) {
@@ -824,17 +831,17 @@ export const addAliasHandler =
       return;
     }
 
-    const canonicalRow = deps.db
-      .prepare('SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?')
-      .get(canonical) as {x: number} | undefined;
+    const canonicalRow = prepared(deps.db, 'SELECT 1 AS x FROM tags_taxonomy WHERE tag = ?').get(
+      canonical
+    ) as {x: number} | undefined;
     if (!canonicalRow) {
       sendError(ctx.res, 404, 'tag_not_found', `canonical '${canonical}' is not in the taxonomy`);
       return;
     }
 
-    const existing = deps.db
-      .prepare('SELECT canonical FROM tag_aliases WHERE alias = ?')
-      .get(alias) as {canonical: string} | undefined;
+    const existing = prepared(deps.db, 'SELECT canonical FROM tag_aliases WHERE alias = ?').get(
+      alias
+    ) as {canonical: string} | undefined;
     if (existing) {
       sendError(
         ctx.res,
@@ -850,9 +857,10 @@ export const addAliasHandler =
 
     deps.db.exec('BEGIN');
     try {
-      deps.db
-        .prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)')
-        .run(alias, canonical);
+      prepared(deps.db, 'INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)').run(
+        alias,
+        canonical
+      );
       const {linked, accepted} = linkBackfillAndAutoAccept(
         deps.db,
         filer,

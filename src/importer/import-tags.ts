@@ -20,6 +20,7 @@
 import type {DatabaseSync, StatementSync} from 'node:sqlite';
 import {normalizeTag} from '../migration/tags.ts';
 import {SuggestionFiler} from './file-suggestions.ts';
+import {prepared} from '../db/prepared.ts';
 
 export class TagsImporter {
   readonly #deleteForRecord: StatementSync;
@@ -30,11 +31,11 @@ export class TagsImporter {
   readonly #filer: SuggestionFiler<'new_tag'>;
 
   constructor(db: DatabaseSync) {
-    this.#deleteForRecord = db.prepare('DELETE FROM tags WHERE record_id = ?');
-    this.#insertTag = db.prepare('INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
-    this.#lookupAlias = db.prepare('SELECT canonical FROM tag_aliases WHERE alias = ?');
-    this.#selectForRecord = db.prepare('SELECT tag FROM tags WHERE record_id = ?');
-    this.#inTaxonomy = db.prepare('SELECT 1 FROM tags_taxonomy WHERE tag = ?');
+    this.#deleteForRecord = prepared(db, 'DELETE FROM tags WHERE record_id = ?');
+    this.#insertTag = prepared(db, 'INSERT OR IGNORE INTO tags (record_id, tag) VALUES (?, ?)');
+    this.#lookupAlias = prepared(db, 'SELECT canonical FROM tag_aliases WHERE alias = ?');
+    this.#selectForRecord = prepared(db, 'SELECT tag FROM tags WHERE record_id = ?');
+    this.#inTaxonomy = prepared(db, 'SELECT 1 FROM tags_taxonomy WHERE tag = ?');
     this.#filer = new SuggestionFiler(db, 'new_tag');
   }
 
