@@ -127,18 +127,28 @@ export const registerTools = (mcp, client) => {
     'vault_search',
     {
       description:
-        'Search the vault by lexical query (default) or semantic similarity (mode=semantic). Returns {as_of, hits}: hits is up to `limit` of [{filename, score, matches: [{match, context}]}], and as_of {generation, indexed_commit, at} is the content generation the answer was computed at, so an empty hits reads as "empty at generation N", never "none ever". (Adapters before 0.7.0 returned the bare hits array.)',
+        'Search the vault by lexical query (default) or semantic similarity (mode=semantic). Returns {as_of, hits}: hits is up to `limit` of [{filename, score, matches: [{match, context}]}], and as_of {generation, indexed_commit, at} is the content generation the answer was computed at, so an empty hits reads as "empty at generation N", never "none ever". `edge` keeps the hits whose typed edges meet every condition: `[!]<type>[|<type>…][:outbound|inbound|both[:<record_id>]]`, several separated by commas, `|` for any of several types, `!` for none, `both` by default, the types those of vault_list_edges (`supersedes:outbound` notes that supersede another, `contradicts:inbound` notes contradicted, `!cites:outbound:<id>` notes that do not cite one). A semantic search reads up to five times `limit` nearest notes to filter; `edge_window` is set when that window ran out before `limit` hits. `edges: true` adds each hit\'s `record_id` and `edges` [{type, direction: out|in|both, other: {record_id, file_path, title}}], a mirrored pair once. (Adapters before 0.7.0 returned the bare hits array.)',
       inputSchema: {
         query: z.string().min(1).describe('Search query text'),
         mode: z.enum(['lexical', 'semantic']).optional().default('lexical'),
-        limit: z.number().int().min(1).max(100).optional().default(20)
+        limit: z.number().int().min(1).max(100).optional().default(20),
+        edge: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Edge conditions, all required: [!]<type>[|<type>…][:outbound|inbound|both[:<record_id>]], comma-separated'
+          ),
+        edges: z.boolean().optional().describe("Add each hit's record_id and typed edges")
       }
     },
-    wrap(async ({query, mode, limit}) => {
+    wrap(async ({query, mode, limit, edge, edges}) => {
       const {json, headers} = await client.postJsonWithMeta('/search/simple/', undefined, {
         query,
         mode,
-        limit
+        limit,
+        edge,
+        edges: edges ? 1 : undefined
       });
       const generation = headers.get('x-vault-generation');
       return {
@@ -147,6 +157,9 @@ export const registerTools = (mcp, client) => {
           indexed_commit: headers.get('x-vault-indexed-commit') || null,
           at: headers.get('x-vault-as-of')
         },
+        ...(headers.get('x-vault-edge-window')
+          ? {edge_window: Number(headers.get('x-vault-edge-window'))}
+          : {}),
         hits: json
       };
     })

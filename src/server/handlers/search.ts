@@ -6,6 +6,7 @@ import {asOf, asOfHeaders} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {prepared} from '../../db/prepared.ts';
+import {edgeFilterSql, edgesOf, parseEdgeFilter, type EdgeCondition} from '../edge-filter.ts';
 
 interface SearchDeps {
   db: DatabaseSync;
@@ -21,6 +22,7 @@ interface SearchHit {
   filename: string;
   score: number;
   matches: MatchSpan[];
+  record_id: string;
 }
 
 const CONTEXT_PAD = 40;
@@ -66,6 +68,7 @@ const buildMatch = (query: string): {match: string; terms: string[]} | null => {
 
 interface FtsRow {
   rid: number;
+  record_id: string;
   file_path: string;
   title: string | null;
   rank: number;
@@ -75,9 +78,15 @@ interface FtsRow {
 // title match always outranks a body-only one regardless of corpus stats.
 const TITLE_BOOST = 1;
 
-export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): SearchHit[] => {
+export const lexicalSearch = (
+  db: DatabaseSync,
+  query: string,
+  limit: number,
+  conditions: readonly EdgeCondition[] = []
+): SearchHit[] => {
   const built = buildMatch(query);
   if (!built) return [];
+  const filter = edgeFilterSql(conditions, 'r.record_id');
 
   // Indexed FTS5 MATCH replaces the O(rows) LIKE scan. Fetch ALL matches (no
   // SQL LIMIT) and rank in JS, so a title match with weak bm25 can't be sliced
@@ -87,11 +96,11 @@ export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): S
   try {
     rows = prepared(
       db,
-      `SELECT r.rowid AS rid, r.file_path, r.title, bm25(records_fts) AS rank
+      `SELECT r.rowid AS rid, r.record_id, r.file_path, r.title, bm25(records_fts) AS rank
            FROM records_fts
            JOIN records r ON r.rowid = records_fts.rowid
-          WHERE records_fts MATCH ?`
-    ).all(built.match) as unknown[] as FtsRow[];
+          WHERE records_fts MATCH ?${filter.sql ? ` AND ${filter.sql}` : ''}`
+    ).all(built.match, ...filter.params) as unknown[] as FtsRow[];
   } catch {
     // Defensive: any residual FTS5 query-syntax error degrades to no results
     // rather than a 500. Quoting already neutralizes operators.
@@ -125,43 +134,61 @@ export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): S
         if (matches.length < MAX_MATCHES_PER_FILE) matches.push(m);
       }
     }
-    return {filename: row.file_path, score, matches};
+    return {filename: row.file_path, score, matches, record_id: row.record_id};
   });
 };
 
+/** How many nearest records a filtered semantic search reads per hit it may answer, and at most. */
+const EDGE_WINDOW_FACTOR = 5;
+const EDGE_WINDOW_MAX = 500;
+
+/** The hits, and how many nearest records were read when a filter left fewer than `limit` of a full window. */
 const semanticSearch = async (
   db: DatabaseSync,
   embedder: Embedder,
   query: string,
-  limit: number
-): Promise<SearchHit[]> => {
+  limit: number,
+  conditions: readonly EdgeCondition[] = []
+): Promise<{hits: SearchHit[]; window: number | null}> => {
   const vec = await embedder.embedQuery(query);
   const repo = new RecordVecRepository(db);
-  const hits = await repo.nearest(vec, limit);
-  if (hits.length === 0) return [];
+  const window = conditions.length ? Math.min(EDGE_WINDOW_MAX, limit * EDGE_WINDOW_FACTOR) : limit;
+  const near = await repo.nearest(vec, window);
+  if (near.length === 0) return {hits: [], window: null};
 
-  const ids = hits.map(h => h.recordId);
-  const placeholders = ids.map(() => '?').join(',');
+  const filter = edgeFilterSql(conditions, 'r.record_id');
   const rows = prepared(
     db,
-    `SELECT record_id, file_path FROM records WHERE record_id IN (${placeholders})`
-  ).all(...ids) as unknown[] as {record_id: string; file_path: string}[];
+    `SELECT r.record_id, r.file_path FROM records r
+      WHERE r.record_id IN (SELECT value FROM json_each(?))${filter.sql ? ` AND ${filter.sql}` : ''}`
+  ).all(JSON.stringify(near.map(h => h.recordId)), ...filter.params) as unknown[] as {
+    record_id: string;
+    file_path: string;
+  }[];
   const pathById = new Map(rows.map(r => [r.record_id, r.file_path]));
 
-  return hits
+  const hits = near
     .filter(h => pathById.has(h.recordId))
+    .slice(0, limit)
     .map(h => ({
       filename: pathById.get(h.recordId)!,
       score: Number((1 - h.distance / 2).toFixed(4)),
-      matches: []
+      matches: [],
+      record_id: h.recordId
     }));
+  const short = conditions.length > 0 && hits.length < limit && near.length >= window;
+  return {hits, window: short ? window : null};
 };
 
-/** POST /search/simple/?query=...&mode=lexical|semantic&limit=N */
+/**
+ * POST /search/simple/?query=...&mode=lexical|semantic&limit=N&edge=...&edges=1:
+ * `edge` keeps the hits whose edges meet every condition (D129), `edges=1`
+ * adds each hit's record id and edges.
+ */
 export const simpleSearchHandler =
   (deps: SearchDeps): Handler =>
   async ctx => {
-    if (!rejectUnknownParams(ctx, new Set(['query', 'mode', 'limit']))) return;
+    if (!rejectUnknownParams(ctx, new Set(['query', 'mode', 'limit', 'edge', 'edges']))) return;
     const query = ctx.query['query'];
     if (!query || query.length === 0) {
       sendError(ctx.res, 400, 'bad_request', 'missing query parameter');
@@ -177,11 +204,38 @@ export const simpleSearchHandler =
     const limitRaw = ctx.query['limit'];
     const limit = Math.min(100, Math.max(1, limitRaw ? Number.parseInt(limitRaw, 10) || 20 : 20));
 
-    const hits =
-      mode === 'semantic'
-        ? await semanticSearch(deps.db, deps.embedder, query, limit)
-        : lexicalSearch(deps.db, query, limit);
+    let conditions: EdgeCondition[] = [];
+    if (ctx.query['edge'] !== undefined) {
+      try {
+        conditions = parseEdgeFilter(ctx.query['edge']);
+      } catch (err) {
+        sendError(ctx.res, 400, 'bad_request', (err as Error).message);
+        return;
+      }
+    }
+    const withEdges = ctx.query['edges'];
+    if (withEdges !== undefined && withEdges !== '1' && withEdges !== '0') {
+      sendError(ctx.res, 400, 'bad_request', 'edges must be 1 or 0');
+      return;
+    }
 
+    const {hits, window} =
+      mode === 'semantic'
+        ? await semanticSearch(deps.db, deps.embedder, query, limit, conditions)
+        : {hits: lexicalSearch(deps.db, query, limit, conditions), window: null};
+
+    const edges =
+      withEdges === '1'
+        ? edgesOf(
+            deps.db,
+            hits.map(h => h.record_id)
+          )
+        : null;
+    const body = hits.map(({record_id, ...hit}) =>
+      edges ? {...hit, record_id, edges: edges.get(record_id) ?? []} : hit
+    );
     // A bare array carries no keys, so the stamp rides in headers here.
-    sendJson(ctx.res, 200, hits, asOfHeaders(asOf(deps.db)));
+    const headers = asOfHeaders(asOf(deps.db));
+    if (window !== null) headers['X-Vault-Edge-Window'] = String(window);
+    sendJson(ctx.res, 200, body, headers);
   };

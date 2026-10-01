@@ -62,7 +62,11 @@ suggestion kinds) so the canonical vocabulary is visible at discovery time.
 Search & list:
 
 - vault_search — lexical (FTS5, default) or semantic (mode=semantic) search;
-  {as_of, hits: [{filename, score, matches}]}.
+  {as_of, hits: [{filename, score, matches}]}. `edge` keeps the hits whose
+  typed edges meet every condition, `[!]<type>[|<type>…][:outbound|inbound|both[:<record_id>]]`
+  comma-separated (`supersedes:outbound`, `!cites:outbound:<id>`); `edges: true`
+  adds each hit's `record_id` and edges; `edge_window` marks a semantic search
+  whose window ran out first. Needs vault-storage from 2026-10-01.
 - vault_context_pack — one prepared RAG pack anchored by exactly one of
   `query` (hybrid: lexical FTS + semantic ranking, fused by reciprocal
   rank; the semantic leg scores a record by the better of its best chunk

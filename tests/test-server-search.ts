@@ -484,3 +484,132 @@ test('POST /search/simple/ — unknown query parameter is a loud 400', async t =
     cleanup();
   }
 });
+
+// a supersedes b (declared), c cites b (a body link), d is related to a (mirrored), e has no edges.
+const seedEdges = (root: string): void => {
+  const note = (name: string, fm: string, body: string): void =>
+    writeMd(root, `topics/${name}.md`, `---\ntitle: Cache ${name}\n${fm}---\n${body}\n`);
+  note('a', 'edges:\n  topics/b: supersedes\n', 'The cache note a replaces [[topics/b]].');
+  note('b', '', 'The cache note b.');
+  note('c', '', 'The cache note c; see [[topics/b]].');
+  note('d', 'related:\n  - "[[topics/a]]"\n', 'The cache note d.');
+  note('e', '', 'The cache note e.');
+};
+
+const names = (body: unknown): string[] =>
+  (body as Array<{filename: string}>).map(h => h.filename.replace(/^topics\/|\.md$/g, '')).sort();
+
+test('POST /search/simple/ keeps the hits whose edges meet every edge condition', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEdges(root);
+    const ctx = await startTestServer(root);
+    try {
+      const idOf = (name: string): string =>
+        (
+          ctx.db
+            .prepare('SELECT record_id FROM records WHERE file_path = ?')
+            .get(`topics/${name}.md`) as {
+            record_id: string;
+          }
+        ).record_id;
+      const search = async (edge: string) =>
+        fetchAuthed(`${ctx.url}/search/simple/?query=cache&${edge}`, {method: 'POST'});
+      t.deepEqual(names((await search('edge=supersedes:outbound')).body), ['a']);
+      t.deepEqual(names((await search('edge=supersedes:inbound')).body), ['b']);
+      t.deepEqual(
+        names((await search('edge=supersedes')).body),
+        ['a', 'b'],
+        'both ways by default'
+      );
+      t.deepEqual(
+        names((await search('edge=!cites')).body),
+        ['a', 'd', 'e'],
+        '! keeps the hits without one'
+      );
+      t.deepEqual(
+        names((await search(`edge=cites:outbound:${idOf('b')}`)).body),
+        ['c'],
+        'an edge to one note'
+      );
+      t.deepEqual(
+        names((await search('edge=supersedes|related-to,!cites')).body),
+        ['a', 'd'],
+        '| within a condition, a comma between them'
+      );
+      t.deepEqual(
+        names((await search('edge=supersedes|related-to&edge=!cites')).body),
+        ['a', 'd'],
+        'a repeated edge= is a second condition'
+      );
+      const bad = await search('edge=bogus:outbound');
+      t.equal(bad.status, 400);
+      t.matchString(bad.raw, /edge condition \\"bogus:outbound\\".*types: supersedes/);
+      t.equal((await search('edge=cites:sideways')).status, 400, 'an unknown direction');
+      t.equal((await search('edges=yes')).status, 400, 'edges takes 1 or 0');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /search/simple/?edges=1 adds each hit its record id and edges, a mirrored pair once', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEdges(root);
+    const ctx = await startTestServer(root);
+    try {
+      const r = await fetchAuthed(`${ctx.url}/search/simple/?query=cache&edges=1`, {
+        method: 'POST'
+      });
+      const hits = r.body as Array<{
+        filename: string;
+        record_id: string;
+        edges: Array<{type: string; direction: string; other: {file_path: string}}>;
+      }>;
+      const a = hits.find(h => h.filename === 'topics/a.md')!;
+      t.equal(typeof a.record_id, 'string');
+      t.deepEqual(
+        a.edges.map(e => [e.type, e.direction, e.other.file_path]),
+        [
+          ['supersedes', 'out', 'topics/b.md'],
+          ['related-to', 'both', 'topics/d.md']
+        ]
+      );
+      t.deepEqual(hits.find(h => h.filename === 'topics/e.md')!.edges, [], 'a hit with no edges');
+      const plain = await fetchAuthed(`${ctx.url}/search/simple/?query=cache`, {method: 'POST'});
+      t.notOk('record_id' in (plain.body as object[])[0]!, 'the plain answer keeps its shape');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('POST /search/simple/?mode=semantic filters a wider window and says when it ran short', async t => {
+  const {root, cleanup} = setupVault();
+  try {
+    seedEdges(root);
+    const ctx = await startTestServer(root, true);
+    try {
+      const url = `${ctx.url}/search/simple/?query=cache&mode=semantic&limit=1`;
+      const related = await fetchAuthed(`${url}&edge=related-to`, {method: 'POST'});
+      t.equal(related.status, 200);
+      t.equal((related.body as unknown[]).length, 1, 'the one hit asked for');
+      t.ok(['a', 'd'].includes(names(related.body)[0]!), 'a note with a related-to edge');
+      const res = await fetch(`${url}&edge=contradicts`, {
+        method: 'POST',
+        headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+      });
+      t.deepEqual(await res.json(), [], 'no note contradicts another');
+      t.equal(res.headers.get('x-vault-edge-window'), '5', 'the window it read');
+    } finally {
+      await teardown(ctx);
+    }
+  } finally {
+    cleanup();
+  }
+});

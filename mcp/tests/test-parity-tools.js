@@ -263,6 +263,27 @@ test('vault_search → POST /search/simple/ and wraps the bare hits with the as_
   t.equal(out.hits.length, 1, 'hits carried through');
 });
 
+test('vault_search passes edge conditions and edges, and reports a short window', async t => {
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: {'Content-Type': 'application/json', 'X-Vault-Edge-Window': '25'}
+      })
+  );
+  const result = await call('vault_search', {
+    query: 'alpha',
+    mode: 'semantic',
+    limit: 5,
+    edge: 'supersedes:outbound,!cites',
+    edges: true
+  });
+  const url = new URL(getCaptured().url);
+  t.equal(url.searchParams.get('edge'), 'supersedes:outbound,!cites');
+  t.equal(url.searchParams.get('edges'), '1');
+  t.equal(JSON.parse(firstText(result)).edge_window, 25);
+});
+
 test('vault_health → GET /system/health, no parameters', async t => {
   const {call, getCaptured} = setup(
     () =>
