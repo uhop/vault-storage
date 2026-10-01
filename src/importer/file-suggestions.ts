@@ -128,6 +128,12 @@ export interface AgentEnrichmentStalePayload {
   current_body_hash: string;
 }
 
+/** A decision a suggestion is filed with, and who made it. */
+export interface Resolution {
+  status: 'accepted' | 'rejected';
+  by: string | null;
+}
+
 /** Wire payload per suggestion kind. */
 export interface KindPayloads {
   edge_type: EdgeSuggestionPayload;
@@ -394,7 +400,7 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
   readonly #spec: FilerSpec;
   readonly #findExisting: StatementSync;
   readonly #insert: StatementSync;
-  readonly #insertRejected: StatementSync;
+  readonly #insertResolved: StatementSync;
   /** Payload keys binding `#findExisting`'s identity placeholders (non-symmetric specs). */
   readonly #identityKeys: readonly MatchKey[];
   /** Lazily prepared accept/pending statements, keyed by op + match keys. */
@@ -411,9 +417,9 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created)
        VALUES (?, '${kind}', ?, ?, 'pending', ?)`
     );
-    this.#insertRejected = db.prepare(
+    this.#insertResolved = db.prepare(
       `INSERT INTO suggestions (id, kind, subject_id, payload, status, created, resolved_at, resolved_by)
-       VALUES (?, '${kind}', ?, ?, 'rejected', ?, ?, ?)`
+       VALUES (?, '${kind}', ?, ?, ?, ?, ?, ?)`
     );
   }
 
@@ -426,12 +432,13 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
    * `snoozeDays` (default {@link DEFAULT_SNOOZE_DAYS}) only applies to
    * `pending-or-snoozed-reject` kinds. `subjectId` overrides the spec-derived
    * subject for kinds whose subject isn't in the payload (upgrade signals).
-   * `rejectAs` records the row already rejected, with that `resolved_by`.
+   * `resolved` records the row already decided at `now`: D76's default
+   * `cites`, and a decision seeded from the vault's repository (D123).
    */
   file(
     payload: KindPayloads[K] & {evidence?: Evidence},
     now: string,
-    opts: {snoozeDays?: number; subjectId?: string | null; rejectAs?: string} = {}
+    opts: {snoozeDays?: number; subjectId?: string | null; resolved?: Resolution} = {}
   ): boolean {
     const spec = this.#spec;
     const fields = payload as unknown as Record<string, string | undefined>;
@@ -455,10 +462,18 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
     }
     if (this.#findExisting.get(...params)) return false;
     const stored = {...payload, evidence: payload.evidence ?? spec.evidence};
-    if (opts.rejectAs === undefined)
-      this.#insert.run(uuidv7(), subject, JSON.stringify(stored), now);
+    const {resolved} = opts;
+    if (resolved === undefined) this.#insert.run(uuidv7(), subject, JSON.stringify(stored), now);
     else
-      this.#insertRejected.run(uuidv7(), subject, JSON.stringify(stored), now, now, opts.rejectAs);
+      this.#insertResolved.run(
+        uuidv7(),
+        subject,
+        JSON.stringify(stored),
+        resolved.status,
+        now,
+        now,
+        resolved.by
+      );
     return true;
   }
 
@@ -539,16 +554,23 @@ export class SuggestionFiler<K extends SuggestionKind = SuggestionKind> {
   }
 }
 
-/**
- * Auto-accept pending `tag_suggestion`s for a record whose stored payload
- * tag — after alias resolution via `resolve` — is now realized on the record
- * (`realized` is the record's canonical tag set). Resolving the payload tag
- * (rather than matching it verbatim against a canonical) covers an
- * alias-spelled payload, or a literal that only became an alias of a
- * now-realized canonical after the suggestion was filed — an exact match
- * would miss it and the suggestion would never clear. Returns the count
- * promoted (`resolved_by='tag-realized'`).
- */
+/** The payload fields naming a record's path, each beside the field with its id. */
+export const PAYLOAD_PATHS: ReadonlyArray<{
+  kinds: readonly SuggestionKind[];
+  idField: string;
+  pathField: string;
+}> = [
+  {
+    kinds: ['new_tag', 'tag_suggestion', 'archive_candidate', 'agent_enrichment_stale'],
+    idField: 'record_id',
+    pathField: 'file_path'
+  },
+  {kinds: ['edge_type'], idField: 'from_record', pathField: 'from_path'},
+  {kinds: ['edge_type'], idField: 'to_record', pathField: 'to_path'},
+  {kinds: ['duplicate'], idField: 'a_record', pathField: 'a_path'},
+  {kinds: ['duplicate'], idField: 'b_record', pathField: 'b_path'}
+];
+
 /**
  * Rewrite the payload path fields of unresolved (pending/claimed)
  * suggestions that reference `recordId` after the record moved to
@@ -564,19 +586,8 @@ export const repathPendingSuggestions = (
   recordId: string,
   newPath: string
 ): number => {
-  const rewrites: Array<{kinds: readonly SuggestionKind[]; idField: string; pathField: string}> = [
-    {
-      kinds: ['new_tag', 'tag_suggestion', 'archive_candidate', 'agent_enrichment_stale'],
-      idField: 'record_id',
-      pathField: 'file_path'
-    },
-    {kinds: ['edge_type'], idField: 'from_record', pathField: 'from_path'},
-    {kinds: ['edge_type'], idField: 'to_record', pathField: 'to_path'},
-    {kinds: ['duplicate'], idField: 'a_record', pathField: 'a_path'},
-    {kinds: ['duplicate'], idField: 'b_record', pathField: 'b_path'}
-  ];
   let changed = 0;
-  for (const {kinds, idField, pathField} of rewrites) {
+  for (const {kinds, idField, pathField} of PAYLOAD_PATHS) {
     const kindList = kinds.map(k => `'${k}'`).join(', ');
     changed += Number(
       db
@@ -593,6 +604,16 @@ export const repathPendingSuggestions = (
   return changed;
 };
 
+/**
+ * Auto-accept pending `tag_suggestion`s for a record whose stored payload
+ * tag — after alias resolution via `resolve` — is now realized on the record
+ * (`realized` is the record's canonical tag set). Resolving the payload tag
+ * (rather than matching it verbatim against a canonical) covers an
+ * alias-spelled payload, or a literal that only became an alias of a
+ * now-realized canonical after the suggestion was filed — an exact match
+ * would miss it and the suggestion would never clear. Returns the count
+ * promoted (`resolved_by='tag-realized'`).
+ */
 export const acceptRealizedTagSuggestions = (
   filer: SuggestionFiler<'tag_suggestion'>,
   recordId: string,

@@ -14,6 +14,7 @@ import type {Embedder} from './embeddings/types.ts';
 import {importVault} from './importer/import.ts';
 import {migrateVault} from './migration/import.ts';
 import {main as serveMain} from './server/index.ts';
+import {dropSeededIds, seedVaultState, STATE_DIR} from './vault-state.ts';
 
 const argv = process.argv.slice(2);
 const subcommand = argv[0] ?? 'info';
@@ -92,7 +93,17 @@ if (subcommand === 'serve') {
     case 'import': {
       const vaultRoot = argv[1] ?? process.env['VAULT_INGEST_PATH'];
       if (!vaultRoot) die('usage: import <vault-path>  (or set VAULT_INGEST_PATH)');
-      const summary = importVault(db, resolve(vaultRoot as string));
+      const root = resolve(vaultRoot as string);
+      const seeded = seedVaultState(db, root);
+      if (seeded) {
+        process.stdout.write(
+          `seeded from ${STATE_DIR}/: ${seeded.tags} tags, ${seeded.aliases} aliases, ` +
+            `${seeded.records} record ids, ${seeded.decisions} decisions\n`
+        );
+      }
+      const summary = importVault(db, root);
+      const unused = dropSeededIds(db);
+      if (unused > 0) process.stdout.write(`${unused} seeded record ids had no note, dropped\n`);
       process.stdout.write(
         `imported ${summary.total} files: ${summary.inserted} inserted, ` +
           `${summary.updated} updated, ${summary.unchanged} unchanged, ` +

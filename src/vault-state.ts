@@ -1,7 +1,8 @@
 // The state only the database holds, exported into the vault's repository
 // (D121, D122), so a rebuild or an adoption keeps it: the tag taxonomy with
 // its aliases, each note's record id by path, and the suggestion decisions a
-// rebuild would ask again. Written just before a commit.
+// rebuild would ask again. Written just before a commit, and read back into a
+// fresh database before its first import (D123).
 
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
@@ -9,7 +10,10 @@ import type {DatabaseSync, SQLInputValue} from 'node:sqlite';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {
   DEFAULT_SNOOZE_DAYS,
+  PAYLOAD_PATHS,
   snoozeCutoff,
+  SuggestionFiler,
+  type KindPayloads,
   type SuggestionKind
 } from './importer/file-suggestions.ts';
 
@@ -198,3 +202,199 @@ export const exportVaultState = async (
   }
   return written;
 };
+
+const SEED_HINT = `fix the line, or move ${STATE_DIR}/ aside to start without the saved state`;
+
+const lineError = (name: string, line: number, message: string, cause?: unknown): SyntaxError =>
+  new SyntaxError(
+    `${STATE_DIR}/${name}:${line}: ${message}; ${SEED_HINT}`,
+    cause === undefined ? undefined : {cause}
+  );
+
+interface StateLine<T> {
+  line: number;
+  value: T;
+}
+
+/**
+ * Each line of a state file read through `parse`, which names what is wrong
+ * with a line; null when the file is absent.
+ */
+const readStateFile = <T>(
+  dir: string,
+  name: string,
+  parse: (value: Record<string, unknown>) => T | string
+): StateLine<T>[] | null => {
+  const path = join(dir, name);
+  if (!existsSync(path)) return null;
+  const lines: StateLine<T>[] = [];
+  readFileSync(path, 'utf8')
+    .split('\n')
+    .forEach((text, i) => {
+      if (!text) return;
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch (err) {
+        throw lineError(name, i + 1, 'not JSON', err);
+      }
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw lineError(name, i + 1, 'not an object');
+      }
+      const parsed = parse(value as Record<string, unknown>);
+      if (typeof parsed === 'string') throw lineError(name, i + 1, parsed);
+      lines.push({line: i + 1, value: parsed});
+    });
+  return lines;
+};
+
+const isString = (value: unknown): value is string => typeof value === 'string';
+
+interface TagLine {
+  tag: string;
+  description: string | null;
+  added: string;
+  origin: string;
+  aliases: string[];
+}
+
+const parseTag = ({tag, description, added, origin, aliases}: Record<string, unknown>) => {
+  if (!isString(tag) || !isString(added) || !isString(origin)) {
+    return 'tag, added, and origin must be strings';
+  }
+  if (description !== null && !isString(description)) {
+    return 'description must be a string or null';
+  }
+  if (!Array.isArray(aliases) || !aliases.every(isString)) {
+    return 'aliases must be an array of strings';
+  }
+  return {tag, description, added, origin, aliases} satisfies TagLine;
+};
+
+const parseRecord = ({path, id}: Record<string, unknown>) =>
+  isString(path) && isString(id) ? {path, id} : 'path and id must be strings';
+
+const SPECS_BY_KIND = new Map(DECISION_SPECS.map(spec => [spec.kind, spec]));
+
+interface DecisionLine {
+  kind: SuggestionKind;
+  fields: Record<string, string | number | null>;
+  status: 'accepted' | 'rejected';
+  by: string | null;
+  at: string;
+}
+
+const parseDecision = (line: Record<string, unknown>): DecisionLine | string => {
+  const spec = SPECS_BY_KIND.get(line['kind'] as SuggestionKind);
+  if (!spec) return `unknown kind: ${String(line['kind'])}`;
+  const fields: DecisionLine['fields'] = {};
+  for (const [name] of spec.identity) {
+    const value = line[name];
+    if (!isString(value)) return `${name} must be a string`;
+    fields[name] = value;
+  }
+  for (const [name] of spec.carried ?? []) {
+    const value = line[name];
+    if (value !== null && typeof value !== 'number') return `${name} must be a number or null`;
+    fields[name] = value;
+  }
+  const {status, resolved_by: by, resolved_at: at} = line;
+  if (status !== 'accepted' && status !== 'rejected') return 'status must be accepted or rejected';
+  if (by !== null && !isString(by)) return 'resolved_by must be a string or null';
+  if (!isString(at)) return 'resolved_at must be a string';
+  return {kind: spec.kind, fields, status, by, at};
+};
+
+export interface SeedSummary {
+  tags: number;
+  aliases: number;
+  records: number;
+  decisions: number;
+}
+
+/**
+ * Read the state files into a fresh database, one with no records and no
+ * suggestions, before its first import (D123): the taxonomy and its aliases
+ * replaced, each path's record id kept for the import to take, and each
+ * decision filed already resolved. Null when the database is not fresh or
+ * the vault has no saved state; a line it cannot read throws before anything
+ * is written.
+ */
+export const seedVaultState = (db: DatabaseSync, vaultDataPath: string): SeedSummary | null => {
+  const dir = join(vaultDataPath, STATE_DIR);
+  if (!existsSync(dir)) return null;
+  const {used} = db
+    .prepare('SELECT EXISTS (SELECT 1 FROM records) OR EXISTS (SELECT 1 FROM suggestions) AS used')
+    .get() as {used: number};
+  if (used) return null;
+
+  const tags = readStateFile(dir, 'tags.jsonl', parseTag);
+  const records = readStateFile(dir, 'records.jsonl', parseRecord) ?? [];
+  const decisions = readStateFile(dir, 'suggestions.jsonl', parseDecision) ?? [];
+  const pathById = new Map(records.map(({value}) => [value.id, value.path]));
+  const summary: SeedSummary = {tags: 0, aliases: 0, records: 0, decisions: 0};
+
+  const each = <T>(name: string, lines: StateLine<T>[], write: (value: T) => void): void => {
+    for (const {line, value} of lines) {
+      try {
+        write(value);
+      } catch (err) {
+        throw lineError(name, line, (err as Error).message, err);
+      }
+    }
+  };
+
+  db.exec('BEGIN');
+  try {
+    if (tags) {
+      db.exec('DELETE FROM tag_aliases; DELETE FROM tags_taxonomy');
+      const tag = db.prepare(
+        'INSERT INTO tags_taxonomy (tag, description, added, origin) VALUES (?, ?, ?, ?)'
+      );
+      each('tags.jsonl', tags, t => {
+        tag.run(t.tag, t.description, t.added, t.origin);
+        ++summary.tags;
+      });
+      const alias = db.prepare('INSERT INTO tag_aliases (alias, canonical) VALUES (?, ?)');
+      each('tags.jsonl', tags, t => {
+        for (const a of t.aliases) {
+          alias.run(a, t.tag);
+          ++summary.aliases;
+        }
+      });
+    }
+
+    const id = db.prepare('INSERT INTO seeded_record_ids (file_path, record_id) VALUES (?, ?)');
+    each('records.jsonl', records, r => {
+      id.run(r.path, r.id);
+      ++summary.records;
+    });
+
+    const filers = new Map<SuggestionKind, SuggestionFiler>();
+    each('suggestions.jsonl', decisions, d => {
+      let filer = filers.get(d.kind);
+      if (!filer) filers.set(d.kind, (filer = new SuggestionFiler(db, d.kind)));
+      const payload: Record<string, unknown> = {...d.fields};
+      for (const {kinds, idField, pathField} of PAYLOAD_PATHS) {
+        const path = kinds.includes(d.kind) && pathById.get(String(d.fields[idField]));
+        if (path) payload[pathField] = path;
+      }
+      if (
+        filer.file(payload as unknown as KindPayloads[SuggestionKind], d.at, {
+          resolved: {status: d.status, by: d.by}
+        })
+      ) {
+        ++summary.decisions;
+      }
+    });
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return summary;
+};
+
+/** Drop the seeded record ids no import took, paths with no note (D123); answers how many. */
+export const dropSeededIds = (db: DatabaseSync): number =>
+  Number(db.prepare('DELETE FROM seeded_record_ids').run().changes);

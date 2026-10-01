@@ -21,6 +21,7 @@ import {ResolverCache} from './resolver-cache.ts';
 import {startServer} from './server.ts';
 import {startWatcher, type WatcherHandle} from './watcher.ts';
 import {ensureVaultMarker, MARKER_FILE} from '../vault-marker.ts';
+import {dropSeededIds, seedVaultState, STATE_DIR} from '../vault-state.ts';
 
 export const main = async (): Promise<void> => {
   const env = readServerEnv();
@@ -48,6 +49,15 @@ export const main = async (): Promise<void> => {
   process.stdout.write(
     `vault-storage: vault ${marker.vault_id} (format ${marker.format})${created ? `, marker written to ${MARKER_FILE}` : ''}\n`
   );
+
+  // Before listening: a write imported during the first reindex takes a seeded id.
+  const seeded = seedVaultState(db, env.vaultDataPath);
+  if (seeded) {
+    process.stdout.write(
+      `vault-storage: fresh database seeded from ${STATE_DIR}/: ${seeded.tags} tags, ` +
+        `${seeded.aliases} aliases, ${seeded.records} record ids, ${seeded.decisions} decisions\n`
+    );
+  }
 
   // In-memory health: git-sync and the watcher report into it, /system/health reads it.
   const health = startHealthMonitor();
@@ -94,6 +104,10 @@ export const main = async (): Promise<void> => {
       });
       resolverCache.invalidate();
       health.recordReindex({ok: true});
+      const unused = dropSeededIds(db);
+      if (unused > 0) {
+        process.stdout.write(`vault-storage: ${unused} seeded record ids had no note, dropped\n`);
+      }
       process.stdout.write(
         `vault-storage: reindex done — ${summary.reason ? `full (${summary.reason})` : 'incremental'}, ` +
           `${summary.changedFiles} files, ${summary.imported} imported, ${summary.deleted} deleted, ` +

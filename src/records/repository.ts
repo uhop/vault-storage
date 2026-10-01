@@ -69,6 +69,7 @@ export class RecordsRepository {
   readonly #updateFilePath: StatementSync;
   readonly #updatePathAndProject: StatementSync;
   readonly #bumpGeneration: StatementSync;
+  readonly #takeSeededId: StatementSync;
 
   constructor(db: DatabaseSync) {
     // modified_at is DB-stamped (strftime 'now', UTC, ms precision), not a
@@ -137,6 +138,9 @@ export class RecordsRepository {
       `INSERT INTO meta (key, value) VALUES ('content_generation', '1')
        ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`
     );
+    this.#takeSeededId = db.prepare(
+      'DELETE FROM seeded_record_ids WHERE file_path = ? RETURNING record_id'
+    );
   }
 
   insert(r: VaultRecord): void {
@@ -188,6 +192,15 @@ export class RecordsRepository {
       r.project ?? null
     );
     this.#bumpGeneration.run();
+  }
+
+  /**
+   * The record id a fresh database was seeded with for `path` (D123), taken so
+   * no later insert reuses it; null when the path has none.
+   */
+  takeSeededId(path: string): string | null {
+    const row = this.#takeSeededId.get(path) as {record_id: string} | undefined;
+    return row?.record_id ?? null;
   }
 
   getById(id: string): VaultRecord | null {

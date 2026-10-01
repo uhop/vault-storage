@@ -427,7 +427,7 @@ const extractRecord = (record: VaultRecord, ctx: PassContext): void => {
         context
       },
       now,
-      {rejectAs: DEFAULT_CITES}
+      {resolved: {status: 'rejected', by: DEFAULT_CITES}}
     );
     if (filed) summary.suggestionsFiled++;
   }

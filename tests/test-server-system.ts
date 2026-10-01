@@ -95,8 +95,8 @@ test('GET /system/status with valid token returns indexer status', async t => {
     t.equal(payload['ok'], true, 'ok=true');
     t.equal(
       payload['schema_version'],
-      39,
-      'schema_version=39 (all migrations through the queue title key)'
+      40,
+      'schema_version=40 (all migrations through the seeded record ids)'
     );
     t.equal(payload['vault'], null, 'no marker for a server started without one');
     t.equal(payload['records'], 0, 'records=0 on empty DB');

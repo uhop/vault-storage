@@ -298,7 +298,7 @@ export const importFile = (
     action = 'unchanged';
   } else {
     const record: VaultRecord = {
-      recordId: existing?.recordId ?? uuidv7(),
+      recordId: existing?.recordId ?? records.takeSeededId(relativePath) ?? uuidv7(),
       filePath: relativePath,
       parentPath: existing?.parentPath ?? null,
       sequenceKey: existing?.sequenceKey ?? null,

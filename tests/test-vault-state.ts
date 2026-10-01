@@ -1,12 +1,24 @@
 import test from 'tape-six';
 import {execSync} from 'node:child_process';
-import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import type {DatabaseSync} from 'node:sqlite';
 import {openDatabase} from '../src/db/connection.ts';
 import {runMigrations} from '../src/db/migrate.ts';
+import {SuggestionFiler} from '../src/importer/file-suggestions.ts';
+import {importFile} from '../src/importer/import-file.ts';
+import {fullImportOptions} from '../src/importer/import-options.ts';
+import {importVault} from '../src/importer/import.ts';
+import {RecordsRepository} from '../src/records/repository.ts';
 import {startGitSync} from '../src/server/git-sync.ts';
-import {exportVaultState, STATE_DIR, stateFiles} from '../src/vault-state.ts';
+import {
+  dropSeededIds,
+  exportVaultState,
+  seedVaultState,
+  STATE_DIR,
+  stateFiles
+} from '../src/vault-state.ts';
 
 const setup = () => {
   const db = openDatabase({path: ':memory:'});
@@ -291,6 +303,177 @@ test('git-sync commits the state with the content, and an unchanged state with n
     t.equal(committed(), `${STATE_DIR}/tags.jsonl`, 'a changed alias commits its file');
   } finally {
     handle.close();
+    db.close();
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+const NOW = '2026-10-01T00:00:00.000Z';
+
+const fresh = (): DatabaseSync => {
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  return db;
+};
+
+/** A vault of three notes and a database that imported it and decided four suggestions. */
+const decidedVault = () => {
+  const root = mkdtempSync(join(tmpdir(), 'vault-seed-'));
+  mkdirSync(join(root, 'topics'));
+  const note = (name: string, fm: string): void =>
+    writeFileSync(
+      join(root, 'topics', name),
+      `---\ntitle: ${name}\ntype: permanent\n${fm}---\nBody of ${name}.\n`
+    );
+  note('a.md', 'tags: [alpha]\nagent:\n  tags_suggested: [beta]\n');
+  note('b.md', 'tags: [zeta]\n');
+  note('c.md', 'tags: [alfa]\n');
+  const db = fresh();
+  db.exec(`
+    INSERT INTO tags_taxonomy (tag, description, added, origin) VALUES
+      ('alpha', 'Notes about alpha.', '2026-09-30', 'manual'),
+      ('beta', NULL, '2026-09-30', 'minted');
+    INSERT INTO tag_aliases (alias, canonical) VALUES ('alfa', 'alpha');
+  `);
+  importVault(db, root);
+  const id = (path: string): string =>
+    (
+      db.prepare('SELECT record_id FROM records WHERE file_path = ?').get(path) as {
+        record_id: string;
+      }
+    ).record_id;
+  db.exec(`UPDATE suggestions SET status = 'rejected', resolved_at = '${NOW}', resolved_by = 'agent'
+            WHERE kind IN ('tag_suggestion', 'new_tag')`);
+  new SuggestionFiler(db, 'duplicate').file(
+    {
+      a_record: id('topics/a.md'),
+      a_path: 'topics/a.md',
+      b_record: id('topics/b.md'),
+      b_path: 'topics/b.md',
+      distance: 0.05
+    },
+    NOW,
+    {resolved: {status: 'rejected', by: null}}
+  );
+  new SuggestionFiler(db, 'inefficiency_detected').file(
+    {signal: 'edge_fanout_high', current: 20, threshold: 10, recommendation: 'r'},
+    NOW,
+    {resolved: {status: 'accepted', by: 'agent'}}
+  );
+  return {root, db};
+};
+
+const pending = (db: DatabaseSync): number =>
+  (
+    db
+      .prepare(
+        `SELECT count(*) AS n FROM suggestions WHERE kind IN ('tag_suggestion', 'new_tag') AND status = 'pending'`
+      )
+      .get() as {n: number}
+  ).n;
+
+test('seedVaultState: a fresh database seeded and imported exports the state it was seeded from', async t => {
+  const {root, db} = decidedVault();
+  const rebuilt = fresh();
+  try {
+    t.equal(pending(db), 0, 'every tag question decided');
+    await exportVaultState(db, root, NOW);
+    const saved = Object.fromEntries(stateFiles(db, NOW));
+    t.equal(saved['suggestions.jsonl']!.trimEnd().split('\n').length, 4, 'four decisions saved');
+    t.deepEqual(seedVaultState(rebuilt, root), {tags: 2, aliases: 1, records: 3, decisions: 4});
+    importVault(rebuilt, root);
+    t.deepEqual(
+      Object.fromEntries(stateFiles(rebuilt, NOW)),
+      saved,
+      'the same ids, taxonomy, and decisions'
+    );
+    t.equal(
+      pending(rebuilt),
+      0,
+      'no tag question asked again, and no new tag for the seeded alias'
+    );
+    t.equal(dropSeededIds(rebuilt), 0, 'every seeded id taken');
+    t.equal(seedVaultState(db, root), null, 'a database with records is left alone');
+  } finally {
+    db.close();
+    rebuilt.close();
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('seedVaultState: an import cut short keeps taking the seeded ids', async t => {
+  const {root, db} = decidedVault();
+  const rebuilt = fresh();
+  try {
+    await exportVaultState(db, root, NOW);
+    const saved = stateFiles(db, NOW).get('records.jsonl');
+    appendFileSync(
+      join(root, STATE_DIR, 'records.jsonl'),
+      '{"path":"topics/gone.md","id":"id-gone"}\n'
+    );
+    t.equal(seedVaultState(rebuilt, root)?.records, 4);
+    importFile(
+      new RecordsRepository(rebuilt),
+      'topics/b.md',
+      join(root, 'topics/b.md'),
+      NOW,
+      fullImportOptions(rebuilt)
+    );
+    t.equal(seedVaultState(rebuilt, root), null, 'a restart does not seed again');
+    importVault(rebuilt, root);
+    t.equal(stateFiles(rebuilt, NOW).get('records.jsonl'), saved, 'every note under its saved id');
+    t.equal(dropSeededIds(rebuilt), 1, 'the id of a note that is gone is dropped');
+  } finally {
+    db.close();
+    rebuilt.close();
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('seedVaultState: a line it cannot read stops the seed with nothing written', t => {
+  const root = mkdtempSync(join(tmpdir(), 'vault-seed-bad-'));
+  const dir = join(root, STATE_DIR);
+  mkdirSync(dir);
+  const db = fresh();
+  const taxonomy = (): number =>
+    (db.prepare('SELECT count(*) AS n FROM tags_taxonomy').get() as {n: number}).n;
+  const before = taxonomy();
+  try {
+    writeFileSync(
+      join(dir, 'tags.jsonl'),
+      '{"tag":"alpha","description":null,"added":"2026-09-30","origin":"manual","aliases":[]}\n'
+    );
+    writeFileSync(
+      join(dir, 'suggestions.jsonl'),
+      '{"kind":"duplicate","a_record":"x","b_record":"y","status":"rejected","resolved_by":null,"resolved_at":"2026-09-30"}\n{"kind":"duplicate"\n'
+    );
+    t.throws(() => seedVaultState(db, root), SyntaxError, 'unparsed JSON throws');
+    try {
+      seedVaultState(db, root);
+    } catch (err) {
+      t.matchString(
+        (err as Error).message,
+        /suggestions\.jsonl:2: not JSON; .* move \.vault-storage-state\/ aside/
+      );
+    }
+    writeFileSync(join(dir, 'suggestions.jsonl'), '');
+    writeFileSync(
+      join(dir, 'records.jsonl'),
+      '{"path":"a.md","id":"1"}\n{"path":"a.md","id":"2"}\n'
+    );
+    try {
+      seedVaultState(db, root);
+      t.fail('a repeated path should throw');
+    } catch (err) {
+      t.matchString((err as Error).message, /records\.jsonl:2: /, 'the failing line is named');
+    }
+    t.equal(taxonomy(), before, 'the taxonomy rolled back');
+    t.equal(
+      (db.prepare('SELECT count(*) AS n FROM seeded_record_ids').get() as {n: number}).n,
+      0,
+      'no ids kept'
+    );
+  } finally {
     db.close();
     rmSync(root, {recursive: true, force: true});
   }
