@@ -4,8 +4,8 @@
 
 import {SYMMETRIC_TYPES, titleOf, TYPE_ORDER} from './note-links.js';
 
-/** Notes drawn at most, besides the root. */
-export const DRAW_FIRST = 60;
+/** Notes drawn at most by default, besides the root: Neo4j Browser's `maxNewNeighbours` (D128). */
+export const DRAW_FIRST = 100;
 /** The least distance between rings, in viewBox units. */
 export const RING = 190;
 /** The least arc between neighbors on a ring, in viewBox units. */
@@ -215,6 +215,10 @@ export const renderGraph = (layout, esc, href) => {
   return `<svg class="graph" viewBox="${x} ${y} ${w} ${h}" role="img" aria-label="${esc(`${titleOf(at.get(layout.nodes[0].id).record)} and ${layout.nodes.length - 1} notes around it`)}"><defs>${markers}</defs>${rings}${layout.edges.map(e => line(e, at, esc)).join('')}${nodes}</svg>`;
 };
 
-/** The types drawn, each with its stroke, in TYPE_ORDER, for a legend. */
+/** The types drawn, each with its stroke and how many of its edges are drawn, in TYPE_ORDER. */
 export const legendOf = layout =>
-  TYPE_ORDER.filter(t => layout.edges.some(e => e.type === t)).map(t => ({type: t, ...styleOf(t)}));
+  TYPE_ORDER.map(t => ({
+    type: t,
+    ...styleOf(t),
+    count: layout.edges.filter(e => e.type === t).length
+  })).filter(s => s.count > 0);

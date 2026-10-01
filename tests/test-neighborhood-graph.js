@@ -120,10 +120,22 @@ test('renderGraph escapes titles, links each note, and arrows only directed edge
   t.equal(svg.match(/<circle class="ring"/g).length, 2);
 });
 
-test('legendOf lists the drawn types in their order', t => {
+test('legendOf lists the drawn types in their order, with how many of each are drawn', t => {
   t.deepEqual(
-    legendOf(layout).map(s => s.type),
-    ['derived-from', 'cites', 'related-to']
+    legendOf(layout).map(s => [s.type, s.count]),
+    [
+      ['derived-from', 1],
+      ['cites', 3],
+      ['related-to', 1]
+    ]
+  );
+  t.deepEqual(
+    legendOf(layoutGraph('root', root, hops, neighborhood.edges, 2)).map(s => [s.type, s.count]),
+    [
+      ['derived-from', 1],
+      ['cites', 1]
+    ],
+    'only the edges among the drawn notes'
   );
 });
 

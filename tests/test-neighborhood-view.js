@@ -1,6 +1,12 @@
 import test from 'tape-six';
 
-import {arrangeHops, countTypes, renderHops, SHOW_FIRST} from '/static/ui/neighborhood-view.js';
+import {
+  arrangeHops,
+  countEdgeTypes,
+  countTypes,
+  renderHops,
+  SHOW_FIRST
+} from '/static/ui/neighborhood-view.js';
 
 const esc = s =>
   String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
@@ -75,4 +81,17 @@ test('renderHops writes one section per non-empty hop with counts, and folds pas
   const folded = renderHops(arrangeHops('root', many), esc, 'Root');
   t.ok(folded.includes('<summary>3 more</summary>'), 'the tail folds');
   t.ok(folded.includes(`Hop 1 · ${n} notes · cites ${n}`));
+});
+
+test('countEdgeTypes counts a mirrored pair once and each directed edge', t => {
+  t.deepEqual(countEdgeTypes(neighborhood.edges), {'derived-from': 1, cites: 3, 'related-to': 1});
+  t.deepEqual(
+    countEdgeTypes([
+      {from_id: 'x', to_id: 'y', type: 'cites'},
+      {from_id: 'y', to_id: 'x', type: 'cites'}
+    ]),
+    {cites: 2},
+    'two directed edges between one pair are two'
+  );
+  t.deepEqual(countEdgeTypes(undefined), {});
 });

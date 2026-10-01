@@ -64,6 +64,22 @@ export const arrangeHops = (rootId, neighborhood) => {
   return hops;
 };
 
+/** Edges per type, a mirrored pair once, as the list and the edges page count them. */
+export const countEdgeTypes = edges => {
+  const seen = new Set();
+  const counts = {};
+  for (const e of edges ?? []) {
+    if (SYMMETRIC_TYPES.has(e.type)) {
+      const [a, b] = e.from_id < e.to_id ? [e.from_id, e.to_id] : [e.to_id, e.from_id];
+      const key = `${a}\t${b}\t${e.type}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    counts[e.type] = (counts[e.type] ?? 0) + 1;
+  }
+  return counts;
+};
+
 /** A hop's [type, count] pairs in TYPE_ORDER, for its heading. */
 export const countTypes = hop => {
   const counts = new Map();

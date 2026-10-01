@@ -223,9 +223,27 @@
       }
       .graph-tools {
         display: flex;
-        justify-content: end;
-        gap: 0.3rem;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.4rem 1rem;
         margin: 0.4rem 0 0;
+      }
+      .graph-tools .draw {
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .graph-tools select {
+        font: inherit;
+        color: var(--fg);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.15rem 0.3rem;
+      }
+      .graph-tools .zoom {
+        display: flex;
+        gap: 0.3rem;
       }
       .graph-tools button {
         min-width: 2.2rem;
@@ -348,10 +366,7 @@
         <section class="type-pane">
           <h2>Types</h2>
           <ul id="type-list" class="type-list"></ul>
-          <p>
-            Edges of the shown neighborhood. Pick types to walk only those; the others are not
-            counted then.
-          </p>
+          <p id="type-note"></p>
         </section>
         <section class="hood-pane">
           <div class="hood-head">
@@ -370,8 +385,9 @@
     <script type="module">
       import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
       import {TYPE_ORDER, titleOf} from '/ui/note-links.js';
-      import {arrangeHops, renderHops} from '/ui/neighborhood-view.js';
+      import {arrangeHops, countEdgeTypes, renderHops} from '/ui/neighborhood-view.js';
       import {
+        DRAW_FIRST,
         fitView,
         layoutGraph,
         legendOf,
@@ -382,11 +398,12 @@
       } from '/ui/neighborhood-graph.js';
       const $ = sel => document.querySelector(sel);
 
-      const DEPTH_DEFAULT = 2;
+      const DEPTH_DEFAULT = 1;
       const DIRECTIONS = new Set(['both', 'outbound', 'inbound']);
       const VIEWS = new Set(['list', 'graph']);
+      const DRAWS = [50, 100, 250, 500, 1000];
 
-      // The query string is the state: path, depth, via (types, comma-separated), direction, view.
+      // The query string is the state: path, depth, via (types, comma-separated), direction, view, draw.
       const readState = () => {
         const q = new URLSearchParams(location.search);
         const depth = Number.parseInt(q.get('depth') ?? '', 10);
@@ -396,7 +413,8 @@
           depth: depth >= 1 && depth <= 5 ? depth : DEPTH_DEFAULT,
           via: (q.get('via') ?? '').split(',').filter(t => TYPE_ORDER.includes(t)),
           direction: DIRECTIONS.has(direction) ? direction : 'both',
-          view: VIEWS.has(q.get('view') ?? '') ? q.get('view') : 'list'
+          view: VIEWS.has(q.get('view') ?? '') ? q.get('view') : 'list',
+          draw: DRAWS.includes(Number(q.get('draw'))) ? Number(q.get('draw')) : DRAW_FIRST
         };
       };
       const state = readState();
@@ -407,6 +425,7 @@
         if (state.via.length) q.set('via', state.via.join(','));
         if (state.direction !== 'both') q.set('direction', state.direction);
         if (state.view !== 'list') q.set('view', state.view);
+        if (state.draw !== DRAW_FIRST) q.set('draw', String(state.draw));
         const search = q.toString();
         history.replaceState(null, '', search ? `?${search}` : location.pathname);
       };
@@ -427,6 +446,10 @@
         $('#type-list').innerHTML =
           `<li><button data-type="" aria-pressed="${state.via.length === 0}"><span class="name">all</span></button></li>` +
           TYPE_ORDER.map(row).join('');
+        const hops = `${state.depth} hop${state.depth === 1 ? '' : 's'}`;
+        $('#type-note').textContent =
+          `Edges within ${hops} of the note${state.direction === 'both' ? '' : `, ${state.direction} only`}, ` +
+          'a mirrored pair once. Pick types to walk only those; the others are not counted then.';
       };
 
       const renderRoot = (root, hops) => {
@@ -450,6 +473,7 @@
         if (state.via.length) q.set('via', state.via.join(','));
         if (state.direction !== 'both') q.set('direction', state.direction);
         q.set('view', 'graph');
+        if (state.draw !== DRAW_FIRST) q.set('draw', String(state.draw));
         return `/ui/neighborhood.html?${q}`;
       };
 
@@ -458,11 +482,13 @@
 
       const ZOOM_STEP = 1.5;
       const DRAG_START = 4;
-      const TOOLS =
-        '<div class="graph-tools" role="group" aria-label="Zoom">' +
+      const tools = () =>
+        '<div class="graph-tools">' +
+        `<label class="draw">Draw <select data-draw>${DRAWS.map(n => `<option value="${n}"${n === state.draw ? ' selected' : ''}>${n} notes</option>`).join('')}</select></label>` +
+        '<span class="zoom" role="group" aria-label="Zoom">' +
         '<button type="button" data-zoom="in" aria-label="Zoom in" title="Zoom in">+</button>' +
         '<button type="button" data-zoom="out" aria-label="Zoom out" title="Zoom out">−</button>' +
-        '<button type="button" data-zoom="fit" title="Show the whole graph">Fit</button></div>';
+        '<button type="button" data-zoom="fit" title="Show the whole graph">Fit</button></span></div>';
 
       // The drawn graph's fitted and current views, in drawing units; null while none is drawn.
       let zoom = null;
@@ -486,19 +512,21 @@
         new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 
       const renderGraphView = () => {
-        const layout = layoutGraph(shown.rootId, shown.root, shown.hops, shown.edges);
+        const layout = layoutGraph(shown.rootId, shown.root, shown.hops, shown.edges, state.draw);
         const notes = shown.hops.reduce((sum, h) => sum + h.notes.length, 0);
         const note =
           layout.left > 0
-            ? `<p class="graph-note">Drawn: ${notes - layout.left} of ${notes} notes, in the list's order. Pick types to narrow it.</p>`
+            ? `<p class="graph-note">Drawn: ${notes - layout.left} of ${notes} notes, in the list's order. Draw more below, or pick types to narrow it.</p>`
             : '';
         const legend = legendOf(layout)
-          .map(s => `<li>${swatch(s)}${esc(s.type)}</li>`)
+          .map(
+            s => `<li>${swatch(s)}${esc(s.type)} ${s.count} of ${byType[s.type] ?? s.count}</li>`
+          )
           .join('');
         $('#graph').innerHTML =
           notes === 0
             ? ''
-            : `${note}${TOOLS}${renderGraph(layout, esc, graphHref)}<ul class="legend">${legend}</ul>`;
+            : `${note}${tools()}${renderGraph(layout, esc, graphHref)}<ul class="legend">${legend}</ul>`;
         zoom = {fit: fitView(layout), view: fitView(layout)};
         applyView();
       };
@@ -539,8 +567,7 @@
           if (my !== seq) return;
           const hood = await apiJson(hoodUrl(resolved.record_id));
           if (my !== seq) return;
-          byType = {};
-          for (const e of hood.edges ?? []) byType[e.type] = (byType[e.type] ?? 0) + 1;
+          byType = countEdgeTypes(hood.edges);
           renderTypes();
           const hops = arrangeHops(resolved.record_id, hood);
           const root = hood.root ?? {file_path: resolved.file_path, title: null};
@@ -701,6 +728,13 @@
         },
         true
       );
+
+      $('#graph').addEventListener('change', e => {
+        if (!e.target.matches('select[data-draw]')) return;
+        state.draw = Number(e.target.value);
+        writeState();
+        renderGraphView();
+      });
 
       $('#view-switch').addEventListener('change', e => {
         state.view = e.detail.value;
