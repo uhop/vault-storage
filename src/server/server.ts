@@ -177,6 +177,8 @@ interface BuildOptions {
   health?: HealthMonitor;
   /** Defaults to a router-local one; startServer stops it on close. */
   renderer?: MarkdownRenderer;
+  /** The vault's marker (D119), read at `serve`; absent for tests and bare servers. */
+  vault?: {id: string; format: number};
 }
 
 export const buildRouter = (opts: BuildOptions): Router => {
@@ -198,7 +200,8 @@ export const buildRouter = (opts: BuildOptions): Router => {
       db: opts.db,
       schemaVersion: opts.schemaVersion,
       vaultDataPath: opts.env.vaultDataPath,
-      embedder: opts.embedder
+      embedder: opts.embedder,
+      vault: opts.vault ?? null
     })
   );
   router.get('/system/lint', lintHandler({db: opts.db}));

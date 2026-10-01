@@ -1663,7 +1663,7 @@ export const registerTools = (mcp, client) => {
     'vault_status',
     {
       description:
-        'Report server and index state. Returns {ok, schema_version, sqlite_vec_version, vault_data_path, records, edges, pending_suggestions, last_indexed_commit, indexer_running, embedder: {model, retained}, memory: {rss, heap_used, heap_total, external, array_buffers}}. `embedder.retained` says whether the ONNX pipeline is currently resident (it is released after an idle window, so the next embed pays a ~1-3s reload); `memory` is process RSS, useful for watching the embedder arena.',
+        'Report server and index state. Returns {ok, schema_version, sqlite_vec_version, vault_data_path, vault: {id, format} (the vault’s marker, vault-storage D119; null on a server without one), records, edges, pending_suggestions, last_indexed_commit, indexer_running, embedder: {model, retained}, memory: {rss, heap_used, heap_total, external, array_buffers}}. `embedder.retained` says whether the ONNX pipeline is currently resident (it is released after an idle window, so the next embed pays a ~1-3s reload); `memory` is process RSS, useful for watching the embedder arena.',
       inputSchema: {}
     },
     wrap(async () => client.getJson('/system/status'))

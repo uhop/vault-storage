@@ -12,6 +12,8 @@ export interface SystemDeps {
   schemaVersion: number;
   vaultDataPath: string;
   embedder: Embedder;
+  /** The vault's marker (D119); null when the server was started without one. */
+  vault: {id: string; format: number} | null;
 }
 
 export const systemStatusHandler =
@@ -39,6 +41,7 @@ export const systemStatusHandler =
       schema_version: schemaVersion,
       sqlite_vec_version: vecVersion,
       vault_data_path: vaultDataPath,
+      vault: deps.vault,
       records: recordCount,
       edges: edgeCount,
       pending_suggestions: pendingSuggestions,

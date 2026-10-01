@@ -43,7 +43,10 @@ const fetchJson = async (
   return {status: res.status, body};
 };
 
-const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => {
+const withServer = async (
+  fn: (url: string) => Promise<void>,
+  vault?: {id: string; format: number}
+): Promise<void> => {
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   // port 0 → OS picks a free port
@@ -51,7 +54,8 @@ const withServer = async (fn: (url: string) => Promise<void>): Promise<void> => 
     db,
     env: makeEnv(0),
     schemaVersion: migration.current,
-    embedder: new FakeEmbedder()
+    embedder: new FakeEmbedder(),
+    ...(vault ? {vault} : {})
   });
   const addr = handle.server.address();
   const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
@@ -94,6 +98,7 @@ test('GET /system/status with valid token returns indexer status', async t => {
       39,
       'schema_version=39 (all migrations through the queue title key)'
     );
+    t.equal(payload['vault'], null, 'no marker for a server started without one');
     t.equal(payload['records'], 0, 'records=0 on empty DB');
     t.equal(payload['edges'], 0, 'edges=0 on empty DB');
     t.equal(payload['pending_suggestions'], 0, 'pending_suggestions=0 on empty DB');
@@ -184,4 +189,16 @@ test('wrong method on known route returns 405', async t => {
     t.equal(status, 405, '405 method not allowed');
     t.equal((body as {code: string}).code, 'method_not_allowed', 'code=method_not_allowed');
   });
+});
+
+test('GET /system/status names the vault from its marker', async t => {
+  await withServer(
+    async url => {
+      const {body} = await fetchJson(`${url}/system/status`, {
+        headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+      });
+      t.deepEqual((body as {vault: unknown}).vault, {id: 'v-1', format: 1});
+    },
+    {id: 'v-1', format: 1}
+  );
 });

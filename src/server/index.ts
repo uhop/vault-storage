@@ -20,6 +20,7 @@ import {processRss, startMemoryReporter, type MemoryReporterHandle} from './memo
 import {ResolverCache} from './resolver-cache.ts';
 import {startServer} from './server.ts';
 import {startWatcher, type WatcherHandle} from './watcher.ts';
+import {ensureVaultMarker, MARKER_FILE} from '../vault-marker.ts';
 
 export const main = async (): Promise<void> => {
   const env = readServerEnv();
@@ -43,6 +44,11 @@ export const main = async (): Promise<void> => {
   // invalidate) and the watcher (drains invalidate after disk changes).
   const resolverCache = new ResolverCache(db);
 
+  const {marker, created} = ensureVaultMarker(env.vaultDataPath);
+  process.stdout.write(
+    `vault-storage: vault ${marker.vault_id} (format ${marker.format})${created ? `, marker written to ${MARKER_FILE}` : ''}\n`
+  );
+
   // In-memory health: git-sync and the watcher report into it, /system/health reads it.
   const health = startHealthMonitor();
   // Listen before the initial reindex: the database persisted, so requests are
@@ -53,7 +59,8 @@ export const main = async (): Promise<void> => {
     schemaVersion: migration.current,
     embedder,
     resolverCache,
-    health
+    health,
+    vault: {id: marker.vault_id, format: marker.format}
   });
   process.stdout.write(
     `vault-storage: listening on ${handle.url} ` +
