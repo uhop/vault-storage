@@ -1,7 +1,17 @@
 import test from 'tape-six';
 
 import {arrangeHops} from '/static/ui/neighborhood-view.js';
-import {layoutGraph, legendOf, MIN_ARC, renderGraph, RING} from '/static/ui/neighborhood-graph.js';
+import {
+  fitView,
+  layoutGraph,
+  legendOf,
+  MIN_ARC,
+  panView,
+  renderGraph,
+  RING,
+  ZOOM_MAX,
+  zoomView
+} from '/static/ui/neighborhood-graph.js';
 
 const esc = s =>
   String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
@@ -115,4 +125,32 @@ test('legendOf lists the drawn types in their order', t => {
     legendOf(layout).map(s => s.type),
     ['derived-from', 'cites', 'related-to']
   );
+});
+
+test('zoomView keeps the point it zooms about in place, between the fit and ZOOM_MAX', t => {
+  const fit = fitView(layout);
+  const r = layout.radius + 175;
+  t.deepEqual(fit, {x: -r, y: -r, w: 2 * r, h: 2 * r});
+  const at = {x: 100, y: -50};
+  const view = zoomView(fit, fit, 2, at);
+  t.equal(view.w, fit.w / 2);
+  const before = {u: (at.x - fit.x) / fit.w, v: (at.y - fit.y) / fit.h};
+  const after = {u: (at.x - view.x) / view.w, v: (at.y - view.y) / view.h};
+  t.ok(
+    Math.abs(before.u - after.u) < 1e-9 && Math.abs(before.v - after.v) < 1e-9,
+    'the point stays put'
+  );
+  t.equal(zoomView(fit, fit, 100, at).w, fit.w / ZOOM_MAX, 'no closer than ZOOM_MAX');
+  t.deepEqual(zoomView(view, fit, 0.1, at), fit, 'no farther than the fit');
+});
+
+test('panView moves a zoomed view and keeps it inside the fit', t => {
+  const fit = fitView(layout);
+  const view = zoomView(fit, fit, 4, {x: 0, y: 0});
+  const moved = panView(view, fit, 20, -30);
+  t.deepEqual([moved.x - view.x, moved.y - view.y], [20, -30]);
+  const far = panView(view, fit, 1e6, -1e6);
+  t.equal(far.x, fit.x + fit.w - view.w, 'stopped at the right edge');
+  t.equal(far.y, fit.y, 'stopped at the top edge');
+  t.deepEqual(panView(fit, fit, 40, 40), fit, 'a fitted view does not move');
 });

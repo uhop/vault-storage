@@ -167,8 +167,37 @@ const line = (edge, at, esc) => {
  * arrowhead on the directed ones, and each note as a link to `href(record)`,
  * its title cut short beside it and whole in its `<title>`.
  */
-export const renderGraph = (layout, esc, href) => {
+/** The view that shows the whole drawing: {x, y, w, h} in drawing units. */
+export const fitView = layout => {
   const r = layout.radius + MARGIN;
+  return {x: -r, y: -r, w: 2 * r, h: 2 * r};
+};
+
+/** How far a view may zoom in, as a multiple of the fit. */
+export const ZOOM_MAX = 8;
+
+const clampView = (view, fit) => ({
+  ...view,
+  x: Math.min(fit.x + fit.w - view.w, Math.max(fit.x, view.x)),
+  y: Math.min(fit.y + fit.h - view.h, Math.max(fit.y, view.y))
+});
+
+/** `view` zoomed by `factor` about `at`, which stays put; kept between the fit and ZOOM_MAX, inside the fit. */
+export const zoomView = (view, fit, factor, at) => {
+  const w = Math.min(fit.w, Math.max(fit.w / ZOOM_MAX, view.w / factor));
+  const k = w / view.w;
+  return clampView(
+    {x: at.x - (at.x - view.x) * k, y: at.y - (at.y - view.y) * k, w, h: view.h * k},
+    fit
+  );
+};
+
+/** `view` moved by (dx, dy) drawing units, kept inside the fit. */
+export const panView = (view, fit, dx, dy) =>
+  clampView({...view, x: view.x + dx, y: view.y + dy}, fit);
+
+export const renderGraph = (layout, esc, href) => {
+  const {x, y, w, h} = fitView(layout);
   const at = new Map(layout.nodes.map(n => [n.id, n]));
   const markers = TYPE_ORDER.map(
     t =>
@@ -183,7 +212,7 @@ export const renderGraph = (layout, esc, href) => {
         `<a href="${esc(href(n.record))}"><g class="node${n.depth === 0 ? ' root' : ''}"><title>${esc(titleOf(n.record))} (${esc(n.record.file_path)})</title><circle cx="${num(n.x)}" cy="${num(n.y)}" r="${n.depth === 0 ? ROOT_R : NODE_R}"/>${label(n, esc)}</g></a>`
     )
     .join('');
-  return `<svg class="graph" viewBox="${-r} ${-r} ${2 * r} ${2 * r}" role="img" aria-label="${esc(`${titleOf(at.get(layout.nodes[0].id).record)} and ${layout.nodes.length - 1} notes around it`)}"><defs>${markers}</defs>${rings}${layout.edges.map(e => line(e, at, esc)).join('')}${nodes}</svg>`;
+  return `<svg class="graph" viewBox="${x} ${y} ${w} ${h}" role="img" aria-label="${esc(`${titleOf(at.get(layout.nodes[0].id).record)} and ${layout.nodes.length - 1} notes around it`)}"><defs>${markers}</defs>${rings}${layout.edges.map(e => line(e, at, esc)).join('')}${nodes}</svg>`;
 };
 
 /** The types drawn, each with its stroke, in TYPE_ORDER, for a legend. */
