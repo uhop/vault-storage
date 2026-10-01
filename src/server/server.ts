@@ -65,6 +65,7 @@ import {commitHandler} from './handlers/commit.ts';
 import {lintHandler, queueLintHandler} from './handlers/lint.ts';
 import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.ts';
 import {projectTrackersHandler} from './handlers/trackers.ts';
+import {projectChangesHandler} from './handlers/changes.ts';
 import {fleetStatusHandler} from './handlers/fleet.ts';
 import {historyHandler, restoreHandler} from './handlers/history.ts';
 import {linksHandler} from './handlers/links.ts';
@@ -225,6 +226,10 @@ export const buildRouter = (opts: BuildOptions): Router => {
   router.get(
     '/projects/{name}/trackers',
     projectTrackersHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
+  );
+  router.get(
+    '/projects/{name}/changes',
+    projectChangesHandler({db: opts.db, vaultDataPath: opts.env.vaultDataPath})
   );
   router.get('/fleet/status', fleetStatusHandler({db: opts.db}));
   router.get('/links', linksHandler({db: opts.db}));

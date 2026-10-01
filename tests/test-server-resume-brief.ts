@@ -586,3 +586,88 @@ test("resume brief + bundle — the project's sessions, and the ones that wrote 
     t.equal(other.project.sessions_unlogged, 0, 'a project with no sessions note counts none');
   });
 });
+
+// What changed since the last session that took a turn (D117): notes by their
+// `modified_at`, queue items by when they entered a section or changed.
+test('resume bundle + GET /projects/{name}/changes — what changed since the last working session', async t => {
+  await withServer(async (url, db) => {
+    const body = [
+      'Sessions of vs-demo.',
+      '',
+      '- **2026-09-30T02:00:00Z** nuke/aaaaaaaa: started 2026-09-30T01:00:00Z, ended by exit, commits: 0, wrote: 1 (projects/vs-demo/queue.md), log: none.',
+      '- **2026-09-30T03:00:00Z** nuke/zzzzzzzz: started 2026-09-30T03:00:00Z, ended by other, commits: 0, wrote: 0, log: none.',
+      ''
+    ].join('\n');
+    const put = await fetch(`${url}/vault/projects/vs-demo/sessions.md`, {
+      method: 'PUT',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`, 'Content-Type': 'application/json'},
+      body: JSON.stringify({frontmatter: {title: 'vs-demo — Sessions', type: 'state'}, body})
+    });
+    t.equal(put.status, 204);
+
+    db.prepare(
+      `UPDATE records SET modified_at = '2026-09-30T01:00:00.000Z' WHERE file_path LIKE 'projects/vs-demo/%'`
+    ).run();
+    // Half a second after the session ended; as text it sorts before `…02:00:00Z`.
+    db.prepare(
+      `UPDATE records SET modified_at = '2026-09-30T02:00:00.500Z' WHERE file_path IN ('projects/vs-demo/queue.md', 'projects/vs-demo/sessions.md')`
+    ).run();
+    db.prepare(
+      `UPDATE queue_items SET created_at = '2026-09-29T00:00:00Z', updated_at = '2026-09-29T00:00:00Z' WHERE project = 'vs-demo'`
+    ).run();
+    const [entered, edited] = db
+      .prepare(`SELECT id, title, section FROM queue_items WHERE project = 'vs-demo' ORDER BY id`)
+      .all() as {id: string; title: string; section: string}[];
+    t.ok(entered && edited, 'the fixture queue has two items to stamp');
+    db.prepare(
+      `UPDATE queue_items SET created_at = '2026-09-30T02:10:00Z', updated_at = '2026-09-30T02:10:00Z' WHERE id = ?`
+    ).run(entered!.id);
+    db.prepare(`UPDATE queue_items SET updated_at = '2026-09-30T02:20:00Z' WHERE id = ?`).run(
+      edited!.id
+    );
+
+    const res = await fetch(`${url}/system/resume-bundle?project=vs-demo&logs=0`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    const {changes} = ((await res.json()) as {project: {changes: Record<string, unknown>}}).project;
+    t.deepEqual(
+      changes['since'],
+      {ended: '2026-09-30T02:00:00Z', holder: 'nuke/aaaaaaaa'},
+      'the zero-turn session after it is passed over'
+    );
+    t.deepEqual(
+      (changes['notes'] as {path: string}[]).map(n => n.path),
+      ['projects/vs-demo/queue.md'],
+      'the sessions note is left out, and a stamp with milliseconds compares as a time'
+    );
+    t.deepEqual(changes['queue'], {
+      entered: [{title: entered!.title, section: entered!.section}],
+      edited: [{title: edited!.title, section: edited!.section}],
+      more: 0
+    });
+
+    const route = JSON.parse(
+      (await fetchRaw(`${url}/projects/vs-demo/changes?since=2026-09-30T02:00:00Z`)).raw
+    ) as {since: {date: string}; notes: {path: string}[]};
+    t.equal(route.since.date, '2026-09-30T02:00:00.000Z');
+    t.deepEqual(
+      route.notes.map(n => n.path),
+      ['projects/vs-demo/queue.md']
+    );
+    t.equal((await fetchRaw(`${url}/projects/vs-demo/changes?since=3d`)).status, 200);
+    t.equal((await fetchRaw(`${url}/projects/vs-demo/changes`)).status, 400, 'since is required');
+    t.equal((await fetchRaw(`${url}/projects/vs-demo/changes?since=soon`)).status, 400);
+    t.equal((await fetchRaw(`${url}/projects/Bad_Name/changes?since=1d`)).status, 400);
+
+    const none = await fetch(`${url}/system/resume-bundle?project=vs-messy&logs=0`, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${TEST_TOKEN}`}
+    });
+    t.equal(
+      ((await none.json()) as {project: {changes: unknown}}).project.changes,
+      null,
+      'no session record, no block'
+    );
+  });
+});

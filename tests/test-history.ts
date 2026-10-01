@@ -295,6 +295,22 @@ test('history and restore answer 503 when the vault is not a git repository', as
     t.equal((await json(`${ctx.url}/history?path=topics/a.md`)).status, 503);
     t.equal((await call(`${ctx.url}/vault/topics/a.md?at=deadbee`)).status, 503);
     t.equal((await restore(ctx, {path: 'topics/a.md', sha: 'deadbee'})).status, 503);
+    t.equal((await json(`${ctx.url}/projects/p/changes?since=deadbee`)).status, 503);
+  } finally {
+    await stop(ctx);
+  }
+});
+
+test('GET /projects/{name}/changes reads a sha as its commit time', async t => {
+  const {root, shas} = initRepo();
+  const ctx = await start(root);
+  try {
+    const r = await json(`${ctx.url}/projects/p/changes?since=${shas['two']}`);
+    t.equal(r.status, 200);
+    t.equal(r.body.since.sha, shas['two']);
+    t.ok(Number.isFinite(Date.parse(r.body.since.date)), 'with its commit time');
+    t.deepEqual([r.body.notes, r.body.more], [[], 0]);
+    t.equal((await json(`${ctx.url}/projects/p/changes?since=deadbee`)).status, 404);
   } finally {
     await stop(ctx);
   }

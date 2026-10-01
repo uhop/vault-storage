@@ -12,6 +12,7 @@ import {computeLintReport, queueHygieneFindings, type LintReport} from './lint.t
 import {rejectUnknownParams} from '../query.ts';
 import {asOf} from '../as-of.ts';
 import {sendError, sendJson} from '../responses.ts';
+import {lastWorkingSession, projectChanges} from '../project-changes.ts';
 import {parseSessions, type SessionRecord} from '../sessions.ts';
 import {projectTrackers, trackerLine} from '../trackers.ts';
 import type {Handler} from '../router.ts';
@@ -419,9 +420,19 @@ export const resumeBundleHandler =
         notices,
         trackers: projectTrackers(deps.vaultDataPath, project),
         logs: latestLogs(db, logsLimit, project).map(logEntry),
-        sessions: (() => {
+        ...(() => {
           const recent = projectSessions(records, project);
-          return {recent: recent.slice(0, 5), unlogged: recent.filter(x => x.log === null)};
+          const last = lastWorkingSession(recent);
+          return {
+            sessions: {recent: recent.slice(0, 5), unlogged: recent.filter(x => x.log === null)},
+            changes:
+              last === null
+                ? null
+                : {
+                    since: {ended: last.ended, holder: last.holder},
+                    ...projectChanges(db, project, last.ended)
+                  }
+          };
         })(),
         handoffs: {
           open: inbox.filter(h => h.status === 'open').map(inboxItem),
