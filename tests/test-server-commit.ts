@@ -175,7 +175,11 @@ test('POST /commit carries the state export, then returns committed=false on a c
     t.equal(first.committed, true, 'the first export is a change');
     t.deepEqual(
       first.files,
-      ['.vault-storage-state/records.jsonl', '.vault-storage-state/tags.jsonl'],
+      [
+        '.vault-storage-state/records.jsonl',
+        '.vault-storage-state/suggestions.jsonl',
+        '.vault-storage-state/tags.jsonl'
+      ],
       'the state files, and nothing else'
     );
     const second = await commit();

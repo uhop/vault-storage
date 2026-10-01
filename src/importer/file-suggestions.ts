@@ -48,7 +48,7 @@ export const DEFAULT_CITES = 'default-cites';
  * `resolved_at >= snoozeCutoff(now, days)` still blocks re-filing. Falls back
  * to `now` (so no extra blocking) when `now` is unparseable.
  */
-const snoozeCutoff = (now: string, snoozeDays: number): string => {
+export const snoozeCutoff = (now: string, snoozeDays: number): string => {
   const t = Date.parse(now);
   if (!Number.isFinite(t)) return now;
   return new Date(t - snoozeDays * MS_PER_DAY).toISOString();

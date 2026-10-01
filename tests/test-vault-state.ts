@@ -48,6 +48,189 @@ test('stateFiles: the taxonomy with its aliases, and the record ids, each sorted
       files.get('records.jsonl'),
       '{"path":"topics/a.md","id":"id-a"}\n{"path":"topics/b.md","id":"id-b"}\n'
     );
+    t.equal(files.get('suggestions.jsonl'), '', 'no decisions, an empty file');
+  } finally {
+    db.close();
+  }
+});
+
+test('stateFiles: the latest decision per identity that a rebuild would ask again', t => {
+  const db = setup();
+  const now = '2026-10-01T00:00:00.000Z';
+  let n = 0;
+  const decide = (
+    kind: string,
+    payload: Record<string, unknown>,
+    status: string,
+    resolvedAt: string | null,
+    subject: string | null = null
+  ): void => {
+    db.prepare(
+      `INSERT INTO suggestions (id, kind, subject_id, payload, status, created, resolved_at, resolved_by)
+       VALUES (?, ?, ?, ?, ?, '2026-09-01', ?, ?)`
+    ).run(
+      `s${String(++n).padStart(2, '0')}`,
+      kind,
+      subject,
+      JSON.stringify(payload),
+      status,
+      resolvedAt,
+      resolvedAt && 'agent'
+    );
+  };
+  try {
+    db.exec(`
+      INSERT INTO records (record_id, file_path, type, body, content_hash, body_hash, created, updated)
+        VALUES ('id-c', 'topics/c.md', 'permanent', 'c', 'h', 'h', '2026-09-30', '2026-09-30');
+      INSERT INTO tags (record_id, tag) VALUES ('id-a', 'alpha');
+    `);
+    const pair = (a: string, b: string) => ({a_record: a, b_record: b, distance: 0.05});
+    decide('duplicate', pair('id-b', 'id-a'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('duplicate', pair('id-a', 'id-gone'), 'accepted', '2026-09-20T00:00:00.000Z');
+    decide('duplicate', pair('id-a', 'id-c'), 'rejected', '2026-09-10T00:00:00.000Z');
+    decide('duplicate', pair('id-c', 'id-a'), 'accepted', '2026-09-21T00:00:00.000Z');
+    decide('duplicate', pair('id-b', 'id-c'), 'pending', null);
+    const tagged = (tag: string, record: string) => ({tag, record_id: record});
+    decide('tag_suggestion', tagged('beta', 'id-a'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('tag_suggestion', tagged('alpha', 'id-a'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('tag_suggestion', tagged('alfa', 'id-a'), 'accepted', '2026-09-20T00:00:00.000Z');
+    decide('tag_suggestion', tagged('beta', 'id-gone'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('tag_suggestion', tagged('beta', 'id-b'), 'rejected', '2026-09-10T00:00:00.000Z');
+    decide('tag_suggestion', tagged('beta', 'id-b'), 'accepted', '2026-09-11T00:00:00.000Z');
+    decide('new_tag', tagged('zeta', 'id-b'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('new_tag', tagged('alpha', 'id-b'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('new_tag', tagged('alfa', 'id-c'), 'rejected', '2026-09-20T00:00:00.000Z');
+    decide('new_tag', tagged('zeta', 'id-gone'), 'rejected', '2026-09-20T00:00:00.000Z');
+    const aged = {file_path: 'topics/c.md', age_days: 100, rule: 'log > 90d'};
+    decide(
+      'archive_candidate',
+      {record_id: 'id-c', ...aged},
+      'rejected',
+      '2026-09-17T00:00:00.000Z',
+      'id-c'
+    );
+    decide(
+      'archive_candidate',
+      {record_id: 'id-b', ...aged},
+      'rejected',
+      '2026-09-16T23:59:59.999Z',
+      'id-b'
+    );
+    decide(
+      'archive_candidate',
+      {record_id: 'id-a', ...aged},
+      'accepted',
+      '2026-09-30T00:00:00.000Z',
+      'id-a'
+    );
+    decide('compaction_candidate', {folder_path: 'logs'}, 'rejected', '2026-09-30T00:00:00.000Z');
+    decide('compaction_candidate', {folder_path: 'topics'}, 'rejected', '2026-09-01T00:00:00.000Z');
+    decide(
+      'inefficiency_detected',
+      {signal: 'edge_fanout_high', current: 12},
+      'accepted',
+      '2026-09-10T00:00:00.000Z'
+    );
+    decide(
+      'inefficiency_detected',
+      {signal: 'edge_fanout_high', current: 20},
+      'rejected',
+      '2026-09-20T00:00:00.000Z'
+    );
+    decide('inefficiency_detected', {signal: 'fts_bloat', current: 3}, 'pending', null);
+    decide(
+      'edge_type',
+      {from_record: 'id-a', to_record: 'id-b'},
+      'rejected',
+      '2026-09-20T00:00:00.000Z',
+      'id-a'
+    );
+    decide(
+      'agent_enrichment_stale',
+      {record_id: 'id-a'},
+      'accepted',
+      '2026-09-20T00:00:00.000Z',
+      'id-a'
+    );
+
+    const lines = stateFiles(db, now)
+      .get('suggestions.jsonl')!
+      .trimEnd()
+      .split('\n')
+      .map(l => JSON.parse(l));
+    const by = 'agent';
+    t.deepEqual(lines, [
+      {
+        kind: 'archive_candidate',
+        record_id: 'id-c',
+        status: 'rejected',
+        resolved_by: by,
+        resolved_at: '2026-09-17T00:00:00.000Z'
+      },
+      {
+        kind: 'compaction_candidate',
+        folder_path: 'logs',
+        status: 'rejected',
+        resolved_by: by,
+        resolved_at: '2026-09-30T00:00:00.000Z'
+      },
+      {
+        kind: 'duplicate',
+        a_record: 'id-a',
+        b_record: 'id-b',
+        status: 'rejected',
+        resolved_by: by,
+        resolved_at: '2026-09-20T00:00:00.000Z'
+      },
+      {
+        kind: 'duplicate',
+        a_record: 'id-a',
+        b_record: 'id-c',
+        status: 'accepted',
+        resolved_by: by,
+        resolved_at: '2026-09-21T00:00:00.000Z'
+      },
+      {
+        kind: 'inefficiency_detected',
+        signal: 'edge_fanout_high',
+        current: 20,
+        status: 'rejected',
+        resolved_by: by,
+        resolved_at: '2026-09-20T00:00:00.000Z'
+      },
+      {
+        kind: 'new_tag',
+        tag: 'zeta',
+        record_id: 'id-b',
+        status: 'rejected',
+        resolved_by: by,
+        resolved_at: '2026-09-20T00:00:00.000Z'
+      },
+      {
+        kind: 'tag_suggestion',
+        tag: 'beta',
+        record_id: 'id-a',
+        status: 'rejected',
+        resolved_by: by,
+        resolved_at: '2026-09-20T00:00:00.000Z'
+      },
+      {
+        kind: 'tag_suggestion',
+        tag: 'beta',
+        record_id: 'id-b',
+        status: 'accepted',
+        resolved_by: by,
+        resolved_at: '2026-09-11T00:00:00.000Z'
+      }
+    ]);
+
+    db.exec(
+      `UPDATE suggestions SET status = 'pending', resolved_at = NULL, resolved_by = NULL WHERE id = 's01'`
+    );
+    t.notOk(
+      stateFiles(db, now).get('suggestions.jsonl')!.includes('"b_record":"id-b"'),
+      'a reopened decision leaves the file'
+    );
   } finally {
     db.close();
   }
@@ -59,7 +242,8 @@ test('exportVaultState writes a file only when its content changed', async t => 
   try {
     t.deepEqual(await exportVaultState(db, root), [
       `${STATE_DIR}/tags.jsonl`,
-      `${STATE_DIR}/records.jsonl`
+      `${STATE_DIR}/records.jsonl`,
+      `${STATE_DIR}/suggestions.jsonl`
     ]);
     t.deepEqual(await exportVaultState(db, root), [], 'nothing changed, nothing written');
     db.exec(`UPDATE tags_taxonomy SET description = 'Now described.' WHERE tag = 'beta'`);
@@ -92,7 +276,7 @@ test('git-sync commits the state with the content, and an unchanged state with n
     await handle.syncNow();
     t.equal(
       committed(),
-      `${STATE_DIR}/records.jsonl\n${STATE_DIR}/tags.jsonl`,
+      `${STATE_DIR}/records.jsonl\n${STATE_DIR}/suggestions.jsonl\n${STATE_DIR}/tags.jsonl`,
       'the first pass commits the state'
     );
     const head = execSync('git rev-parse HEAD', {cwd: root}).toString().trim();
