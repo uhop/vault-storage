@@ -141,8 +141,11 @@ vault_append, vault_replace, vault_replace_section, vault_remove_item, and
 vault_insert_item take an optional agent patch (vault_move_item: from_agent
 and to_agent): its fields are merged over the stored agent: block and the
 block is stamped current for the new body, so no stale-enrichment suggestion
-is filed. agent: {} says the summary still holds; a document with no agent:
-block takes a patch only with a summary (409 no_enrichment).
+is filed. agent: {} says the summary still holds; a patch without a summary
+over a summary already stale before the edit leaves the block stale and the
+answer carries agent_stale: true, so restate the summary to certify it; a
+document with no agent: block takes a patch only with a summary (409
+no_enrichment).
 
 Whole-document writes:
 

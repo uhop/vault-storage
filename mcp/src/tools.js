@@ -399,10 +399,10 @@ export const registerTools = (mcp, client) => {
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      'Fields of the agent: block to change in the same write, stamped current for the new body; {} keeps the summary and marks it current'
+      'Fields of the agent: block to change in the same write, stamped current for the new body; {} keeps the summary and marks it current, unless it was already stale (agent_stale)'
     );
   const AGENT_NOTE =
-    ' Pass agent to keep the enrichment current in the same request: its fields are merged over the stored agent: block and the block is stamped current for the new body, so no stale-enrichment suggestion is filed; agent: {} says the summary still holds. A document with no agent: block takes a patch only with a summary (409 `no_enrichment`).';
+    ' Pass agent to keep the enrichment current in the same request: its fields are merged over the stored agent: block and the block is stamped current for the new body, so no stale-enrichment suggestion is filed; agent: {} says the summary still holds. A patch without a summary over a summary already stale before the edit leaves the block stale, and the answer carries agent_stale: true; restate the summary to certify it. A document with no agent: block takes a patch only with a summary (409 `no_enrichment`).';
 
   // The narrow-blast-radius write path. `vault_write_file` replaces a whole
   // document, so a bug in the caller costs the whole document; these three
@@ -573,7 +573,7 @@ export const registerTools = (mcp, client) => {
     'vault_move_item',
     {
       description:
-        "Move one queue item between documents, or between sections of one document, without reproducing its text — the queue-to-archive move as one request. The item is found by its bold title (normalized, exactly once; from_section narrows the search), `trail` is inserted right after the bold title (the archive's **Shipped …** line, a leading space added), and it lands at the start or end (default end) of to_section in to_path, with create_section: true adding a missing heading before the first of the same level (a new archive date block). The destination is written before the source, so a failure between the two leaves a duplicate to clean up, never a lost item; an Active, Backlog, or Watching section the move empties gets the bare `(empty)` placeholder. Asserted: 409 `item_assert_failed` or `section_assert_failed` with details.occurrences. from_agent and to_agent patch each document's agent: block the way vault_append's agent does, both checked before either write; on a queue-to-archive move, {} for each says both summaries still hold. Returns {title, from: {path, etag}, to: {path, etag}}.",
+        "Move one queue item between documents, or between sections of one document, without reproducing its text — the queue-to-archive move as one request. The item is found by its bold title (normalized, exactly once; from_section narrows the search), `trail` is inserted right after the bold title (the archive's **Shipped …** line, a leading space added), and it lands at the start or end (default end) of to_section in to_path, with create_section: true adding a missing heading before the first of the same level (a new archive date block). The destination is written before the source, so a failure between the two leaves a duplicate to clean up, never a lost item; an Active, Backlog, or Watching section the move empties gets the bare `(empty)` placeholder. Asserted: 409 `item_assert_failed` or `section_assert_failed` with details.occurrences. from_agent and to_agent patch each document's agent: block the way vault_append's agent does, both checked before either write; on a queue-to-archive move, {} for each says both summaries still hold, and a side whose summary was already stale stays stale and carries agent_stale: true. Returns {title, from: {path, etag}, to: {path, etag}}.",
       inputSchema: {
         from_path: z.string().min(1).describe('Where the item is now'),
         to_path: z.string().min(1).describe('Where it goes; may equal from_path'),

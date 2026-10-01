@@ -761,13 +761,37 @@ test('POST /vault/edit with agent stamps the block current for the new body (D74
     try {
       t.equal(pendingStale(ctx.db, 'projects/demo/decisions.md'), 1, 'seeded block is stale');
 
-      const res = await postJson(`${ctx.url}/vault/edit`, {
+      const kept = await postJson(`${ctx.url}/vault/edit`, {
         path: 'projects/demo/decisions.md',
         op: 'append',
         text: '## D2\n\nSecond.',
-        agent: {}
+        agent: {key_concepts: ['decisions', 'log']}
       });
-      t.equal(res.status, 200, 'append with agent: {} succeeds');
+      t.equal(kept.status, 200, 'the edit lands');
+      t.equal(
+        (kept.body as {agent_stale?: boolean}).agent_stale,
+        true,
+        'the answer says the block stays stale'
+      );
+      const staleBlock = parseFrontmatter(
+        readFileSync(join(root, 'projects/demo/decisions.md'), 'utf8')
+      ).data['agent'] as Record<string, unknown>;
+      t.equal(
+        staleBlock['derived_from_hash'],
+        'stale0000',
+        'a patch without a summary does not certify a stale summary (D133)'
+      );
+      t.deepEqual(staleBlock['key_concepts'], ['decisions', 'log'], 'its other fields apply');
+      t.equal(pendingStale(ctx.db, 'projects/demo/decisions.md'), 1, "still on the sweep's queue");
+
+      const res = await postJson(`${ctx.url}/vault/edit`, {
+        path: 'projects/demo/decisions.md',
+        op: 'append',
+        text: '## D3\n\nThird.',
+        agent: {summary: 'Decision log for the demo project.'}
+      });
+      t.equal(res.status, 200, 'restating the summary certifies it');
+      t.notOk('agent_stale' in (res.body as object), 'and the answer has no agent_stale');
 
       const {data, body} = parseFrontmatter(
         readFileSync(join(root, 'projects/demo/decisions.md'), 'utf8')
@@ -776,8 +800,9 @@ test('POST /vault/edit with agent stamps the block current for the new body (D74
       t.equal(agent['derived_from_hash'], contentHash(body), 'hash is the written body');
       t.notEqual(agent['derived_at'], 'auto', 'derived_at stamped');
       t.equal(agent['summary'], 'Decision log for the demo project.', 'summary kept');
-      t.deepEqual(agent['key_concepts'], ['decisions'], 'other fields kept');
+      t.deepEqual(agent['key_concepts'], ['decisions', 'log'], 'other fields kept');
       t.equal(pendingStale(ctx.db, 'projects/demo/decisions.md'), 0, 'stale suggestion resolved');
+
       const baseline = ctx.db
         .prepare(
           `SELECT b.body_hash FROM enrichment_baselines b JOIN records r ON r.record_id = b.record_id
@@ -785,6 +810,22 @@ test('POST /vault/edit with agent stamps the block current for the new body (D74
         )
         .get('projects/demo/decisions.md') as {body_hash: string} | undefined;
       t.equal(baseline?.body_hash, contentHash(body), 'enrichment baseline recorded');
+
+      const current = await postJson(`${ctx.url}/vault/edit`, {
+        path: 'projects/demo/decisions.md',
+        op: 'append',
+        text: '## D4\n\nFourth.',
+        agent: {}
+      });
+      t.notOk('agent_stale' in (current.body as object), '{} over a current block');
+      const restamped = parseFrontmatter(
+        readFileSync(join(root, 'projects/demo/decisions.md'), 'utf8')
+      );
+      t.equal(
+        (restamped.data['agent'] as Record<string, unknown>)['derived_from_hash'],
+        contentHash(restamped.body),
+        'restamps it for the new body'
+      );
 
       const revised = await postJson(`${ctx.url}/vault/edit`, {
         path: 'projects/demo/decisions.md',
@@ -880,16 +921,39 @@ test('POST /vault/move-item stamps both documents from from_agent and to_agent (
         'source untouched'
       );
 
-      const res = await postJson(`${ctx.url}/vault/move-item`, {
+      const kept = await postJson(`${ctx.url}/vault/move-item`, {
         from_path: 'projects/demo/queue.md',
         to_path: 'projects/demo/queue-archive.md',
-        title: 'Ship it.',
+        title: 'Keep it.',
         to_section: '## 2026-04-02',
         create_section: true,
         from_agent: {},
         to_agent: {}
       });
-      t.equal(res.status, 200, 'move with both patches succeeds');
+      t.equal(kept.status, 200, 'the move lands');
+      t.match(
+        kept.body,
+        {from: {agent_stale: true}, to: {agent_stale: true}},
+        '{} over two stale blocks leaves both stale and says so (D133)'
+      );
+      for (const path of ['projects/demo/queue.md', 'projects/demo/queue-archive.md']) {
+        const {data} = parseFrontmatter(readFileSync(join(root, path), 'utf8'));
+        t.equal(
+          (data['agent'] as Record<string, unknown>)['derived_from_hash'],
+          'stale0000',
+          `${path} keeps its stamp`
+        );
+      }
+
+      const res = await postJson(`${ctx.url}/vault/move-item`, {
+        from_path: 'projects/demo/queue.md',
+        to_path: 'projects/demo/queue-archive.md',
+        title: 'Ship it.',
+        to_section: '## 2026-04-02',
+        from_agent: {summary: 'Decision log for the demo project.'},
+        to_agent: {summary: 'Decision log for the demo project.'}
+      });
+      t.equal(res.status, 200, 'move with both summaries restated succeeds');
       for (const path of ['projects/demo/queue.md', 'projects/demo/queue-archive.md']) {
         const {data, body} = parseFrontmatter(readFileSync(join(root, path), 'utf8'));
         t.equal(

@@ -73,7 +73,8 @@ The tools map to the REST surface, grouped by purpose:
   (`vault_move_item`: `from_agent` / `to_agent`), merged over the stored
   `agent:` block and stamped current for the new body, so the writer keeps
   the enrichment fresh in the same request; `agent: {}` says the summary
-  still holds.
+  still holds, and over a summary already stale it leaves the block stale
+  and the answer carries `agent_stale: true`.
 - **Whole-document write** — `vault_write_file`, `vault_update_piece`,
   `vault_delete_file`. Both writers accept `agent.derived_from_hash:
 "auto"` (the server stamps the body hash + `derived_at`) and an optional

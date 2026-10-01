@@ -21,7 +21,8 @@ const descriptions = () => {
 const REQUIRED_MENTIONS = {
   vault_read_piece: ['fields'],
   vault_health: ['stalled', 'consecutive_timeouts', 'lag_ms'],
-  vault_move_item: ['trail', 'item_assert_failed', 'etag'],
+  vault_move_item: ['trail', 'item_assert_failed', 'etag', 'agent_stale'],
+  vault_append: ['agent_stale'],
   vault_insert_item: ['etag', 'created', 'section_assert_failed'],
   vault_remove_item: ['etag', 'removed', 'item_assert_failed'],
   vault_handoff_verify: ['stale', 'artifact_sha256', 'base_sha', 'handoff_resolved'],

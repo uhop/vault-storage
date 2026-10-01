@@ -44,6 +44,7 @@ import {syncQueueFile} from '../../queue/sync.ts';
 import {FleetStateRepository} from '../../fleet/state.ts';
 import {ExternalLinksRepository} from '../../links/external.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
+import type {VaultRecord} from '../../records/types.ts';
 import {isGitRepo} from '../../util/git.ts';
 import {readBodyText} from '../body.ts';
 import {rejectUnknownParams} from '../query.ts';
@@ -709,18 +710,27 @@ const agentPatchShapeOk = (res: ServerResponse, name: string, patch: unknown): b
   return false;
 };
 
+/** The importer's staleness rule: a summary and its hash, the hash not the stored body's. */
+const summaryStale = (record: VaultRecord | null): boolean =>
+  record !== null &&
+  record.agentSummary !== null &&
+  record.agentDerivedFromHash !== null &&
+  record.agentDerivedFromHash !== record.bodyHash;
+
 /**
  * The stored `agent:` block with the writer's patch merged over it and both
  * stamps forced to "auto", so the block is current for the body being written
- * (D74). `{}` restamps a block whose summary still holds. A document with no
+ * (D74). A patch without a summary over a block already stale keeps the stored
+ * stamps, so the block stays stale, and says so (D133). A document with no
  * block takes a patch only when it carries a summary; null after a 409.
  */
 const agentBlockOrError = (
   res: ServerResponse,
   path: string,
   stored: unknown,
-  patch: Record<string, unknown>
-): Record<string, unknown> | null => {
+  patch: Record<string, unknown>,
+  stale: boolean
+): {block: Record<string, unknown>; stale: boolean} | null => {
   if (!isPlainObject(stored) && typeof patch['summary'] !== 'string') {
     sendError(
       res,
@@ -730,13 +740,15 @@ const agentBlockOrError = (
     );
     return null;
   }
-  return {
-    ...(isPlainObject(stored) ? stored : {}),
-    ...patch,
-    derived_from_hash: 'auto',
-    derived_at: 'auto'
-  };
+  const base = isPlainObject(stored) ? stored : {};
+  if (stale && typeof patch['summary'] !== 'string') {
+    const {derived_from_hash: _hash, derived_at: _at, ...fields} = patch;
+    return {block: {...base, ...fields}, stale: true};
+  }
+  return {block: {...base, ...patch, derived_from_hash: 'auto', derived_at: 'auto'}, stale: false};
 };
+
+const staleMark = (stale: boolean): {agent_stale?: true} => (stale ? {agent_stale: true} : {});
 
 const EDIT_OPS: ReadonlySet<string> = new Set([
   'append',
@@ -1183,19 +1195,22 @@ export const editVaultHandler =
       if (value !== null) requestFm[key] = value;
     }
     if (replacedFm) requestFm = replacedFm;
+    const {records} = deps;
+    const existing = records.getByPath(path);
+    let agentStale = false;
     if (req.agent !== undefined) {
-      const block = agentBlockOrError(
+      const patched = agentBlockOrError(
         ctx.res,
         path,
         onDiskFm['agent'],
-        req.agent as Record<string, unknown>
+        req.agent as Record<string, unknown>,
+        summaryStale(existing)
       );
-      if (block === null) return;
-      requestFm['agent'] = block;
+      if (patched === null) return;
+      requestFm['agent'] = patched.block;
+      agentStale = patched.stale;
     }
 
-    const {records} = deps;
-    const existing = records.getByPath(path);
     let etag: string;
     try {
       const result = writeSplitRecordToDisk({
@@ -1225,7 +1240,8 @@ export const editVaultHandler =
       etag,
       ...(replaced !== undefined ? {replaced} : {}),
       ...(section ?? {}),
-      ...extra
+      ...extra,
+      ...staleMark(agentStale)
     });
   };
 
@@ -1422,15 +1438,31 @@ export const moveItemHandler =
     const fromPatch = req.from_agent as Record<string, unknown> | undefined;
     const toPatch = req.to_agent as Record<string, unknown> | undefined;
     const targetPatch = same && (fromPatch || toPatch) ? {...fromPatch, ...toPatch} : toPatch;
+    let toStale = false;
+    let fromStale = false;
     if (targetPatch) {
-      const block = agentBlockOrError(ctx.res, toPath, target.fm['agent'], targetPatch);
-      if (block === null) return;
-      target.fm['agent'] = block;
+      const patched = agentBlockOrError(
+        ctx.res,
+        toPath,
+        target.fm['agent'],
+        targetPatch,
+        summaryStale(deps.records.getByPath(toPath))
+      );
+      if (patched === null) return;
+      target.fm['agent'] = patched.block;
+      toStale = patched.stale;
     }
     if (!same && fromPatch) {
-      const block = agentBlockOrError(ctx.res, fromPath, source.fm['agent'], fromPatch);
-      if (block === null) return;
-      source.fm['agent'] = block;
+      const patched = agentBlockOrError(
+        ctx.res,
+        fromPath,
+        source.fm['agent'],
+        fromPatch,
+        summaryStale(deps.records.getByPath(fromPath))
+      );
+      if (patched === null) return;
+      source.fm['agent'] = patched.block;
+      fromStale = patched.stale;
     }
 
     if (same) {
@@ -1438,8 +1470,8 @@ export const moveItemHandler =
       if (etag === null) return;
       sendJson(ctx.res, 200, {
         title: span.title,
-        from: {path: fromPath, etag},
-        to: {path: toPath, etag}
+        from: {path: fromPath, etag, ...staleMark(toStale)},
+        to: {path: toPath, etag, ...staleMark(toStale)}
       });
       return;
     }
@@ -1457,8 +1489,8 @@ export const moveItemHandler =
     if (fromEtag === null) return;
     sendJson(ctx.res, 200, {
       title: span.title,
-      from: {path: fromPath, etag: fromEtag},
-      to: {path: toPath, etag: toEtag}
+      from: {path: fromPath, etag: fromEtag, ...staleMark(fromStale)},
+      to: {path: toPath, etag: toEtag, ...staleMark(toStale)}
     });
   };
 
