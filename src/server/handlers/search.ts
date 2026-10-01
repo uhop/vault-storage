@@ -64,8 +64,8 @@ const buildMatch = (query: string): {match: string; terms: string[]} | null => {
 };
 
 interface FtsRow {
+  rid: number;
   file_path: string;
-  body: string;
   title: string | null;
   rank: number;
 }
@@ -81,11 +81,12 @@ export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): S
   // Indexed FTS5 MATCH replaces the O(rows) LIKE scan. Fetch ALL matches (no
   // SQL LIMIT) and rank in JS, so a title match with weak bm25 can't be sliced
   // off before scoring — the property the "scores all before limit" test pins.
+  // Bodies are read for the kept hits only: the score never uses them (D120).
   let rows: FtsRow[];
   try {
     rows = db
       .prepare(
-        `SELECT r.file_path, r.body, r.title, bm25(records_fts) AS rank
+        `SELECT r.rowid AS rid, r.file_path, r.title, bm25(records_fts) AS rank
            FROM records_fts
            JOIN records r ON r.rowid = records_fts.rowid
           WHERE records_fts MATCH ?`
@@ -97,32 +98,35 @@ export const lexicalSearch = (db: DatabaseSync, query: string, limit: number): S
     return [];
   }
 
+  const terms = built.terms.map(t => t.toLowerCase());
+  const ranked = rows
+    .map(row => {
+      const title = row.title?.toLowerCase() ?? '';
+      const titleHits = terms.filter(term => title.includes(term)).length;
+      // bm25 (`rank`) is unbounded, negative-is-better, and turns positive for
+      // corpus-ubiquitous terms (negative idf) — a logistic tames it to a (0,1)
+      // relevance (same scale as semanticSearch). The title boost layered on top
+      // is the deterministic field preference bm25's idf can't guarantee in
+      // small/dense corpora.
+      const relevance = 1 / (1 + Math.exp(row.rank));
+      return {row, score: Number((titleHits * TITLE_BOOST + relevance).toFixed(4))};
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+
   // Context spans come from the body via the same substring scan as before, so
   // the {match:{start,end}, context} output contract is unchanged.
-  const hits: SearchHit[] = [];
-  for (const row of rows) {
+  const bodyOf = db.prepare('SELECT body FROM records WHERE rowid = ?');
+  return ranked.map(({row, score}) => {
+    const body = (bodyOf.get(row.rid) as {body: string} | undefined)?.body ?? '';
     const matches: MatchSpan[] = [];
-    let titleHits = 0;
     for (const term of built.terms) {
-      if (row.title && findMatches(row.title, term).length > 0) ++titleHits;
-      for (const m of findMatches(row.body, term)) {
+      for (const m of findMatches(body, term)) {
         if (matches.length < MAX_MATCHES_PER_FILE) matches.push(m);
       }
     }
-    // bm25 (`rank`) is unbounded, negative-is-better, and turns positive for
-    // corpus-ubiquitous terms (negative idf) — a logistic tames it to a (0,1)
-    // relevance (same scale as semanticSearch). The title boost layered on top
-    // is the deterministic field preference bm25's idf can't guarantee in
-    // small/dense corpora.
-    const relevance = 1 / (1 + Math.exp(row.rank));
-    hits.push({
-      filename: row.file_path,
-      score: Number((titleHits * TITLE_BOOST + relevance).toFixed(4)),
-      matches
-    });
-  }
-  hits.sort((a, b) => b.score - a.score);
-  return hits.slice(0, limit);
+    return {filename: row.file_path, score, matches};
+  });
 };
 
 const semanticSearch = async (
