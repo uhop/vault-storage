@@ -20,7 +20,9 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
 - Run via `npx -y @uhop/vault-storage-mcp@latest`; env: `VAULT_API_URL`, `VAULT_API_TOKEN`.
 - Tool groups: search & list (incl. `vault_context_pack` — one byte-budgeted
   RAG pack: hybrid top-K chunks + a deduped 1-hop graph whose inbound
-  entries are the backlinks), read,
+  entries are the backlinks; `vault_search`'s `edge` filter by typed edges,
+  with `vault_search_facets` counting them), read, a note's history
+  (`vault_history`, `vault_read_file` with `at`, `vault_restore`),
   narrow writes (`vault_append` / `vault_replace` / `vault_replace_section`
   / `vault_patch_fm` — asserted, atomic, small blast radius; the body edits
   take an `agent` patch that keeps the enrichment current in the same write;
@@ -31,8 +33,10 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   (`vault_supersede` / `vault_move` / `vault_propose`), maintenance (incl.
   `vault_enrichment_delta` — the chunks added since a note's `agent:` block
   was derived), tags (`vault_tag_nearest` to pick from the taxonomy before
-  minting; create, alias, delete), stored edges (`vault_list_edges`), project
-  trackers (`vault_project_trackers`), graph insight, the
+  minting; create, alias, delete), stored edges (`vault_list_edges`), projects
+  (`vault_project_trackers`, `vault_project_changes` since a time or a commit,
+  `vault_fleet_status` for the stored GitHub and npm baselines, `vault_links`
+  for the notes that mention a ticket or a URL), graph insight, the
   suggestions review queue (claim / resolve batches), queue-item slices
   (`fields: "a,b"` / `"-a,-b"` to subset a row, `exclude: "body"` the older
   alias for `fields: "-body"`),

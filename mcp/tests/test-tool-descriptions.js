@@ -108,7 +108,10 @@ const REQUIRED_MENTIONS = {
     'body_omitted',
     'bundle_budget',
     'headings',
-    'summary_stale'
+    'summary_stale',
+    'sessions',
+    'changes',
+    'trackers'
   ],
   vault_context_pack: [
     'chunks',

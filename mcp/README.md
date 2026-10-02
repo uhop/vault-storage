@@ -42,7 +42,9 @@ that is down or older changes nothing.
 
 The tools map to the REST surface, grouped by purpose:
 
-- **Search & list** — `vault_search`, `vault_search_facets` (how many of a
+- **Search & list** — `vault_search` (`edge` keeps the hits whose typed
+  edges meet every condition, `edges: true` lists each hit's edges),
+  `vault_search_facets` (how many of a
   query's matches carry each edge type each way, the counts behind
   `vault_search`'s `edge` filter), `vault_context_pack` (one prepared
   RAG pack — hybrid top-K chunks + a deduped 1-hop graph whose inbound
@@ -51,7 +53,8 @@ The tools map to the REST surface, grouped by purpose:
   `vault_list_pieces` (filters incl. alias-aware `tag`), `vault_list_folder`
 - **Read** — `vault_read_piece`, `vault_read_meta`, `vault_read_file`
   (`include_etag: true` returns `{path, etag, composed, content}` — the
-  tag a conditional write needs, and the composed-folder flag),
+  tag a conditional write needs, and the composed-folder flag; `at`, a commit
+  from `vault_history`, reads the note as it was then),
   `vault_read_section` (one ATX-heading section as
   `{path, etag, heading, level, occurrence, content, hash}`, so a large
   document never has to be pulled into context to read one part of it;
@@ -64,7 +67,9 @@ The tools map to the REST surface, grouped by purpose:
   changed since), `vault_remove_item` / `vault_insert_item` /
   `vault_move_item` (one queue item by its bold title — removed, inserted
   into a section, or moved between documents with a trail after the title,
-  the queue-to-archive move as one request), `vault_patch_fm` (add/remove
+  the queue-to-archive move as one request; an inserted item whose `source:`
+  an open item already carries updates that item, or with `on_existing:
+"keep"` writes nothing), `vault_patch_fm` (add/remove
   one frontmatter array member, `tags:` excepted), `vault_tag_add` /
   `vault_tag_remove` (one `tags:` member). All of them are atomic
   server-side ops whose blast radius is the thing being changed, so they
@@ -90,6 +95,10 @@ The tools map to the REST surface, grouped by purpose:
   links the target; a type outside the vocabulary is a `400 invalid_enum_value`,
   an unresolved target answers with `unresolved_edges`, and `strict_edges: true`
   refuses that with `409 unresolved_edges`.
+- **History** — `vault_history` (a note's committed versions, newest first,
+  following renames), `vault_restore` (write a version back through the
+  writer; content not yet committed is committed first, so it stays a
+  version)
 - **Lifecycle** — `vault_supersede` (replace a note, archiving the
   predecessor with its `record_id` — and therefore its edges, embeddings,
   and suggestions — intact), `vault_move` (rename, same id preservation),
@@ -107,9 +116,13 @@ The tools map to the REST surface, grouped by purpose:
   `vault_tag_update` (rewrite a description, or re-label `origin`),
   `vault_tag_alias`, `vault_tag_delete` (strip a tag from every note, then
   drop it), `vault_tag_add` / `vault_tag_remove` (one tag on one record)
-- **Trackers** — `vault_project_trackers` (where a project's work is tracked and
+- **Projects** — `vault_project_trackers` (where a project's work is tracked and
   which tracker is primary, from its queue's `trackers:` frontmatter; the vault
-  when none is declared)
+  when none is declared), `vault_project_changes` (the notes and queue items
+  changed since a time or a commit), `vault_fleet_status` (the stored GitHub
+  and npm baselines that fleet-status collected, with a project's tracked
+  threads), `vault_links` (the notes and queue items that mention a ticket, a
+  design, or any URL)
 - **Insight** — `vault_neighborhood`, `vault_similar`, `vault_backlinks`,
   `vault_enrichment_delta` (the chunks added to a body since its `agent:` block
   was current, for a refresh that reads the change instead of the whole note)
@@ -151,8 +164,9 @@ The tools map to the REST surface, grouped by purpose:
   `coverage.enrichment` block and its `unenriched_records` worklist),
   `vault_resume_bundle` (one-shot session-start bundle: reindex + lint +
   suggestions + workflow + log summaries + project notes + the project's
-  handoff inbox; `project_bodies` opts named project files into full-body
-  delivery)
+  handoff inbox, its own latest logs, its session records, what changed since
+  its last working session, and its tracker declaration; `project_bodies`
+  opts named project files into full-body delivery)
 
 Tool input schemas inline closed-enum lists (record types, statuses, edge
 types, suggestion kinds) so the agent learns the canonical surface at
@@ -229,6 +243,29 @@ codes:
 
 ## Release notes
 
+- 0.13.0 — a note's history, what changed in a project, and search by typed
+  edges: `vault_history` lists a note's committed versions, `vault_read_file`
+  reads one with `at`, and `vault_restore` writes one back, committing the
+  current content first so it stays a version; `vault_project_changes` lists
+  a project's notes and queue items changed since a time or a commit, and the
+  resume bundle carries the same since the last working session, beside the
+  project's own logs, its session records, and its tracker declaration.
+  `vault_search` keeps the hits whose typed edges meet `edge` conditions and
+  lists each hit's edges with `edges: true`, and `vault_search_facets` counts
+  how many of a query's matches carry each edge type each way.
+  `vault_fleet_status` reads the stored GitHub and npm baselines with the
+  tracked threads, and `vault_links` lists the notes that mention a ticket, a
+  design, or any URL. `vault_insert_item` updates the open item that carries
+  the inserted `source:` instead of filing it twice (`on_existing: "keep"`
+  leaves it), and the queue reads carry `source` and the Inbox. An `agent: {}`
+  patch over a summary that was already stale leaves the block stale and the
+  answer says `agent_stale: true`. The descriptions name what the server added:
+  `vault_lint`'s `frontmatter_outside_enum` and `import_failures`,
+  `vault_status`'s vault marker, the `secondary` role and `intake` in
+  `vault_project_trackers`, and a mirrored `contradicts` pair listed once by
+  `vault_list_edges`. The new tools and parameters need vault-storage from
+  2026-10-01: an older server answers a new tool with a 404 and a new
+  parameter with a 400 for an unknown field.
 - 0.12.0 — tags picked from the taxonomy, relations declared on the write, and
   calls that outlast a server restart: `vault_tag_nearest` returns the nearest
   existing tags for proposed names or a draft's text, and `vault_write_file`,

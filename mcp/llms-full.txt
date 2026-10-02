@@ -98,7 +98,12 @@ Search & list:
 Read:
 
 - vault_read_file — markdown by vault path; composes atomized folders;
-  include_etag returns {path, etag, composed, content} for conditional writes.
+  include_etag returns {path, etag, composed, content} for conditional writes;
+  at, a commit from vault_history, reads the note as it was then, by the path
+  that version lists.
+- vault_history — a note's committed versions, newest first, following renames:
+  {path, uncommitted, items: [{sha, date, subject, path, change}], offset,
+  limit, last}; paged with no total. Needs vault-storage from 2026-09-30.
 - vault_read_piece — one record by id.
 - vault_read_meta — the indexed record row minus body (not arbitrary FM keys).
 - vault_read_section — one ATX-heading section, {path, etag, heading, level,
@@ -131,7 +136,9 @@ Narrow writes (atomic server-side ops; prefer these over whole-document writes):
   continuation lines (the text comes back as `removed`; an Active, Backlog,
   or Watching section left with nothing gets the bare `(empty)`), or inserted
   at the start or end of a section, framed by blank lines, with create_section
-  for a missing heading.
+  for a missing heading. An inserted item whose `source:` an open item already
+  carries updates that item ({replaced: {title, source}}), or with on_existing:
+  "keep" writes nothing ({existing}).
 - vault_move_item — the queue-to-archive move as one request: from_path →
   to_path, title, to_section, optional trail inserted after the bold title,
   destination written before the source; a schema section it empties gets
@@ -169,6 +176,11 @@ Lifecycle:
   supersedes footer.
 - vault_move — rename preserving record_id.
 - vault_propose — search-before-write: score a draft against existing notes.
+- vault_restore — write a note back to one of its versions (sha, and from_path
+  when a rename came between) through the writer; content not yet committed
+  is committed first, so it stays a version; expected_etag makes it
+  conditional. Returns {path, etag, restored_from, committed_before}. Needs
+  vault-storage from 2026-09-30.
 
 Maintenance:
 
@@ -197,12 +209,26 @@ Tags:
 - vault_tag_alias — add an alias of an existing canonical tag.
 - vault_tag_delete — strip a tag and its aliases from every note, then drop it.
 
-Graph insight:
+Projects:
 
 - vault_project_trackers — where a project's work is tracked and which tracker is
   primary, from the trackers: list in its queue.md frontmatter ({kind, ref, role,
-  create, write, url}); the vault when none is declared. Read it before filing
-  new work.
+  create, intake, write, url}; role primary or secondary, intake none, reflect,
+  or triage); the vault when none is declared. Read it before filing new work.
+- vault_project_changes — the project's notes written and queue items that
+  entered a section or changed in place since a time, Nd, or a commit:
+  {project, since, notes, more, queue: {entered, edited, more}, as_of}. Needs
+  vault-storage from 2026-09-30.
+- vault_fleet_status — the stored fleet-status baselines (GitHub and npm) and the
+  digest's runs; with project, that project's baseline, its runs, and
+  `tracked`, its open items mirroring a GitHub thread with the thread's stored
+  state. Reads stored data only, never GitHub. Needs vault-storage from 2026-09-30.
+- vault_links — the notes and queue items that mention an outside object, by key
+  (a queue item's `source:` spelling), url, or repo (every thread of a GitHub
+  repository). Needs vault-storage from 2026-09-30.
+
+Graph insight:
+
 - vault_neighborhood — BFS layers + typed edges around a record (depth ≤ 5); the root record rides along as `root`; `fields` and `edge_fields` keep only the named record and edge fields, the ids always.
 - vault_similar — embedding nearest neighbours; distance and score run in
   opposite directions (score = 1 - distance/2).
@@ -237,6 +263,9 @@ Queue-item slices (flat {count, items}):
   400), with exclude: "body" as the older alias for fields: "-body";
   every import keeps the derivative table current (server ≥ 2026-09-19), and
   vault_queue_reindex rebuilds it when the queue lint reports a stale slice.
+  Each item carries `source`, the outside ticket its `source:` marker names,
+  or null; vault_queue_by_project lists the Inbox first and vault_queue_by_section
+  reads it, while vault_queue_top leaves it out (server ≥ 2026-09-30).
 
 Repo leases (agent coordination — who may edit which repo working tree; flat
 {count, items}, ephemeral: cleared on server restart):
@@ -295,13 +324,16 @@ restart; resolved ones archive into projects/<project>/handoff-archive.md):
 
 System:
 
-- vault_status — indexer/DB state, embedder and memory blocks.
+- vault_status — indexer/DB state, embedder and memory blocks, and the vault's
+  marker ({id, format}, null on a server without one).
 - vault_health — the process's view of itself from memory only: uptime,
   watchdog lag, last git-sync and reindex outcomes, watcher's last event,
   and stalled; never touches the database or the data mount, so it answers
   while storage is wedged and the loop is not. Always 200.
-- vault_lint — integrity checks (nine categories) plus coverage.enrichment
-  with the unenriched_records worklist; coverage never flips ok.
+- vault_lint — integrity checks, the categories named in its description
+  (among them frontmatter_outside_enum and import_failures), plus
+  coverage.enrichment with the unenriched_records worklist; coverage never
+  flips ok.
 - vault_resume_bundle — one-shot session-start bundle (reindex + lint digest +
   suggestions + workflow + log summaries + project notes). The feedback body
   ships by default only while the whole bundle fits the server's 32 KiB
@@ -309,7 +341,10 @@ System:
   index with body_omitted: {reason: "bundle_budget", budget_bytes}; naming
   files in project_bodies bypasses the budget. The project block also carries
   notices, the supersedes and contradicts edges pointing into the project's
-  files, each with the note that makes the claim.
+  files, each with the note that makes the claim; logs, the project's own
+  latest logs; sessions {recent, unlogged}, the session records, where an
+  unlogged one ended without a wrap; changes, what changed since the last
+  working session; and trackers, the tracker declaration.
 
 ## Resources
 

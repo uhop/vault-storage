@@ -148,6 +148,56 @@ try {
     Array.isArray(edges.items) && typeof edges.total === 'number',
     `vault_list_edges: ${edges.items?.length ?? 0} of ${edges.total} edges`
   );
+
+  const history = await call('vault_history', {path: `projects/${project}/queue.md`, limit: 2});
+  const version = history.items?.[0];
+  check(
+    typeof version?.sha === 'string',
+    `vault_history: ${history.path}, ${history.items?.length ?? 0} versions, newest ${version?.sha?.slice(0, 7)}`
+  );
+  if (version) {
+    const old = await request('tools/call', {
+      name: 'vault_read_file',
+      arguments: {path: version.path, at: version.sha}
+    });
+    const text = old.content?.[0]?.text ?? '';
+    check(
+      !old.isError && text.startsWith('---'),
+      `vault_read_file at ${version.sha.slice(0, 7)}: ${text.length} bytes`
+    );
+  }
+
+  const changes = await call('vault_project_changes', {project, since: '7d'});
+  check(
+    Array.isArray(changes.notes) && Array.isArray(changes.queue?.entered),
+    `vault_project_changes: ${changes.notes?.length ?? 0} notes, ${changes.queue?.entered?.length ?? 0} items entered since ${changes.since?.date}`
+  );
+
+  const fleet = await call('vault_fleet_status', {project});
+  check(
+    Array.isArray(fleet.baselines) && Array.isArray(fleet.runs),
+    `vault_fleet_status: ${fleet.baselines?.length ?? 0} baselines, ${fleet.runs?.length ?? 0} runs`
+  );
+
+  const links = await call('vault_links', {url: 'https://github.com/uhop/vault-storage'});
+  check(Array.isArray(links.links), `vault_links: ${links.links?.length ?? 0} links`);
+
+  const filtered = await call('vault_search', {
+    query: 'queue',
+    edge: 'cites',
+    edges: true,
+    limit: 3
+  });
+  check(
+    Array.isArray(filtered.hits) && filtered.hits.every(h => Array.isArray(h.edges)),
+    `vault_search edge=cites edges: ${filtered.hits?.length ?? 0} hits, each with its edges`
+  );
+
+  const facets = await call('vault_search_facets', {query: 'queue'});
+  check(
+    typeof facets.total === 'number' && Array.isArray(facets.edges) && facets.as_of != null,
+    `vault_search_facets: ${facets.total} matches, ${facets.edges?.length ?? 0} rows`
+  );
 } catch (err) {
   check(false, err instanceof Error ? err.message : String(err));
 } finally {
