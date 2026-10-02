@@ -41,7 +41,8 @@ const GROUPS = [
     label: 'upkeep',
     items: [
       {href: '/ui/lint-review.html', label: 'lint review'},
-      {href: '/ui/archive-review.html', label: 'archive review'}
+      {href: '/ui/archive-review.html', label: 'archive review'},
+      {href: '/ui/keys.html', label: 'keys'}
     ]
   }
 ];

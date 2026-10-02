@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const t = localStorage.getItem('vault.theme');
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      })();
+    </script>
+    <script>
+      // api() adopts these by exact URL: keep them in step with the page's own first requests.
+      (() => {
+        performance.mark('head script');
+        const token = localStorage.getItem('vault.token');
+        if (!token) return;
+        const urls = ['/keys/me', '/keys'];
+        const early = (window.__early ??= new Map());
+        for (const url of urls) {
+          const res = fetch(url, {headers: {Authorization: `Bearer ${token}`}});
+          res.catch(() => {});
+          early.set(url, res);
+        }
+      })();
+    </script>
+    <title>vault-storage — keys</title>
+    <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg" />
+    <link rel="icon" sizes="any" href="/favicon.ico" />
+    <link rel="stylesheet" href="/ui/theme.css" />
+    <style>
+      main {
+        max-width: 60rem;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 1.4rem 0 0.6rem;
+      }
+      .why {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-bottom: 1rem;
+      }
+      .keys button {
+        padding: 0.25rem 0.6rem;
+        font-size: 0.85rem;
+      }
+      .keys td small {
+        color: var(--muted);
+      }
+      form.new-key {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        align-items: end;
+      }
+      form.new-key label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      form.new-key input,
+      form.new-key select {
+        font: inherit;
+        padding: 0.35rem 0.5rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--card);
+        color: var(--fg);
+      }
+      .secret code {
+        word-break: break-all;
+      }
+      dialog {
+        max-width: 28rem;
+      }
+    </style>
+  </head>
+  <body class="fmw">
+    <header>
+      <h1><a href="/ui/">vault-storage</a></h1>
+      <vault-nav></vault-nav>
+      <div class="spacer"></div>
+      <div id="theme-toggle"></div>
+      <vault-settings></vault-settings>
+    </header>
+    <main>
+      <div id="status"></div>
+      <div id="content">
+        <div class="empty"><span class="spinner"></span> loading keys…</div>
+      </div>
+    </main>
+    <div class="footer" id="footer"></div>
+
+    <dialog id="confirm-dlg">
+      <h2>Recall a key</h2>
+      <p id="confirm-body"></p>
+      <div class="dlg-row">
+        <button id="confirm-cancel">Cancel</button>
+        <button id="confirm-ok" class="danger">Recall</button>
+      </div>
+    </dialog>
+
+    <script type="module">
+      import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {KINDS, renderKeys, renderSecret, renderWhoAmI} from '/ui/keys-view.js';
+      const $ = sel => document.querySelector(sel);
+
+      const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
+
+      const confirmRecall = name =>
+        new Promise(resolve => {
+          $('#confirm-body').textContent =
+            `The key "${name}" stops working at once, and a recalled key cannot be restored.`;
+          const dlg = $('#confirm-dlg');
+          const close = result => {
+            dlg.close();
+            resolve(result);
+          };
+          $('#confirm-ok').onclick = () => close(true);
+          $('#confirm-cancel').onclick = () => close(false);
+          dlg.showModal();
+        });
+
+      const showError = (what, e) => {
+        $('#status').innerHTML = `<div class="err">${esc(what)}: ${esc(e.message)}</div>`;
+      };
+
+      const create = async event => {
+        event.preventDefault();
+        const form = event.target;
+        const body = {name: form.name.value.trim(), kind: form.kind.value};
+        if (form.email.value.trim()) body.email = form.email.value.trim();
+        if (form.expires.value) body.expires_at = form.expires.value;
+        try {
+          const made = await apiJson('/keys', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+          });
+          await refresh();
+          $('#status').innerHTML = renderSecret(made, esc);
+          $('#copy-secret').addEventListener('click', () =>
+            navigator.clipboard?.writeText(made.secret)
+          );
+        } catch (e) {
+          if (isAuthError(e)) return showAuthDialog();
+          showError('Could not make the key', e);
+        }
+      };
+
+      const recall = async event => {
+        const button = event.target.closest('button.recall');
+        if (!button || !(await confirmRecall(button.dataset.name))) return;
+        try {
+          await apiJson(`/keys/${encodeURIComponent(button.dataset.id)}/recall`, {method: 'POST'});
+          $('#status').innerHTML =
+            `<div class="fmw-notice ok">Recalled ${esc(button.dataset.name)}.</div>`;
+          await refresh();
+        } catch (e) {
+          if (isAuthError(e)) return showAuthDialog();
+          showError('Could not recall the key', e);
+        }
+      };
+
+      const refresh = async () => {
+        if (!getToken()) return showAuthDialog();
+        let me;
+        try {
+          me = await apiJson('/keys/me');
+        } catch (e) {
+          if (isAuthError(e)) return showAuthDialog();
+          $('#content').innerHTML =
+            `<div class="err">Failed to read /keys/me: ${esc(e.message)}</div>`;
+          return;
+        }
+        if (me?.kind !== 'person') {
+          $('#content').innerHTML = `<p class="why">${renderWhoAmI(me, esc)}</p>
+            <div class="fmw-notice">Making, listing, and recalling keys needs a person's key.</div>`;
+          return;
+        }
+        let items;
+        try {
+          ({items} = await apiJson('/keys'));
+        } catch (e) {
+          if (isAuthError(e)) return showAuthDialog();
+          $('#content').innerHTML =
+            `<div class="err">Failed to read /keys: ${esc(e.message)}</div>`;
+          return;
+        }
+        $('#footer').textContent = `${items.length} key${items.length === 1 ? '' : 's'}`;
+        $('#content').innerHTML = `
+          <p class="why">${renderWhoAmI(me, esc)} The server's API token is the person key
+            <b>operator</b>; it is set in the server's environment and is not listed here.
+            Each named key's writes are committed under its name.</p>
+          <h2>Keys <span class="fmw-count">${items.length}</span></h2>
+          ${renderKeys(items, esc)}
+          <h2>A new key</h2>
+          <form class="new-key">
+            <label>Name <input name="name" required placeholder="laptop agents" /></label>
+            <label>Kind <select name="kind">${KINDS.map(k => `<option>${k}</option>`).join('')}</select></label>
+            <label>Email (optional) <input name="email" type="email" placeholder="for its commits" /></label>
+            <label>Expires (optional) <input name="expires" type="date" /></label>
+            <button class="primary">Make the key</button>
+          </form>`;
+        $('form.new-key').addEventListener('submit', create);
+      };
+
+      $('#content').addEventListener('click', recall);
+      document.addEventListener('token-change', refresh);
+      refresh();
+    </script>
+    <script type="module" src="/ui/components/vault-settings.js"></script>
+    <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/theme.js"></script>
+  </body>
+</html>

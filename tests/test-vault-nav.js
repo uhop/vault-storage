@@ -35,7 +35,8 @@ const GROUPS = [
     'upkeep',
     [
       ['/ui/lint-review.html', 'lint review'],
-      ['/ui/archive-review.html', 'archive review']
+      ['/ui/archive-review.html', 'archive review'],
+      ['/ui/keys.html', 'keys']
     ]
   ]
 ];
