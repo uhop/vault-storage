@@ -130,6 +130,49 @@
       #notice {
         margin-bottom: 0.8rem;
       }
+      #view-switch {
+        margin-bottom: 0.8rem;
+      }
+      .restore-prompt {
+        margin-bottom: 0.8rem;
+      }
+      .restore-prompt p {
+        margin: 0 0 0.5rem;
+      }
+      .hunk + .hunk {
+        margin-top: 0.8rem;
+      }
+      .hunk-head {
+        margin-bottom: 0.2rem;
+        color: var(--muted);
+        font-size: var(--text-s);
+      }
+      .diff {
+        border: 1px solid var(--line);
+        border-radius: var(--radius-s);
+        padding: 0.4rem 0.6rem;
+        font-family: var(--mono);
+        font-size: var(--text-s);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .diff .dl {
+        min-height: 1.4em;
+      }
+      .diff .dl.removed {
+        background: color-mix(in srgb, var(--bad) 8%, transparent);
+      }
+      .diff .dl.added {
+        background: color-mix(in srgb, var(--ok) 8%, transparent);
+      }
+      .diff del {
+        color: var(--bad);
+        background: color-mix(in srgb, var(--bad) 15%, transparent);
+      }
+      .diff ins {
+        color: var(--ok);
+        background: color-mix(in srgb, var(--ok) 15%, transparent);
+      }
       @media (max-width: 720px) {
         .layout {
           grid-template-columns: 1fr;
@@ -172,12 +215,16 @@
 
     <script type="module">
       import {apiJson, esc, getToken, showAuthDialog} from '/ui/api.js';
+      import {renderWordDiff} from '/ui/diff-view.js';
       import {
+        diffUrl,
         encodePath,
         PAGE_SIZE,
         rangeText,
+        renderRestorePrompt,
         renderVersionHead,
-        renderVersions
+        renderVersions,
+        renderViewSwitch
       } from '/ui/history-view.js';
       const $ = sel => document.querySelector(sel);
 
@@ -186,7 +233,9 @@
       let offset = Math.max(0, Number.parseInt(q.get('offset') ?? '0', 10) || 0);
       let items = [];
       let selected = null;
+      let view = 'content';
       let seq = 0;
+      let viewSeq = 0;
       const isAuthError = e => e.message === 'unauthorized' || e.message === 'no-token';
       const reason = e =>
         e.code === 'not_a_git_repo'
@@ -232,41 +281,57 @@
         }
       };
 
-      const show = async version => {
+      const show = version => {
         selected = version;
+        if (view === 'restore') view = 'content';
         for (const b of document.querySelectorAll('.version'))
           b.setAttribute('aria-pressed', String(b.dataset.sha === version.sha));
         const pane = $('#version');
         pane.hidden = false;
         pane.innerHTML = renderVersionHead(version, esc);
         if (version.change === 'deleted') return;
-        const body = document.createElement('div');
-        body.className = 'fmw-prose';
-        body.innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
-        pane.append(body);
+        pane.insertAdjacentHTML('beforeend', `${renderViewSwitch(view)}<div id="view"></div>`);
+        showView();
+      };
+
+      const showView = async () => {
+        const v = selected;
+        const my = ++viewSeq;
+        $('#view-switch').value = view === 'restore' ? null : view;
+        $('#restore').disabled = view === 'restore';
+        const box = $('#view');
+        box.className = view === 'content' ? 'fmw-prose' : '';
+        box.innerHTML = '<div class="empty"><span class="spinner"></span> loading…</div>';
         try {
-          const doc = await apiJson(
-            `/vault/${encodePath(version.path)}?at=${version.sha}&render=html`
-          );
-          if (selected !== version) return;
-          body.innerHTML = doc.html;
+          if (view === 'content') {
+            const doc = await apiJson(`/vault/${encodePath(v.path)}?at=${v.sha}&render=html`);
+            if (my !== viewSeq) return;
+            box.innerHTML = doc.html;
+            return;
+          }
+          const res = await apiJson(diffUrl(path, v, view));
+          if (my !== viewSeq) return;
+          box.innerHTML =
+            (view === 'restore' ? renderRestorePrompt(v, esc) : '') + renderWordDiff(res.diff, esc);
         } catch (e) {
+          if (my !== viewSeq) return;
           if (isAuthError(e)) {
             showAuthDialog();
             return;
           }
-          body.innerHTML = `<div class="err">${reason(e)}</div>`;
+          box.innerHTML = `<div class="err">${reason(e)}</div>`;
         }
+      };
+
+      const setView = next => {
+        view = next;
+        showView();
       };
 
       const restore = async () => {
         const v = selected;
         if (!v) return;
-        const ok = confirm(
-          `Restore ${path} to its version of ${v.date}?\n\nThe current content stays in the history as a version.`
-        );
-        if (!ok) return;
-        $('#restore').disabled = true;
+        $('#confirm-restore').disabled = true;
         try {
           const res = await apiJson('/vault/restore', {
             method: 'POST',
@@ -278,6 +343,7 @@
           );
           offset = 0;
           selected = null;
+          view = 'content';
           $('#version').hidden = true;
           load();
         } catch (e) {
@@ -288,7 +354,7 @@
           showStatus(
             `<div class="err">${e.code === 'not_a_git_repo' ? reason(e) : `Restore failed: ${esc(e.message)}`}</div>`
           );
-          $('#restore').disabled = false;
+          $('#confirm-restore').disabled = false;
         }
       };
 
@@ -306,7 +372,12 @@
         if (v) show(v);
       });
       $('#version').addEventListener('click', e => {
-        if (e.target.closest('#restore')) restore();
+        if (e.target.closest('#restore')) setView('restore');
+        else if (e.target.closest('#confirm-restore')) restore();
+        else if (e.target.closest('#cancel-restore')) setView('content');
+      });
+      $('#version').addEventListener('change', e => {
+        if (e.target.id === 'view-switch') setView(e.detail.value);
       });
       for (const pager of document.querySelectorAll('.pager'))
         pager.addEventListener('click', e => {
@@ -328,6 +399,7 @@
     </script>
     <script type="module" src="/ui/components/vault-settings.js"></script>
     <script type="module" src="/ui/components/vault-nav.js"></script>
+    <script type="module" src="/ui/components/vault-switch.js"></script>
     <script type="module" src="/ui/theme.js"></script>
   </body>
 </html>

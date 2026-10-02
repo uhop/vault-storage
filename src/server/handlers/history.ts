@@ -1,4 +1,6 @@
 import {existsSync, statSync} from 'node:fs';
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {buildEdges} from '../../importer/build-edges.ts';
@@ -46,12 +48,16 @@ const git = (vaultDataPath: string, args: string[]) =>
     timeoutMs: HISTORY_TIMEOUT_MS
   });
 
-/** One page of a note's committed versions, newest first, and whether it is the last. */
+/**
+ * One page of a note's committed versions, newest first, and whether it is the
+ * last; from `rev` back when given, where `path` is the note's path at `rev`.
+ */
 export const listVersions = async (
   vaultDataPath: string,
   path: string,
   offset: number,
-  limit: number
+  limit: number,
+  rev?: string
 ): Promise<{items: Version[]; last: boolean}> => {
   // No --skip: git skips before --follow switches names, so a page that starts
   // past a rename would lose the trail (D115).
@@ -61,6 +67,7 @@ export const listVersions = async (
     '--name-status',
     '--format=%x1e%H%x1f%aI%x1f%an%x1f%s',
     `--max-count=${offset + limit + 1}`,
+    ...(rev ? [rev] : []),
     '--',
     path
   ]);
@@ -307,4 +314,184 @@ export const restoreHandler =
       },
       {ETag: `"${etag}"`}
     );
+  };
+
+const CURRENT = 'current';
+const DIFF_FORMATS = new Set(['unified', 'words']);
+
+/** A version (`sha` set), the note on disk (`sha` null), or null for an empty side. */
+interface Side {
+  sha: string | null;
+  path: string;
+  text: string;
+}
+
+/** The newest version of `path` before the commit `rev`, or at all without one; renames followed. */
+const versionBefore = async (
+  vaultDataPath: string,
+  path: string,
+  rev?: string
+): Promise<Version | null> => {
+  const [first, second] = (await listVersions(vaultDataPath, path, 0, 2, rev)).items;
+  return (rev !== undefined && first?.sha.startsWith(rev) ? second : first) ?? null;
+};
+
+const readCurrent = async (absolute: string): Promise<string | null> => {
+  try {
+    return await readFile(absolute, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'EISDIR') return null;
+    throw err;
+  }
+};
+
+const sideLabel = (side: Side | null): string =>
+  side === null
+    ? '/dev/null'
+    : side.sha === null
+      ? side.path
+      : `${side.sha.slice(0, 8)}:${side.path}`;
+
+/** git's diff of two texts, unified or `--word-diff=porcelain`, headed by the sides' labels; '' when they match. */
+const diffTexts = async (from: Side | null, to: Side | null, format: string): Promise<string> => {
+  const dir = await mkdtemp(join(tmpdir(), 'vault-diff-'));
+  try {
+    await Promise.all([
+      writeFile(join(dir, 'a'), from?.text ?? ''),
+      writeFile(join(dir, 'b'), to?.text ?? '')
+    ]);
+    const r = await runGit(
+      dir,
+      [
+        'diff',
+        '--no-index',
+        '--no-color',
+        '--no-ext-diff',
+        '--text',
+        ...(format === 'words' ? ['--word-diff=porcelain'] : []),
+        '--',
+        'a',
+        'b'
+      ],
+      {timeoutMs: HISTORY_TIMEOUT_MS}
+    );
+    // --no-index exits 1 when the files differ.
+    if (r.exitCode !== 0 && r.exitCode !== 1) throw new Error(`git diff failed: ${gitFailure(r)}`);
+    const hunks = r.stdout.search(/^@@/m);
+    return hunks < 0
+      ? ''
+      : `--- ${sideLabel(from)}\n+++ ${sideLabel(to)}\n${r.stdout.slice(hunks)}`;
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+};
+
+/**
+ * GET /history/diff?path=&from=&from_path=&to=&to_path=&format= — what changed
+ * between two versions of a note, or a version and the note on disk, as git's
+ * diff of the markdown, frontmatter included. `to` is a sha, or `current`
+ * (default) for the note on disk at `path`; `from` is a sha, `current`, or
+ * absent for the version before `to`, found across renames. `from_path` and
+ * `to_path` name a version's own path (default `path`). `format` is `unified`
+ * (default) or `words`, git's `--word-diff=porcelain`. Answers `{path, from,
+ * to, format, diff}`, each side `{sha, path}` with `sha` null for the note on
+ * disk, or null when it is empty (no version before `to`, no note on disk);
+ * `diff` is '' when the sides match.
+ */
+export const historyDiffHandler =
+  (deps: HistoryDeps): Handler =>
+  async ctx => {
+    const params = ['path', 'from', 'from_path', 'to', 'to_path', 'format'];
+    if (!rejectUnknownParams(ctx, new Set(params))) return;
+    const q = ctx.query;
+    const path = q['path'];
+    const from = q['from'];
+    const to = q['to'] ?? CURRENT;
+    const fromPath = q['from_path'] ?? path;
+    const toPath = q['to_path'] ?? path;
+    const format = q['format'] ?? 'unified';
+    if (!isMdPath(path) || !isMdPath(fromPath) || !isMdPath(toPath)) {
+      sendError(ctx.res, 400, 'bad_request', 'path, from_path, and to_path must name .md files');
+      return;
+    }
+    for (const [name, value] of [
+      ['from', from],
+      ['to', to]
+    ] as const) {
+      if (value !== undefined && value !== CURRENT && !SHA_RE.test(value)) {
+        sendError(
+          ctx.res,
+          400,
+          'bad_request',
+          `${name} must be 7 to 40 lowercase hex digits, or current`
+        );
+        return;
+      }
+    }
+    if (q['from_path'] !== undefined && (from === undefined || from === CURRENT)) {
+      sendError(ctx.res, 400, 'bad_request', 'from_path applies only with a from sha');
+      return;
+    }
+    if (q['to_path'] !== undefined && to === CURRENT) {
+      sendError(ctx.res, 400, 'bad_request', 'to_path applies only with a to sha');
+      return;
+    }
+    if (!DIFF_FORMATS.has(format)) {
+      sendError(ctx.res, 400, 'bad_request', 'format must be "unified" or "words"');
+      return;
+    }
+    let absolute: string;
+    try {
+      absolute = ensureSafePath(deps.vaultDataPath, path);
+      ensureSafePath(deps.vaultDataPath, fromPath);
+      ensureSafePath(deps.vaultDataPath, toPath);
+    } catch (err) {
+      if (!(err instanceof WriterError)) throw err;
+      sendError(ctx.res, err.status, err.code, err.message);
+      return;
+    }
+    if (!isGitRepo(deps.vaultDataPath)) {
+      sendError(ctx.res, 503, 'not_a_git_repo', 'vault data path is not a git repository');
+      return;
+    }
+
+    const current = async (): Promise<Side | null> => {
+      const text = await readCurrent(absolute);
+      return text === null ? null : {sha: null, path, text};
+    };
+    // An explicit version must exist; the version found before `to` may be a deletion.
+    const version = async (sha: string, at: string): Promise<Side | undefined> => {
+      const text = await readVersion(deps.vaultDataPath, sha, at);
+      if (text !== null) return {sha, path: at, text};
+      sendError(ctx.res, 404, 'version_not_found', `no ${at} at ${sha}`);
+      return undefined;
+    };
+
+    const toSide = to === CURRENT ? await current() : await version(to, toPath);
+    if (toSide === undefined) return;
+    let fromSide: Side | null | undefined;
+    if (from === CURRENT) fromSide = await current();
+    else if (from !== undefined) fromSide = await version(from, fromPath);
+    else {
+      const before = await versionBefore(
+        deps.vaultDataPath,
+        toPath,
+        to === CURRENT ? undefined : to
+      );
+      const text =
+        before === null ? null : await readVersion(deps.vaultDataPath, before.sha, before.path);
+      fromSide =
+        before !== null && text !== null ? {sha: before.sha, path: before.path, text} : null;
+    }
+    if (fromSide === undefined) return;
+
+    const side = (s: Side | null) => (s === null ? null : {sha: s.sha, path: s.path});
+    sendJson(ctx.res, 200, {
+      path,
+      from: side(fromSide),
+      to: side(toSide),
+      format,
+      diff: await diffTexts(fromSide, toSide, format)
+    });
   };

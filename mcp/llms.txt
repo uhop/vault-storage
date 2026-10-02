@@ -22,7 +22,8 @@ Plain JavaScript (ES modules), Node ≥ 26, stdio transport only.
   RAG pack: hybrid top-K chunks + a deduped 1-hop graph whose inbound
   entries are the backlinks; `vault_search`'s `edge` filter by typed edges,
   with `vault_search_facets` counting them), read, a note's history
-  (`vault_history`, `vault_read_file` with `at`, `vault_restore`),
+  (`vault_history`, `vault_read_file` with `at`, `vault_history_diff`,
+  `vault_restore`),
   narrow writes (`vault_append` / `vault_replace` / `vault_replace_section`
   / `vault_patch_fm` — asserted, atomic, small blast radius; the body edits
   take an `agent` patch that keeps the enrichment current in the same write;

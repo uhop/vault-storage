@@ -26,6 +26,36 @@ export const renderVersions = (items, notePath, selectedSha, esc) =>
     )
     .join('')}</ol>`;
 
+/** A version's views beside its content: its changes, and against the note now (D138). */
+export const renderViewSwitch = view => `<vault-switch id="view-switch" aria-label="View"${
+  view === 'restore' ? '' : ` value="${view}"`
+}>
+  <button data-value="content">Content</button>
+  <button data-value="changes">Changes</button>
+  <button data-value="current">With current</button>
+</vault-switch>`;
+
+/**
+ * The word diff a view shows: `changes` from the version before, `current` from
+ * the version to the note on disk, `restore` from the note on disk to the version.
+ */
+export const diffUrl = (notePath, v, view) => {
+  const sides =
+    view === 'changes'
+      ? `to=${v.sha}&to_path=${encodeURIComponent(v.path)}`
+      : view === 'current'
+        ? `from=${v.sha}&from_path=${encodeURIComponent(v.path)}`
+        : `from=current&to=${v.sha}&to_path=${encodeURIComponent(v.path)}`;
+  return `/history/diff?path=${encodeURIComponent(notePath)}&${sides}&format=words`;
+};
+
+/** The restore's own confirmation, above the diff it applies. */
+export const renderRestorePrompt = (v, esc) => `<div class="fmw-notice restore-prompt">
+  <p>Restoring writes the version of ${esc(shortDate(v.date))} over the note: the struck-out text goes and the underlined text comes in. The current content stays in the history as a version.</p>
+  <button id="confirm-restore" class="primary">Restore</button>
+  <button id="cancel-restore">Cancel</button>
+</div>`;
+
 /** The chosen version's header, with Restore unless the commit deleted the note. */
 export const renderVersionHead = (v, esc) => {
   const deleted = v.change === 'deleted';

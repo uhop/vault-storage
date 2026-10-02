@@ -1,10 +1,13 @@
 import test from 'tape-six';
 
 import {
+  diffUrl,
   encodePath,
   rangeText,
+  renderRestorePrompt,
   renderVersionHead,
   renderVersions,
+  renderViewSwitch,
   shortDate
 } from '/static/ui/history-view.js';
 
@@ -67,4 +70,33 @@ test('history view: Restore on a version, never on a deletion', t => {
   const gone = doc(renderVersionHead({...items[1], change: 'deleted'}, esc));
   t.equal(gone.querySelector('#restore').disabled, true);
   t.matchString(gone.querySelector('.why').textContent, /deleted the note/);
+});
+
+test('history view: the diff each view asks for (D138)', t => {
+  const v = items[1];
+  const url = view => new URL(diffUrl('topics/b.md', v, view), 'http://x').searchParams;
+  const sides = view => Object.fromEntries([...url(view)].filter(([k]) => k !== 'path'));
+  t.equal(url('changes').get('path'), 'topics/b.md');
+  t.deepEqual(sides('changes'), {to: v.sha, to_path: 'topics/a.md', format: 'words'});
+  t.deepEqual(sides('current'), {from: v.sha, from_path: 'topics/a.md', format: 'words'});
+  t.deepEqual(
+    sides('restore'),
+    {from: 'current', to: v.sha, to_path: 'topics/a.md', format: 'words'},
+    'a restore shows what it writes over the note'
+  );
+});
+
+test('history view: the view switch, none pressed while a restore waits', t => {
+  const pressed = view =>
+    doc(renderViewSwitch(view)).querySelector('vault-switch').getAttribute('value');
+  t.deepEqual(
+    [...doc(renderViewSwitch('changes')).querySelectorAll('button')].map(b => b.dataset.value),
+    ['content', 'changes', 'current']
+  );
+  t.equal(pressed('changes'), 'changes');
+  t.equal(pressed('restore'), null);
+  const prompt = doc(renderRestorePrompt(items[1], esc));
+  t.ok(prompt.querySelector('#confirm-restore'));
+  t.ok(prompt.querySelector('#cancel-restore'));
+  t.matchString(prompt.querySelector('p').textContent, /2026-09-29 08:01/);
 });

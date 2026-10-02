@@ -104,6 +104,14 @@ Read:
 - vault_history — a note's committed versions, newest first, following renames:
   {path, uncommitted, items: [{sha, date, author, subject, path, change}], offset,
   limit, last}; paged with no total. Needs vault-storage from 2026-09-30.
+- vault_history_diff — what changed between two versions of a note, or a
+  version and the note on disk, as git's diff of the markdown, frontmatter
+  included: to is a sha or current (default, the note on disk); from is a
+  sha, current, or omitted for the version before to, found across renames;
+  from_path and to_path name a version's own path after a rename. format is
+  unified (default) or words (--word-diff=porcelain, for prose). Returns
+  {path, from, to, format, diff}; a side is {sha, path}, sha null for the note
+  on disk, or null when empty. Needs vault-storage from 2026-10-02.
 - vault_read_piece — one record by id.
 - vault_read_meta — the indexed record row minus body (not arbitrary FM keys).
 - vault_read_section — one ATX-heading section, {path, etag, heading, level,

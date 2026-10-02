@@ -96,9 +96,11 @@ The tools map to the REST surface, grouped by purpose:
   an unresolved target answers with `unresolved_edges`, and `strict_edges: true`
   refuses that with `409 unresolved_edges`.
 - **History** — `vault_history` (a note's committed versions, newest first,
-  following renames), `vault_restore` (write a version back through the
-  writer; content not yet committed is committed first, so it stays a
-  version)
+  following renames), `vault_history_diff` (what changed between two
+  versions, or a version and the note on disk: a unified diff of the
+  markdown, or a word diff for prose), `vault_restore` (write a version
+  back through the writer; content not yet committed is committed first, so
+  it stays a version)
 - **Lifecycle** — `vault_supersede` (replace a note, archiving the
   predecessor with its `record_id` — and therefore its edges, embeddings,
   and suggestions — intact), `vault_move` (rename, same id preservation),

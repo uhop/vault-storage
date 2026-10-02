@@ -219,6 +219,96 @@ test('GET /vault/{path}?at= reads a version by its own path', async t => {
   }
 });
 
+test('GET /history/diff compares versions across a rename, and a version with the disk', async t => {
+  const {root, shas} = initRepo();
+  const ctx = await start(root);
+  const short = (name: string) => shas[name]!.slice(0, 8);
+  try {
+    const same = await json(`${ctx.url}/history/diff?path=topics/b.md`);
+    t.equal(same.status, 200);
+    t.deepEqual(same.body.from, {sha: shas['three'], path: 'topics/b.md'});
+    t.deepEqual(same.body.to, {sha: null, path: 'topics/b.md'}, 'to defaults to the disk');
+    t.equal(same.body.diff, '', 'nothing uncommitted');
+
+    const moved = await json(
+      `${ctx.url}/history/diff?path=topics/b.md&to=${shas['three']}&to_path=topics/b.md`
+    );
+    t.deepEqual(moved.body.from, {sha: shas['two'], path: 'topics/a.md'}, 'the version before');
+    t.equal(moved.body.format, 'unified');
+    t.matchString(moved.body.diff, new RegExp(`^--- ${short('two')}:topics/a.md\n`));
+    t.matchString(moved.body.diff, new RegExp(`\n\\+\\+\\+ ${short('three')}:topics/b.md\n@@ `));
+    t.matchString(
+      moved.body.diff,
+      /\n-The second version, edited\.\n\+The second version, edited and moved\.\n/
+    );
+
+    const first = await json(
+      `${ctx.url}/history/diff?path=topics/b.md&to=${shas['one']}&to_path=topics/a.md`
+    );
+    t.equal(first.body.from, null, 'no version before the first');
+    t.matchString(first.body.diff, /^--- \/dev\/null\n.*\n@@ -0,0 \+1,\d+ @@/);
+
+    const words = await json(
+      `${ctx.url}/history/diff?path=topics/b.md&from=${shas['two']}&from_path=topics/a.md&format=words`
+    );
+    t.equal(words.body.format, 'words');
+    t.matchString(
+      words.body.diff,
+      /\n The second version, \n-edited\.\n\+edited and moved\.\n/,
+      'words, not the line'
+    );
+    t.matchString(words.body.diff, /\n~\n/, 'line ends marked');
+
+    write(root, 'topics/b.md', V3.replace('moved', 'moved again'));
+    const edit = await json(`${ctx.url}/history/diff?path=topics/b.md`);
+    t.deepEqual(edit.body.from, {sha: shas['three'], path: 'topics/b.md'});
+    t.matchString(edit.body.diff, /\+The second version, edited and moved again\.\n/, 'the edit');
+
+    const back = await json(
+      `${ctx.url}/history/diff?path=topics/b.md&from=current&to=${shas['one']}&to_path=topics/a.md`
+    );
+    t.deepEqual(back.body.from, {sha: null, path: 'topics/b.md'}, 'what a restore applies');
+    t.matchString(
+      back.body.diff,
+      new RegExp(`^--- topics/b.md\n\\+\\+\\+ ${short('one')}:topics/a.md\n`)
+    );
+    t.matchString(back.body.diff, /\n\+The first version of the note\.\n/);
+  } finally {
+    await stop(ctx);
+  }
+});
+
+test('GET /history/diff reads a missing side as empty and refuses what it cannot find', async t => {
+  const {root, shas} = initRepo();
+  const ctx = await start(root);
+  try {
+    const gone = await json(`${ctx.url}/history/diff?path=topics/c.md&from=${shas['one']}`);
+    t.equal(gone.status, 200);
+    t.equal(gone.body.to, null, 'no note on disk');
+    t.matchString(gone.body.diff, /\n\+\+\+ \/dev\/null\n@@ -1,\d+ \+0,0 @@\n-/);
+    const latest = await json(`${ctx.url}/history/diff?path=topics/c.md`);
+    t.deepEqual(
+      [latest.body.from, latest.body.to, latest.body.diff],
+      [null, null, ''],
+      'a deletion'
+    );
+
+    const url = `${ctx.url}/history/diff?path=topics/b.md`;
+    t.equal((await json(`${url}&to=${shas['four']}&to_path=topics/c.md`)).status, 404);
+    t.equal((await json(`${url}&from=deadbee`)).status, 404);
+    t.equal((await json(`${url}&from=HEAD`)).status, 400, 'a sha only');
+    t.equal((await json(`${url}&to=-p`)).status, 400, 'no option');
+    t.equal((await json(`${url}&from_path=topics/a.md`)).status, 400, 'from_path needs from');
+    t.equal((await json(`${url}&to=current&to_path=topics/a.md`)).status, 400, 'to_path needs to');
+    t.equal((await json(`${url}&format=html`)).status, 400);
+    t.equal((await json(`${url}&context=9`)).status, 400, 'unknown parameters refused');
+    t.equal((await json(`${ctx.url}/history/diff`)).status, 400, 'path is required');
+    t.equal((await json(`${ctx.url}/history/diff?path=../x.md`)).status, 400, 'inside the vault');
+  } finally {
+    await stop(ctx);
+  }
+});
+
 test('POST /vault/restore writes a version back and keeps what it replaced', async t => {
   const {root, shas} = initRepo();
   const ctx = await start(root);
@@ -294,6 +384,7 @@ test('history and restore answer 503 when the vault is not a git repository', as
   const ctx = await start(root);
   try {
     t.equal((await json(`${ctx.url}/history?path=topics/a.md`)).status, 503);
+    t.equal((await json(`${ctx.url}/history/diff?path=topics/a.md`)).status, 503);
     t.equal((await call(`${ctx.url}/vault/topics/a.md?at=deadbee`)).status, 503);
     t.equal((await restore(ctx, {path: 'topics/a.md', sha: 'deadbee'})).status, 503);
     t.equal((await json(`${ctx.url}/projects/p/changes?since=deadbee`)).status, 503);

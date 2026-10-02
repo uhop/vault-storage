@@ -74,7 +74,7 @@ import {resumeBriefHandler, resumeBundleHandler} from './handlers/resume-bundle.
 import {projectTrackersHandler} from './handlers/trackers.ts';
 import {projectChangesHandler} from './handlers/changes.ts';
 import {fleetStatusHandler} from './handlers/fleet.ts';
-import {historyHandler, restoreHandler} from './handlers/history.ts';
+import {historyDiffHandler, historyHandler, restoreHandler} from './handlers/history.ts';
 import {linksHandler} from './handlers/links.ts';
 import {resolveBatchHandler, resolveHandler} from './handlers/resolve.ts';
 import {
@@ -336,6 +336,7 @@ export const buildRouter = (opts: BuildOptions): Router => {
     })
   );
   router.get('/history', historyHandler({vaultDataPath: opts.env.vaultDataPath}));
+  router.get('/history/diff', historyDiffHandler({vaultDataPath: opts.env.vaultDataPath}));
 
   const draftDeps = {
     drafts: new DraftStore(join(opts.env.vaultDataPath, '.vault-storage', 'drafts')),

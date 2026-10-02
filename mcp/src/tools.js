@@ -875,6 +875,34 @@ export const registerTools = (mcp, client) => {
     wrap(async ({path, offset, limit}) => client.getJson('/history', {path, offset, limit}))
   );
 
+  const SIDE = z.string().regex(/^(?:[0-9a-f]{7,40}|current)$/);
+  mcp.registerTool(
+    'vault_history_diff',
+    {
+      description:
+        "What changed between two versions of a note, or a version and the note on disk, as git's diff of the markdown, frontmatter included (vault-storage D138; absent on an older server). `to` is a sha from vault_history, or `current` (the default) for the note on disk at path; `from` is a sha, `current`, or omitted for the version before `to`, found across renames, so `to` alone answers what that version changed, and neither answers what is not committed yet. Pass a version's own path (the `path` vault_history lists on it) as from_path or to_path when a rename came between; each applies only with a sha. format is `unified` (default; the sides labelled `<sha8>:<path>`, the bare path for the note on disk, /dev/null for an empty side) or `words`, git's --word-diff=porcelain for prose, where a paragraph is one line: one token per line prefixed with a space, `-`, or `+`, and `~` ending a line. Returns {path, from, to, format, diff}: each side {sha, path}, sha null for the note on disk, or the side null when it is empty (no version before `to`, no note on disk); diff is '' when the sides match. 404 version_not_found when a given sha has no such file; 503 when the vault is not a git repository.",
+      inputSchema: {
+        path: z.string().min(1).describe('The note; must end with .md'),
+        from: SIDE.optional().describe('A sha, current, or omitted for the version before to'),
+        from_path: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("from's own path when a rename came between; default path"),
+        to: SIDE.optional().describe('A sha, or current (default) for the note on disk'),
+        to_path: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("to's own path when a rename came between; default path"),
+        format: z.enum(['unified', 'words']).optional()
+      }
+    },
+    wrap(async ({path, from, from_path, to, to_path, format}) =>
+      client.getJson('/history/diff', {path, from, from_path, to, to_path, format})
+    )
+  );
+
   mcp.registerTool(
     'vault_restore',
     {

@@ -30,6 +30,7 @@ const REQUIRED_MENTIONS = {
   vault_read_suggestion: ['evidence', 'asserted'],
   vault_search: ['as_of'],
   vault_history: ['author', 'uncommitted', 'last'],
+  vault_history_diff: ['current', 'from_path', 'to_path', 'diff', 'version_not_found'],
   vault_search_facets: ['total', 'direction', 'hits', 'both', 'as_of'],
   vault_tag_nearest: ['exact', 'matched', 'score', 'tag_vecs', 'as_of'],
   vault_list_edges: ['by_type', 'from', 'to', 'as_of'],

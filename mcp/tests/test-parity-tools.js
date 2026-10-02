@@ -306,6 +306,38 @@ test('vault_search_facets → POST /search/facets with the query and mode, body 
   t.deepEqual(JSON.parse(firstText(result)), facets);
 });
 
+test('vault_history_diff → GET /history/diff with the sides given, the rest omitted', async t => {
+  const diff = {
+    path: 'topics/b.md',
+    from: {sha: 'a'.repeat(40), path: 'topics/a.md'},
+    to: {sha: null, path: 'topics/b.md'},
+    format: 'words',
+    diff: '--- aaaaaaaa:topics/a.md\n+++ topics/b.md\n@@ -1 +1 @@\n-old\n+new\n~\n'
+  };
+  const {call, getCaptured} = setup(
+    () =>
+      new Response(JSON.stringify(diff), {
+        status: 200,
+        headers: {'Content-Type': 'application/json'}
+      })
+  );
+  const result = await call('vault_history_diff', {
+    path: 'topics/b.md',
+    from: 'aaaaaaa',
+    from_path: 'topics/a.md',
+    format: 'words'
+  });
+  const url = new URL(getCaptured().url);
+  t.equal(url.pathname, '/history/diff');
+  t.deepEqual(Object.fromEntries(url.searchParams), {
+    path: 'topics/b.md',
+    from: 'aaaaaaa',
+    from_path: 'topics/a.md',
+    format: 'words'
+  });
+  t.deepEqual(JSON.parse(firstText(result)), diff);
+});
+
 test('vault_health → GET /system/health, no parameters', async t => {
   const {call, getCaptured} = setup(
     () =>
