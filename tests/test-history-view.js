@@ -17,6 +17,7 @@ const items = [
   {
     sha: 'c'.repeat(40),
     date: '2026-09-30T23:35:07Z',
+    author: 'uhop agents',
     subject: 'vault-storage auto-commit (1 file)',
     path: 'topics/b.md',
     change: 'renamed'
@@ -51,12 +52,18 @@ test('history view: one button per version, the old path shown after a rename', 
   t.equal(buttons[0].querySelector('.path'), null, 'the current path is not repeated');
   t.equal(buttons[1].querySelector('.path').textContent, 'topics/a.md');
   t.equal(buttons[1].querySelector('.subject').textContent, 'edit <b>', 'text is escaped');
+  t.equal(buttons[0].querySelector('.author').textContent, 'uhop agents', 'the writer (D136)');
+  t.equal(buttons[1].querySelector('.author'), null, 'none from a server without authors');
 });
 
 test('history view: Restore on a version, never on a deletion', t => {
   const head = doc(renderVersionHead(items[1], esc));
   t.equal(head.querySelector('#restore').disabled, false);
   t.equal(head.querySelector('code').textContent, 'bbbbbbbb');
+  t.matchString(
+    doc(renderVersionHead(items[0], esc)).querySelector('div').textContent,
+    /by uhop agents/
+  );
   const gone = doc(renderVersionHead({...items[1], change: 'deleted'}, esc));
   t.equal(gone.querySelector('#restore').disabled, true);
   t.matchString(gone.querySelector('.why').textContent, /deleted the note/);

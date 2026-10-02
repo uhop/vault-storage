@@ -26,6 +26,7 @@ import type {DatabaseSync} from 'node:sqlite';
 import {RecordsRepository} from '../records/repository.ts';
 import type {VaultRecord} from '../records/types.ts';
 import {joinVaultPath} from '../server/writer.ts';
+import {recordWriter} from '../server/writers.ts';
 
 /** Retention window for `type: log`, per topics/vault-hygiene-policy. */
 export const DEFAULT_LOG_RETENTION_DAYS = 90;
@@ -131,6 +132,7 @@ export const expireLogs = (
     try {
       const abs = joinVaultPath(vaultRoot, record.filePath);
       if (existsSync(abs) && statSync(abs).isFile()) unlinkSync(abs);
+      recordWriter([record.filePath]);
       records.delete(record.recordId);
       summary.deleted++;
     } catch (err) {

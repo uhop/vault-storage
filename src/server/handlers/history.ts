@@ -14,6 +14,7 @@ import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {requestTags, type TagChecker, type UnknownTagRef} from '../tag-check.ts';
 import {ensureSafePath, parseWriteRequest, WriterError, writeRecordToDisk} from '../writer.ts';
+import {clearWriters, writersOf} from '../writers.ts';
 
 export const SHA_RE = /^[0-9a-f]{7,40}$/;
 
@@ -32,6 +33,8 @@ const CHANGES: Record<string, string> = {
 export interface Version {
   sha: string;
   date: string;
+  /** The commit's author: the writer of a named key, or the configured author (D136). */
+  author: string;
   subject: string;
   /** The note's path at that commit; `--follow` crosses renames. */
   path: string;
@@ -56,7 +59,7 @@ export const listVersions = async (
     'log',
     '--follow',
     '--name-status',
-    '--format=%x1e%H%x1f%aI%x1f%s',
+    '--format=%x1e%H%x1f%aI%x1f%an%x1f%s',
     `--max-count=${offset + limit + 1}`,
     '--',
     path
@@ -67,11 +70,12 @@ export const listVersions = async (
     .slice(1)
     .map(chunk => {
       const [head = '', ...lines] = chunk.split('\n');
-      const [sha = '', date = '', subject = ''] = head.split('\x1f');
+      const [sha = '', date = '', author = '', subject = ''] = head.split('\x1f');
       const status = lines.find(l => l.includes('\t'))?.split('\t') ?? [];
       return {
         sha,
         date,
+        author,
         subject,
         path: status.at(-1) ?? path,
         change: CHANGES[status[0]?.[0] ?? 'M'] ?? 'modified'
@@ -103,7 +107,7 @@ interface HistoryDeps {
 /**
  * GET /history?path=&offset=&limit= — a note's committed versions, newest
  * first, one page at a time: `{path, uncommitted, items: [{sha, date,
- * subject, path, change}], offset, limit, last}`. No total: counting walks the
+ * author, subject, path, change}], offset, limit, last}`. No total: counting walks the
  * whole history (D115). `uncommitted` says the file differs from its last
  * commit, so its current version is not listed yet.
  */
@@ -222,6 +226,9 @@ export const restoreHandler =
     let committedBefore: string | null = null;
     if (await isUncommitted(deps.vaultDataPath, path)) {
       const add = await git(deps.vaultDataPath, ['add', '--', path]);
+      // The content kept is its last writer's, so the commit is theirs (D136).
+      const writer = writersOf(deps.db, [path]).get(path);
+      const passStart = new Date().toISOString();
       const commit =
         add.exitCode === 0
           ? await git(deps.vaultDataPath, [
@@ -229,13 +236,19 @@ export const restoreHandler =
               `user.name=${deps.gitAuthorName}`,
               '-c',
               `user.email=${deps.gitAuthorEmail}`,
+              '--literal-pathspecs',
               'commit',
+              ...(writer
+                ? [`--author=${writer.name} <${writer.email ?? deps.gitAuthorEmail}>`]
+                : []),
               '-m',
               `vault-storage: ${path} before restoring ${sha.slice(0, 7)}`,
+              ...(writer ? ['-m', `Key: ${writer.name} (${writer.kind}, ${writer.key_id})`] : []),
               '--',
               path
             ])
           : add;
+      if (commit.exitCode === 0) clearWriters(deps.db, [path], passStart);
       // The sync loop committed the path between the status and this commit.
       const taken = /nothing to commit|no changes added to commit/i.test(
         commit.stdout + commit.stderr

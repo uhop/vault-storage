@@ -17,8 +17,8 @@ test('runs the init migration and creates required tables', t => {
 
   t.equal(
     result.current,
-    40,
-    'schema version is 40 after all migrations through the seeded record ids'
+    41,
+    'schema version is 41 after all migrations through the pending writers'
   );
   t.deepEqual(
     result.applied,
@@ -62,7 +62,8 @@ test('runs the init migration and creates required tables', t => {
       '0037_external_links.sql',
       '0038_import_failures.sql',
       '0039_queue_title_not_unique.sql',
-      '0040_seeded_record_ids.sql'
+      '0040_seeded_record_ids.sql',
+      '0041_pending_writers.sql'
     ],
     'all migrations applied in order'
   );
@@ -80,7 +81,8 @@ test('runs the init migration and creates required tables', t => {
         name !== '0030_tag_vecs.sql' &&
         name !== '0031_edge_vocabulary.sql' &&
         name !== '0035_queue_inbox.sql' &&
-        name !== '0040_seeded_record_ids.sql'
+        name !== '0040_seeded_record_ids.sql' &&
+        name !== '0041_pending_writers.sql'
     ),
     'every migration forces a full import except the ones marked no-reindex'
   );
@@ -136,6 +138,7 @@ test('0035 rebuilds queue_items with the inbox section and keeps every row', t =
     DROP TABLE project_github;
     DROP TABLE import_failures;
     DROP TABLE seeded_record_ids;
+    DROP TABLE pending_writers;
     UPDATE meta SET value = '34' WHERE key = 'schema_version';
   `);
   t.throws(
@@ -152,7 +155,8 @@ test('0035 rebuilds queue_items with the inbox section and keeps every row', t =
     '0037_external_links.sql',
     '0038_import_failures.sql',
     '0039_queue_title_not_unique.sql',
-    '0040_seeded_record_ids.sql'
+    '0040_seeded_record_ids.sql',
+    '0041_pending_writers.sql'
   ]);
   t.deepEqual(
     result.reindex,
@@ -233,6 +237,7 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     DROP TABLE project_github;
     DROP TABLE import_failures;
     DROP TABLE seeded_record_ids;
+    DROP TABLE pending_writers;
     UPDATE meta SET value = '25' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created, claimed_by, claimed_at, claim_expires)
       VALUES ('s1', 'duplicate', '{}', 'claimed', '2026-09-26T00:00:00Z', 'sweep-A',
@@ -254,7 +259,8 @@ test('0026 releases the suggestion claims made before claim tokens', t => {
     '0037_external_links.sql',
     '0038_import_failures.sql',
     '0039_queue_title_not_unique.sql',
-    '0040_seeded_record_ids.sql'
+    '0040_seeded_record_ids.sql',
+    '0041_pending_writers.sql'
   ]);
   t.deepEqual(
     {...(db.prepare('SELECT status, claimed_by, claim_token FROM suggestions').get() as object)},
@@ -279,6 +285,7 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     DROP TABLE project_github;
     DROP TABLE import_failures;
     DROP TABLE seeded_record_ids;
+    DROP TABLE pending_writers;
     UPDATE meta SET value = '27' WHERE key = 'schema_version';
     INSERT INTO suggestions (id, kind, payload, status, created) VALUES
       ('p', 'edge_type', '{}', 'pending', '2026-09-27T00:00:00Z'),
@@ -301,7 +308,8 @@ test('0028 settles pending edge_type rows as default-cites, leaving claimed ones
     '0037_external_links.sql',
     '0038_import_failures.sql',
     '0039_queue_title_not_unique.sql',
-    '0040_seeded_record_ids.sql'
+    '0040_seeded_record_ids.sql',
+    '0041_pending_writers.sql'
   ]);
   t.deepEqual(
     result.reindex,
@@ -343,6 +351,7 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     DROP TABLE project_github;
     DROP TABLE import_failures;
     DROP TABLE seeded_record_ids;
+    DROP TABLE pending_writers;
     UPDATE meta SET value = '28' WHERE key = 'schema_version';
     INSERT INTO tags_taxonomy (tag, added) VALUES
       ('seed', '2026-04-29'), ('later', '2026-06-14T10:00:00.000Z');
@@ -359,7 +368,8 @@ test('0029 backfills tag origin: seeded on the migration date, minted otherwise'
     '0037_external_links.sql',
     '0038_import_failures.sql',
     '0039_queue_title_not_unique.sql',
-    '0040_seeded_record_ids.sql'
+    '0040_seeded_record_ids.sql',
+    '0041_pending_writers.sql'
   ]);
   const rows = db
     .prepare('SELECT tag, origin FROM tags_taxonomy ORDER BY tag')
@@ -382,7 +392,7 @@ test('migrations are idempotent — second run applies nothing', t => {
   runMigrations(db);
   const second = runMigrations(db);
   t.deepEqual(second.applied, [], 'second run applies no migrations');
-  t.equal(second.current, 40, 'schema version stays at 40');
+  t.equal(second.current, 41, 'schema version stays at 41');
   db.close();
 });
 
@@ -455,7 +465,8 @@ test('0010+0011 migrate pre-existing data: aux → chunks, embeddings + records 
       '0037_external_links.sql',
       '0038_import_failures.sql',
       '0039_queue_title_not_unique.sql',
-      '0040_seeded_record_ids.sql'
+      '0040_seeded_record_ids.sql',
+      '0041_pending_writers.sql'
     ],
     'migrations from schema 9 onward applied (0010–0029)'
   );
@@ -761,10 +772,15 @@ test('0039 drops the queue title key and keeps every row', t => {
               '2026-09-29', 'projects/p/queue-archive.md', 5, 'h1',
               '2026-09-29T00:00:00Z', '2026-09-29T01:00:00Z');
     DROP TABLE seeded_record_ids;
+    DROP TABLE pending_writers;
     UPDATE meta SET value = '38' WHERE key = 'schema_version';
   `);
   const result = runMigrations(db);
-  t.deepEqual(result.applied, ['0039_queue_title_not_unique.sql', '0040_seeded_record_ids.sql']);
+  t.deepEqual(result.applied, [
+    '0039_queue_title_not_unique.sql',
+    '0040_seeded_record_ids.sql',
+    '0041_pending_writers.sql'
+  ]);
   t.deepEqual(
     result.reindex,
     ['0039_queue_title_not_unique.sql'],

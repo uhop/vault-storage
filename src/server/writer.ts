@@ -3,6 +3,7 @@ import {dirname, join, relative, resolve} from 'node:path';
 import {isDeepStrictEqual} from 'node:util';
 import {parseFrontmatter, serializeFrontmatter} from '../markdown/frontmatter.ts';
 import {contentHash} from '../util/hash.ts';
+import {recordWriter} from './writers.ts';
 import {normalizeTag} from '../migration/tags.ts';
 import {entityTags, entityValue} from './compress.ts';
 import {
@@ -741,6 +742,7 @@ export const writeSplitRecordToDisk = (opts: WriteSplitOptions): WriteResult => 
   mkdirSync(dirname(absolutePath), {recursive: true});
   const out = serializeFrontmatter({data: merged, body: requestBody});
   writeFileSync(absolutePath, out, 'utf8');
+  recordWriter([composeRelativePath(vaultDataPath, absolutePath)]);
 
   return {absolutePath, frontmatter: merged, body: requestBody, etag: documentEtag(out)};
 };

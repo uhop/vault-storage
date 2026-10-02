@@ -19,6 +19,7 @@ export const renderVersions = (items, notePath, selectedSha, esc) =>
       v => `<li><button class="version" data-sha="${esc(v.sha)}" aria-pressed="${v.sha === selectedSha}">
     <span class="when">${esc(shortDate(v.date))}</span>
     <span class="change ${esc(v.change)}">${esc(v.change)}</span>
+    ${v.author ? `<span class="author">${esc(v.author)}</span>` : ''}
     <span class="subject">${esc(v.subject)}</span>
     ${v.path === notePath ? '' : `<small class="path">${esc(v.path)}</small>`}
   </button></li>`
@@ -29,7 +30,7 @@ export const renderVersions = (items, notePath, selectedSha, esc) =>
 export const renderVersionHead = (v, esc) => {
   const deleted = v.change === 'deleted';
   return `<div class="version-head">
-  <div><b>${esc(shortDate(v.date))}</b> <code>${esc(v.sha.slice(0, 8))}</code> ${esc(v.subject)}</div>
+  <div><b>${esc(shortDate(v.date))}</b> <code>${esc(v.sha.slice(0, 8))}</code>${v.author ? ` by ${esc(v.author)}` : ''} ${esc(v.subject)}</div>
   <button id="restore" class="primary" ${deleted ? 'disabled' : ''}>Restore this version</button>
 </div>${deleted ? '<p class="why">This commit deleted the note; the version before it holds its last content.</p>' : ''}`;
 };

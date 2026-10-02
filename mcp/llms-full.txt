@@ -102,7 +102,7 @@ Read:
   at, a commit from vault_history, reads the note as it was then, by the path
   that version lists.
 - vault_history — a note's committed versions, newest first, following renames:
-  {path, uncommitted, items: [{sha, date, subject, path, change}], offset,
+  {path, uncommitted, items: [{sha, date, author, subject, path, change}], offset,
   limit, last}; paged with no total. Needs vault-storage from 2026-09-30.
 - vault_read_piece — one record by id.
 - vault_read_meta — the indexed record row minus body (not arbitrary FM keys).

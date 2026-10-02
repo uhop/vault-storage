@@ -31,6 +31,7 @@ import {
 import type {HandoffTouch} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
 import {readBodyBuffer, readJsonBody} from '../body.ts';
+import {recordWriter} from '../writers.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -906,6 +907,7 @@ export const completeHandoffArchival = (
     source = serializeFrontmatter({data, body: body.trimEnd() + '\n' + lines.join('\n')});
     mkdirSync(dirname(absolutePath), {recursive: true});
     writeFileSync(absolutePath, source);
+    recordWriter([archivePath]);
 
     const {recordId} = importFile(
       deps.records,

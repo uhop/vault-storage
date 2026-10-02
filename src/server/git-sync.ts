@@ -12,7 +12,9 @@
 //     `syncNow()` always runs — the window only suppresses the timer.
 //
 // Design:
-//   - If the working tree is dirty: `git add -A && git commit -m "<msg>"`.
+//   - If the working tree is dirty: `git add -A`, then one commit per named
+//     writer of the staged paths, authored by that writer with a `Key:`
+//     trailer (D136), and one for the rest under the configured author.
 //   - If `autoPush` is true: `git push` after a successful commit. Failures
 //     log but don't crash — push is best-effort.
 //   - All git invocations are wrapped: missing git, non-repo, network errors
@@ -32,7 +34,7 @@
 //     reads the streak as the `auto_commit_failing` check, so a dead
 //     auto-commit surfaces in `/vault resume` instead of stderr.
 
-import {statSync, unlinkSync} from 'node:fs';
+import {rmSync, statSync, unlinkSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import type {DatabaseSync} from 'node:sqlite';
 import {setLastIndexedCommit} from '../maintenance/incremental-reindex.ts';
@@ -40,6 +42,7 @@ import {getCurrentHead, gitFailure, isGitRepo, runGit, type GitResult} from '../
 import {exportVaultState} from '../vault-state.ts';
 import type {HealthMonitor} from './health.ts';
 import {prepared} from '../db/prepared.ts';
+import {clearWriters, dropStaleWriters, writersOf, type Writer} from './writers.ts';
 
 export interface WorkHoursWindow {
   /** `HH:MM` in 24-hour local time. */
@@ -106,9 +109,6 @@ export interface GitSyncHandle {
 const defaultSubject = (n: number): string =>
   `vault-storage auto-commit (${n} file${n === 1 ? '' : 's'})`;
 
-/** Initial attempt + one retry after a stale-lock removal. */
-const MAX_COMMIT_ATTEMPTS = 2;
-
 /** Matches git's `fatal: Unable to create '….git/index.lock': File exists.` */
 const isLockCollision = (gitOutput: string): boolean =>
   gitOutput.includes('index.lock') && gitOutput.includes('File exists');
@@ -141,6 +141,21 @@ export const isWithinWorkHours = (now: Date, start: string, end: string): boolea
   if (s < e) return cur >= s && cur < e;
   // Wrap-around window (e.g. 22:00–06:00) — inside if before end OR at/after start.
   return cur >= s || cur < e;
+};
+
+// "nothing to commit": only ignored files changed, or another commit took the paths.
+const nothingToCommit = (r: GitResult): boolean =>
+  /nothing to commit|no changes added to commit/i.test(r.stdout + r.stderr);
+
+/** The staged paths of each named writer, one group per key. */
+const groupByWriter = (writers: Map<string, Writer>): {writer: Writer; paths: string[]}[] => {
+  const groups = new Map<string, {writer: Writer; paths: string[]}>();
+  for (const [path, writer] of writers) {
+    const group = groups.get(writer.key_id);
+    if (group) group.paths.push(path);
+    else groups.set(writer.key_id, {writer, paths: [path]});
+  }
+  return [...groups.values()];
 };
 
 export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
@@ -243,6 +258,13 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
     }
   };
 
+  /** `git` once more after a lock collision whose lock was stale. */
+  const gitRetrying = async (args: string[]): Promise<GitResult> => {
+    const first = await git(args);
+    if (first.exitCode === 0 || !isLockCollision(first.stderr + first.stdout)) return first;
+    return removeStaleLock() ? git(args) : first;
+  };
+
   /** Returns 'committed', 'quiet', or 'skipped'. */
   const syncOnce = async (force: boolean): Promise<'committed' | 'quiet' | 'skipped'> => {
     if (!force && !inWindow()) return 'skipped';
@@ -266,35 +288,64 @@ export const startGitSync = (opts: GitSyncOptions): GitSyncHandle => {
       return 'quiet';
     }
 
-    const subject = commitSubject(dirtyLines.length);
-    for (let attempt = 1; ; ++attempt) {
-      const add = await git(['add', '-A']);
-      if (add.exitCode !== 0) {
-        if (attempt < MAX_COMMIT_ATTEMPTS && isLockCollision(add.stderr) && removeStaleLock())
-          continue;
-        return fail(new Error(`git add failed: ${gitFailure(add)}`));
-      }
-      const commit = await git([...identityArgs, 'commit', '-m', subject]);
-      if (commit.exitCode !== 0) {
-        // "nothing to commit" can happen if files were only in .gitignore.
-        const benign =
-          /nothing to commit/i.test(commit.stdout) || /nothing to commit/i.test(commit.stderr);
-        if (benign) {
-          clearFailures();
-          return 'quiet';
-        }
-        if (
-          attempt < MAX_COMMIT_ATTEMPTS &&
-          isLockCollision(commit.stderr + commit.stdout) &&
-          removeStaleLock()
-        )
-          continue;
+    const passStart = new Date().toISOString();
+    const add = await gitRetrying(['add', '-A']);
+    if (add.exitCode !== 0) return fail(new Error(`git add failed: ${gitFailure(add)}`));
+
+    let staged: string[] = [];
+    let groups: {writer: Writer; paths: string[]}[] = [];
+    if (opts.db) {
+      const diff = await git(['diff', '--cached', '--name-only', '--no-renames', '-z']);
+      if (diff.exitCode !== 0) return fail(new Error(`git diff failed: ${gitFailure(diff)}`));
+      staged = diff.stdout.split('\0').filter(p => p.length > 0);
+      groups = groupByWriter(writersOf(opts.db, staged));
+    }
+
+    // Each named writer's paths first, under that writer's name; the rest under the configured author.
+    let commits = 0;
+    for (const {writer, paths} of groups) {
+      const pathspec = join(vaultDataPath, '.git', 'vault-storage-pathspec');
+      writeFileSync(pathspec, paths.join('\0'));
+      const commit = await gitRetrying([
+        ...identityArgs,
+        '--literal-pathspecs',
+        'commit',
+        '--only',
+        `--author=${writer.name} <${writer.email ?? authorEmail}>`,
+        '-m',
+        commitSubject(paths.length),
+        '-m',
+        `Key: ${writer.name} (${writer.kind}, ${writer.key_id})`,
+        `--pathspec-from-file=${pathspec}`,
+        '--pathspec-file-nul'
+      ]);
+      rmSync(pathspec, {force: true});
+      if (commit.exitCode === 0) ++commits;
+      else if (!nothingToCommit(commit))
         return fail(new Error(`git commit failed: ${gitFailure(commit)}`));
-      }
-      break;
+    }
+    const grouped = groups.reduce((n, g) => n + g.paths.length, 0);
+    const rest = await gitRetrying([
+      ...identityArgs,
+      'commit',
+      '-m',
+      commitSubject(opts.db ? staged.length - grouped : dirtyLines.length)
+    ]);
+    if (rest.exitCode === 0) ++commits;
+    else if (!nothingToCommit(rest))
+      return fail(new Error(`git commit failed: ${gitFailure(rest)}`));
+    if (opts.db) {
+      clearWriters(opts.db, staged, passStart);
+      dropStaleWriters(opts.db, new Set(staged), passStart);
+    }
+    if (commits === 0) {
+      clearFailures();
+      return 'quiet';
     }
     clearFailures();
-    log(`git-sync: committed ${dirtyLines.length} change(s)`);
+    log(
+      `git-sync: committed ${dirtyLines.length} change(s)${commits > 1 ? ` in ${commits} commits` : ''}`
+    );
 
     // Advance the multi-writer reindex anchor so a later post-pull diff
     // sees a coherent `last_indexed_commit..HEAD` range. The watcher

@@ -56,11 +56,12 @@ const initRepo = (): {root: string; shas: Record<string, string>} => {
   return {root, shas};
 };
 
-const makeEnv = (dataPath: string): ServerEnv => ({
+const makeEnv = (dataPath: string, keysPath: string | null = null): ServerEnv => ({
   vaultDataPath: dataPath,
   vaultIngestPath: null,
   vaultDbPath: ':memory:',
   apiToken: TEST_TOKEN,
+  keysPath,
   host: '127.0.0.1',
   port: 0,
   autoReindex: false,
@@ -89,13 +90,13 @@ interface Ctx {
   root: string;
 }
 
-const start = async (root: string): Promise<Ctx> => {
+const start = async (root: string, keysPath: string | null = null): Promise<Ctx> => {
   const db = openDatabase({path: ':memory:'});
   const migration = runMigrations(db);
   importVault(db, root);
   const handle = await startServer({
     db,
-    env: makeEnv(root),
+    env: makeEnv(root, keysPath),
     schemaVersion: migration.current,
     embedder: new FakeEmbedder()
   });
@@ -313,5 +314,67 @@ test('GET /projects/{name}/changes reads a sha as its commit time', async t => {
     t.equal((await json(`${ctx.url}/projects/p/changes?since=deadbee`)).status, 404);
   } finally {
     await stop(ctx);
+  }
+});
+
+test('a write by a named key is credited to its writer in the restore commit and the history', async t => {
+  const {root, shas} = initRepo();
+  const keysDir = mkdtempSync(join(tmpdir(), 'vault-history-keys-'));
+  const ctx = await start(root, join(keysDir, 'keys.json'));
+  const as = (token: string, url: string, init: RequestInit = {}) =>
+    fetch(url, {
+      ...init,
+      headers: {...(init.headers as Record<string, string>), Authorization: `Bearer ${token}`}
+    });
+  try {
+    const made = (await (
+      await as(TEST_TOKEN, `${ctx.url}/keys`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: 'uhop agents', kind: 'agent', email: 'agents@example.com'})
+      })
+    ).json()) as {secret: string; key: {id: string}};
+    const put = await as(made.secret, `${ctx.url}/vault/topics/b.md`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'text/markdown'},
+      body: V3.replace('moved.', 'moved, then edited by an agent.')
+    });
+    t.equal(put.status, 204, 'the agent writes');
+    const row = ctx.db
+      .prepare('SELECT name, kind FROM pending_writers WHERE path = ?')
+      .get('topics/b.md');
+    t.deepEqual(
+      {...(row as object)},
+      {name: 'uhop agents', kind: 'agent'},
+      'the write is recorded'
+    );
+
+    const restored = await restore(ctx, {
+      path: 'topics/b.md',
+      sha: shas.two,
+      from_path: 'topics/a.md'
+    });
+    t.equal(restored.status, 200);
+    t.equal(
+      git(root, 'log -1 --format=%an%x1f%ae%x1f%cn'),
+      'uhop agents\x1fagents@example.com\x1fvault-storage',
+      "the content the restore replaced is committed as its writer's"
+    );
+    t.equal(
+      git(root, "log -1 '--format=%(trailers:key=Key,valueonly)'"),
+      `uhop agents (agent, ${made.key.id})`,
+      'with the key in a trailer'
+    );
+    const history = await json(`${ctx.url}/history?path=topics/b.md&limit=2`);
+    t.equal(history.body.items[0].author, 'uhop agents', 'the history names the writer');
+    t.equal(history.body.items[1].author, 'Tester', 'and the earlier author');
+    t.equal(
+      (ctx.db.prepare('SELECT COUNT(*) AS n FROM pending_writers').get() as {n: number}).n,
+      0,
+      "the API token's restore leaves no writer recorded"
+    );
+  } finally {
+    await stop(ctx);
+    rmSync(keysDir, {recursive: true, force: true});
   }
 });

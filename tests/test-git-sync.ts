@@ -1,10 +1,23 @@
 import test from 'tape-six';
 import {execFileSync, execSync} from 'node:child_process';
-import {existsSync, mkdtempSync, rmSync, utimesSync, writeFileSync, mkdirSync} from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+  mkdirSync
+} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {openDatabase} from '../src/db/connection.ts';
+import {runMigrations} from '../src/db/migrate.ts';
 import {isWithinWorkHours, startGitSync} from '../src/server/git-sync.ts';
+import type {Session} from '../src/server/keys.ts';
+import {recordWriter, writeContext} from '../src/server/writers.ts';
 
 const initRepo = (): string => {
   const root = mkdtempSync(join(tmpdir(), 'vault-git-sync-'));
@@ -350,6 +363,9 @@ test('git-sync failure ledger: streak recorded in meta, cleared on success', asy
   const root = initRepo();
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  db.exec(
+    readFileSync(new URL('../src/db/schema/0041_pending_writers.sql', import.meta.url), 'utf8')
+  );
   const readMeta = (key: string): string | null => {
     const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
       {value: string} | undefined;
@@ -388,6 +404,155 @@ test('git-sync failure ledger: streak recorded in meta, cleared on success', asy
     t.equal(readMeta('git_sync_consecutive_failures'), null, 'streak cleared on success');
     t.equal(readMeta('git_sync_last_error'), null, 'last error cleared');
     t.equal(readMeta('git_sync_failing_since'), null, 'failing_since cleared');
+  } finally {
+    handle.close();
+    db.close();
+    cleanup(root);
+  }
+});
+
+const AGENT: Session = {
+  key_id: 'k-agent',
+  name: 'uhop agents',
+  kind: 'agent',
+  email: 'agents@example.com'
+};
+const BOT: Session = {key_id: 'k-bot', name: 'sweep bot', kind: 'system', email: null};
+const LEGACY: Session = {key_id: 'legacy', name: 'operator', kind: 'person', email: null};
+
+const writeAs = (
+  session: Session,
+  db: DatabaseSync,
+  root: string,
+  path: string,
+  text: string | null
+) =>
+  writeContext.run({session, db}, () => {
+    mkdirSync(join(root, path, '..'), {recursive: true});
+    if (text === null) rmSync(join(root, path));
+    else writeFileSync(join(root, path), text);
+    recordWriter([path]);
+  });
+
+/** Each commit as author name, author email, committer name, subject, the Key trailer, and its files. */
+const commitsOf = (cwd: string, n: number) =>
+  execFileSync(
+    'git',
+    [
+      'log',
+      `-${n}`,
+      '--format=%x1e%an%x1f%ae%x1f%cn%x1f%s%x1f%(trailers:key=Key,valueonly)',
+      '--name-only'
+    ],
+    {cwd}
+  )
+    .toString()
+    .split('\x1e')
+    .slice(1)
+    .map(chunk => {
+      const [head = '', ...files] = chunk.trim().split('\n');
+      const [author, email, committer, subject, key] = head.split('\x1f');
+      return {
+        author,
+        email,
+        committer,
+        subject,
+        key: key?.trim() ?? '',
+        files: files.filter(Boolean).sort()
+      };
+    });
+
+test("git-sync commits each named writer's paths under that writer, the rest under the configured author", async t => {
+  const root = initRepo();
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  writeFileSync(join(root, 'old.md'), 'old\n');
+  writeFileSync(join(root, 'moved.md'), 'moved\n');
+  execSync('git add -A && git commit -q -m seed', {cwd: root});
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    authorName: 'vault-storage',
+    authorEmail: 'vault-storage@localhost',
+    db,
+    log: () => {},
+    onError: () => {}
+  });
+  try {
+    writeAs(AGENT, db, root, 'topics/a.md', 'a\n');
+    writeAs(AGENT, db, root, 'topics/star*.md', 'a literal star\n');
+    writeAs(AGENT, db, root, 'old.md', null);
+    writeAs(BOT, db, root, 'logs/b.md', 'b\n');
+    writeAs(AGENT, db, root, 'topics/c.md', 'c\n');
+    writeAs(LEGACY, db, root, 'topics/c.md', 'c by the API token\n');
+    writeAs(AGENT, db, root, 'renamed.md', 'moved\n');
+    rmSync(join(root, 'moved.md'));
+    writeFileSync(join(root, 'by-hand.md'), 'edited outside the server\n');
+
+    await handle.syncNow();
+    const commits = commitsOf(root, 3);
+    const byAuthor = new Map(commits.map(c => [c.author, c]));
+    t.equal(commits.length, 3, 'one commit per writer and one for the rest');
+    t.match(byAuthor.get('uhop agents'), {
+      email: 'agents@example.com',
+      committer: 'vault-storage',
+      subject: 'vault-storage auto-commit (4 files)',
+      key: 'uhop agents (agent, k-agent)',
+      files: ['old.md', 'renamed.md', 'topics/a.md', 'topics/star*.md']
+    });
+    t.match(byAuthor.get('sweep bot'), {
+      email: 'vault-storage@localhost',
+      key: 'sweep bot (system, k-bot)',
+      files: ['logs/b.md']
+    });
+    const rest = byAuthor.get('vault-storage');
+    t.equal(rest?.key, '', 'no Key trailer under the configured author');
+    t.deepEqual(
+      rest?.files.filter(f => !f.startsWith('.vault-storage-state/')),
+      ['by-hand.md', 'moved.md', 'topics/c.md'],
+      "the API token's last write and an outside edit keep the configured author"
+    );
+    t.ok(
+      rest?.files.includes('.vault-storage-state/records.jsonl'),
+      "the state export (D121) is the server's own"
+    );
+    t.equal(execSync('git status --porcelain', {cwd: root}).toString(), '', 'everything committed');
+    t.equal(
+      (db.prepare('SELECT COUNT(*) AS n FROM pending_writers').get() as {n: number}).n,
+      0,
+      'the ledger is empty'
+    );
+  } finally {
+    handle.close();
+    db.close();
+    cleanup(root);
+  }
+});
+
+test('git-sync drops a recorded writer whose path is clean at the pass', async t => {
+  const root = initRepo();
+  const db = openDatabase({path: ':memory:'});
+  runMigrations(db);
+  const handle = startGitSync({
+    vaultDataPath: root,
+    intervalMs: 60_000,
+    db,
+    log: () => {},
+    onError: () => {}
+  });
+  try {
+    writeAs(AGENT, db, root, 'topics/a.md', 'a\n');
+    writeAs(AGENT, db, root, 'README.md', '# vault\n');
+    await handle.syncNow();
+    t.ok(
+      commitsOf(root, 2).some(c => c.author === 'uhop agents' && c.files.includes('topics/a.md')),
+      'the written path under its writer'
+    );
+    t.equal(
+      (db.prepare('SELECT COUNT(*) AS n FROM pending_writers').get() as {n: number}).n,
+      0,
+      'a path written back to its committed bytes leaves no row behind'
+    );
   } finally {
     handle.close();
     db.close();

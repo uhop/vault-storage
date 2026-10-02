@@ -53,6 +53,7 @@ import {sendError, sendJson, sendNoContent, sendText} from '../responses.ts';
 import type {Handler} from '../router.ts';
 import {refuseUnresolvedEdges, requestEdges, type EdgeChecker} from '../edge-check.ts';
 import {readVersion, SHA_RE} from './history.ts';
+import {recordWriter} from '../writers.ts';
 import {refResolver} from '../refs.ts';
 import {refuseUnknownTags, requestTags, respondWritten, type TagChecker} from '../tag-check.ts';
 import {
@@ -1518,6 +1519,7 @@ export const deleteVaultHandler =
     }
 
     if (onDisk) unlinkSync(abs);
+    recordWriter([path]);
     if (existing) {
       records.delete(existing.recordId);
       deps.resolverCache.invalidate();
@@ -1614,6 +1616,7 @@ export const moveVaultHandler =
     // mkdirSync is idempotent with `recursive: true`; harmless if dir exists.
     mkdirSync(dirname(toAbs), {recursive: true});
     renameSync(fromAbs, toAbs);
+    recordWriter([fromPath, toPath]);
 
     // DB update — preserves record_id, and therefore every reference to it
     // (edges, tags, suggestions, embeddings, agent block). The project derives
@@ -1798,6 +1801,7 @@ export const supersedeVaultHandler =
     // 1. Archive the old note, record_id preserved.
     mkdirSync(dirname(archiveAbs), {recursive: true});
     renameSync(oldAbs, archiveAbs);
+    recordWriter([oldPath, archivePath]);
     records.updateFilePath(oldRecord.recordId, archivePath);
     repathPendingSuggestions(deps.db, oldRecord.recordId, archivePath);
 

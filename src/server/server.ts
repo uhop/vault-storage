@@ -2,6 +2,7 @@ import {join} from 'node:path';
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
 import {bearerOf, KeyStore} from './keys.ts';
+import {writeContext} from './writers.ts';
 import {
   createKeyHandler,
   keysMeHandler,
@@ -496,7 +497,12 @@ const parseUrl = (req: IncomingMessage): {path: string; query: Record<string, st
 };
 
 const handleRequest =
-  (router: Router, keys: KeyStore, observe: (route: string, req: IncomingMessage) => void) =>
+  (
+    router: Router,
+    keys: KeyStore,
+    db: DatabaseSync,
+    observe: (route: string, req: IncomingMessage) => void
+  ) =>
   async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       const parsed = parseUrl(req);
@@ -569,7 +575,8 @@ const handleRequest =
         params: match.params,
         ...(session === null ? {} : {session})
       };
-      await match.handler(ctx);
+      if (session === null) await match.handler(ctx);
+      else await writeContext.run({session, db}, () => match.handler(ctx));
       observe(match.route, req);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -615,7 +622,7 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
   const renderer = opts.renderer ?? new MarkdownRenderer();
   const keys = keyStoreOf(opts);
   const router = buildRouter({...opts, renderer, keys});
-  const server = createServer(handleRequest(router, keys, bodyFieldObserver(opts.db)));
+  const server = createServer(handleRequest(router, keys, opts.db, bodyFieldObserver(opts.db)));
   // The DB is synchronous, so heavy handlers block the event loop and every
   // queued request waits out the full backlog before its headers are even
   // parsed. Node's default headersTimeout (60 s) then destroys queued
