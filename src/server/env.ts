@@ -7,8 +7,10 @@ export interface ServerEnv {
   vaultIngestPath: string | null;
   /** Path to vault.sqlite. Defaults to `${vaultDataPath}/.vault-storage/vault.sqlite`. */
   vaultDbPath: string;
-  /** Bearer token required on every request. */
+  /** Bearer token accepted on every request, as the implicit person key `operator` (D135). */
   apiToken: string;
+  /** The named-key file (D135); absent or null keeps only apiToken. */
+  keysPath?: string | null;
   host: string;
   port: number;
   /** When true, server runs an importVault pass on startup before listening. */
@@ -105,6 +107,8 @@ export const readServerEnv = (): ServerEnv => {
   const vaultDbPath =
     process.env['VAULT_DB_PATH'] ?? join(vaultDataPath, '.vault-storage', 'vault.sqlite');
   const vaultIngestPath = process.env['VAULT_INGEST_PATH'] ?? null;
+  const keysPath =
+    process.env['VAULT_KEYS_PATH'] ?? join(vaultDataPath, '.vault-storage', 'keys.json');
 
   const host = process.env['VAULT_HOST'] ?? '127.0.0.1';
   const portRaw = process.env['VAULT_PORT'] ?? '8123';
@@ -207,6 +211,7 @@ export const readServerEnv = (): ServerEnv => {
     vaultIngestPath,
     vaultDbPath,
     apiToken,
+    keysPath,
     host,
     port,
     autoReindex,

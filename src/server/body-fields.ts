@@ -106,6 +106,8 @@ const FIELDS: Readonly<Record<string, readonly string[]>> = {
     'ttl_seconds',
     'claim_token'
   ],
+  'POST /keys': ['name', 'kind', 'email', 'expires_at'],
+  'POST /keys/{id}/recall': [],
   'POST /leases/renew': ['resource', 'holder', 'ttl_seconds', 'claim_token'],
   'POST /leases/release': ['resource', 'holder', 'force', 'claim_token'],
   'POST /leases/transfer': [
@@ -146,6 +148,7 @@ export const STRICT_BODY_ROUTES: ReadonlySet<string> = new Set([
   'POST /handoffs/claim',
   'POST /handoffs/resolve',
   'POST /handoffs/verify',
+  'POST /keys',
   'POST /leases/claim',
   'POST /leases/release',
   'POST /leases/renew',

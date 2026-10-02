@@ -1,4 +1,5 @@
 import type {IncomingMessage, ServerResponse} from 'node:http';
+import type {Session} from './keys.ts';
 
 export interface RequestContext {
   req: IncomingMessage;
@@ -9,6 +10,8 @@ export interface RequestContext {
   query: Record<string, string>;
   /** Path parameters extracted from the route pattern. */
   params: Record<string, string>;
+  /** The caller's key (D135); absent on a public path. */
+  session?: Session;
 }
 
 export type Handler = (ctx: RequestContext) => Promise<void> | void;

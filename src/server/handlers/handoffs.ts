@@ -30,7 +30,7 @@ import {
 } from '../../records/handoffs.ts';
 import type {HandoffTouch} from '../../records/handoffs.ts';
 import type {RecordsRepository} from '../../records/repository.ts';
-import {readBodyBuffer, readBodyText} from '../body.ts';
+import {readBodyBuffer, readJsonBody} from '../body.ts';
 import {NO_QUERY_PARAMS, rejectUnknownParams} from '../query.ts';
 import {sendError, sendJson} from '../responses.ts';
 import type {Handler} from '../router.ts';
@@ -138,31 +138,6 @@ const overlapsOf = (
     if (shared.length > 0) out.push({id: other.id, touches: shared});
   }
   return out;
-};
-
-interface ParsedBody {
-  body: Record<string, unknown>;
-}
-
-const readJsonBody = async (ctx: Parameters<Handler>[0]): Promise<ParsedBody | null> => {
-  let raw: string;
-  try {
-    raw = await readBodyText(ctx.req);
-  } catch (err) {
-    sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      sendError(ctx.res, 400, 'bad_request', 'request body must be a JSON object');
-      return null;
-    }
-    return {body: parsed as Record<string, unknown>};
-  } catch (err) {
-    sendError(ctx.res, 400, 'bad_request', `invalid JSON: ${(err as Error).message}`);
-    return null;
-  }
 };
 
 const requireString = (

@@ -1,4 +1,6 @@
 import type {IncomingMessage} from 'node:http';
+import {sendError} from './responses.ts';
+import type {RequestContext} from './router.ts';
 
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 
@@ -38,3 +40,30 @@ export const readBodyText = async (
   req: IncomingMessage,
   maxBytes: number = DEFAULT_MAX_BYTES
 ): Promise<string> => (await readBodyBuffer(req, maxBytes)).toString('utf8');
+
+/**
+ * The request body as a JSON object, or null after answering 413 (too large)
+ * or 400 (not JSON, or not an object).
+ */
+export const readJsonBody = async (
+  ctx: RequestContext
+): Promise<{body: Record<string, unknown>} | null> => {
+  let raw: string;
+  try {
+    raw = await readBodyText(ctx.req);
+  } catch (err) {
+    sendError(ctx.res, 413, 'request_too_large', (err as Error).message);
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      sendError(ctx.res, 400, 'bad_request', 'request body must be a JSON object');
+      return null;
+    }
+    return {body: parsed as Record<string, unknown>};
+  } catch (err) {
+    sendError(ctx.res, 400, 'bad_request', `invalid JSON: ${(err as Error).message}`);
+    return null;
+  }
+};

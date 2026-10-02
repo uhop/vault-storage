@@ -198,6 +198,8 @@ so an adapter older than the server never drops a field silently. Common
 codes:
 
 - `auth_failed` — `VAULT_API_TOKEN` missing or wrong
+- `forbidden` — the act needs a person's key, such as a forced lease release
+  with an agent's key (server from D135)
 - `not_found` — record/file/tag/suggestion absent
 - `conflict` — the destination of a move or supersede is taken, the tag is
   already in the taxonomy, or a suggestion changed between the server's

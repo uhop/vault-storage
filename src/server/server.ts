@@ -1,7 +1,13 @@
 import {join} from 'node:path';
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
 import type {DatabaseSync} from 'node:sqlite';
-import {checkBearer} from './auth.ts';
+import {bearerOf, KeyStore} from './keys.ts';
+import {
+  createKeyHandler,
+  keysMeHandler,
+  listKeysHandler,
+  recallKeyHandler
+} from './handlers/keys.ts';
 import {coder} from './compress.ts';
 import type {ServerEnv} from './env.ts';
 import type {Embedder} from '../embeddings/types.ts';
@@ -179,11 +185,26 @@ interface BuildOptions {
   renderer?: MarkdownRenderer;
   /** The vault's marker (D119), read at `serve`; absent for tests and bare servers. */
   vault?: {id: string; format: number};
+  /** Shared by the auth gate and the key routes; startServer builds it from env. */
+  keys?: KeyStore;
 }
+
+const keyStoreOf = (opts: BuildOptions): KeyStore =>
+  opts.keys ??
+  new KeyStore({
+    path: opts.env.keysPath ?? null,
+    legacyToken: opts.env.apiToken,
+    vaultDataPath: opts.env.vaultDataPath
+  });
 
 export const buildRouter = (opts: BuildOptions): Router => {
   const health = opts.health ?? startHealthMonitor();
   const router = new Router();
+  const keys = keyStoreOf(opts);
+  router.get('/keys/me', keysMeHandler());
+  router.get('/keys', listKeysHandler({keys}));
+  router.post('/keys', createKeyHandler({keys}));
+  router.post('/keys/{id}/recall', recallKeyHandler({keys}));
 
   // Shared repositories: each constructor prepares its statements, so build
   // them once per server instead of once per request. Safe to share — the
@@ -475,7 +496,7 @@ const parseUrl = (req: IncomingMessage): {path: string; query: Record<string, st
 };
 
 const handleRequest =
-  (router: Router, env: ServerEnv, observe: (route: string, req: IncomingMessage) => void) =>
+  (router: Router, keys: KeyStore, observe: (route: string, req: IncomingMessage) => void) =>
   async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       const parsed = parseUrl(req);
@@ -498,7 +519,9 @@ const handleRequest =
         return;
       }
 
-      if (!isPublicPath(parsed.path) && !checkBearer(req, env.apiToken)) {
+      const isPublic = isPublicPath(parsed.path);
+      const session = isPublic ? null : keys.resolve(bearerOf(req.headers['authorization']));
+      if (!isPublic && session === null) {
         sendError(res, 401, 'unauthorized', 'missing or invalid bearer token');
         return;
       }
@@ -543,7 +566,8 @@ const handleRequest =
         res,
         path: parsed.path,
         query: parsed.query,
-        params: match.params
+        params: match.params,
+        ...(session === null ? {} : {session})
       };
       await match.handler(ctx);
       observe(match.route, req);
@@ -589,8 +613,9 @@ export const startServer = (opts: BuildOptions): Promise<ServerHandle> => {
     }
   }
   const renderer = opts.renderer ?? new MarkdownRenderer();
-  const router = buildRouter({...opts, renderer});
-  const server = createServer(handleRequest(router, opts.env, bodyFieldObserver(opts.db)));
+  const keys = keyStoreOf(opts);
+  const router = buildRouter({...opts, renderer, keys});
+  const server = createServer(handleRequest(router, keys, bodyFieldObserver(opts.db)));
   // The DB is synchronous, so heavy handlers block the event loop and every
   // queued request waits out the full backlog before its headers are even
   // parsed. Node's default headersTimeout (60 s) then destroys queued
