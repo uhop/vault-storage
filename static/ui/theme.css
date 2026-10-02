@@ -199,16 +199,18 @@ header h1 a:hover {
   text-decoration: underline;
 }
 
-/* <vault-nav> — the shared menu look. The unwrapped header row needs 654 px
-   at the default font (measured 2026-09-17), so below 767 px the menu takes
-   its own full-width row under the title and the controls. */
+/* <vault-nav> — the shared menu look: four groups, each a <details> whose
+   panel opens under its summary. The unwrapped header row needs 586 px at the
+   default font, and 706 px on the dashboard with its action button (measured
+   2026-10-01), so below 720 px the menu takes its own full-width row under the
+   title and the controls. */
 header nav {
   display: flex;
   flex-wrap: wrap;
   gap: 0.8rem;
   font-size: 0.9rem;
 }
-@media (max-width: 767px) {
+@media (max-width: 719px) {
   header {
     row-gap: 0.4rem;
   }
@@ -217,9 +219,55 @@ header nav {
     order: 1;
   }
 }
+/* The margin and font resets keep a page's own bare details/summary rules
+   (fleet-project.html has both) out of the menu. */
+header nav details {
+  position: relative;
+  margin: 0;
+}
+header nav summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: inherit;
+  list-style: none;
+}
+header nav summary::-webkit-details-marker {
+  display: none;
+}
+header nav summary::after {
+  content: ' ▾';
+  font-size: 0.75em;
+}
+header nav details.current > summary,
+header nav details[open] > summary,
+header nav summary:hover {
+  color: var(--fg);
+}
+header nav .nav-panel {
+  position: absolute;
+  left: 0;
+  top: 1.6rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: max-content;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  padding: 0.5rem 0.8rem;
+}
+header nav details:last-child .nav-panel {
+  left: auto;
+  right: 0;
+}
 header nav a {
   color: var(--muted);
   text-decoration: none;
+}
+header nav a:hover {
+  text-decoration: underline;
 }
 header nav a[aria-current] {
   color: var(--fg);

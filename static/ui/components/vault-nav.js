@@ -5,23 +5,53 @@
 // page lacked "agents").
 //
 // Light DOM on purpose, same rationale as <vault-toolbar>: renders a plain
-// <nav> child, so the host page's `header nav a` CSS applies unchanged.
+// <nav> child, so the host page's `header nav a` CSS applies unchanged. Each
+// group is a <details> whose panel opens on a click, as <vault-legend>'s does,
+// never on hover (D134).
 
-const ITEMS = [
-  {href: '/ui/search.html', label: 'search'},
-  {href: '/ui/projects.html', label: 'projects'},
-  {href: '/ui/fleet.html', label: 'fleet'},
-  {href: '/ui/fleet.html?view=packages', label: 'packages'},
-  {href: '/ui/tags.html', label: 'tags'},
-  {href: '/ui/edges.html', label: 'edges'},
-  {href: '/ui/raw.html', label: 'raw'},
-  {href: '/ui/folder.html', label: 'browse'},
-  {href: '/ui/edit.html', label: 'note'},
-  {href: '/ui/agents.html', label: 'agents'}
+const GROUPS = [
+  {
+    label: 'notes',
+    items: [
+      {href: '/ui/search.html', label: 'search'},
+      {href: '/ui/folder.html', label: 'browse'},
+      {href: '/ui/raw.html', label: 'raw'},
+      {href: '/ui/edit.html', label: 'new note', unless: ['path']},
+      {href: '/ui/drafts.html', label: 'drafts'}
+    ]
+  },
+  {
+    label: 'graph',
+    items: [
+      {href: '/ui/tags.html', label: 'tags'},
+      {href: '/ui/edges.html', label: 'edges'},
+      {href: '/ui/neighborhood.html', label: 'neighborhood'}
+    ]
+  },
+  {
+    label: 'fleet',
+    items: [
+      {href: '/ui/projects.html', label: 'projects'},
+      {href: '/ui/fleet.html', label: 'fleet'},
+      {href: '/ui/fleet.html?view=packages', label: 'packages'},
+      {href: '/ui/agents.html', label: 'agents'}
+    ]
+  },
+  {
+    label: 'upkeep',
+    items: [
+      {href: '/ui/lint-review.html', label: 'lint review'},
+      {href: '/ui/archive-review.html', label: 'archive review'}
+    ]
+  }
 ];
 
+const ITEMS = GROUPS.flatMap(g => g.items);
+
 // Of the items on this path, the one whose query parameters all match, the most
-// specific first: fleet.html?view=packages marks "packages", not "fleet".
+// specific first: fleet.html?view=packages marks "packages", not "fleet". An item's
+// `unless` names parameters it never matches with: the editor holding a note is
+// not "new note".
 const currentItem = (pathname, search) => {
   const params = new URLSearchParams(search);
   let best = null,
@@ -29,6 +59,7 @@ const currentItem = (pathname, search) => {
   for (const item of ITEMS) {
     const url = new URL(item.href, 'http://ui.invalid');
     if (url.pathname !== pathname) continue;
+    if (item.unless?.some(k => params.has(k))) continue;
     const wanted = [...url.searchParams];
     if (wanted.every(([k, v]) => params.get(k) === v) && wanted.length > bestSize) {
       best = item;
@@ -44,16 +75,28 @@ const markCurrent = (nav, pathname, search) => {
     if (ITEMS[i] === current) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
+  nav.querySelectorAll('details').forEach((d, i) => {
+    d.classList.toggle('current', GROUPS[i].items.includes(current));
+  });
 };
 
 // Exported for tests: the location is a parameter so every page can be checked.
 export const buildNav = (pathname, search = '') => {
   const nav = document.createElement('nav');
-  for (const {href, label} of ITEMS) {
-    const a = document.createElement('a');
-    a.href = href;
-    a.textContent = label;
-    nav.appendChild(a);
+  for (const group of GROUPS) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = group.label;
+    const panel = document.createElement('div');
+    panel.className = 'nav-panel';
+    for (const {href, label} of group.items) {
+      const a = document.createElement('a');
+      a.href = href;
+      a.textContent = label;
+      panel.appendChild(a);
+    }
+    details.append(summary, panel);
+    nav.appendChild(details);
   }
   markCurrent(nav, pathname, search);
   return nav;
@@ -61,9 +104,42 @@ export const buildNav = (pathname, search = '') => {
 
 class VaultNav extends HTMLElement {
   connectedCallback() {
-    if (this._ready) return;
-    this._ready = true;
-    this.appendChild(buildNav(location.pathname, location.search));
+    if (!this._ready) {
+      this._ready = true;
+      this.appendChild(buildNav(location.pathname, location.search));
+      // toggle does not bubble, so it is caught on the way down.
+      this.addEventListener(
+        'toggle',
+        e => {
+          if (!e.target.open) return;
+          for (const d of this.querySelectorAll('details[open]'))
+            if (d !== e.target) d.open = false;
+        },
+        true
+      );
+      this._close = e => {
+        if (!this.contains(e.target)) this.closeAll();
+      };
+      this._escape = e => {
+        if (e.key !== 'Escape') return;
+        const open = this.querySelector('details[open]');
+        if (!open) return;
+        const focused = open.contains(document.activeElement);
+        open.open = false;
+        if (focused) open.querySelector('summary').focus();
+      };
+    }
+    document.addEventListener('click', this._close);
+    document.addEventListener('keydown', this._escape);
+  }
+
+  disconnectedCallback() {
+    document.removeEventListener('click', this._close);
+    document.removeEventListener('keydown', this._escape);
+  }
+
+  closeAll() {
+    for (const d of this.querySelectorAll('details[open]')) d.open = false;
   }
 
   // For a page that changes its query in place (history.replaceState).
